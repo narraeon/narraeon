@@ -688,6 +688,10 @@ export function WorldPage({
     lastActiveEvent.event.kind === "failure"
       ? lastActiveEvent.event.failureKind
       : undefined);
+  const activeCanContinuePartial =
+    playCallChain?.canContinuePartial ??
+    playTimeline?.activeCanContinuePartial ??
+    false;
   const activeCanRetry = reportedCanRetry;
   const failureWasSuperseded =
     supersededFailure?.worldId === worldId &&
@@ -798,6 +802,7 @@ export function WorldPage({
   async function submitPlayChain(
     context: "fresh" | "append",
     submittedText = playerText,
+    recovery?: "continue_partial",
   ): Promise<void> {
     if (!modelConfigured || !playIdle || playSubmissionInFlight.current) return;
     const fresh = context === "fresh" || activeChainId === null;
@@ -806,7 +811,11 @@ export function WorldPage({
       fresh
         ? !hasSubmittedText
         : activeChainStale ||
-          (activeStatus !== "ready" && (hasSubmittedText || !activeCanRetry))
+          (activeStatus !== "ready" &&
+            (hasSubmittedText ||
+              !(recovery === "continue_partial"
+                ? activeCanContinuePartial
+                : activeCanRetry)))
     )
       return;
     setRegenerationFallback(null);
@@ -850,6 +859,7 @@ export function WorldPage({
           } satisfies Extract<V1Request, { type: "play.chain.start" }>)
         : ({
             type: "play.chain.append",
+            ...(recovery === undefined ? {} : { recovery }),
             worldId,
             chainId,
             exchangeId,
@@ -1368,6 +1378,9 @@ export function WorldPage({
 
   const failureRecovery: PlayFailureRecovery = {
     canRetry: activeCanRetry && !activeChainStale,
+    canContinuePartial: activeCanContinuePartial && !activeChainStale,
+    onContinuePartial: () =>
+      void submitPlayChain("append", "", "continue_partial"),
     playDisabled: !modelConfigured || !playIdle,
     configureDisabled:
       !playIdle || revisionDirty || controlDirty || authoringLocked,
@@ -1471,7 +1484,7 @@ export function WorldPage({
           )
         }
         onCancel={() => revisionWorkspace.cancel()}
-        onResume={() => revisionWorkspace.resume()}
+        onResume={(recovery) => revisionWorkspace.resume(recovery)}
         onFreshContext={() => revisionWorkspace.startFresh()}
         onSelectSession={(id) => revisionWorkspace.selectSession(id)}
         onDeleteSession={(id) => revisionWorkspace.deleteSession(id)}
@@ -1852,7 +1865,7 @@ export function WorldPage({
                 />
               </div>
             )}
-            {!activeCanRetry ||
+            {(!activeCanRetry && !activeCanContinuePartial) ||
             activeFailureVisible ||
             visiblePlayFailure !== null ||
             failureWasSuperseded ? null : (
@@ -1873,6 +1886,18 @@ export function WorldPage({
                 ) : null}
               </div>
             )}
+            {activeCanContinuePartial &&
+            !activeFailureVisible &&
+            visiblePlayFailure === null &&
+            !failureWasSuperseded ? (
+              <button
+                type="button"
+                disabled={failureRecovery.playDisabled}
+                onClick={failureRecovery.onContinuePartial}
+              >
+                {uiText("继续发送")}
+              </button>
+            ) : null}
             {activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
                 {world?.archiveNeedsFreshContext
@@ -3641,6 +3666,7 @@ function applyPlayTimelineFrame(
         activeChainId: chain.chainId,
         activeStatus: chain.status,
         activeCanRetry: chain.canRetry,
+        activeCanContinuePartial: chain.canContinuePartial ?? false,
         activeLastFailure: chain.lastFailure,
         activeLastFailureKind: chain.lastFailureKind,
         items,
@@ -3780,6 +3806,7 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
     activeChainId: chain.chainId,
     activeStatus: chain.status,
     activeCanRetry: chain.canRetry,
+    activeCanContinuePartial: chain.canContinuePartial ?? false,
     activeLastFailure: chain.lastFailure,
     activeLastFailureKind: chain.lastFailureKind,
     items: [

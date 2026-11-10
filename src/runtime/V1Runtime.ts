@@ -1180,6 +1180,9 @@ export class V1Runtime {
             chainId: request.chainId,
             exchangeId: request.exchangeId,
             playerText: request.playerText,
+            ...(request.recovery === undefined
+              ? {}
+              : { recovery: request.recovery }),
             ...(request.turnNote === undefined
               ? {}
               : { turnNote: request.turnNote }),

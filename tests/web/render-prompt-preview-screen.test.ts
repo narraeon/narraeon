@@ -298,6 +298,7 @@ function modelLibrary() {
         thinkingMode: "provider_default" as const,
         thinkingBudgetTokens: null,
         supportsAllowedTools: true,
+        assistantPrefillMode: "disabled" as const,
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
         hasApiKey: true as const,

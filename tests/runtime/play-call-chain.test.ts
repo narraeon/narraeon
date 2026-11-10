@@ -14028,3 +14028,197 @@ test("151 play cold resumes after settled Google tools", async () => {
     "COMPLETED_151",
   );
 });
+
+test.each(["retry", "continue"])(
+  "继续发送逐字保留正文并在重启和再次中断后累计；%s恢复",
+  async (recovery) => {
+    const { prefillHost } = await import("./support/prefill-host.ts");
+    const { host, sent } = prefillHost([
+      { text: " \n半🙂" },
+      { text: "\n续 " },
+      { text: "重写。", finish: "stop" },
+    ]);
+    const { worlds, worldId, root } = await createWorld(
+      "prefill-repeat",
+      undefined,
+      host.binding(),
+    );
+    let chains = new PlayCallChain(worlds);
+    const first = await chains.start({
+      worldId,
+      chainId: "prefill",
+      exchangeId: "first",
+      playerText: "开始",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(first).toMatchObject({
+      status: "interrupted",
+      canContinuePartial: true,
+    });
+    const frozen = (await worlds.playTimeline.readContext(worldId, "prefill"))
+      ?.value.lastRequest;
+    chains = new PlayCallChain(new FileNativeWorldStore(root));
+    const cold = await chains.inspectWorld(worldId);
+    expect(cold).toMatchObject({ canContinuePartial: true });
+    const second = await chains.append({
+      worldId,
+      chainId: "prefill",
+      exchangeId: "continue",
+      playerText: "",
+      recovery: "continue_partial",
+      modelHost: host,
+    });
+    expect(second).toMatchObject({
+      status: "interrupted",
+      canContinuePartial: true,
+    });
+    expect(
+      second.events.findLast((event) => event.kind === "assistant"),
+    ).toMatchObject({ text: " \n半🙂\n续 " });
+    expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
+      role: "assistant",
+      content: " \n半🙂",
+    });
+    expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
+      sent[0]?.messages,
+    );
+    expect(frozen?.bootstrap).toEqual(
+      (await worlds.playTimeline.readContext(worldId, "prefill"))?.value
+        .lastRequest?.bootstrap,
+    );
+    const done = await chains.append({
+      worldId,
+      chainId: "prefill",
+      exchangeId: "retry",
+      playerText: "",
+      ...(recovery === "continue"
+        ? { recovery: "continue_partial" as const }
+        : {}),
+      modelHost: host,
+    });
+    expect(done.status).toBe("ready");
+    if (recovery === "retry")
+      expect(sent[2]?.messages).toEqual(sent[0]?.messages);
+    else
+      expect((sent[2]?.messages as unknown[]).at(-1)).toEqual({
+        role: "assistant",
+        content: " \n半🙂\n续 ",
+      });
+    const history = (await worlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    );
+    expect(history).toContain(
+      recovery === "retry" ? "重写。" : " \n半🙂\n续 重写。",
+    );
+    expect(history.filter((text) => text === "开始")).toHaveLength(1);
+    const native = (
+      await worlds.playTimeline.readContext(worldId, "prefill")
+    )?.value.transcript.at(-1);
+    expect(native).toMatchObject({
+      kind: "assistant",
+      providerState: {
+        assistantMessage: {
+          content: recovery === "retry" ? "重写。" : " \n半🙂\n续 重写。",
+        },
+      },
+    });
+    expect(history).not.toContain(" \n半🙂\n续 ");
+  },
+);
+
+test("正文 token 截断继续发送只结算合并后的完整正文", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host, sent } = prefillHost(
+    [
+      { text: "  上半\n", finish: "length", json: true },
+      { text: "下半。", finish: "stop" },
+    ],
+    "partial",
+  );
+  const { worlds, worldId } = await createWorld(
+    "prefill-limit",
+    undefined,
+    host.binding(),
+  );
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "prefill",
+    exchangeId: "first",
+    playerText: "开始",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first).toMatchObject({
+    canRetry: false,
+    canContinuePartial: true,
+    lastFailureKind: "output_limit",
+  });
+  const done = await chains.append({
+    worldId,
+    chainId: "prefill",
+    exchangeId: "continue",
+    playerText: "",
+    recovery: "continue_partial",
+    modelHost: host,
+  });
+  expect(done.status).toBe("ready");
+  expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
+    role: "assistant",
+    content: "  上半\n",
+    partial: true,
+  });
+  expect(
+    done.events.findLast((event) => event.kind === "assistant"),
+  ).toMatchObject({ text: "  上半\n下半。", status: "completed" });
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.filter((text) => text === "  上半\n下半。")).toHaveLength(1);
+});
+
+test.each([
+  { text: "" },
+  { text: "正文", extra: { reasoning_content: "思考" } },
+  {
+    text: "正文",
+    extra: {
+      tool_calls: [{ index: 0, id: "call", function: { name: "world_patch" } }],
+    },
+  },
+])("没有完整普通正文时拒绝继续发送：%j", async (step) => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host } = prefillHost([step]);
+  const { worlds, worldId } = await createWorld(
+    "prefill-reject",
+    undefined,
+    host.binding(),
+  );
+  const chains = new PlayCallChain(worlds);
+  const first = await chains.start({
+    worldId,
+    chainId: "prefill",
+    exchangeId: "first",
+    playerText: "开始",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first.canContinuePartial).toBe(false);
+  await expect(
+    chains.append({
+      worldId,
+      chainId: "prefill",
+      exchangeId: "continue",
+      playerText: "",
+      recovery: "continue_partial",
+      modelHost: host,
+    }),
+  ).rejects.toThrow(/no supported/iu);
+});

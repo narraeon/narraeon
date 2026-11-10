@@ -168,6 +168,7 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
             event.status === "streaming" &&
             (advance === null || event.id === advance.eventId),
         );
+    if (streaming?.kind === "assistant") streaming.responseKind = "empty";
     const unknownGoogleDispatch =
       advance?.advanceKind === "response" &&
       session.status === "running" &&

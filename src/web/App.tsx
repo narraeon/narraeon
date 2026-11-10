@@ -796,9 +796,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           )
         }
         onCancel={() => authoringWorkspace.cancel()}
-        onResume={() => {
+        onResume={(recovery) => {
           setNotice("");
-          return authoringWorkspace.resume();
+          return authoringWorkspace.resume(recovery);
         }}
         onFreshContext={() => authoringWorkspace.startFresh()}
         onSelectSession={(id) => authoringWorkspace.selectSession(id)}

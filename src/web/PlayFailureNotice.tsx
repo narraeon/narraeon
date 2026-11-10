@@ -4,6 +4,8 @@ import { failureText, playFailureDescription } from "./PlayFailureText.ts";
 
 export interface PlayFailureRecovery {
   canRetry: boolean;
+  canContinuePartial?: boolean;
+  onContinuePartial?: () => void;
   playDisabled: boolean;
   configureDisabled: boolean;
   onRetry: () => void;
@@ -37,6 +39,15 @@ export function PlayFailureNotice({
               onClick={recovery.onRetry}
             >
               {uiText("重新发送")}
+            </button>
+          ) : null}
+          {recovery.canContinuePartial ? (
+            <button
+              type="button"
+              disabled={recovery.playDisabled}
+              onClick={recovery.onContinuePartial}
+            >
+              {uiText("继续发送")}
             </button>
           ) : null}
           <button

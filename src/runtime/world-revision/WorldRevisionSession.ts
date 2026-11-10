@@ -1,4 +1,8 @@
 import {
+  canContinueAuthoringPartial,
+  prepareAuthoringPartial,
+} from "../model/AssistantPrefill.ts";
+import {
   completedAuthoringEdit,
   planAuthoringEdit,
   revertAuthoringChanges,
@@ -638,6 +642,7 @@ export class WorldRevisionSession {
     worldId: string;
     sessionId: string;
     requestId: string;
+    recovery?: "continue_partial";
   }): Promise<V1WorldRevisionView> {
     const requestId = requiredRequestId(input.requestId);
     const prepared = await this.#mutate(async () => {
@@ -662,7 +667,13 @@ export class WorldRevisionSession {
         );
       const host = await this.#bindModelHost();
       assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-      if (canRetryAuthoringDispatch(session)) {
+      if (input.recovery === "continue_partial")
+        prepareAuthoringPartial(session, host);
+      else delete session.partialResponse;
+      if (
+        input.recovery === "continue_partial" ||
+        canRetryAuthoringDispatch(session)
+      ) {
         session.runStatus = "running";
         session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
         session.lastFailure = null;
@@ -1072,6 +1083,7 @@ export class WorldRevisionSession {
     if (this.#conversation.isRunning(session.sessionId)) return session;
     await this.#workspace.active(session.worldId);
     session = await this.#store.readSession(session.sessionId);
+    if (session.runStatus === "running") delete session.partialResponse;
     const lastItem = session.modelItems.at(-1);
     if (
       session.pendingSettlement === null &&
@@ -1266,6 +1278,9 @@ export class WorldRevisionSession {
       lastFailure: session.lastFailure,
       canRetry:
         activeEpochId === session.epochId && canRetryAuthoringDispatch(session),
+      canContinuePartial:
+        activeEpochId === session.epochId &&
+        canContinueAuthoringPartial(session),
     };
   }
 

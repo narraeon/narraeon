@@ -24,6 +24,82 @@ afterEach(() => {
   setWebLocale("zh-CN");
 });
 
+test("预填充高级设置显式保存并在重开后保留，切换协议清除能力", async () => {
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    provider: "chat_completions",
+    dialect: "standard",
+  };
+  const request = vi.fn((input: V1Request) => {
+    if (input.type === "model.save") {
+      expect(input.connection.assistantPrefillMode).toBe("mistral_prefix");
+      return Promise.resolve({
+        ...library,
+        connections: [
+          {
+            ...library.connections[0]!,
+            assistantPrefillMode: "mistral_prefix",
+          },
+        ],
+      });
+    }
+    return Promise.resolve(library);
+  });
+  const props = {
+    client: { request } as unknown as RuntimeClient,
+    library,
+    onLibraryChange: vi.fn(),
+    onNotice: vi.fn(),
+    onDirtyChange: vi.fn(),
+  };
+  const view = render(createElement(ModelConnectionScreen, props));
+  fireEvent.click(screen.getByText("高级选项"));
+  const select = screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送");
+  expect(select.value).toBe("disabled");
+  fireEvent.change(select, { target: { value: "mistral_prefix" } });
+  expect(
+    screen.getByText("Mistral 返回包含已发前缀的完整正文，不重复拼接。"),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
+  await waitFor(() => expect(props.onLibraryChange).toHaveBeenCalled());
+  view.unmount();
+  const savedLibrary: ModelConnectionLibraryView = {
+    ...library,
+    connections: [
+      { ...library.connections[0], assistantPrefillMode: "mistral_prefix" },
+    ],
+  };
+  render(
+    createElement(ModelConnectionScreen, { ...props, library: savedLibrary }),
+  );
+  fireEvent.click(screen.getByText("高级选项"));
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+  ).toBe("mistral_prefix");
+  fireEvent.change(screen.getByLabelText("协议适配器"), {
+    target: { value: "anthropic_messages" },
+  });
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+  ).toBe("disabled");
+  expect(
+    screen.queryByRole("option", { name: "prefix: true（DeepSeek）" }),
+  ).toBeNull();
+  fireEvent.change(screen.getByLabelText("协议适配器"), {
+    target: { value: "openai_responses" },
+  });
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+  ).toBe("disabled");
+  expect(
+    screen.getByRole("option", { name: "partial: true（火山方舟）" }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("option", { name: "prefix: true（DeepSeek）" }),
+  ).toBeNull();
+});
+
 test("Responses 高级选项可编辑保存并用英文显示已保存的值", async () => {
   setWebLocale("en");
   const library = modelLibrary();
@@ -239,6 +315,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
         thinkingMode: "enabled",
         thinkingBudgetTokens: 4_096,
         supportsAllowedTools: true,
+        assistantPrefillMode: "disabled",
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
       },
@@ -475,6 +552,7 @@ function modelLibrary(): ModelConnectionLibraryView {
         thinkingMode: "provider_default",
         thinkingBudgetTokens: null,
         supportsAllowedTools: true,
+        assistantPrefillMode: "disabled",
         contextWindowTokens: 128_000,
         maxOutputTokens: 16_000,
         hasApiKey: true,

@@ -585,3 +585,44 @@ describe("beginning a dispatch", () => {
     expect(session.lastRequest).not.toBe(request);
   });
 });
+
+test("abandoned in-flight prefilling cannot promote an older saved prefix into fresh partial evidence", async () => {
+  const { playAssistantPrefill } =
+    await import("../../src/runtime/model/AssistantPrefill.ts");
+  const { lifecycle } = harness();
+  const session = ledger({
+    lastRequest: {
+      ...request,
+      exchange: 1,
+      assistantPrefill: { mode: "assistant", text: "saved prefix" },
+      modelConfig: {
+        provider: "chat_completions",
+        modelId: "fixture",
+        dialect: "standard",
+        reasoningEffort: "provider_default",
+        reasoningSummary: "provider_default",
+        thinkingMode: "provider_default",
+        thinkingBudgetTokens: null,
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+        assistantPrefillMode: "assistant",
+      },
+    },
+    lastRequestAttempt: 1,
+    events: [
+      {
+        id: 3,
+        kind: "assistant",
+        text: "saved prefix",
+        status: "streaming",
+        responseKind: "pending",
+        exchange: 1,
+        attempt: 1,
+      },
+    ],
+    nextEventId: 4,
+  });
+  await lifecycle.recoverAbandoned(session, responseAdvance, false);
+  expect(session.canRetry).toBe(true);
+  expect(playAssistantPrefill(session)).toBeNull();
+});

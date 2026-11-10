@@ -1,4 +1,5 @@
 import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
+import { playAssistantPrefill } from "../model/AssistantPrefill.ts";
 import {
   captureRequestContext,
   contextDigest,
@@ -163,6 +164,7 @@ interface PersistedContextBase {
 }
 
 interface PersistedContextState {
+  canContinuePartial?: boolean;
   schemaVersion: 3;
   chainId: string;
   parentHead: string;
@@ -470,6 +472,7 @@ export class FileNativePlayTimelineStore {
       parentHead: value.parentHead,
       status: value.status,
       canRetry: value.canRetry,
+      canContinuePartial: playAssistantPrefill(value) !== null,
       eventCount: value.events.length,
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
@@ -1132,6 +1135,7 @@ export class FileNativePlayTimelineStore {
       activeChainId: head?.chainId ?? null,
       activeStatus: active?.state.status ?? null,
       activeCanRetry: active?.state.canRetry ?? false,
+      activeCanContinuePartial: active?.state.canContinuePartial ?? false,
       activeLastFailure: active?.state.lastFailure ?? null,
       ...(active?.state.lastFailureKind === undefined
         ? {}
@@ -1774,6 +1778,8 @@ function assertContextState(
       value.status !== "running" &&
       value.status !== "interrupted") ||
     typeof value.canRetry !== "boolean" ||
+    (value.canContinuePartial !== undefined &&
+      typeof value.canContinuePartial !== "boolean") ||
     !validCount(value.eventCount) ||
     !validCount(value.transcriptCount) ||
     !validCount(value.completedToolCount) ||

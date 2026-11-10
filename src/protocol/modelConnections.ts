@@ -10,6 +10,10 @@ export type ModelProviderKind =
  */
 export type ModelProviderDialect = "standard" | "cliproxyapi";
 
+/** Explicit endpoint capability; OpenAI-compatible shape alone is insufficient. */
+export type ModelAssistantPrefillMode =
+  "disabled" | "assistant" | "prefix" | "mistral_prefix" | "partial";
+
 export type ModelReasoningEffort =
   | "provider_default"
   | "none"
@@ -292,6 +296,7 @@ export interface ModelConnectionView {
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
   supportsAllowedTools: boolean;
+  assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: number;
   maxOutputTokens: number;
   hasApiKey: true;
@@ -323,6 +328,7 @@ export interface SaveModelConnectionInput {
   thinkingMode?: ModelThinkingMode;
   thinkingBudgetTokens?: number | null;
   supportsAllowedTools?: boolean;
+  assistantPrefillMode?: ModelAssistantPrefillMode;
   contextWindowTokens: number;
   maxOutputTokens: number;
 }

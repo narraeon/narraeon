@@ -94,7 +94,9 @@ test("Chat Completions 游玩请求用 SSE 聚合正文、reasoning、工具与 
   expect(deltas).toEqual([
     { kind: "reasoning", text: "Analysis" },
     { kind: "text", text: "The door creaks." },
+    { kind: "tool", text: "" },
     { kind: "tool", text: '{"ref":' },
+    { kind: "tool", text: "" },
     { kind: "tool", text: '"@scene"}' },
   ]);
   expect(response).toMatchObject({
@@ -194,7 +196,11 @@ test("Chat Completions 流把工具分片里的 null 字段当作未提供", asy
     onDelta: (delta) => deltas.push(structuredClone(delta)),
   });
 
-  expect(deltas).toEqual([{ kind: "tool", text: '{"ref":"@history"}' }]);
+  expect(deltas).toEqual([
+    { kind: "tool", text: "" },
+    { kind: "tool", text: "" },
+    { kind: "tool", text: '{"ref":"@history"}' },
+  ]);
   expect(response).toMatchObject({
     toolCalls: [
       {
@@ -484,8 +490,10 @@ test.each([{}, { signature: "" }])(
 
     expect(requestBody(fetch_)).toMatchObject({ stream: true });
     expect(deltas).toEqual([
+      { kind: "reasoning", text: "" },
       { kind: "reasoning", text: "Check first" },
       { kind: "text", text: "The light comes on." },
+      { kind: "tool", text: "" },
       { kind: "tool", text: '{"ref":' },
       { kind: "tool", text: '"@scene"}' },
     ]);

@@ -2665,6 +2665,26 @@ Object.assign(englishMessages, {
   "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。":
     "You can resend the saved request without submitting the player text again; it uses the original frozen settings.",
   重新发送: "Resend request",
+  继续发送: "Continue response",
+  中断回复的继续发送: "Continue interrupted responses",
+  "普通 assistant 预填充": "Plain assistant prefill",
+  "prefix: true（DeepSeek）": "prefix: true (DeepSeek)",
+  "prefix: true（Mistral，响应包含前缀）":
+    "prefix: true (Mistral, response includes prefix)",
+  "partial: true（Kimi / 千问）": "partial: true (Kimi / Qwen)",
+  "partial: true（火山方舟）": "partial: true (Volcano Engine Ark)",
+  "仅在服务和模型明确支持时开启。中断回复的已收正文会原样作为末尾 assistant 消息继续；推理或工具调用中断仍需重新发送。":
+    "Enable only when the service and model support it. Received response text is sent unchanged as the final assistant message; interruptions in reasoning or tool calls still require resending.",
+  "普通预填充依赖具体端点；标准 OpenAI 不支持，OpenRouter 等兼容端点须确认模型支持。Anthropic 仅限受支持的旧模型，并须关闭 Thinking；Claude 4.6 及后续模型不支持。":
+    "Plain prefill depends on the endpoint. Standard OpenAI does not support it; compatible endpoints such as OpenRouter require a supported model. Anthropic requires a supported older model with Thinking disabled; Claude 4.6 and later do not support it.",
+  "DeepSeek 前缀补全须使用支持此能力的 /beta 端点；响应按新增正文拼接。":
+    "DeepSeek prefix completion requires a /beta endpoint that supports it. The returned text is appended to the prefix.",
+  "Mistral 返回包含已发前缀的完整正文，不重复拼接。":
+    "Mistral returns the full text including the sent prefix, which is not appended twice.",
+  "Kimi / 千问的模型与思考模式须支持 partial；没有可续写正文或包含推理片段时不可继续。":
+    "The Kimi / Qwen model and thinking mode must support partial. Continuation is unavailable without response text or when reasoning fragments are present.",
+  "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。":
+    "Volcano Engine Ark Responses requires a model that supports partial. Standard OpenAI Responses does not support it.",
   从全新上下文继续: "Continue with a fresh context",
   调整最大输出: "Adjust maximum output",
   检查模型连接: "Check model connection",

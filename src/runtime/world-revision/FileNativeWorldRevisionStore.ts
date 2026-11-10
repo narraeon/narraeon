@@ -1,3 +1,7 @@
+import {
+  validPartialAuthoringResponse,
+  type PartialAuthoringResponse,
+} from "../model/AssistantPrefill.ts";
 import { validLogicalMessages } from "../prompt/PromptCompilationCodec.ts";
 import { upgradeLegacyEpochs } from "./LegacyWorldRevisionEpochUpgrade.ts";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
@@ -118,6 +122,7 @@ export interface StoredWorldRevisionSession {
     message: string;
     filePolicy: "keep" | "revert";
   }[];
+  partialResponse?: PartialAuthoringResponse;
   retryDispatch?: {
     requestId: string;
     exchange: number;
@@ -701,6 +706,7 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
       [
         "requests",
         "googleOutcomeUnknown",
+        "partialResponse",
         ...(value.schemaVersion === 3 || value.schemaVersion === 4
           ? ["retryDispatch", "editReceipts"]
           : []),
@@ -712,6 +718,13 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
       value.schemaVersion !== 4) ||
     (value.editReceipts !== undefined &&
       !validEditReceipts(value.editReceipts)) ||
+    (value.partialResponse !== undefined &&
+      (!Array.isArray(value.modelItems) ||
+        !validPartialAuthoringResponse(
+          value.partialResponse,
+          value.modelItems.length,
+          value.modelItems,
+        ))) ||
     (value.retryDispatch !== undefined &&
       (!isRecord(value.retryDispatch) ||
         !hasExactKeys(value.retryDispatch, [

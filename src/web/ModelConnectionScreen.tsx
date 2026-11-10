@@ -8,6 +8,7 @@ import {
   type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
+  type ModelAssistantPrefillMode,
   type ModelProviderDialect,
   type ModelProviderKind,
   type ModelProviderPresetId,
@@ -31,6 +32,7 @@ interface ConnectionForm {
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: string;
   supportsAllowedTools: boolean;
+  assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: string;
   maxOutputTokens: string;
 }
@@ -50,6 +52,7 @@ function emptyConnectionForm(): ConnectionForm {
     thinkingMode: "provider_default",
     thinkingBudgetTokens: "",
     supportsAllowedTools: true,
+    assistantPrefillMode: "disabled",
     contextWindowTokens: "128000",
     maxOutputTokens: "16000",
   };
@@ -127,6 +130,7 @@ export function ModelConnectionScreen({
             presetId,
             provider: preset.provider,
             dialect: "standard",
+            assistantPrefillMode: "disabled",
             ...reasoningForProvider(form, preset.provider, "standard"),
             baseUrl: preset.baseUrl,
             name:
@@ -174,6 +178,7 @@ export function ModelConnectionScreen({
           reasoningSummary: form.reasoningSummary,
           thinkingMode: form.thinkingMode,
           supportsAllowedTools: form.supportsAllowedTools,
+          assistantPrefillMode: form.assistantPrefillMode,
           thinkingBudgetTokens:
             form.thinkingMode === "enabled"
               ? Number(form.thinkingBudgetTokens)
@@ -361,6 +366,7 @@ export function ModelConnectionScreen({
                 {
                   presetId: "custom",
                   provider: event.target.value as ModelProviderKind,
+                  assistantPrefillMode: "disabled",
                   ...reasoningForProvider(
                     form,
                     event.target.value as ModelProviderKind,
@@ -559,24 +565,99 @@ export function ModelConnectionScreen({
             </p>
           </details>
 
-          {form.provider === "openai_responses" && (
+          {!google && (
             <details className="parameter-help">
               <summary>{uiText("高级选项")}</summary>
-              <label htmlFor="model-allowed-tools">
-                {uiText("支持工具子集选择（allowed_tools）")}
-              </label>
-              <select
-                id="model-allowed-tools"
-                value={String(form.supportsAllowedTools)}
-                onChange={(event) =>
-                  change({
-                    supportsAllowedTools: event.target.value === "true",
-                  })
-                }
-              >
-                <option value="true">{uiText("是")}</option>
-                <option value="false">{uiText("否")}</option>
-              </select>
+              {form.provider === "openai_responses" ? (
+                <>
+                  <label htmlFor="model-allowed-tools">
+                    {uiText("支持工具子集选择（allowed_tools）")}
+                  </label>
+                  <select
+                    id="model-allowed-tools"
+                    value={String(form.supportsAllowedTools)}
+                    onChange={(event) =>
+                      change({
+                        supportsAllowedTools: event.target.value === "true",
+                      })
+                    }
+                  >
+                    <option value="true">{uiText("是")}</option>
+                    <option value="false">{uiText("否")}</option>
+                  </select>
+                </>
+              ) : null}
+              <>
+                <label htmlFor="model-assistant-prefill">
+                  {uiText("中断回复的继续发送")}
+                </label>
+                <select
+                  id="model-assistant-prefill"
+                  value={form.assistantPrefillMode}
+                  onChange={(event) =>
+                    change({
+                      assistantPrefillMode: event.target
+                        .value as ModelAssistantPrefillMode,
+                    })
+                  }
+                >
+                  <option value="disabled">{uiText("关闭")}</option>
+                  <option value="assistant">
+                    {uiText("普通 assistant 预填充")}
+                  </option>
+                  {form.provider === "openai_responses" && (
+                    <option value="partial">
+                      {uiText("partial: true（火山方舟）")}
+                    </option>
+                  )}
+                  {form.provider === "chat_completions" && (
+                    <>
+                      <option value="prefix">
+                        {uiText("prefix: true（DeepSeek）")}
+                      </option>
+                      <option value="mistral_prefix">
+                        {uiText("prefix: true（Mistral，响应包含前缀）")}
+                      </option>
+                      <option value="partial">
+                        {uiText("partial: true（Kimi / 千问）")}
+                      </option>
+                    </>
+                  )}
+                </select>
+                <p className="field-note">
+                  {uiText(
+                    "仅在服务和模型明确支持时开启。中断回复的已收正文会原样作为末尾 assistant 消息继续；推理或工具调用中断仍需重新发送。",
+                  )}
+                </p>
+                {form.assistantPrefillMode === "assistant" && (
+                  <p className="field-note">
+                    {uiText(
+                      "普通预填充依赖具体端点；标准 OpenAI 不支持，OpenRouter 等兼容端点须确认模型支持。Anthropic 仅限受支持的旧模型，并须关闭 Thinking；Claude 4.6 及后续模型不支持。",
+                    )}
+                  </p>
+                )}
+                {form.assistantPrefillMode === "prefix" && (
+                  <p className="field-note">
+                    {uiText(
+                      "DeepSeek 前缀补全须使用支持此能力的 /beta 端点；响应按新增正文拼接。",
+                    )}
+                  </p>
+                )}
+                {form.assistantPrefillMode === "mistral_prefix" && (
+                  <p className="field-note">
+                    {uiText("Mistral 返回包含已发前缀的完整正文，不重复拼接。")}
+                  </p>
+                )}
+                {form.assistantPrefillMode === "partial" && (
+                  <p className="field-note">
+                    {uiText(
+                      form.provider === "openai_responses"
+                        ? "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。"
+                        : "Kimi / 千问的模型与思考模式须支持 partial；没有可续写正文或包含推理片段时不可继续。",
+                    )}
+                  </p>
+                )}
+              </>
             </details>
           )}
           <label htmlFor="model-base-url">Base URL</label>
@@ -899,6 +980,7 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
     supportsAllowedTools: connection.supportsAllowedTools,
+    assistantPrefillMode: connection.assistantPrefillMode,
     thinkingBudgetTokens:
       connection.thinkingBudgetTokens === null
         ? ""

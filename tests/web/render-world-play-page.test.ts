@@ -57,6 +57,52 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("continue response submits the partial recovery action even when resend is unavailable", async () => {
+    const chain = {
+      ...interruptedChainView(),
+      canRetry: false,
+      canContinuePartial: true,
+      lastFailureKind: "output_limit" as const,
+    };
+    let finish!: (chain: V1PlayCallChainView) => void;
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read") return Promise.resolve(worldView(chain));
+      if (input.type === "world.play-decorations.read")
+        return Promise.resolve({ artifacts: [], debug: [] });
+      if (input.type === "artifacts.debug") return Promise.resolve([]);
+      if (input.type === "play.chain.append")
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      return Promise.resolve([]);
+    });
+    renderWorld({ request });
+    const button = await screen.findByRole<HTMLButtonElement>("button", {
+      name: "继续发送",
+    });
+    expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "play.chain.append",
+          chainId: chain.chainId,
+          playerText: "",
+          recovery: "continue_partial",
+        }),
+      ),
+    );
+    await act(async () => {
+      finish({
+        ...chain,
+        status: "ready",
+        canContinuePartial: false,
+        lastFailure: null,
+      });
+      await Promise.resolve();
+    });
+  });
+
   test.each([
     { technical: false, summaryOnly: false },
     { technical: true, summaryOnly: false },

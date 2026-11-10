@@ -61,7 +61,7 @@ interface SettingImprovementPanelProps {
   initialMessage?: string;
   onInitialMessageStarted?: () => void;
   onCancel: () => Promise<void>;
-  onResume: () => Promise<void>;
+  onResume: (recovery?: "continue_partial") => Promise<void>;
   onFreshContext: () => void;
   onSelectSession: (sessionId: string) => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
@@ -224,12 +224,12 @@ export function SettingImprovementPanel({
     [disabled, onSend],
   );
 
-  const resume = async (): Promise<void> => {
+  const resume = async (recovery?: "continue_partial"): Promise<void> => {
     if (disabled || submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      await onResume();
+      await onResume(recovery);
     } catch {
       // The parent projects the Runtime failure into the conversation surface.
     } finally {
@@ -760,6 +760,15 @@ export function SettingImprovementPanel({
                     </button>
                   ) : null}
                 </div>
+              ) : null}
+              {view?.canContinuePartial && !running ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => void resume("continue_partial")}
+                >
+                  {uiText("继续发送")}
+                </button>
               ) : null}
               {view?.runStatus === "paused" && !running ? (
                 <div className="setting-conversation-paused" role="status">

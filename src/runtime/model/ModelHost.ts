@@ -5,6 +5,7 @@ import type {
   ModelReasoningEffort,
   ModelReasoningSummary,
   ModelThinkingMode,
+  ModelAssistantPrefillMode,
 } from "../../protocol/modelConnections.ts";
 import type {
   ModelUsage as ModelHostUsage,
@@ -111,9 +112,15 @@ export interface ModelHostRequestConfig {
   cacheSuffixBreakpoint?: boolean;
   /** Absent in older snapshots; use the selected connection setting. */
   supportsAllowedTools?: boolean;
+  assistantPrefillMode?: ModelAssistantPrefillMode;
 }
 
 export interface ModelHostExchange {
+  /** Explicit incomplete text input, separate from completed native transcript. */
+  assistantPrefill?: {
+    text: string;
+    mode: Exclude<ModelAssistantPrefillMode, "disabled">;
+  };
   modelConfig?: ModelHostRequestConfig;
   bootstrap: PromptCompilation;
   /** Stable definitions for the complete logical operation. */

@@ -10,6 +10,116 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
 const roots: string[] = [];
 
+test("预填充能力须显式开启，保存、复制和重载保持选择，旧连接默认关闭", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Compatible",
+    presetId: "custom" as const,
+    provider: "chat_completions" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "model",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+  };
+  const initial = await store.save(input);
+  expect(initial.connections[0]?.assistantPrefillMode).toBe("disabled");
+  const id = initial.activeConnectionId!;
+  for (const mode of [
+    "assistant",
+    "prefix",
+    "mistral_prefix",
+    "partial",
+  ] as const) {
+    await store.save({
+      ...input,
+      connectionId: id,
+      assistantPrefillMode: mode,
+    });
+    const reopened = new ModelConnectionStore(root);
+    expect((await reopened.view()).connections[0]?.assistantPrefillMode).toBe(
+      mode,
+    );
+    expect(await reopened.bind()).toMatchObject({ assistantPrefillMode: mode });
+  }
+  const copied = await store.copy(id, "Copy");
+  expect(
+    copied.library.connections.find(
+      ({ id }) => id === copied.copiedConnectionId,
+    ),
+  ).toMatchObject({ assistantPrefillMode: "partial" });
+  // Omitting the optional field on edit retains the saved explicit choice.
+  await store.save({ ...input, connectionId: id });
+  expect((await store.view()).connections[0]?.assistantPrefillMode).toBe(
+    "partial",
+  );
+  const path = join(root, "model-connections-v1.json");
+  const legacy = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { assistantPrefillMode?: string }[];
+  };
+  delete legacy.connections[0]!.assistantPrefillMode;
+  await writeFile(path, JSON.stringify(legacy));
+  expect(
+    (await new ModelConnectionStore(root).view()).connections[0]
+      ?.assistantPrefillMode,
+  ).toBe("disabled");
+});
+
+test("预填充能力拒绝不匹配的协议和未知模式，损坏配置不静默启用", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Custom",
+    presetId: "custom" as const,
+    provider: "chat_completions" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "model",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+  };
+  await expect(
+    store.save({
+      ...input,
+      provider: "google_interactions",
+      assistantPrefillMode: "assistant",
+    }),
+  ).rejects.toThrow("does not support assistant prefill");
+  for (const mode of ["assistant", "partial"] as const) {
+    const saved = await store.save({
+      ...input,
+      provider: "openai_responses",
+      assistantPrefillMode: mode,
+    });
+    expect(saved.connections.at(-1)?.assistantPrefillMode).toBe(mode);
+  }
+  await expect(
+    store.save({
+      ...input,
+      provider: "openai_responses",
+      assistantPrefillMode: "prefix",
+    }),
+  ).rejects.toThrow("only plain assistant or partial prefill");
+  await expect(
+    store.save({
+      ...input,
+      provider: "anthropic_messages",
+      assistantPrefillMode: "partial",
+    }),
+  ).rejects.toThrow("only plain assistant prefill");
+  await store.save({ ...input, assistantPrefillMode: "prefix" });
+  const path = join(root, "model-connections-v1.json");
+  const malformed = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { assistantPrefillMode: string }[];
+  };
+  malformed.connections[0]!.assistantPrefillMode = "automatic";
+  await writeFile(path, JSON.stringify(malformed));
+  await expect(new ModelConnectionStore(root).view()).rejects.toThrow(
+    "Assistant prefill mode is invalid",
+  );
+});
+
 test("Responses 工具子集能力按连接保存，旧连接默认开启", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

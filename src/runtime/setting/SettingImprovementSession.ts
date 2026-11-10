@@ -1,4 +1,8 @@
 import {
+  canContinueAuthoringPartial,
+  prepareAuthoringPartial,
+} from "../model/AssistantPrefill.ts";
+import {
   completedAuthoringEdit,
   planAuthoringEdit,
   revertAuthoringChanges,
@@ -574,13 +578,20 @@ export class SettingImprovementSession {
     packageId: string;
     sessionId: string;
     requestId: string;
+    recovery?: "continue_partial";
   }): Promise<SettingImprovementView> {
     const requestId = requiredRequestId(input.requestId);
     const prepared = await this.#mutate(async () => {
       const session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
-      return this.#startRequest(session, requestId, (next) => {
-        if (canRetryAuthoringDispatch(next)) {
+      return this.#startRequest(session, requestId, (next, _lease, host) => {
+        if (input.recovery === "continue_partial")
+          prepareAuthoringPartial(next, host);
+        else delete next.partialResponse;
+        if (
+          input.recovery === "continue_partial" ||
+          canRetryAuthoringDispatch(next)
+        ) {
           next.runStatus = "running";
           next.activeRequestId = next.requests?.at(-1)?.requestId ?? null;
           next.lastFailure = null;
@@ -1202,6 +1213,7 @@ export class SettingImprovementSession {
       },
       lastFailure: session.lastFailure,
       canRetry: canRetryAuthoringDispatch(session),
+      canContinuePartial: canContinueAuthoringPartial(session),
     };
   }
 
@@ -1256,6 +1268,7 @@ function lastPendingAssistant(
 function markInterruptedAfterRestart(
   session: StoredSettingImprovementSession,
 ): void {
+  delete session.partialResponse;
   const requestId = session.activeRequestId;
   session.runStatus =
     session.modelBinding.provider === "google_interactions" &&

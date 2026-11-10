@@ -1,3 +1,9 @@
+import {
+  assertAssistantPrefill,
+  assistantPrefillDelta,
+  completeAssistantPrefill,
+  prefillMessage,
+} from "./AssistantPrefill.ts";
 import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, stat } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -9,6 +15,7 @@ import {
   type ModelReasoningEffort,
   type ModelReasoningSummary,
   type ModelThinkingMode,
+  type ModelAssistantPrefillMode,
 } from "../../protocol/modelConnections.ts";
 
 import type {
@@ -83,6 +90,7 @@ export interface FileNativeModelConnection {
    */
   cacheSuffixBreakpoint?: boolean;
   supportsAllowedTools?: boolean;
+  assistantPrefillMode?: ModelAssistantPrefillMode;
 }
 
 interface ResolvedFileNativeModelConnection extends Omit<
@@ -121,6 +129,7 @@ function resolveConnection(
     thinkingBudgetTokens: connection.thinkingBudgetTokens ?? null,
     cacheSuffixBreakpoint: connection.cacheSuffixBreakpoint ?? true,
     supportsAllowedTools: connection.supportsAllowedTools ?? true,
+    assistantPrefillMode: connection.assistantPrefillMode ?? "disabled",
   });
   const issue = modelReasoningPolicyIssue({
     provider: resolved.provider,
@@ -250,7 +259,26 @@ export class FileNativeModelHost implements ModelHost {
     request: ModelHostExchange,
     observer?: ModelHostExchangeObserver,
   ): Promise<ModelHostResponse> {
-    return this.#requestHost(request).#exchange(request, observer);
+    const host = this.#requestHost(request);
+    assertAssistantPrefill(host.freezeRequest(request));
+    return host
+      .#exchange(request, {
+        ...observer,
+        onDelta: assistantPrefillDelta(request, observer?.onDelta),
+      })
+      .then((response) => {
+        try {
+          return completeAssistantPrefill(request, response);
+        } catch (error) {
+          observer?.onDelta?.({ kind: "tool", text: "" });
+          throw new ModelHostFailureError(
+            error instanceof Error
+              ? error.message
+              : "Invalid assistant prefix response",
+            { cause: error },
+          );
+        }
+      });
   }
 
   async #exchange(
@@ -754,6 +782,33 @@ export class FileNativeModelHost implements ModelHost {
         await trace("chat_response", payload);
         const message = payload.choices?.[0]?.message;
         const finishReason = payload.choices?.[0]?.finish_reason;
+        if (
+          finishReason === "length" &&
+          message !== undefined &&
+          validChatAssistantMessage(message)
+        ) {
+          if (typeof message.content === "string")
+            diagnosticDelta?.({ kind: "text", text: message.content });
+          if (
+            Object.keys(message).some(
+              (key) =>
+                ![
+                  "role",
+                  "content",
+                  "tool_calls",
+                  "reasoning_content",
+                ].includes(key),
+            )
+          )
+            diagnosticDelta?.({ kind: "reasoning", text: "" });
+          if (message.reasoning_content != null)
+            diagnosticDelta?.({
+              kind: "reasoning",
+              text: message.reasoning_content,
+            });
+          if ((message.tool_calls?.length ?? 0) > 0)
+            diagnosticDelta?.({ kind: "tool", text: "" });
+        }
         assertModelOutputComplete(finishReason);
         if (message === undefined)
           throw unknownProviderResponse("Chat Completions");
@@ -887,6 +942,20 @@ export class FileNativeModelHost implements ModelHost {
             cache_creation_input_tokens?: number;
           };
         };
+        if (
+          payload.stop_reason === "max_tokens" &&
+          validAnthropicContent(payload.content)
+        ) {
+          for (const part of payload.content) {
+            if (part.type === "text" && typeof part.text === "string")
+              diagnosticDelta?.({ kind: "text", text: part.text });
+            else
+              diagnosticDelta?.({
+                kind: part.type === "tool_use" ? "tool" : "reasoning",
+                text: "",
+              });
+          }
+        }
         assertModelOutputComplete(payload.stop_reason);
         const content = payload.content!;
         if (!validAnthropicContent(content))
@@ -1403,6 +1472,7 @@ function chatRequestBody(
     messages: [
       ...chatBootstrapMessages(connection, request),
       ...chatAppend(connection, request),
+      ...prefillMessage(request),
     ],
     ...(connection.dialect === "cliproxyapi"
       ? { prompt_cache_key: promptCacheKey(connection, request) }
@@ -1442,6 +1512,7 @@ function anthropicRequestBody(
     messages: [
       ...anthropicBootstrapMessages(request),
       ...anthropicAppend(connection, request),
+      ...prefillMessage(request, true),
     ],
     ...(tools.length === 0
       ? {}
@@ -1481,6 +1552,7 @@ function responsesRequestInput(
     input: [
       ...responsesBootstrapMessages(connection, request),
       ...responsesAppend(connection, request),
+      ...prefillMessage(request),
     ],
     tools: providerToolDefinitions(request).map((tool) => ({
       name: tool.name,
@@ -2538,6 +2610,36 @@ async function openAIResponsesRequest(
       await trace(`${input.tracePrefix}_response`, payload);
       if (!isRecord(payload) || !Array.isArray(payload.output))
         throw unknownProviderResponse("Responses API");
+      if (
+        !isProviderEventStream(response) &&
+        responsesStopReason(payload) === "incomplete:max_output_tokens" &&
+        validResponsesOutput(payload.output)
+      ) {
+        for (const item of payload.output) {
+          if (
+            isRecord(item) &&
+            item.type === "message" &&
+            Array.isArray(item.content)
+          ) {
+            for (const part of item.content) {
+              if (
+                isRecord(part) &&
+                part.type === "output_text" &&
+                typeof part.text === "string"
+              )
+                diagnosticDelta?.({ kind: "text", text: part.text });
+              else diagnosticDelta?.({ kind: "reasoning", text: "" });
+            }
+          } else
+            diagnosticDelta?.({
+              kind:
+                isRecord(item) && item.type === "function_call"
+                  ? "tool"
+                  : "reasoning",
+              text: "",
+            });
+        }
+      }
       assertModelOutputComplete(responsesStopReason(payload));
       const output = cloneResponseOutput(payload.output);
       if (!validResponsesOutput(output))

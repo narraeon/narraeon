@@ -4002,3 +4002,52 @@ test("151 cold resume Google revision after published tools", async () => {
   expect((await workspace.active(worldId))?.revision).toBe(epoch!.revision);
   expect(await worlds.currentHead(worldId)).toBe("genesis");
 });
+
+test("世界修订未结算正文可在重启后原样继续且不发布世界改动", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host, sent } = prefillHost([
+    { text: "修订\n " },
+    { text: "说明。", finish: "stop" },
+  ]);
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const before = (await worlds.recoverEndpoint(worldId)).head;
+  const createService = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const first = await createService().send({
+    worldId,
+    requestId: "first",
+    message: "Inspect.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(first).toMatchObject({
+    runStatus: "interrupted",
+    canContinuePartial: true,
+  });
+  const done = await createService().resume({
+    worldId,
+    sessionId: first.sessionId,
+    requestId: "continue",
+    recovery: "continue_partial",
+  });
+  expect(done.runStatus).toBe("ready");
+  expect(done.messages.at(-1)?.text).toBe("修订\n 说明。");
+  expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
+    role: "assistant",
+    content: "修订\n ",
+  });
+  expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
+    sent[0]?.messages,
+  );
+  expect((await worlds.recoverEndpoint(worldId)).head).toBe(before);
+});

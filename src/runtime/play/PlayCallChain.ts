@@ -1,3 +1,7 @@
+import {
+  playAssistantPrefill,
+  assertCurrentPrefillConnection,
+} from "../model/AssistantPrefill.ts";
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
 import {
   dispatchFailureEnding,
@@ -184,6 +188,7 @@ interface PlayCallChainStartInput {
 }
 
 interface PlayCallChainAppendInput {
+  recovery?: "continue_partial";
   resolvePrompt?: () => Promise<
     Pick<PlayCallChainStartInput, "hostBinding" | "playPreset">
   >;
@@ -583,18 +588,39 @@ export class PlayCallChain {
     if (input.playerText.trim().length === 0) {
       if (session.status === "running")
         throw new PlayCallChainError("A model request is still running.");
+      if (input.recovery !== undefined && session.status !== "interrupted")
+        throw new PlayCallChainError(
+          "Only an interrupted response can be continued.",
+        );
       if (session.status === "interrupted") {
-        if (!session.canRetry || session.lastRequest === null)
+        const partial =
+          input.recovery === "continue_partial"
+            ? playAssistantPrefill(session)
+            : null;
+        if (input.recovery === "continue_partial" && partial === null)
+          throw new PlayCallChainError(
+            "This interrupted response has no supported, complete text prefix to continue.",
+          );
+        if (
+          (partial === null && !session.canRetry) ||
+          session.lastRequest === null
+        )
           throw new PlayCallChainError(
             "The current model context cannot continue; use a fresh context.",
           );
         const request = structuredClone(session.lastRequest);
-        delete request.modelConfig;
-        request.maxOutputTokens = input.modelHost.binding().maxOutputTokens;
-        request.bootstrap = retargetFrozenCompilation(
-          request.bootstrap,
-          input.modelHost.binding(),
-        );
+        delete request.assistantPrefill;
+        if (partial !== null) {
+          assertCurrentPrefillConnection(request, input.modelHost);
+          request.assistantPrefill = partial;
+        } else {
+          delete request.modelConfig;
+          request.maxOutputTokens = input.modelHost.binding().maxOutputTokens;
+          request.bootstrap = retargetFrozenCompilation(
+            request.bootstrap,
+            input.modelHost.binding(),
+          );
+        }
         const currentRequest =
           input.modelHost.freezeRequest?.(request) ?? request;
         return this.#dispatch(
@@ -2754,7 +2780,7 @@ export class PlayCallChain {
       const event: Extract<V1PlayCallChainEvent, { kind: "assistant" }> = {
         id: session.nextEventId++,
         kind: "assistant",
-        text: "",
+        text: request.assistantPrefill?.text ?? "",
         status: "streaming",
         responseKind: "pending",
         exchange: responseExchange,
@@ -2955,6 +2981,12 @@ export class PlayCallChain {
           error,
           "Call-chain processing failed.",
         );
+        // A settlement failure cannot grant partial recovery even if the stream was plain text.
+        const failedEvent = session.events.find(
+          (entry) => entry.id === event.id,
+        );
+        if (failedEvent?.kind === "assistant")
+          failedEvent.responseKind = "empty";
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordFailure({
             exchange: response.diagnostics,
@@ -3778,6 +3810,7 @@ function projectContext(
         }),
     status: context.status,
     canRetry: context.canRetry,
+    canContinuePartial: playAssistantPrefill(context) !== null,
     events: context.events
       .slice(-projectedEventTail)
       .map((event) => projectActivityEvent(event)),

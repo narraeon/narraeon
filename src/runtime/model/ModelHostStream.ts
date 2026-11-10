@@ -67,6 +67,15 @@ export async function aggregateChatModelStream(
       if (typeof choiceValue.finish_reason === "string")
         stopReason = choiceValue.finish_reason;
       const delta = choiceValue.delta;
+      if (
+        Object.keys(delta).some(
+          (key) =>
+            !["role", "content", "tool_calls", "reasoning_content"].includes(
+              key,
+            ),
+        )
+      )
+        onDelta?.({ kind: "reasoning", text: "" });
       if (delta.role !== undefined && delta.role !== "assistant")
         throw new Error("Chat SSE assistant role is invalid");
       mergeChatProviderDelta(providerMessage, delta);
@@ -100,6 +109,7 @@ export async function aggregateChatModelStream(
       if (!Array.isArray(delta.tool_calls))
         throw new Error("Chat SSE tool_calls delta is invalid");
       for (const [position, fragmentValue] of delta.tool_calls.entries()) {
+        onDelta?.({ kind: "tool", text: "" });
         if (!isRecord(fragmentValue))
           throw new Error("Chat SSE tool-call fragment is invalid");
         const index =
@@ -281,6 +291,18 @@ export async function aggregateAnthropicModelStream(
         const index = streamIndex(payload.index);
         if (!isRecord(payload.content_block) || blocks.has(index))
           throw new Error("Anthropic SSE content block start is invalid");
+        if (payload.content_block.type !== "text")
+          onDelta?.({
+            kind:
+              payload.content_block.type === "tool_use" ? "tool" : "reasoning",
+            text: "",
+          });
+        if (
+          payload.content_block.type === "text" &&
+          typeof payload.content_block.text === "string" &&
+          payload.content_block.text !== ""
+        )
+          onDelta?.({ kind: "text", text: payload.content_block.text });
         blocks.set(index, {
           value: structuredClone(payload.content_block),
           partialJson: "",
@@ -431,6 +453,7 @@ export async function aggregateResponsesModelStream(
   onDelta?: ModelHostDeltaSink,
 ): Promise<Record<string, unknown>> {
   let completed: Record<string, unknown> | null = null;
+  let observedText = "";
   for await (const event of modelHostEvents(body)) {
     const payload = streamRecord(event.data);
     if (typeof payload.type !== "string")
@@ -445,9 +468,31 @@ export async function aggregateResponsesModelStream(
       typeof payload.delta !== "string"
     )
       throw new Error("Responses SSE delta is invalid");
-    if (payload.type === "response.output_text.delta" && payload.delta !== "")
+    if (
+      payload.type === "response.output_item.added" &&
+      isRecord(payload.item) &&
+      payload.item.type !== "message"
+    )
+      onDelta?.({
+        kind: payload.item.type === "function_call" ? "tool" : "reasoning",
+        text: "",
+      });
+    if (
+      payload.type === "response.output_item.added" &&
+      isRecord(payload.item) &&
+      payload.item.type === "message" &&
+      Array.isArray(payload.item.content)
+    ) {
+      const initial = responseOutputText([payload.item]);
+      if (initial !== "") {
+        observedText += initial;
+        onDelta?.({ kind: "text", text: initial });
+      }
+    }
+    if (payload.type === "response.output_text.delta" && payload.delta !== "") {
+      observedText += payload.delta as string;
       onDelta?.({ kind: "text", text: payload.delta as string });
-    else if (
+    } else if (
       (payload.type === "response.reasoning_text.delta" ||
         payload.type === "response.reasoning_summary_text.delta") &&
       payload.delta !== ""
@@ -478,6 +523,32 @@ export async function aggregateResponsesModelStream(
         payload.type === "response.incomplete" &&
         isRecord(payload.response)
       ) {
+        const output = payload.response.output;
+        if (Array.isArray(output)) {
+          for (const item of output) {
+            if (!isRecord(item) || item.type !== "message")
+              onDelta?.({
+                kind:
+                  isRecord(item) && item.type === "function_call"
+                    ? "tool"
+                    : "reasoning",
+                text: "",
+              });
+            else if (
+              !Array.isArray(item.content) ||
+              item.content.some(
+                (part: unknown) =>
+                  !isRecord(part) || part.type !== "output_text",
+              )
+            )
+              onDelta?.({ kind: "reasoning", text: "" });
+          }
+          const text = responseOutputText(output);
+          if (text.startsWith(observedText)) {
+            const suffix = text.slice(observedText.length);
+            if (suffix !== "") onDelta?.({ kind: "text", text: suffix });
+          } else onDelta?.({ kind: "reasoning", text: "" });
+        }
         const details = payload.response.incomplete_details;
         if (isRecord(details)) assertModelOutputComplete(details.reason);
       }
@@ -653,4 +724,20 @@ function isPresent(value: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function responseOutputText(output: unknown[]): string {
+  return output
+    .flatMap((item) =>
+      isRecord(item) && item.type === "message" && Array.isArray(item.content)
+        ? item.content.flatMap((part: unknown) =>
+            isRecord(part) &&
+            part.type === "output_text" &&
+            typeof part.text === "string"
+              ? [part.text]
+              : [],
+          )
+        : [],
+    )
+    .join("");
 }

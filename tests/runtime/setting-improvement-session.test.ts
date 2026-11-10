@@ -4950,3 +4950,134 @@ test("schema 5 source is preserved when the next send records current binding ev
     ).schemaVersion,
   ).toBe(6);
 });
+
+test("设定完善中断正文在重启后继续发送，保持冻结请求及正文空白", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host, sent } = prefillHost([
+    { text: " \n半🙂" },
+    { text: "续文。", finish: "stop" },
+  ]);
+  const fixture = await createFixture([]);
+  const service = serviceFor(fixture.root, fixture.content, host);
+  const first = await sendFresh(
+    service,
+    fixture.packageId,
+    "prefill-first",
+    "Inspect.",
+  );
+  expect(first).toMatchObject({
+    runStatus: "interrupted",
+    canContinuePartial: true,
+  });
+  expect(first.messages).toHaveLength(1);
+  const cold = serviceFor(
+    fixture.root,
+    new ContentWorkspace(fixture.root),
+    host,
+  );
+  const read = await cold.read(fixture.packageId);
+  expect(read?.canContinuePartial).toBe(true);
+  const done = await cold.resume({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "prefill-continue",
+    recovery: "continue_partial",
+  });
+  expect(done.runStatus).toBe("ready");
+  expect(done.messages.at(-1)?.text).toBe(" \n半🙂续文。");
+  expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
+    role: "assistant",
+    content: " \n半🙂",
+  });
+  expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
+    sent[0]?.messages,
+  );
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    first.sessionId,
+  );
+  expect(stored.partialResponse).toBeUndefined();
+  const assistant = stored.modelItems.at(-1);
+  expect(assistant).toMatchObject({
+    kind: "assistant",
+    text: " \n半🙂续文。",
+    providerState: { assistantMessage: { content: " \n半🙂续文。" } },
+  });
+});
+
+test("设定完善 token 截断可累计继续，普通重发重新生成原请求", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host, sent } = prefillHost([
+    { text: "头", finish: "length" },
+    { text: "中" },
+    { text: "新正文", finish: "stop" },
+  ]);
+  const fixture = await createFixture([]);
+  const service = serviceFor(fixture.root, fixture.content, host);
+  const first = await sendFresh(
+    service,
+    fixture.packageId,
+    "first",
+    "Inspect.",
+  );
+  expect(first).toMatchObject({ canRetry: false, canContinuePartial: true });
+  const second = await service.resume({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "second",
+    recovery: "continue_partial",
+  });
+  expect(second.canContinuePartial).toBe(true);
+  const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
+    first.sessionId,
+  );
+  expect(stored.partialResponse?.text).toBe("头中");
+  const done = await service.resume({
+    packageId: fixture.packageId,
+    sessionId: first.sessionId,
+    requestId: "third",
+  });
+  expect(done.messages.at(-1)?.text).toBe("新正文");
+  expect(sent[2]?.messages).toEqual(sent[0]?.messages);
+});
+
+test("进程在继续发送途中退出不把旧前缀冒充新响应完整保留", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host } = prefillHost([{ text: "原前缀" }]);
+  const fixture = await createFixture([]);
+  const service = serviceFor(fixture.root, fixture.content, host);
+  const first = await sendFresh(
+    service,
+    fixture.packageId,
+    "first",
+    "Inspect.",
+  );
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const stored = await store.read(first.sessionId);
+  stored.runStatus = "running";
+  stored.activeRequestId = "first";
+  stored.retryDispatch!.state = "dispatching";
+  stored.partialResponse!.request.assistantPrefill = {
+    mode: "assistant",
+    text: "原前缀",
+  };
+  await store.save(stored);
+  const cold = serviceFor(
+    fixture.root,
+    new ContentWorkspace(fixture.root),
+    host,
+  );
+  const recovered = await cold.read(fixture.packageId);
+  expect(recovered).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: true,
+    canContinuePartial: false,
+  });
+  await expect(
+    cold.resume({
+      packageId: fixture.packageId,
+      sessionId: first.sessionId,
+      requestId: "continue",
+      recovery: "continue_partial",
+    }),
+  ).rejects.toThrow(/no supported text prefix/iu);
+});

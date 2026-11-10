@@ -1,4 +1,8 @@
 import {
+  prefillFor,
+  type PartialAuthoringResponse,
+} from "../model/AssistantPrefill.ts";
+import {
   prepareAuthoringDispatch,
   failAuthoringDispatch,
   type AuthoringDispatchPhase,
@@ -70,6 +74,7 @@ export interface ModelToolConversationState {
     modelItemCount: number;
     state: "dispatching" | "retryable" | "blocked";
   };
+  partialResponse?: PartialAuthoringResponse;
   pendingSettlement: unknown;
 }
 
@@ -85,6 +90,7 @@ export interface ModelToolConversationStreaming {
 }
 
 interface LiveRun<View> {
+  nonTextReceived: boolean;
   requestId: string;
   controller: AbortController;
   promise: Promise<View>;
@@ -226,6 +232,7 @@ export class ModelToolConversation<
       controller: new AbortController(),
       promise: Promise.resolve(undefined as View),
       streaming: emptyStreaming(),
+      nonTextReceived: false,
     };
     live.promise = this.#execute(input, live).finally(() => {
       if (this.#runs.get(input.session.sessionId) === live)
@@ -250,6 +257,7 @@ export class ModelToolConversation<
   ): Promise<View> {
     const { session } = input;
     let phase: AuthoringDispatchPhase = "settling";
+    let dispatchedRequest: ModelHostExchange | undefined;
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         let request = authoringExchange(
@@ -258,8 +266,13 @@ export class ModelToolConversation<
           input.worldRevisionBoundaries,
           input.host.binding(),
         );
+        if (session.partialResponse?.request.assistantPrefill !== undefined) {
+          request = structuredClone(session.partialResponse.request);
+        }
         if (input.retrySupported)
           request = prepareAuthoringDispatch(session, request);
+        request = input.host.freezeRequest?.(request) ?? request;
+        dispatchedRequest = request;
         const retryAttempt = session.requests
           ?.at(-1)
           ?.retryAttempts?.find((item) => item.requestId === live.requestId);
@@ -274,6 +287,7 @@ export class ModelToolConversation<
         if (session.modelBinding.provider === "google_interactions")
           session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
+        live.nonTextReceived = false;
         session.updatedAt = Date.now();
         phase = "preparing";
         await input.save(session);
@@ -298,6 +312,7 @@ export class ModelToolConversation<
             return input.recordGoogleHop?.(requestId, hop);
           },
           onDelta: (delta) => {
+            if (delta.kind !== "text") live.nonTextReceived = true;
             recordDelta(live, delta);
             input.changed?.(false);
           },
@@ -320,6 +335,7 @@ export class ModelToolConversation<
           );
         }
         delete session.retryDispatch;
+        delete session.partialResponse;
         phase = "settling";
         session.modelItems.push({
           kind: "assistant",
@@ -372,6 +388,23 @@ export class ModelToolConversation<
       await input.save(session);
       return input.view(session);
     } catch (error: unknown) {
+      const partialText =
+        (dispatchedRequest?.assistantPrefill?.text ?? "") +
+        (live.streaming.visibleText ?? "");
+      delete session.partialResponse;
+      if (
+        phase === "dispatched" &&
+        dispatchedRequest !== undefined &&
+        !live.nonTextReceived &&
+        prefillFor(dispatchedRequest, partialText) !== null
+      ) {
+        session.partialResponse = {
+          request: structuredClone(dispatchedRequest),
+          text: partialText,
+          modelItemCount: session.modelItems.length,
+        };
+        delete session.partialResponse.request.assistantPrefill;
+      }
       failAuthoringDispatch(session, error, phase);
       if (
         session.modelBinding.provider === "google_interactions" &&
@@ -413,6 +446,7 @@ export function appendAuthoringUserMessage(
     text: requiredAuthoringMessage(message),
     createdAt: now,
   });
+  delete session.partialResponse;
   session.modelItems.push({ kind: "user", text: message });
   session.runStatus = "running";
   session.activeRequestId = requiredAuthoringRequestId(requestId);

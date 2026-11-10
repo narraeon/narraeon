@@ -133,6 +133,32 @@ test("retry button resumes once and is disabled for unsaved file drafts", async 
 });
 
 test.each(["content-package", "world-revision"] as const)(
+  "%s continues partial output without resend eligibility and blocks unsaved edits",
+  async (target) => {
+    const onResume = vi.fn(() => Promise.resolve());
+    renderPanel(undefined, { target, continuable: true, onResume });
+    expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "继续发送" }));
+    await waitFor(() =>
+      expect(onResume).toHaveBeenCalledWith("continue_partial"),
+    );
+    cleanup();
+    renderPanel(undefined, {
+      target,
+      continuable: true,
+      onResume,
+      unsaved: true,
+    });
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "继续发送" })
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "继续发送" }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  },
+);
+
+test.each(["content-package", "world-revision"] as const)(
   "%s 损坏历史不可选择并说明原因",
   (target) => {
     const onSelectSession = vi.fn(() => Promise.resolve());
@@ -288,8 +314,9 @@ function renderPanel(
     history?: V1SettingImprovementHistoryItem[];
     onSelectSession?: (sessionId: string) => Promise<void>;
     retryable?: boolean;
+    continuable?: boolean;
     unsaved?: boolean;
-    onResume?: () => Promise<void>;
+    onResume?: (recovery?: "continue_partial") => Promise<void>;
     onEditMessage?: (
       messageId: string,
       message: string,
@@ -312,8 +339,10 @@ function renderPanel(
       loading: false,
       view: {
         sessionId: "setting-test",
-        runStatus: options.retryable ? "interrupted" : "ready",
+        runStatus:
+          options.retryable || options.continuable ? "interrupted" : "ready",
         canRetry: options.retryable ?? false,
+        canContinuePartial: options.continuable ?? false,
         messages: [],
         turns: [
           {
@@ -362,7 +391,8 @@ function renderPanel(
           streaming: null,
           updatedAt: 2,
         },
-        lastFailure: options.retryable ? "Stream stopped" : null,
+        lastFailure:
+          options.retryable || options.continuable ? "Stream stopped" : null,
       },
       history: options.history ?? [
         {

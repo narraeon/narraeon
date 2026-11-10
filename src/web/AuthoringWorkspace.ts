@@ -338,7 +338,7 @@ export class AuthoringWorkspace {
     );
   }
   /** Continues the selected conversation after it paused at its exchange budget. */
-  async resume(): Promise<void> {
+  async resume(recovery?: "continue_partial"): Promise<void> {
     if (
       !this.active ||
       this.state.applying ||
@@ -349,7 +349,9 @@ export class AuthoringWorkspace {
     if (this.state.dirty)
       throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
     const sessionId = this.selection;
-    await this.settleRequest(valid, () => this.target.resume(sessionId));
+    await this.settleRequest(valid, () =>
+      this.target.resume(sessionId, recovery),
+    );
   }
   private async settleRequest(
     valid: () => boolean,

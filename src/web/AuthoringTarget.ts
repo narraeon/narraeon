@@ -106,7 +106,10 @@ export interface AuthoringTarget {
     requestId: string,
   ): Promise<AuthoringConversationView>;
   cancel(sessionId: string): Promise<AuthoringConversationView>;
-  resume(sessionId: string): Promise<AuthoringConversationView>;
+  resume(
+    sessionId: string,
+    recovery?: "continue_partial",
+  ): Promise<AuthoringConversationView>;
   deleteSession(sessionId: string): Promise<AuthoringTargetSnapshot>;
   beginEdit(
     snapshot: AuthoringTargetSnapshot,
@@ -261,9 +264,10 @@ export function contentPackageTarget(
     },
     cancel: (sessionId) =>
       request(client, { type: "setting-improvement.cancel", sessionId }),
-    resume: (sessionId) =>
+    resume: (sessionId, recovery) =>
       request(client, {
         type: "setting-improvement.resume",
+        ...(recovery === undefined ? {} : { recovery }),
         packageId: id,
         sessionId,
         requestId: createClientId("setting-resume"),
@@ -440,9 +444,10 @@ export function worldRevisionTarget(
     },
     cancel: async (sessionId) =>
       request(client, { type: "world.revision.cancel", sessionId }),
-    resume: async (sessionId) =>
+    resume: async (sessionId, recovery) =>
       request(client, {
         type: "world.revision.resume",
+        ...(recovery === undefined ? {} : { recovery }),
         worldId: id,
         sessionId,
         requestId: createClientId("world-revision-resume"),

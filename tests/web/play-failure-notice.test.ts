@@ -11,6 +11,54 @@ afterEach(() => {
   setWebLocale("zh-CN");
 });
 
+test.each(["zh-CN", "en"] as const)(
+  "%s: output-limit continuation is independent of resend and locks during generation",
+  (locale) => {
+    setWebLocale(locale);
+    const onContinuePartial = vi.fn();
+    const recovery = {
+      canRetry: false,
+      canContinuePartial: true,
+      playDisabled: false,
+      configureDisabled: false,
+      onRetry: vi.fn(),
+      onContinuePartial,
+      onFreshContext: vi.fn(),
+      onConfigureModel: vi.fn(),
+    };
+    const props = {
+      failureKind: "output_limit" as const,
+      canRetry: false,
+      message: "limit",
+      recovery,
+    };
+    const view = render(createElement(PlayFailureNotice, props));
+    const name = locale === "en" ? "Continue response" : "继续发送";
+    expect(
+      screen.queryByRole("button", {
+        name: locale === "en" ? "Resend request" : "重新发送",
+      }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name }));
+    expect(onContinuePartial).toHaveBeenCalledOnce();
+    view.rerender(
+      createElement(PlayFailureNotice, {
+        ...props,
+        recovery: { ...recovery, playDisabled: true },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name }));
+    expect(onContinuePartial).toHaveBeenCalledOnce();
+    view.rerender(
+      createElement(PlayFailureNotice, {
+        ...props,
+        recovery: { ...recovery, canContinuePartial: false },
+      }),
+    );
+    expect(screen.queryByRole("button", { name })).toBeNull();
+  },
+);
+
 const titles = [
   ["模型请求结果未知", "Model request outcome unknown"],
   ["模型上下文已达上限", "Model context limit reached"],

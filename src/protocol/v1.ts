@@ -148,6 +148,7 @@ export type V1Request =
   | { type: "setting-improvement.cancel"; sessionId: string }
   | {
       type: "setting-improvement.resume";
+      recovery?: "continue_partial";
       packageId: string;
       sessionId: string;
       requestId: string;
@@ -267,6 +268,7 @@ export type V1Request =
   | { type: "world.revision.cancel"; sessionId: string }
   | {
       type: "world.revision.resume";
+      recovery?: "continue_partial";
       worldId: string;
       sessionId: string;
       requestId: string;
@@ -328,6 +330,7 @@ export type V1Request =
     }
   | {
       type: "play.chain.append";
+      recovery?: "continue_partial";
       worldId: string;
       chainId: string;
       exchangeId: string;
@@ -608,6 +611,7 @@ export interface V1AuthoringRequestPreview {
 
 export interface V1SettingImprovementView {
   canRetry?: boolean;
+  canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   packageId: string;
@@ -684,6 +688,7 @@ export interface V1WorldRevisionSealedEpochView {
 
 export interface V1WorldRevisionView {
   canRetry?: boolean;
+  canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
   sessionId: string;
   worldId: string;
@@ -897,6 +902,7 @@ export interface V1PlayTimelinePage {
   activeChainId: string | null;
   activeStatus: V1PlayCallChainStatus | null;
   activeCanRetry: boolean;
+  activeCanContinuePartial?: boolean;
   activeLastFailure: string | null;
   activeLastFailureKind?: PlayFailureKind | undefined;
   items: V1PlayTimelineItem[];
@@ -918,6 +924,7 @@ export interface V1PlayCallChainContextView {
   latestCompletedResponse?: { id: number; usage?: ModelUsage };
   status: V1PlayCallChainStatus;
   canRetry: boolean;
+  canContinuePartial?: boolean;
   events: V1PlayCallChainEvent[];
   changedDocuments: {
     kind: "create" | "replace";
@@ -1263,6 +1270,28 @@ const requiredFields: Record<
 };
 
 function validateRequestFields(request: Record<string, unknown>): void {
+  if (
+    [
+      "play.chain.append",
+      "setting-improvement.resume",
+      "world.revision.resume",
+    ].includes(String(request.type)) &&
+    request.recovery !== undefined &&
+    request.recovery !== "continue_partial"
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "Invalid interrupted-response recovery mode",
+    );
+  if (
+    request.type === "play.chain.append" &&
+    request.recovery === "continue_partial" &&
+    request.playerText !== ""
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "Continuing a partial response cannot add player input",
+    );
   for (const [field, kind] of Object.entries(
     requiredFields[request.type as string] ?? {},
   )) {

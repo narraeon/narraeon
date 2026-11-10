@@ -18,6 +18,7 @@ import {
   type ListProviderModelsInput,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
+  type ModelAssistantPrefillMode,
   type ModelProviderDialect,
   type ModelProviderKind,
   type ModelProviderPresetId,
@@ -50,6 +51,7 @@ interface StoredModelConnection extends FileNativeModelConnection {
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: number | null;
   supportsAllowedTools: boolean;
+  assistantPrefillMode: ModelAssistantPrefillMode;
 }
 
 interface ModelConnectionDocument {
@@ -400,6 +402,10 @@ function normalizeSaveInput(
     supportsAllowedTools: validateSupportsAllowedTools(
       input.supportsAllowedTools ?? existing?.supportsAllowedTools,
     ),
+    assistantPrefillMode: validateAssistantPrefillMode(
+      input.assistantPrefillMode ?? existing?.assistantPrefillMode,
+      provider,
+    ),
     contextWindowTokens: input.contextWindowTokens,
     maxOutputTokens: input.maxOutputTokens,
   };
@@ -490,6 +496,10 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     supportsAllowedTools: validateSupportsAllowedTools(
       value.supportsAllowedTools,
     ),
+    assistantPrefillMode: validateAssistantPrefillMode(
+      value.assistantPrefillMode,
+      provider,
+    ),
     contextWindowTokens: value.contextWindowTokens as number,
     maxOutputTokens: value.maxOutputTokens as number,
   };
@@ -509,6 +519,7 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
     supportsAllowedTools: connection.supportsAllowedTools,
+    assistantPrefillMode: connection.assistantPrefillMode,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
     hasApiKey: true,
@@ -529,6 +540,7 @@ function toBinding(
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
     supportsAllowedTools: connection.supportsAllowedTools,
+    assistantPrefillMode: connection.assistantPrefillMode,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
   });
@@ -538,6 +550,39 @@ function validateSupportsAllowedTools(value: unknown): boolean {
   if (value === undefined) return true;
   if (typeof value !== "boolean")
     throw new Error("Tool subset capability must be a boolean");
+  return value;
+}
+
+function validateAssistantPrefillMode(
+  value: unknown,
+  provider: ModelProviderKind,
+): ModelAssistantPrefillMode {
+  if (value === undefined) return "disabled";
+  if (
+    value !== "disabled" &&
+    value !== "assistant" &&
+    value !== "prefix" &&
+    value !== "mistral_prefix" &&
+    value !== "partial"
+  )
+    throw new Error("Assistant prefill mode is invalid");
+  if (value !== "disabled" && provider === "google_interactions")
+    throw new Error("The selected protocol does not support assistant prefill");
+  if (
+    provider === "openai_responses" &&
+    value !== "disabled" &&
+    value !== "assistant" &&
+    value !== "partial"
+  )
+    throw new Error(
+      "Responses supports only plain assistant or partial prefill",
+    );
+  if (
+    provider === "anthropic_messages" &&
+    value !== "disabled" &&
+    value !== "assistant"
+  )
+    throw new Error("Anthropic Messages supports only plain assistant prefill");
   return value;
 }
 

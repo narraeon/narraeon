@@ -1,4 +1,8 @@
 import {
+  validPartialAuthoringResponse,
+  type PartialAuthoringResponse,
+} from "../model/AssistantPrefill.ts";
+import {
   validPromptCompilation,
   validLogicalMessages,
   validPromptTools,
@@ -159,6 +163,7 @@ export interface StoredSettingImprovementSession {
     next: StoredSettingImprovementSession;
   };
   /** Last dispatched model request, retained only while its outcome is unresolved. */
+  partialResponse?: PartialAuthoringResponse;
   retryDispatch?: {
     requestId: string;
     exchange: number;
@@ -965,6 +970,7 @@ function validateStoredSession(
         "googleOutcomeUnknown",
         "googleIdentity",
         "retryDispatch",
+        "partialResponse",
         "pendingEdit",
         "editReceipts",
       ],
@@ -1022,6 +1028,13 @@ function validateStoredSession(
     typeof value.creationRequestId !== "string" ||
     !validPromptCompilation(value.bootstrap) ||
     !validModelBinding(value.modelBinding) ||
+    (value.partialResponse !== undefined &&
+      (!Array.isArray(value.modelItems) ||
+        !validPartialAuthoringResponse(
+          value.partialResponse,
+          value.modelItems.length,
+          value.modelItems,
+        ))) ||
     (value.retryDispatch !== undefined &&
       (!isRecord(value.retryDispatch) ||
         !hasExactKeys(value.retryDispatch, [
