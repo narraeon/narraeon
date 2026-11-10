@@ -96,10 +96,10 @@ function ContextDetails({
             )}
           </p>
           {context.messages.map((message, index) => (
-            <section key={index}>
-              <strong>{message.role}</strong>
+            <details className="technical-details" key={index}>
+              <summary>{message.role}</summary>
               <pre>{message.text}</pre>
-            </section>
+            </details>
           ))}
         </>
       ) : null}
