@@ -221,6 +221,31 @@ describe("choice groups", () => {
 });
 
 describe("turn guide composition", () => {
+  test.each(["en", "zh-CN"] as const)(
+    "%s: empty previews have no current-player boundary",
+    (locale) => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const preset = bindingFrom(defaultPlayPresetFilesForLocale(locale));
+      for (const text of ["", "  \n"]) {
+        const preview = compiler.preview(
+          createMinimalFileNativePreviewInput({
+            provider: "chat_completions",
+            modelId: "turn-guide-model",
+            contextWindowTokens: 200_000,
+            maxOutputTokens: 4096,
+            playerInput: text,
+            playerInputPlacement: "append",
+          }),
+          preset,
+        );
+        expect(preview.initialAppend?.provider.content).toBe(text);
+        expect(preview.compilation.turnGuide?.text).toBe(
+          turnGuideText(locale, preview.compilation.turnGuide!.lines, false),
+        );
+      }
+    },
+  );
+
   const worldFrame = `format: narraeon.world-frame/v1
 bindings:
   currentSituation: "@current-situation"
@@ -388,14 +413,23 @@ context:
     expect(alone.turnGuide?.text.startsWith(turnGuideHeader("en"))).toBe(true);
   });
 
-  test("the Runtime header names only the source of the suffix, in both locales", () => {
+  test("the Runtime header points to the current input, with generic continuation wording", () => {
     expect(turnGuideHeader("zh-CN")).toBe(
-      "[Runtime 本轮提示]\n以下来自预设、世界设定和玩家的临时要求，在撰写本轮最终正文时适用。不要回应本提示。",
+      "[Runtime 本轮提示]\n请回应 <本轮玩家输入> 中的内容，撰写最终正文时遵循以下要求。",
     );
     expect(turnGuideHeader("en")).toBe(
-      "[Runtime turn guide]\nThese notes from the preset, the world and the player's requests for this turn apply when writing final prose. Do not reply to this notice.",
+      "[Runtime turn guide]\nRespond to the content in <current_player_input>, following these requirements when writing the final prose.",
     );
   });
+
+  test.each(["en", "zh-CN"] as const)(
+    "%s: continuations use a generic header",
+    (locale) => {
+      expect(turnGuideHeader(locale, false)).not.toContain(
+        locale === "zh-CN" ? "<本轮玩家输入>" : "<current_player_input>",
+      );
+    },
+  );
 
   test("a preset without any line sends no suffix", () => {
     const binding = bindingFrom(

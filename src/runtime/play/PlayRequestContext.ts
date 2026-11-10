@@ -1,3 +1,4 @@
+import { modelHostInputText } from "../model/ModelHost.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PlayRequestContextMessage } from "../../protocol/playRequestContext.ts";
@@ -141,7 +142,7 @@ export function projectRequestContext(
         break;
       case "player":
       case "user":
-        messages.push({ role: "user", text: item.text });
+        messages.push({ role: "user", text: modelHostInputText(item) });
         break;
     }
   }

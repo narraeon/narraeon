@@ -3676,6 +3676,12 @@ test("schema-v1 隔离草稿严格迁移为审计历史，不改当前树", asyn
     },
   }).review().preview;
   expect(legacyPreview).not.toBeNull();
+  // This synthetic v1 fixture must retain the released raw-input projection.
+  if (legacyPreview?.initialAppend !== undefined) {
+    const text = "Inspect the legacy setting draft.";
+    legacyPreview.initialAppend.logical = { kind: "player", text };
+    legacyPreview.initialAppend.provider = { role: "user", content: text };
+  }
   const legacyBootstrap = structuredClone(v2.bootstrap);
   const legacyRuntime = legacyBootstrap.logicalMessages.find(
     ({ role }) => role === "runtime_system",

@@ -1,3 +1,4 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { captureNarrativeOrigin } from "../history/HistoryBackground.ts";
 import type {
   V1PlayCallChainEvent,
@@ -54,6 +55,7 @@ export function preparePlayerRevisionTrace(
       head: string;
       exchangeId: string;
       text: string;
+      locale: AppLocale;
     }) {
       const events: V1PlayCallChainEvent[] = [
         ...prefix,
@@ -68,7 +70,7 @@ export function preparePlayerRevisionTrace(
       ];
       const continuedTranscript = [
         ...transcript,
-        ...playerInputAppend(replacement.text),
+        ...playerInputAppend(replacement.text, replacement.locale),
       ];
       return {
         atEndpoint(endpoint: TraceEndpoint): RetainedPlayTrace {

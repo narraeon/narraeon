@@ -1842,6 +1842,7 @@ export class PlayCallChain {
             head,
             exchangeId: intent.replacementExchangeId,
             text: intent.replacementText,
+            locale: this.#compiler.locale,
           })
           .atEndpoint({ baseline, selected, binding }),
         schemaVersion: 3,
@@ -2042,7 +2043,10 @@ export class PlayCallChain {
         }),
         1,
       ),
-      transcript: playerInputAppend(intent.replacementText),
+      transcript: playerInputAppend(
+        intent.replacementText,
+        this.#compiler.locale,
+      ),
       events: [
         {
           id: 1,
@@ -2270,7 +2274,10 @@ export class PlayCallChain {
       modelHost,
       exchange,
       this.#compiler.locale,
-      [...session.transcript, ...playerInputAppend(playerText)],
+      [
+        ...session.transcript,
+        ...playerInputAppend(playerText, this.#compiler.locale),
+      ],
     );
     const operationKey = `player:${exchangeId}`;
     const playerOperationId = operationId(session.chainId, operationKey);
@@ -3489,10 +3496,19 @@ function createRequestWithMaxOutputTokens(
   // dispatch appends and is never part of the transcript it is built on. The
   // player's one-turn request joins the suffix here, not in the bootstrap, so
   // the bootstrap snapshot stays shared by every dispatch of the turn.
+  // Tool steps remain in the submission; a continuation starts a new one.
+  const submission = appended.findLast(
+    (item) =>
+      item.kind === "player" ||
+      (item.kind === "runtime_notice" && item.notice === "continuation"),
+  );
   const turnGuide = turnGuideWithTurnNote(
-    locale,
+    submission?.kind === "player"
+      ? (submission.inputBoundary ?? locale)
+      : locale,
     currentPlayPrompt(session).bootstrap.turnGuide,
     session.turnNote,
+    submission?.kind === "player" && submission.inputBoundary !== undefined,
   );
   return {
     bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),

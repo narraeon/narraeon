@@ -28,6 +28,7 @@ import {
   promptScopeApplies,
 } from "../../shared/ordered-play-prompts.ts";
 import {
+  playerInputText,
   turnGuideHeader,
   turnGuideText,
   turnGuideWithTurnNote,
@@ -269,7 +270,7 @@ export interface PromptPreview {
   };
   compilation: PromptCompilation;
   initialAppend?: {
-    logical: { kind: "player"; text: string };
+    logical: Extract<ModelHostAppendItem, { kind: "player" }>;
     provider: { role: "user"; content: string };
     beforePlayer?: {
       logical: ModelHostAppendItem;
@@ -772,7 +773,10 @@ export class FileNativePromptCompiler {
           : [
               {
                 source: "player:input",
-                markdown: `${this.#locale === "zh-CN" ? "# 玩家原文" : "# Player input"}\n\n${effectiveInput.playerInput.trim()}`,
+                markdown: playerInputText(
+                  this.#locale,
+                  effectiveInput.playerInput,
+                ),
               },
             ],
     } satisfies Record<
@@ -846,6 +850,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation?.bootstrap ?? this.compileBootstrap(input),
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -859,6 +864,7 @@ export class FileNativePromptCompiler {
       playPreset,
       playCompilation.bootstrap,
       playCompilation,
+      this.#locale,
     );
   }
 
@@ -1103,7 +1109,10 @@ export class FileNativePromptCompiler {
     prompt = undefined;
     if (effective.playerInputPlacement === "bootstrap")
       append("player_input", [
-        { source: "player:input", markdown: effective.playerInput },
+        {
+          source: "player:input",
+          markdown: playerInputText(this.#locale, effective.playerInput),
+        },
       ]);
     const turnGuide = turnGuideWithTurnNote(
       this.#locale,
@@ -1114,6 +1123,7 @@ export class FileNativePromptCompiler {
             lines: turnGuideLines,
           },
       effective.turnNote,
+      effective.playerInput.trim().length > 0,
     );
     scanRuntimeLeakage([
       ...logicalMessages,
@@ -1585,7 +1595,7 @@ function settingImprovementPresetReference(
           {
             source: "play-preset:turn-guide",
             markdown: [
-              turnGuideHeader(locale),
+              turnGuideHeader(locale, false),
               ...turnGuideLines,
               "",
               locale === "zh-CN"
@@ -1725,6 +1735,7 @@ function promptPreview(
   playPreset: PlayPresetBinding | undefined,
   compilation: PromptCompilation,
   playCompilation: PlayPresetCompilation | undefined,
+  locale: AppLocale,
 ): PromptPreview {
   const result: PromptPreview = {
     diagnosticBinding: {
@@ -1744,8 +1755,15 @@ function promptPreview(
     ...(input.playerInputPlacement === "append"
       ? {
           initialAppend: {
-            logical: { kind: "player", text: input.playerInput },
-            provider: { role: "user", content: input.playerInput },
+            logical: {
+              kind: "player",
+              text: input.playerInput,
+              inputBoundary: locale,
+            },
+            provider: {
+              role: "user",
+              content: playerInputText(locale, input.playerInput),
+            },
             ...(compilation.turnGuide === undefined
               ? {}
               : {

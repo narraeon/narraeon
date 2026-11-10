@@ -1,3 +1,4 @@
+import { playerInputText } from "../../src/shared/turn-guide.ts";
 import { describe, expect, test } from "vitest";
 
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
@@ -52,6 +53,7 @@ test.each([
     expect(preview.initialAppend?.logical).toEqual({
       kind: "player",
       text: "My action",
+      inputBoundary: locale,
     });
     expect(preview.compilation.provider.preload?.markdown).toContain(opening);
     expect(preview.compilation.tools.map(({ name }) => name)).toContain(
@@ -163,14 +165,14 @@ test.each([
     continuation:
       "If further reads, adjudication or writes are needed, continue calling tools",
     finish: "When ready to finish",
-    header: "when writing final prose",
+    header: "when writing the final prose",
     obsolete: "Do not reply to this notice; write the prose",
   },
   {
     locale: "zh-CN" as const,
     continuation: "若还需读取、判定或写回，可继续调用工具",
     finish: "准备结束时",
-    header: "撰写本轮最终正文时适用",
+    header: "撰写最终正文时遵循以下要求",
     obsolete: "不要回应本提示，直接写正文",
   },
 ])(
@@ -417,7 +419,9 @@ test.each([
       "Completed player rounds since the last checkpoint",
     );
     expect(preview.initialAppend?.logical.text).toBe("  我等一会儿。\n");
-    expect(preview.initialAppend?.provider.content).toBe("  我等一会儿。\n");
+    expect(preview.initialAppend?.provider.content).toBe(
+      playerInputText(locale, "  我等一会儿。\n"),
+    );
   },
 );
 

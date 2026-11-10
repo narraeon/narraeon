@@ -997,11 +997,24 @@ extensions:
       },
       initialAppend: {
         logical: { kind: "player", text: "Check the call-chain prompt." },
-        provider: { role: "user", content: "Check the call-chain prompt." },
+        provider: {
+          role: "user",
+          content:
+            "<current_player_input>\nCheck the call-chain prompt.\n</current_player_input>",
+        },
       },
     });
     const previewText = JSON.stringify(preview.result);
-    expect(previewText).not.toContain("player_input");
+    const wire = (
+      preview.result as { wireRequest: { body: { input: unknown[] } } }
+    ).wireRequest;
+    expect(wire.body.input).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content:
+          "<current_player_input>\nCheck the call-chain prompt.\n</current_player_input>",
+      }),
+    );
     expect(previewText).toContain("Opening already seen by the player");
     expect(previewText).toContain(
       "Meaningful silence, solitude, rest and waiting",

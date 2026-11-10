@@ -1,3 +1,5 @@
+import { playerInputText } from "../../src/shared/turn-guide.ts";
+import { projectRequestContext } from "../../src/runtime/play/PlayRequestContext.ts";
 import { expect, test, vi } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -2841,3 +2843,59 @@ test("对话尾部断点超过 Anthropic 上限时明确报错而不是丢弃", 
     /cache breakpoints; the Anthropic limit is 4/,
   );
 });
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+  "google_interactions",
+] as const)(
+  "%s: new player inputs have localized boundaries and frozen legacy inputs retain their bytes",
+  (provider) => {
+    const host = new FileNativeModelHost({
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "boundary-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2048,
+    });
+    const request = exchangeFor(
+      provider,
+      "boundary-model",
+      host.binding().cacheStrategy,
+    );
+    const original = "  I ask Alex.\n你好！\n";
+    request.appended = [{ kind: "player", text: original }];
+    const legacy = host.freezeRequest(request);
+    const legacyWire = host.previewRequest(legacy);
+    for (const locale of ["en", "zh-CN"] as const) {
+      const input = {
+        kind: "player" as const,
+        text: original,
+        inputBoundary: locale,
+      };
+      const marked = host.freezeRequest({ ...request, appended: [input] });
+      const expected = playerInputText(locale, original);
+      const wire = JSON.stringify(host.previewRequest(marked).body);
+      expect(wire).toContain(JSON.stringify(expected).slice(1, -1));
+      expect(
+        projectRequestContext(marked.bootstrap, marked.appended),
+      ).toContainEqual({ role: "user", text: expected });
+      expect(marked.appended[0]).toEqual(input);
+      const restored = JSON.parse(JSON.stringify(marked)) as ModelHostExchange;
+      expect(host.previewRequest(restored)).toEqual(
+        host.previewRequest(marked),
+      );
+    }
+    expect(
+      host.previewRequest(
+        JSON.parse(JSON.stringify(legacy)) as ModelHostExchange,
+      ),
+    ).toEqual(legacyWire);
+    expect(JSON.stringify(legacyWire.body)).not.toContain(
+      "<current_player_input>",
+    );
+    expect(JSON.stringify(legacyWire.body)).not.toContain("<本轮玩家输入>");
+  },
+);

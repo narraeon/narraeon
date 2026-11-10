@@ -813,10 +813,7 @@ export class V1Runtime {
                     ...(preview.initialAppend.beforePlayer === undefined
                       ? []
                       : [preview.initialAppend.beforePlayer.logical]),
-                    {
-                      kind: "player" as const,
-                      text: preview.initialAppend.logical.text,
-                    },
+                    preview.initialAppend.logical,
                     ...(preview.initialAppend.afterPlayer === undefined
                       ? []
                       : [preview.initialAppend.afterPlayer.logical]),

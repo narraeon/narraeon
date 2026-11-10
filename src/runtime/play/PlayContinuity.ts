@@ -100,8 +100,11 @@ export function toolStepNotice(
   };
 }
 
-export function playerInputAppend(text: string): ModelHostAppendItem[] {
-  return [{ kind: "player", text }];
+export function playerInputAppend(
+  text: string,
+  locale: AppLocale,
+): ModelHostAppendItem[] {
+  return [{ kind: "player", text, inputBoundary: locale }];
 }
 
 export function checkpointReplayBlocks(

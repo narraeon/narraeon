@@ -3455,6 +3455,7 @@ test("修改轨迹统一保留前缀工具及原生载荷，并按含同 ID 修�
       head: "commit:replacement",
       exchangeId: "replacement",
       text: "Replacement input.",
+      locale: "zh-CN",
     })
     .atEndpoint(endpoint);
   expect(retained.transcript.slice(0, -1)).toEqual(prefix.transcript);
@@ -6060,7 +6061,11 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
     modelBinding().maxOutputTokens,
   );
   expect(sent(modelHost.requests[0]!)).toEqual([
-    { kind: "player", text: "I signal Alex to open the door." },
+    {
+      kind: "player",
+      text: "I signal Alex to open the door.",
+      inputBoundary: "en",
+    },
   ]);
   expect(
     modelHost.requests[0]?.bootstrap.logicalMessages.some(
@@ -6114,6 +6119,7 @@ test("工具中间步文本不进入叙事，状态与终态叙事分别推进�
   expect(sent(modelHost.requests.at(-1)!).at(-1)).toEqual({
     kind: "player",
     text: "I walk into the corridor.",
+    inputBoundary: "en",
   });
   const requestCount = modelHost.requests.length;
   const duplicateAppend = await restored.append({
@@ -6477,6 +6483,7 @@ test.each(
       {
         kind: "player",
         text: "I adjust my wrist and ask him to check the angle.",
+        inputBoundary: locale,
       },
     ]);
     expect(
@@ -7607,7 +7614,11 @@ test("全新上下文只重建模型上下文，持久保留此前调用轨迹�
   const withHistory = second;
 
   expect(sent(secondHost.requests[0]!)).toEqual([
-    { kind: "player", text: "Player input for the new context." },
+    {
+      kind: "player",
+      text: "Player input for the new context.",
+      inputBoundary: "en",
+    },
   ]);
   expect(withHistory.previousContexts).toEqual([]);
   const timeline = await worlds.playTimeline.readPage(worldId, 100);
@@ -8047,7 +8058,11 @@ test("从调用链节点派生会保留截至该节点的调用轨迹，并可�
   });
   expect(regenerated.status).toBe("ready");
   expect(sent(regeneratedHost.requests[0]!)).toEqual([
-    { kind: "player", text: "I signal Alex to open the door." },
+    {
+      kind: "player",
+      text: "I signal Alex to open the door.",
+      inputBoundary: "en",
+    },
   ]);
   expect(
     (await coldWorlds.recoverEndpoint(playerBranch.world.worldId)).history.map(
@@ -8181,7 +8196,7 @@ test.each(["continue_context", "fresh_context"] as const)(
     });
     expect(sent(replacementHost.requests[0]!)).toEqual([
       ...(continuation === "continue_context" ? continuedTranscript : []),
-      { kind: "player", text: "I stay inside." },
+      { kind: "player", text: "I stay inside.", inputBoundary: "en" },
     ]);
     expect(
       (await coldWorlds.recoverEndpoint(worldId)).history.map(
@@ -8442,7 +8457,7 @@ test("修改第一条玩家消息可把修改稿保存为不继承旧续传的�
     modelHost: replacementHost,
   });
   expect(replacementHost.requests[0]?.appended).toEqual([
-    { kind: "player", text: "I take the western path." },
+    { kind: "player", text: "I take the western path.", inputBoundary: "en" },
   ]);
   expect(
     replacementHost.requests[0]?.bootstrap.logicalMessages
@@ -8636,7 +8651,11 @@ test("把上下文中较后的修改稿另存为全新上下文时保留页面�
     modelHost: replacementHost,
   });
   expect(sent(replacementHost.requests[0]!)).toEqual([
-    { kind: "player", text: "I take the western path instead." },
+    {
+      kind: "player",
+      text: "I take the western path instead.",
+      inputBoundary: "en",
+    },
   ]);
 });
 
@@ -8861,6 +8880,7 @@ test.each(["en", "zh-CN"] as const)(
     expect(sent(resumed.requests[1]!).at(-1)).toEqual({
       kind: "player",
       text: "I adjust my wrist.",
+      inputBoundary: locale,
     });
     expect(
       (await worlds.recoverEndpoint(worldId)).history.map(
@@ -9053,7 +9073,11 @@ test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provide
     1,
   );
   expect(sent(modelHost.requests[1]!)).toEqual([
-    { kind: "player", text: "I signal Alex to open the door." },
+    {
+      kind: "player",
+      text: "I signal Alex to open the door.",
+      inputBoundary: "en",
+    },
     {
       kind: "assistant",
       text: "Alex opens the door first.",
@@ -9939,7 +9963,11 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   // Only the first request belongs to the main chain. Both follow-ups must use
   // the exact transcript at main-chain completion and cannot see each other.
   const mainPrefix = [
-    { kind: "player", text: "I signal Alex to open the door." },
+    {
+      kind: "player",
+      text: "I signal Alex to open the door.",
+      inputBoundary: "en",
+    },
     {
       kind: "assistant",
       text: "Alex opens the door, and wind rushes in.",
@@ -10041,7 +10069,7 @@ test("后置请求在整轮结束后各跑一次，共享同一主链前缀且�
   });
   expect(nextHost.requests[0]!.appended).toEqual([
     ...mainPrefix,
-    { kind: "player", text: "I follow." },
+    { kind: "player", text: "I follow.", inputBoundary: "en" },
   ]);
 
   // Each settled exchange uses a new operation, replacing the previous panel
@@ -12433,7 +12461,7 @@ views:
     });
     if (guide?.kind !== "runtime_notice")
       throw new Error("Expected turn guide");
-    expect(guide.text).toContain("when writing final prose");
+    expect(guide.text).toContain("when writing the final prose");
     const endpoint = await worlds.recoverEndpoint(worldId);
     expect(endpoint.history.map(({ exactText }) => exactText)).toEqual([
       "门外传来三声短促的铃响。\n",
@@ -12447,103 +12475,115 @@ views:
   },
 );
 
-test("本轮提示只作为每次发送的尾部出现，不进入 transcript，也不出现在后续请求的前缀中", async () => {
-  const { worlds, worldId } = await createWorld("turn-guide-suffix");
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [{ id: "list", name: "state_list", arguments: {} }],
-      },
-      { outcome: "response", text: "Alex looks up from the jersey." },
-      { outcome: "response", text: "He waits." },
-    ],
-  });
-  const chains = new PlayCallChain(worlds);
-  await chains.start({
-    worldId,
-    chainId: "turn-guide",
-    exchangeId: "first",
-    playerText: "I nod to Alex.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
-  await chains.append({
-    worldId,
-    chainId: "turn-guide",
-    exchangeId: "continue",
-    playerText: "",
-    modelHost,
-  });
-  const isGuide = (item: ModelHostExchange["appended"][number]) =>
-    item.kind === "runtime_notice" && item.notice === "turn_guide";
-  expect(modelHost.requests).toHaveLength(3);
-  for (const request of modelHost.requests) {
-    // Exactly one suffix per dispatch, after everything else the request
-    // appends, with the text the bootstrap compiled.
-    expect(request.appended.filter(isGuide)).toHaveLength(1);
-    expect(request.appended.at(-1)).toEqual({
-      kind: "runtime_notice",
-      notice: "turn_guide",
-      text: request.bootstrap.turnGuide!.text,
+test.each(["en", "zh-CN"] as const)(
+  "%s: 本轮提示只作为每次发送的尾部出现，不进入 transcript，也不出现在后续请求的前缀中",
+  async (locale) => {
+    const { worlds, worldId } = await createWorld("turn-guide-suffix");
+    const modelHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [{ id: "list", name: "state_list", arguments: {} }],
+        },
+        { outcome: "response", text: "Alex looks up from the jersey." },
+        { outcome: "response", text: "He waits." },
+      ],
     });
+    const chains = new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    );
+    await chains.start({
+      worldId,
+      chainId: "turn-guide",
+      exchangeId: "first",
+      playerText: "I nod to Alex.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+    await chains.append({
+      worldId,
+      chainId: "turn-guide",
+      exchangeId: "continue",
+      playerText: "",
+      modelHost,
+    });
+    const isGuide = (item: ModelHostExchange["appended"][number]) =>
+      item.kind === "runtime_notice" && item.notice === "turn_guide";
+    expect(modelHost.requests).toHaveLength(3);
+    for (const [index, request] of modelHost.requests.entries()) {
+      // Exactly one suffix per dispatch, after everything else the request
+      // appends, with the text the bootstrap compiled.
+      expect(request.appended.filter(isGuide)).toHaveLength(1);
+      expect(request.appended.at(-1)).toEqual({
+        kind: "runtime_notice",
+        notice: "turn_guide",
+        text: request.bootstrap.turnGuide!.text.replace(
+          turnGuideHeader(locale),
+          turnGuideHeader(locale, index < 2),
+        ),
+      });
+      expect(
+        request.bootstrap.turnGuide!.text.startsWith(turnGuideHeader(locale)),
+      ).toBe(true);
+    }
+    expect(sent(modelHost.requests[0]!).map(({ kind }) => kind)).toEqual([
+      "player",
+    ]);
+    expect(sent(modelHost.requests[1]!).map(({ kind }) => kind)).toEqual([
+      "player",
+      "assistant",
+      "tool",
+    ]);
     expect(
-      request.bootstrap.turnGuide!.text.startsWith(turnGuideHeader("en")),
-    ).toBe(true);
-  }
-  expect(sent(modelHost.requests[0]!).map(({ kind }) => kind)).toEqual([
-    "player",
-  ]);
-  expect(sent(modelHost.requests[1]!).map(({ kind }) => kind)).toEqual([
-    "player",
-    "assistant",
-    "tool",
-  ]);
-  expect(
-    sent(modelHost.requests[2]!).map((item) =>
-      item.kind === "runtime_notice" ? `notice:${item.notice}` : item.kind,
-    ),
-  ).toEqual([
-    "player",
-    "assistant",
-    "tool",
-    "assistant",
-    "notice:continuation",
-  ]);
-  // The stored transcript never contains the suffix, so later requests and
-  // forks are built without it.
-  const stored = (await worlds.playTimeline.readCurrent(worldId))!.value
-    .transcript;
-  expect(stored.some(isGuide)).toBe(false);
-  expect(stored.slice(0, sent(modelHost.requests[2]!).length)).toEqual(
-    sent(modelHost.requests[2]!),
-  );
-  expect(stored.at(-1)).toMatchObject({ kind: "assistant", text: "He waits." });
+      sent(modelHost.requests[2]!).map((item) =>
+        item.kind === "runtime_notice" ? `notice:${item.notice}` : item.kind,
+      ),
+    ).toEqual([
+      "player",
+      "assistant",
+      "tool",
+      "assistant",
+      "notice:continuation",
+    ]);
+    // The stored transcript never contains the suffix, so later requests and
+    // forks are built without it.
+    const stored = (await worlds.playTimeline.readCurrent(worldId))!.value
+      .transcript;
+    expect(stored.some(isGuide)).toBe(false);
+    expect(stored.slice(0, sent(modelHost.requests[2]!).length)).toEqual(
+      sent(modelHost.requests[2]!),
+    );
+    expect(stored.at(-1)).toMatchObject({
+      kind: "assistant",
+      text: "He waits.",
+    });
 
-  // A legacy v1 preset compiles no turn guide, so nothing is appended.
-  const legacyHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [{ outcome: "response", text: "Quiet." }],
-  });
-  const legacy = await createWorld("turn-guide-legacy");
-  await new PlayCallChain(legacy.worlds).start({
-    worldId: legacy.worldId,
-    chainId: "turn-guide-legacy",
-    exchangeId: "first",
-    playerText: "I nod to Alex.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
-    modelBinding: modelBinding(),
-    modelHost: legacyHost,
-  });
-  expect(legacyHost.requests[0]!.bootstrap.turnGuide).toBeUndefined();
-  expect(legacyHost.requests[0]!.appended).toEqual([
-    { kind: "player", text: "I nod to Alex." },
-  ]);
-});
+    // A legacy v1 preset compiles no turn guide, so nothing is appended.
+    const legacyHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "Quiet." }],
+    });
+    const legacy = await createWorld("turn-guide-legacy");
+    await new PlayCallChain(legacy.worlds).start({
+      worldId: legacy.worldId,
+      chainId: "turn-guide-legacy",
+      exchangeId: "first",
+      playerText: "I nod to Alex.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(legacyDefaultPlayPresetFilesForLocale("en")),
+      modelBinding: modelBinding(),
+      modelHost: legacyHost,
+    });
+    expect(legacyHost.requests[0]!.bootstrap.turnGuide).toBeUndefined();
+    expect(legacyHost.requests[0]!.appended).toEqual([
+      { kind: "player", text: "I nod to Alex.", inputBoundary: "en" },
+    ]);
+  },
+);
 
 test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输入续写沿用，下一轮不带，转录与历史不含", async () => {
   const { worlds, worldId } = await createWorld("turn-note-flow");
@@ -12850,7 +12890,7 @@ function cacheSimRequest(body: Record<string, unknown>): CacheSimRequest {
   }[]) {
     if (
       typeof message.content === "string" &&
-      message.content.startsWith(turnGuideHeader("en"))
+      message.content.startsWith("[Runtime turn guide]\n")
     )
       prefix = keys.length;
     const content =

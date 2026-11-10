@@ -1,3 +1,4 @@
+import { modelHostInputText } from "./ModelHost.ts";
 import {
   assertAssistantPrefill,
   assistantPrefillDelta,
@@ -1421,7 +1422,11 @@ function googleRequestBody(
             renderPromptDeltaMessage(message.role, message.markdown),
           ),
         });
-    } else input.push({ type: "user_input", content: text(item.text) });
+    } else
+      input.push({
+        type: "user_input",
+        content: text(modelHostInputText(item)),
+      });
   }
   const tools = providerToolDefinitions(request);
   const allowedTools = providerAllowedTools(request);
@@ -2001,7 +2006,7 @@ function chatItems(items: readonly ModelHostAppendItem[]): unknown[] {
       item.kind === "user" ||
       item.kind === "runtime_notice"
     )
-      return [{ role: "user", content: item.text }];
+      return [{ role: "user", content: modelHostInputText(item) }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);
     if (item.kind === "tool")
@@ -2057,7 +2062,7 @@ function anthropicItems(items: readonly ModelHostAppendItem[]): unknown[] {
       item.kind === "user" ||
       item.kind === "runtime_notice"
     ) {
-      messages.push({ role: "user", content: item.text });
+      messages.push({ role: "user", content: modelHostInputText(item) });
       continue;
     }
     if (item.kind === "prompt_delta") {
@@ -2099,7 +2104,7 @@ function responsesItems(items: readonly ModelHostAppendItem[]): unknown[] {
       item.kind === "user" ||
       item.kind === "runtime_notice"
     )
-      return [{ role: "user", content: item.text }];
+      return [{ role: "user", content: modelHostInputText(item) }];
     if (item.kind === "prompt_delta")
       return promptDeltaProviderMessages(item.logicalMessages);
     if (item.kind === "tool")

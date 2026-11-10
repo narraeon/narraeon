@@ -1,3 +1,5 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import { playerInputText } from "../../shared/turn-guide.ts";
 import type {
   ModelPromptCacheStrategy,
   ModelProviderKind,
@@ -76,6 +78,8 @@ export type ModelHostAppendItem =
   | {
       kind: "player";
       text: string;
+      /** Locale of the v1 input boundary; absent in released transcripts and requests. */
+      inputBoundary?: AppLocale;
     }
   | {
       /** A non-play user turn, such as an authoring conversation message. */
@@ -472,4 +476,16 @@ function scriptedProviderState(
           }),
     },
   };
+}
+
+/** Preserve released requests without a model-facing projection byte for byte. */
+export function modelHostInputText(
+  item: Extract<
+    ModelHostAppendItem,
+    { kind: "player" | "user" | "runtime_notice" }
+  >,
+): string {
+  return item.kind === "player" && item.inputBoundary !== undefined
+    ? playerInputText(item.inputBoundary, item.text)
+    : item.text;
 }

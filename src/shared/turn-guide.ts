@@ -14,14 +14,25 @@ export interface TurnGuideLine {
   text: string;
 }
 
-/**
- * The fixed Runtime header. It is mechanical: it tells the model what the
- * suffix is and that the prose, not a reply to the suffix, is wanted.
- */
-export function turnGuideHeader(locale: AppLocale): string {
+/** Model-facing boundary only; the enclosed original is preserved exactly. */
+export function playerInputText(locale: AppLocale, text: string): string {
+  if (text.trim().length === 0) return text;
+  const tag = locale === "zh-CN" ? "本轮玩家输入" : "current_player_input";
+  return `<${tag}>\n${text}\n</${tag}>`;
+}
+
+/** Mechanical header points only to a new submission, never old input. */
+export function turnGuideHeader(
+  locale: AppLocale,
+  hasPlayerInput = true,
+): string {
   return locale === "zh-CN"
-    ? "[Runtime 本轮提示]\n以下来自预设、世界设定和玩家的临时要求，在撰写本轮最终正文时适用。不要回应本提示。"
-    : "[Runtime turn guide]\nThese notes from the preset, the world and the player's requests for this turn apply when writing final prose. Do not reply to this notice.";
+    ? hasPlayerInput
+      ? "[Runtime 本轮提示]\n请回应 <本轮玩家输入> 中的内容，撰写最终正文时遵循以下要求。"
+      : "[Runtime 本轮提示]\n撰写最终正文时遵循以下要求。"
+    : hasPlayerInput
+      ? "[Runtime turn guide]\nRespond to the content in <current_player_input>, following these requirements when writing the final prose."
+      : "[Runtime turn guide]\nFollow these requirements when writing the final prose.";
 }
 
 /**
@@ -43,26 +54,31 @@ export function turnNoteLine(
 
 /**
  * Appends the player's request line to a compiled turn guide, creating the
- * suffix when no preset or world line exists. Without a request the guide is
- * returned unchanged.
+ * suffix when no preset or world line exists. Rebuild the header for the
+ * current submission while retaining the compiled lines.
  */
 export function turnGuideWithTurnNote(
   locale: AppLocale,
   guide: { text: string; lines: TurnGuideLine[] } | undefined,
   turnNote: string | undefined,
+  hasPlayerInput = true,
 ): { text: string; lines: TurnGuideLine[] } | undefined {
-  if (turnNote === undefined) return guide;
-  const lines = [...(guide?.lines ?? []), turnNoteLine(locale, turnNote)];
-  return { text: turnGuideText(locale, lines), lines };
+  if (turnNote === undefined && guide === undefined) return undefined;
+  const lines = [
+    ...(guide?.lines ?? []),
+    ...(turnNote === undefined ? [] : [turnNoteLine(locale, turnNote)]),
+  ];
+  return { text: turnGuideText(locale, lines, hasPlayerInput), lines };
 }
 
 /** The complete suffix text: header, then one line per enabled entry in list order. */
 export function turnGuideText(
   locale: AppLocale,
   lines: readonly Pick<TurnGuideLine, "text">[],
+  hasPlayerInput = true,
 ): string {
   return [
-    turnGuideHeader(locale),
+    turnGuideHeader(locale, hasPlayerInput),
     ...lines.map(({ text }) => `- ${text}`),
   ].join("\n");
 }
