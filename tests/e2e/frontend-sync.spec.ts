@@ -208,6 +208,70 @@ test("a non-home workspace refresh failure keeps its receipt and draft with one 
   expect(reads).toBe(3);
 });
 
+test("overlapping page writes retain both commits when a newer receipt overtakes a recovery read", async ({
+  page,
+  runtimeUrl,
+}) => {
+  const before = await workspace(page, runtimeUrl);
+  const localePending = Promise.withResolvers<void>();
+  const commitLocale = Promise.withResolvers<void>();
+  const recoveryPending = Promise.withResolvers<void>();
+  const releaseRecovery = Promise.withResolvers<void>();
+  let localeWrites = 0;
+  let sampleWrites = 0;
+  let readbacks = 0;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type === "preferences.save") {
+      localeWrites++;
+      localePending.resolve();
+      await commitLocale.promise;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await route.fulfill({ response });
+    } else if (input.type === "content.create-sample") {
+      sampleWrites++;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await route.abort("failed");
+    } else if (input.type === "workspace.read" && sampleWrites > 0) {
+      readbacks++;
+      if (readbacks === 1) {
+        const response = await route.fetch();
+        recoveryPending.resolve();
+        await releaseRecovery.promise;
+        await route.fulfill({ response });
+      } else await route.continue();
+    } else await route.continue();
+  });
+  await page.goto("/#/");
+  await page.getByLabel("界面语言").selectOption("en");
+  await localePending.promise;
+  await page.getByRole("button", { name: "从示例新建", exact: true }).click();
+  await recoveryPending.promise;
+  // The recovery snapshot already includes the sample but predates the locale commit.
+  commitLocale.resolve();
+  await expect(
+    page.getByRole("button", { name: "Create from sample", exact: true }),
+  ).toBeVisible();
+  releaseRecovery.resolve();
+  await expect(
+    page.getByRole("button", { name: /^Open content package:/u }),
+  ).toHaveCount(before.contentPackages.length + 1);
+  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  await expect(page).toHaveURL(/#\/$/u);
+  const after = await runtime<{
+    preferences: { locale: string };
+    contentPackages: unknown[];
+  }>(page, runtimeUrl, { type: "workspace.read" });
+  expect(after.preferences.locale).toBe("en");
+  expect(after.contentPackages).toHaveLength(before.contentPackages.length + 1);
+  expect(localeWrites).toBe(1);
+  expect(sampleWrites).toBe(1);
+  expect(readbacks).toBe(2);
+});
+
 async function runtime<T>(
   page: Page,
   url: string,
