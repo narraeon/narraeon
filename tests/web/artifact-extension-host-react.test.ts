@@ -229,7 +229,7 @@ describe("ArtifactExtensionHost React lifetime", () => {
     const nonce = /narraeonNonce=\\?"([^"]+)\\?"/u.exec(source)?.[1];
     expect(instanceId).toBeTruthy();
     expect(nonce).toBeTruthy();
-    await act(async () => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           source: frame.contentWindow,
@@ -244,7 +244,10 @@ describe("ArtifactExtensionHost React lifetime", () => {
       );
     });
     await screen.findByText("Panel read failed");
-    await act(async () => screen.getByRole("button", { name: "重试" }).click());
+    await act(async () => {
+      screen.getByRole("button", { name: "重试" }).click();
+      await Promise.resolve();
+    });
     expect(onRefresh).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Panel read failed")).toBeNull();
   });

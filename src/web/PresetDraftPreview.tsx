@@ -47,6 +47,7 @@ export function PresetDraftPreview({
     key: string;
     snapshot: PlayPresetWorkbenchSnapshot;
   }>();
+  const [readAttempt, setReadAttempt] = useState(0);
   const [error, setError] = useState<{ key: string; message: string }>();
   const [sample, setSample] = useState<string>();
   const [draft, setDraft] = useState("");
@@ -62,17 +63,23 @@ export function PresetDraftPreview({
           draft: { files, structure },
         })
         .then((snapshot) => {
-          if (active) setResult({ key, snapshot });
+          if (active) {
+            setResult({ key, snapshot });
+            setError(undefined);
+          }
         })
         .catch((error: unknown) => {
-          if (active) setError({ key, message: String(error) });
+          if (active) {
+            setResult(undefined);
+            setError({ key, message: String(error) });
+          }
         });
     }, 250);
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [client, key, presetId, revision, files, structure]);
+  }, [client, key, presetId, revision, files, structure, readAttempt]);
   const snapshot = result?.key === key ? result.snapshot : undefined;
   const artifact = snapshot?.artifactPreviews.find(
     (a) => a.requestId === requestId && a.output === output,
@@ -151,7 +158,15 @@ export function PresetDraftPreview({
         )}
       </p>
       {error?.key === key ? (
-        <p role="alert">{error.message}</p>
+        <div role="alert">
+          {error.message}{" "}
+          <button
+            type="button"
+            onClick={() => setReadAttempt((value) => value + 1)}
+          >
+            {t("重试", "Retry")}
+          </button>
+        </div>
       ) : !snapshot ? (
         <p role="status">{t("正在解析当前草稿…", "Resolving draft…")}</p>
       ) : null}

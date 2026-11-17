@@ -310,7 +310,7 @@ export function ModelConnectionScreen({
         </div>
       </header>
 
-      <div className="config-layout">
+      <fieldset disabled={pending !== null} className="config-layout">
         <form
           className="config-form panel-card"
           onSubmit={(event) => void save(event)}
@@ -948,7 +948,7 @@ export function ModelConnectionScreen({
             );
           })}
         </section>
-      </div>
+      </fieldset>
     </section>
   );
 }

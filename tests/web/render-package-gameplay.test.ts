@@ -42,11 +42,17 @@ test("迟到的权限读取不能覆盖已确认的撤销", async () => {
       id: "package",
     }),
   );
-  await act(async () =>
-    fireEvent.click(screen.getByRole("button", { name: "撤销全部包脚本授权" })),
+  fireEvent.click(screen.getByRole("button", { name: "撤销全部包脚本授权" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "撤销全部包脚本授权",
+      }).disabled,
+    ).toBe(false),
   );
   await act(async () => {
     read.resolve({ enabled: true });
+    await read.promise;
   });
   expect(screen.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
   expect(client.request.mock.calls.map(([r]) => r.type)).toEqual([

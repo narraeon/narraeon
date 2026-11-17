@@ -100,6 +100,7 @@ test("删除回执生效后列表读取失败，重试只读取重建的预设",
   const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认预设" };
   let reads = 0;
   const request = vi.fn(async (r: V1Request) => {
+    await Promise.resolve();
     if (r.type === "play.delete")
       return { deleted: true, currentPresetId: rebuilt.id };
     if (r.type === "play.read") {

@@ -761,6 +761,10 @@
   font-size: 12px;
 }
 .model-connection-screen .config-layout {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 0;
 }

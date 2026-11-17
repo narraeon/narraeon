@@ -24,6 +24,27 @@ afterEach(() => {
   setWebLocale("zh-CN");
 });
 
+test("模型保存回执到达前保护当前编辑，结束后可继续修改", async () => {
+  const library = modelLibrary();
+  const receipt = Promise.withResolvers<ModelConnectionLibraryView>();
+  const request = vi.fn(() => receipt.promise);
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  const name = screen.getByLabelText<HTMLInputElement>("配置名称");
+  fireEvent.submit(name.form!);
+  expect(name.matches(":disabled")).toBe(true);
+  receipt.resolve(library);
+  await waitFor(() => expect(name.matches(":disabled")).toBe(false));
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
 test("预填充高级设置显式保存并在重开后保留，切换协议清除能力", async () => {
   const library = modelLibrary();
   library.connections[0] = {

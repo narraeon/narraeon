@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { V1Request } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 
@@ -15,64 +15,66 @@ export function PackageScriptPermissionControl({
   dirty?: boolean;
   onChange?: () => void;
 }): React.JSX.Element {
-  const [status, setStatus] = useState<{ enabled: boolean } | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const writeVersion = useRef(0);
-  const writing = useRef(false);
+  const target = useMemo(() => ({ client, kind, id }), [client, kind, id]);
+  const [result, setResult] = useState<{
+    target: typeof target;
+    enabled?: boolean;
+    error?: string;
+  } | null>(null);
+  const [writeTarget, setWriteTarget] = useState<typeof target | null>(null);
+  const pending = writeTarget === target;
+  const status = result?.target === target ? result : null;
+  const error = status?.error;
+  const version = useRef(0);
   const [readAttempt, setReadAttempt] = useState(0);
+  useEffect(
+    () => () => {
+      version.current += 1;
+    },
+    [target],
+  );
   useEffect(() => {
-    writing.current = false;
-    setPending(false);
-    return () => {
-      writeVersion.current += 1;
-    };
-  }, [client, kind, id]);
-  useEffect(() => {
-    if (writing.current) return;
     let active = true;
-    const version = writeVersion.current;
-    setStatus(null);
-    setError("");
+    const readVersion = version.current;
     void client
       .request(
         kind === "content"
           ? { type: "content.scripts.read", packageId: id }
           : { type: "world.package-scripts.read", worldId: id },
       )
-      .then((result) => {
-        if (active && version === writeVersion.current)
-          setStatus(permissionStatus(result));
+      .then((value) => {
+        if (active && readVersion === version.current)
+          setResult({ target, ...permissionStatus(value) });
       })
-      .catch((error) => {
-        if (active && version === writeVersion.current) setError(String(error));
+      .catch((error: unknown) => {
+        if (active && readVersion === version.current)
+          setResult({ target, error: String(error) });
       });
     return () => {
       active = false;
     };
-  }, [client, kind, id, dirty, readAttempt]);
+  }, [client, kind, id, dirty, readAttempt, target]);
   async function change(enabled: boolean): Promise<void> {
-    if (writing.current) return;
-    writing.current = true;
-    const version = ++writeVersion.current;
-    setPending(true);
-    setError("");
+    if (pending) return;
+    const writeVersion = ++version.current;
+    setWriteTarget(target);
     try {
-      const result = await client.request(
+      const value = await client.request(
         kind === "content"
           ? { type: "content.scripts.set", packageId: id, enabled }
           : { type: "world.package-scripts.set", worldId: id, enabled },
       );
-      if (version === writeVersion.current) {
-        setStatus(permissionStatus(result));
+      if (writeVersion === version.current) {
+        setResult({ target, ...permissionStatus(value) });
         onChange?.();
       }
     } catch (error) {
-      if (version === writeVersion.current) setError(String(error));
+      if (writeVersion === version.current)
+        setResult({ target, error: String(error) });
     } finally {
-      if (version === writeVersion.current) {
-        writing.current = false;
-        setPending(false);
+      if (writeVersion === version.current) {
+        version.current += 1;
+        setWriteTarget(null);
       }
     }
   }
@@ -88,7 +90,7 @@ export function PackageScriptPermissionControl({
         <input
           type="checkbox"
           checked={status?.enabled ?? false}
-          disabled={dirty || pending || status === null}
+          disabled={dirty || pending || status?.enabled === undefined}
           onChange={(event) => void change(event.target.checked)}
         />
         {uiText("允许运行内容包脚本")}
