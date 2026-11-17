@@ -97,7 +97,6 @@ import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { ResolutionCard } from "./ResolutionCard.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
-  activePlayExchangeId,
   createPlayRunProgress,
   progressFromCallChain,
   type PlayRunProgressValue,
@@ -388,16 +387,23 @@ export function WorldPage({
         (nextChain?.status ?? nextTimeline.activeStatus) === "running" &&
         runningChainId !== null
       ) {
-        setPlayProgress((current) =>
-          progressFromCallChain(
-            runningChainId,
-            nextChain === null && current?.chainId === runningChainId
-              ? current.exchangeId
-              : activePlayExchangeId(nextChain, nextTimeline, runningChainId),
-            nextChain,
-            current,
-          ),
-        );
+        setPlayProgress((current) => {
+          const exchangeId =
+            nextTimeline.activeInvocationExchangeId !== undefined
+              ? nextTimeline.activeInvocationExchangeId
+              : (nextChain?.activeInvocation?.exchangeId ??
+                (current?.chainId === runningChainId
+                  ? current.exchangeId
+                  : null));
+          return exchangeId === null
+            ? null
+            : progressFromCallChain(
+                runningChainId,
+                exchangeId,
+                nextChain,
+                current,
+              );
+        });
         setPlayProgressNow(Date.now());
       } else setPlayProgress(null);
       setSelectedDocument((current) =>
@@ -477,10 +483,12 @@ export function WorldPage({
     let observedDecorations: string | undefined;
     let observedExtensions: number | undefined;
     let outage = false;
+    let observationVersion = 0;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
-      async (observation, _changed, isCurrent) => {
+      (observation, _changed, isCurrent) => {
         if (!active || observation.kind !== "play") return;
+        const version = ++observationVersion;
         setObservationStopped(false);
         if (observation.extensionsRevision !== observedExtensions) {
           observedExtensions = observation.extensionsRevision;
@@ -490,11 +498,15 @@ export function WorldPage({
         const verifyFirst = observationNeedsVerification(next);
         const readProjection = async (): Promise<WorldReadView | null> => {
           const projection = await worldTarget.read();
-          return active && isCurrent?.() !== false ? projection : null;
+          return active &&
+            isCurrent?.() !== false &&
+            version === observationVersion
+            ? projection
+            : null;
         };
         if (next === null) {
           if (!verifyFirst) return;
-          await readProjection();
+          void readProjection();
           return;
         }
         // Ignore token deltas. Follow-up outcomes (including failure/clear),
@@ -520,7 +532,10 @@ export function WorldPage({
             setPlayProgress((current) =>
               progressFromCallChain(
                 next.chainId,
-                activePlayExchangeId(next, null, next.chainId),
+                next.activeInvocation?.exchangeId ??
+                  (current?.chainId === next.chainId
+                    ? current.exchangeId
+                    : null),
                 next,
                 current,
               ),
@@ -543,32 +558,36 @@ export function WorldPage({
         // snapshot before exposing it in place of a newer visible event.
         if (!verifyFirst) showObservation();
         if (needsHydration) {
-          const projection = await readProjection();
-          if (projection === null) return;
-          hydratedHead = `${next.parentHead}:${next.status}`;
-          const page =
-            projection.playTimeline ?? legacyTimelinePage(projection);
-          if (page && !timelineHasNewerActivity(page, next))
-            showObservation(true);
-          if (page !== undefined) {
-            setPlayTimeline((current) => mergePlayTimelinePage(current, page));
-            setPlayContextUsage((current) =>
-              current?.worldId === page.worldId &&
-              current.chainId === page.activeChainId
-                ? current
-                : null,
-            );
-            setPlayCallChain((current) =>
-              current !== null && timelineHasNewerActivity(page, current)
-                ? null
-                : current,
-            );
-            if (
-              timelineHasNewerActivity(page, next) &&
-              page.activeStatus !== "running"
-            )
-              setPlayProgress(null);
-          }
+          // Projection I/O must not hold the observer's serial delivery queue.
+          void readProjection().then((projection) => {
+            if (projection === null) return;
+            hydratedHead = `${next.parentHead}:${next.status}`;
+            const page =
+              projection.playTimeline ?? legacyTimelinePage(projection);
+            if (page && !timelineHasNewerActivity(page, next))
+              showObservation(true);
+            if (page !== undefined) {
+              setPlayTimeline((current) =>
+                mergePlayTimelinePage(current, page),
+              );
+              setPlayContextUsage((current) =>
+                current?.worldId === page.worldId &&
+                current.chainId === page.activeChainId
+                  ? current
+                  : null,
+              );
+              setPlayCallChain((current) =>
+                current !== null && timelineHasNewerActivity(page, current)
+                  ? null
+                  : current,
+              );
+              if (
+                timelineHasNewerActivity(page, next) &&
+                page.activeStatus !== "running"
+              )
+                setPlayProgress(null);
+            }
+          });
         }
       },
       (connection) => {
@@ -3655,6 +3674,7 @@ function timelineHasNewerActivity(
   chain: V1PlayCallChainView,
 ): boolean {
   if (page.activeChainId !== chain.chainId) return true;
+
   const item = page.items.findLast(
     (item) => item.kind === "event" && item.chainId === chain.chainId,
   );
@@ -3662,6 +3682,20 @@ function timelineHasNewerActivity(
   const event = chain.events.at(-1);
   if (event === undefined || item.event.id > event.id) return true;
   if (item.event.id !== event.id) return false;
+  if (
+    item.event.kind === "assistant" &&
+    item.event.status !== "completed" &&
+    event.kind === "assistant" &&
+    event.status === "completed"
+  )
+    return false;
+  if (
+    page.activeStatus === "running" &&
+    page.activeInvocationExchangeId !== undefined &&
+    page.activeInvocationExchangeId !==
+      (chain.activeInvocation?.exchangeId ?? null)
+  )
+    return true;
   return (
     (chain.status === "running" && page.activeStatus !== "running") ||
     (item.event.kind === "assistant" &&

@@ -1,6 +1,10 @@
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import type { ConversationTarget } from "../../src/protocol/conversationObservation.ts";
-import type { ObserveConversation } from "../../src/web/ConversationObserver.ts";
+import {
+  observeConversation,
+  type ObserveConversation,
+} from "../../src/web/ConversationObserver.ts";
+import { v1Protocol } from "../../src/protocol/v1.ts";
 // @vitest-environment jsdom
 
 import {
@@ -888,6 +892,10 @@ describe("世界游玩页面", () => {
     assistant.status = "streaming";
     assistant.responseKind = "pending";
     chain.status = "running";
+    chain.activeInvocation = createObservedProgress(
+      chain.chainId,
+      "story-mode-exchange",
+    );
     const client = {
       request: vi.fn((request: V1Request): Promise<unknown> => {
         if (request.type === "world.read")
@@ -6348,6 +6356,7 @@ function lightweightPlayTimeline(
     generation: `lightweight:${chain.chainId}`,
     activeChainId: chain.chainId,
     activeStatus: chain.status,
+    activeInvocationExchangeId: chain.activeInvocation?.exchangeId ?? null,
     activeCanRetry: chain.canRetry,
     activeLastFailure: chain.lastFailure,
     nextCursor: null,
@@ -6502,3 +6511,253 @@ test("a confirmed play receipt keeps the timeline fallback usable when world rea
     request.mock.calls.filter(([input]) => input.type === "play.chain.start"),
   ).toHaveLength(1);
 });
+
+test("newer native SSE snapshots stay visible while an earlier snapshot's world hydration is blocked", async () => {
+  class NativeSource extends EventTarget {
+    static CLOSED = 2;
+    static instances: NativeSource[] = [];
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      super();
+      NativeSource.instances.push(this);
+    }
+    close(): void {
+      this.readyState = 2;
+    }
+    snapshot(sequence: number, chain: V1PlayCallChainView): void {
+      this.dispatchEvent(
+        new MessageEvent("observation", {
+          lastEventId: `live:${sequence}`,
+          data: JSON.stringify({
+            protocol: v1Protocol,
+            update: { kind: "snapshot", value: { kind: "play", value: chain } },
+          }),
+        }),
+      );
+    }
+  }
+  vi.stubGlobal("EventSource", NativeSource);
+  const ready = playChainView(
+    "nonblocking-hydration",
+    "native-exchange",
+    "Look outside.",
+  );
+  const running: V1PlayCallChainView = {
+    ...ready,
+    status: "running",
+    activeInvocation: createObservedProgress(
+      "nonblocking-hydration",
+      "native-exchange",
+    ),
+    events: ready.events.filter((event) => event.kind === "player"),
+  };
+  let reads = 0;
+  let release!: () => void;
+  const request = vi.fn((input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read") {
+      reads++;
+      if (reads === 1)
+        return Promise.resolve({
+          ...worldView(null),
+          head: running.parentHead,
+          playTimeline: lightweightPlayTimeline(running),
+        });
+      if (reads === 2)
+        return new Promise((resolve) => {
+          release = () => resolve(worldView(running));
+        });
+      return Promise.resolve(worldView(ready));
+    }
+    if (input.type === "world.play-decorations.read")
+      return Promise.resolve({ artifacts: [], debug: [] });
+    return Promise.reject(new Error(input.type));
+  });
+  renderWorld({ request, observeConversation });
+  await screen.findByLabelText("你的行动");
+  const source = NativeSource.instances[0]!;
+  act(() => source.snapshot(1, running));
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  try {
+    act(() => source.snapshot(2, ready));
+    await screen.findByText("Alex opens the door and lets you go first.");
+    expect(screen.queryByRole("button", { name: "取消生成" })).toBeNull();
+  } finally {
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+  }
+  fireEvent.change(screen.getByLabelText("你的行动"), {
+    target: { value: "Keep going." },
+  });
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+      .disabled,
+  ).toBe(false);
+});
+
+test.each([
+  "initial-retry",
+  "peer-action",
+  "peer-retry",
+  "peer-ready",
+  "no-live-invocation",
+] as const)(
+  "lightweight cancellation follows Runtime identity after %s",
+  async (scenario) => {
+    const old: V1PlayCallChainView = {
+      ...playChainView(
+        "shared-context",
+        "first-player-exchange",
+        "First action.",
+      ),
+      status: "running",
+      activeInvocation: {
+        ...createObservedProgress("shared-context", "first-player-exchange"),
+        startedAt: Date.now() - 95_000,
+        lastActivityAt: Date.now() - 91_000,
+      },
+    };
+    const next: V1PlayCallChainView = {
+      ...old,
+      activeInvocation: createObservedProgress(
+        "shared-context",
+        "actual-live-exchange",
+      ),
+      events:
+        scenario === "peer-action"
+          ? [
+              ...old.events,
+              {
+                id: 5,
+                kind: "player",
+                exchangeId: "actual-live-exchange",
+                text: "A newer player action.",
+                context: "append",
+                committedHead: "commit:4",
+              },
+            ]
+          : old.events,
+    };
+    const page = {
+      ...lightweightPlayTimeline(next),
+      activeInvocationExchangeId:
+        scenario === "no-live-invocation" ? null : "actual-live-exchange",
+    };
+    let light = scenario === "initial-retry";
+    let connection: Parameters<ObserveConversation>[2];
+    let receive: Parameters<ObserveConversation>[1];
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read")
+        return Promise.resolve(
+          light
+            ? { ...worldView(null), head: next.parentHead, playTimeline: page }
+            : worldView(old),
+        );
+      if (input.type === "world.play-decorations.read")
+        return Promise.resolve({ artifacts: [], debug: [] });
+      if (input.type === "play.chain.cancel")
+        return Promise.resolve({ outcome: "cancellation_requested" });
+      if (input.type === "play.chain.inspect") return Promise.resolve(null);
+      return Promise.reject(new Error(input.type));
+    });
+    renderWorld({
+      request,
+      observeConversation: (_target, callback, notify) => {
+        receive = callback;
+        connection = notify;
+        return () => undefined;
+      },
+    });
+    if (scenario !== "initial-retry") {
+      await screen.findByText(/模型调用可能已经卡住/u);
+      light = true;
+      act(() => connection?.("failed"));
+      await waitFor(() =>
+        expect(
+          request.mock.calls.filter(([input]) => input.type === "world.read"),
+        ).toHaveLength(2),
+      );
+    }
+    if (
+      scenario === "peer-retry" ||
+      scenario === "peer-ready" ||
+      scenario === "no-live-invocation"
+    ) {
+      await act(async () => {
+        const { activeInvocation: _invocation, ...settled } = old;
+        void _invocation;
+        await receive(
+          {
+            kind: "play",
+            value:
+              scenario === "peer-ready" ? { ...settled, status: "ready" } : old,
+          },
+          true,
+        );
+        await Promise.resolve();
+      });
+    }
+    if (scenario === "no-live-invocation") {
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "取消生成" })).toBeNull(),
+      );
+      return;
+    }
+    const cancel = await screen.findByRole("button", { name: "取消生成" });
+    expect(screen.queryByText(/模型调用可能已经卡住/u)).toBeNull();
+    fireEvent.click(cancel);
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        type: "play.chain.cancel",
+        worldId: "world-one",
+        chainId: "shared-context",
+        exchangeId: "actual-live-exchange",
+      }),
+    );
+  },
+);
+
+test("a legacy lightweight running projection cannot invent cancellation identity from a player event", async () => {
+  const old = {
+    ...playChainView(
+      "legacy-running",
+      "old-player-exchange",
+      "An older action.",
+    ),
+    status: "running" as const,
+  };
+  const { activeInvocationExchangeId: _identity, ...page } =
+    lightweightPlayTimeline(old);
+  void _identity;
+  const request = vi.fn((input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read")
+      return Promise.resolve({ ...worldView(null), playTimeline: page });
+    if (input.type === "world.play-decorations.read")
+      return Promise.resolve({ artifacts: [], debug: [] });
+    return Promise.reject(new Error(input.type));
+  });
+  renderWorld({ request, observeConversation: () => () => undefined });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  expect(input.disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "取消生成" })).toBeNull();
+});
+
+function createObservedProgress(chainId: string, exchangeId: string) {
+  return {
+    chainId,
+    exchangeId,
+    phase: "waiting" as const,
+    startedAt: Date.now(),
+    lastActivityAt: Date.now(),
+    reasoningChars: 0,
+    textChars: 0,
+    toolChars: 0,
+    toolCalls: 0,
+    dispatches: 1,
+  };
+}

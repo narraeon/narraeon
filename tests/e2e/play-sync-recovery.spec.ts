@@ -62,14 +62,23 @@ test.beforeEach(async ({ page }) => {
   heldResponse = null;
   await page.addInitScript(() => {
     const sources: EventSource[] = [];
+    const opened = new WeakSet<EventSource>();
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {
       constructor(url: string | URL, configuration?: EventSourceInit) {
         super(url, configuration);
         sources.push(this);
+        this.addEventListener("open", () => opened.add(this));
       }
     };
     Object.assign(window, {
+      isPlayObservationReady: () =>
+        sources.some(
+          (source) =>
+            source.url.includes("kind=play") &&
+            source.readyState === EventSource.OPEN &&
+            opened.has(source),
+        ),
       interruptPlayObservation: (terminal: boolean) => {
         for (const source of sources) {
           if (
@@ -390,6 +399,67 @@ for (const late of ["success", "failure"] as const)
     ).toHaveCount(0);
   });
 
+test("a recovery read cancels a newer same-chain invocation while SSE remains unavailable", async ({
+  page,
+}) => {
+  const worldId = await prepareWorld(page, "Authoritative play cancellation");
+  hold = true;
+  const first = runtime(page, {
+    type: "play.chain.start",
+    worldId,
+    chainId: "shared-running-context",
+    exchangeId: "first-invocation",
+    playerText: "Wait beside the door.",
+  });
+  await expect.poll(() => heldResponse !== null).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Cancel generation", exact: true }),
+  ).toBeVisible();
+  await interruptObservation(page, true);
+  await expect(
+    page.getByRole("button", { name: "Read again", exact: true }),
+  ).toBeVisible();
+  finish(heldResponse!);
+  heldResponse = null;
+  await first;
+  const next = runtime(page, {
+    type: "play.chain.append",
+    worldId,
+    chainId: "shared-running-context",
+    exchangeId: "peer-invocation",
+    playerText: "A newer action from another page.",
+  });
+  await expect.poll(() => heldResponse !== null).toBe(true);
+  await page.route("**/api/runtime/v1/events?**", (route) =>
+    route.abort("failed"),
+  );
+  let cancelledExchange = "";
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = runtimeInput(route);
+    if (input?.type === "play.chain.cancel") {
+      cancelledExchange = input.exchangeId;
+      const response = await route.fetch();
+      expect(
+        ((await response.json()) as { result: { outcome: string } }).result
+          .outcome,
+      ).toBe("cancellation_requested");
+      return route.fulfill({ response });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await expect(
+    page.getByText("A newer action from another page.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Cancel generation", exact: true })
+    .click();
+  await next;
+  expect(cancelledExchange).toBe("peer-invocation");
+  expect(providerCalls).toBe(2);
+  heldResponse = null;
+});
+
 function runtimeInput(route: Route): V1Request | undefined {
   return (route.request().postDataJSON() as { request?: V1Request } | null)
     ?.request;
@@ -399,6 +469,15 @@ async function interruptObservation(
   page: Page,
   terminal: boolean,
 ): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as { isPlayObservationReady(): boolean }
+        ).isPlayObservationReady(),
+      ),
+    )
+    .toBe(true);
   await page.evaluate((closed) => {
     (
       window as unknown as { interruptPlayObservation(terminal: boolean): void }
