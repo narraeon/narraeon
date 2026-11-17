@@ -211,10 +211,12 @@ export function AiReadingRail({
 }
 
 export function AiReadingDialog({
+  syncNotice,
   reading,
   documents,
   onClose,
 }: {
+  syncNotice?: ReactNode;
   reading: V1PlayContextReadingView | null;
   documents: readonly ContentTreeFile[];
   onClose: () => void;
@@ -238,6 +240,7 @@ export function AiReadingDialog({
             ×
           </button>
         </header>
+        {syncNotice}
         <AiReadingAudit reading={reading} documents={documents} />
       </section>
     </div>
@@ -383,6 +386,7 @@ function AiReadingAudit({
   reading,
   documents,
 }: {
+  syncNotice?: ReactNode;
   reading: V1PlayContextReadingView | null;
   documents: readonly ContentTreeFile[];
 }): React.JSX.Element {
@@ -634,6 +638,7 @@ function baseRef(handle: string): string {
 }
 
 export function WorldManagementDialog({
+  syncNotice,
   worldBackupExport,
   packageScriptPermission,
   world,
@@ -656,6 +661,7 @@ export function WorldManagementDialog({
   modelConfigured,
   revisionLocked,
 }: {
+  syncNotice?: ReactNode;
   worldBackupExport?: ReactNode;
   packageScriptPermission?: ReactNode;
   world: { worldId: string; head: string; runtime: unknown };
@@ -697,6 +703,7 @@ export function WorldManagementDialog({
           </button>
         </header>
         <div className="world-management-body">
+          {syncNotice}
           <details className="world-permission-disclosure">
             <summary>{uiText("内容包脚本权限")}</summary>
             {packageScriptPermission}

@@ -69,9 +69,15 @@ export function HomeScreen({
   onImportPackage: () => void;
   onOpenPackage: (packageId: string) => void;
   onOpenWorld: (worldId: string) => void;
-  onRenamePackage: (item: HomeContentPackage, name: string) => void;
+  onRenamePackage: (
+    item: HomeContentPackage,
+    name: string,
+  ) => void | boolean | Promise<void | boolean>;
   onDeletePackage: (item: HomeContentPackage) => void;
-  onRenameWorld: (world: HomeWorld, name: string) => void;
+  onRenameWorld: (
+    world: HomeWorld,
+    name: string,
+  ) => void | boolean | Promise<void | boolean>;
   onDeleteWorld: (world: HomeWorld) => void;
 }): React.JSX.Element {
   const [renamingWorldId, setRenamingWorldId] = useState<string | null>(null);
@@ -80,6 +86,8 @@ export function HomeScreen({
     null,
   );
   const [packageNameDraft, setPackageNameDraft] = useState("");
+  const [renamePending, setRenamePending] = useState(false);
+  const [renameFailure, setRenameFailure] = useState("");
   const pending = importPending || samplePending;
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
@@ -195,6 +203,7 @@ export function HomeScreen({
                         })}
                         disabled={pending}
                         onClick={() => {
+                          setRenameFailure("");
                           setRenamingWorldId(world.worldId);
                           setWorldNameDraft(world.title);
                         }}
@@ -221,16 +230,36 @@ export function HomeScreen({
                         event.preventDefault();
                         const name = worldNameDraft.trim();
                         if (name === "" || name === world.title) return;
-                        onRenameWorld(world, name);
-                        setRenamingWorldId(null);
+                        if (renamePending) return;
+                        setRenamePending(true);
+                        setRenameFailure("");
+                        void Promise.resolve(onRenameWorld(world, name))
+                          .then((confirmed) => {
+                            if (confirmed !== false)
+                              setRenamingWorldId((current) =>
+                                current === world.worldId ? null : current,
+                              );
+                          })
+                          .catch((error: unknown) =>
+                            setRenameFailure(
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                            ),
+                          )
+                          .finally(() => setRenamePending(false));
                       }}
                     >
+                      {renameFailure ? (
+                        <p role="alert">{renameFailure}</p>
+                      ) : null}
                       <label>
                         <span>{uiText("世界名称")}</span>
                         <input
                           aria-label={uiText("世界名称")}
                           autoFocus
                           maxLength={160}
+                          disabled={renamePending}
                           value={worldNameDraft}
                           onChange={(event) =>
                             setWorldNameDraft(event.currentTarget.value)
@@ -242,6 +271,7 @@ export function HomeScreen({
                           type="submit"
                           aria-label={uiText("保存世界名称")}
                           disabled={
+                            renamePending ||
                             worldNameDraft.trim() === "" ||
                             worldNameDraft.trim() === world.title
                           }
@@ -351,6 +381,7 @@ export function HomeScreen({
                             })}
                             disabled={pending}
                             onClick={() => {
+                              setRenameFailure("");
                               setRenamingPackageId(item.localId);
                               setPackageNameDraft(item.title);
                             }}
@@ -377,16 +408,36 @@ export function HomeScreen({
                             event.preventDefault();
                             const name = packageNameDraft.trim();
                             if (name === "" || name === item.title) return;
-                            onRenamePackage(item, name);
-                            setRenamingPackageId(null);
+                            if (renamePending) return;
+                            setRenamePending(true);
+                            setRenameFailure("");
+                            void Promise.resolve(onRenamePackage(item, name))
+                              .then((confirmed) => {
+                                if (confirmed !== false)
+                                  setRenamingPackageId((current) =>
+                                    current === item.localId ? null : current,
+                                  );
+                              })
+                              .catch((error: unknown) =>
+                                setRenameFailure(
+                                  error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                                ),
+                              )
+                              .finally(() => setRenamePending(false));
                           }}
                         >
+                          {renameFailure ? (
+                            <p role="alert">{renameFailure}</p>
+                          ) : null}
                           <label>
                             <span>{uiText("内容包标题")}</span>
                             <input
                               aria-label={uiText("内容包标题")}
                               autoFocus
                               maxLength={160}
+                              disabled={renamePending}
                               value={packageNameDraft}
                               onChange={(event) =>
                                 setPackageNameDraft(event.currentTarget.value)
@@ -398,6 +449,7 @@ export function HomeScreen({
                               type="submit"
                               aria-label={uiText("保存内容包标题")}
                               disabled={
+                                renamePending ||
                                 packageNameDraft.trim() === "" ||
                                 packageNameDraft.trim() === item.title
                               }

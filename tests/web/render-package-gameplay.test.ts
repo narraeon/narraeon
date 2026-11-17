@@ -42,6 +42,12 @@ test("迟到的权限读取不能覆盖已确认的撤销", async () => {
       id: "package",
     }),
   );
+  await waitFor(() =>
+    expect(client.request).toHaveBeenCalledWith({
+      type: "content.scripts.read",
+      packageId: "package",
+    }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "撤销全部包脚本授权" }));
   await waitFor(() =>
     expect(

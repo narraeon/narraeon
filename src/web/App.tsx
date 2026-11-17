@@ -24,6 +24,7 @@ import {
 import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { ReadTarget } from "./ReadTarget.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { readAfterCommit } from "./RequestOutcome.ts";
@@ -87,7 +88,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
-  const [worldCreation] = useState(() => new WorldCreation());
+  const [creationSyncFailed, setCreationSyncFailed] = useState(false);
+  const [creationSyncError, setCreationSyncError] = useState<unknown>();
+  const [worldCreation] = useState(
+    () =>
+      new WorldCreation((failed, error) => {
+        setCreationSyncFailed(failed);
+        setCreationSyncError(failed ? error : undefined);
+      }),
+  );
+  const creationTemplate = useRef<ProtagonistTemplate | undefined>(undefined);
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigationLocked, setChildNavigationLocked] = useState(false);
@@ -118,6 +128,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const filesDirtyRef = useRef(filesDirty);
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
+  const packageReadTarget = useRef<ReadTarget<unknown> | null>(null);
+  const [packageSyncFailed, setPackageSyncFailed] = useState(false);
+  const [packageSyncError, setPackageSyncError] = useState<unknown>();
   const navigationLockedRef = useRef(false);
   const navigationDraftLockedRef = useRef(false);
   const navigationLocked =
@@ -143,6 +156,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
     packageOpenRequest.current += 1;
+    packageReadTarget.current?.dispose();
+    setPackageSyncFailed(false);
     if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
     if (workspaceHash(previous) !== hash) {
       worldCreation.clear();
@@ -240,12 +255,17 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     });
   });
 
+  useEffect(() => () => packageReadTarget.current?.dispose(), []);
   useEffect(() => {
     const onPopState = () => restoreBrowserAddress();
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
-  const { target: workspaceTarget, syncFailed } = useReadTarget(
+  const {
+    target: workspaceTarget,
+    syncFailed,
+    syncError: workspaceSyncError,
+  } = useReadTarget(
     useCallback(
       () => client.request<Workspace>({ type: "workspace.read" }),
       [client],
@@ -357,36 +377,40 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   ): Promise<void> {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
-    try {
-      await client.request({
-        type: "content.read",
-        packageId,
-      });
-      if (packageOpenRequest.current !== requestVersion) return;
-      if (
-        navigationDraftLockedRef.current ||
-        (mode === "replace" &&
-          (navigationLockedRef.current || creatingWorldRef.current))
-      ) {
-        if (mode === "replace") preserveLocation();
-        else
-          setNotice(
-            uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
-          );
-        return;
-      }
-      switchLocation({ screen: "content", packageId }, mode);
-    } catch (error: unknown) {
-      if (packageOpenRequest.current === requestVersion) {
-        if (mode === "replace")
+    packageReadTarget.current?.dispose();
+    setPackageSyncFailed(false);
+    const target = new ReadTarget<unknown>({
+      load: () => client.request({ type: "content.read", packageId }),
+      apply: () => {
+        if (packageOpenRequest.current !== requestVersion) return;
+        if (
+          navigationDraftLockedRef.current ||
+          (mode === "replace" &&
+            (navigationLockedRef.current || creatingWorldRef.current))
+        ) {
+          if (mode === "replace") preserveLocation();
+          else
+            setNotice(
+              uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+            );
+          return;
+        }
+        switchLocation({ screen: "content", packageId }, mode);
+      },
+      onSyncFailure: (failed, error) => {
+        if (packageOpenRequest.current !== requestVersion) return;
+        setPackageSyncFailed(failed);
+        setPackageSyncError(failed ? error : undefined);
+        if (failed && mode === "replace")
           window.history.replaceState(
             null,
             "",
             workspaceHash(locationRef.current),
           );
-        report(error);
-      }
-    }
+      },
+    });
+    packageReadTarget.current = target;
+    await target.read();
   }
 
   /** The creation dialog keeps itself open and shows the error when Runtime refuses the package. */
@@ -400,6 +424,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setPackageDialogOpen(false);
       acceptPackage(created);
       switchLocation({ screen: "content", packageId: created.localId });
+    } catch (error) {
+      await workspaceTarget.recover();
+      throw error;
     } finally {
       setCreatingPackage(false);
     }
@@ -472,6 +499,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (locationRef.current === origin && !navigationDraftLockedRef.current)
         switchLocation({ screen: "home" });
     } catch (error: unknown) {
+      await workspaceTarget.recover();
       report(error);
     }
   }
@@ -479,7 +507,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function renamePackage(
     title: string,
     packageId = selected,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const receipt = await client.request<HomeContentPackage>({
         type: "content.rename",
@@ -488,8 +516,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       });
       acceptPackage(receipt);
       setNotice(uiText("内容包已重命名。"));
+      return true;
     } catch (error: unknown) {
+      await workspaceTarget.recover();
+      if (screen === "content") await authoringWorkspace.refresh();
       report(error);
+      return false;
     }
   }
 
@@ -512,6 +544,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       switchLocation({ screen: "content", packageId: imported.localId });
       setNotice(uiText("ZIP 内容包已导入为新的本地身份。"));
     } catch (error: unknown) {
+      await workspaceTarget.recover();
       report(error);
     } finally {
       setImportPending(false);
@@ -531,6 +564,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         blob: new Blob([bytes], { type: "application/zip" }),
       });
     } catch (error: unknown) {
+      await Promise.all([
+        workspaceTarget.recover(),
+        authoringWorkspace.refresh(),
+      ]);
       report(error);
     }
   }
@@ -547,6 +584,25 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     switchLocation({ screen: "preview" });
   }
+
+  const creationOverviewVisible = screen === "create" || screen === "content";
+  const {
+    target: creationOverviewTarget,
+    syncFailed: creationOverviewFailed,
+    syncError: creationOverviewError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        creationOverviewVisible
+          ? client.request<V1SettingImprovementOverview>({
+              type: "setting-improvement.overview",
+              packageId: selected,
+            })
+          : Promise.resolve(null),
+      [client, selected, creationOverviewVisible],
+    ),
+    useCallback(() => undefined, []),
+  );
 
   async function createWorld(template?: ProtagonistTemplate): Promise<void> {
     if (
@@ -574,12 +630,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     creatingWorldRef.current = true;
     setCreatingWorld(true);
     const packageId = selected;
+    creationTemplate.current = template;
     const model = modelBinding();
     try {
-      const authoring = await client.request<V1SettingImprovementOverview>({
-        type: "setting-improvement.overview",
-        packageId,
-      });
+      const authoring = await creationOverviewTarget.read();
+      if (authoring === null) return;
       if (
         authoring.latest?.runStatus === "running" ||
         authoring.history.some((session) => session.runStatus === "running")
@@ -594,23 +649,34 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           ? packageDetail.treeRevision
           : undefined,
       );
-      if (template !== undefined)
-        setProtagonistRevision({
-          worldId: created.worldId,
-          message: uiText(
-            "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
-            { body: template.body },
-          ),
-          started: false,
-        });
-      acceptWorld(created);
-      openWorld(created.worldId);
+      acceptCreatedWorld(created);
     } catch (error: unknown) {
+      await workspaceTarget.recover();
       report(error);
     } finally {
       creatingWorldRef.current = false;
       setCreatingWorld(false);
     }
+  }
+
+  function acceptCreatedWorld(created: HomeWorld): void {
+    const template = creationTemplate.current;
+    if (template !== undefined)
+      setProtagonistRevision({
+        worldId: created.worldId,
+        message: uiText(
+          "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
+          { body: template.body },
+        ),
+        started: false,
+      });
+    acceptWorld(created);
+    openWorld(created.worldId);
+  }
+
+  async function rereadCreation(): Promise<void> {
+    const created = await worldCreation.recover();
+    if (created !== null) acceptCreatedWorld(created);
   }
 
   function modelBinding() {
@@ -637,11 +703,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   async function renameWorld(worldId: string, name: string): Promise<void> {
-    const renamed = await client.request<HomeWorld>({
-      type: "world.rename",
-      worldId,
-      name,
-    });
+    const renamed = await workspaceTarget.command(() =>
+      client.request<HomeWorld>({
+        type: "world.rename",
+        worldId,
+        name,
+      }),
+    );
     acceptWorld(renamed);
     setNotice(uiText("世界已重命名为“{name}”。", { name: renamed.title }));
   }
@@ -667,6 +735,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       }));
       setNotice(uiText("世界已从本机删除。"));
     } catch (error: unknown) {
+      await workspaceTarget.recover();
       report(error);
     }
   }
@@ -759,6 +828,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onConfigureModel={() => navigate("model")}
         onNavigationLockChange={setChildNavigationLocked}
         onRenameWorld={(name) => renameWorld(worldId, name)}
+        onRecoverWorkspace={() => workspaceTarget.recover()}
         initialReadingPreferences={
           workspace.preferences.reading ?? defaultAppReadingPreferences
         }
@@ -898,8 +968,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       ) : null}
       <div className="workspace-body">
         <SyncNotice
-          failed={syncFailed}
-          onRead={() => void workspaceTarget.recover()}
+          failed={
+            syncFailed ||
+            packageSyncFailed ||
+            creationOverviewFailed ||
+            creationSyncFailed
+          }
+          reason={
+            (creationSyncFailed ? creationSyncError : undefined) ??
+            (creationOverviewFailed ? creationOverviewError : undefined) ??
+            (packageSyncFailed ? packageSyncError : undefined) ??
+            workspaceSyncError
+          }
+          onRead={() => {
+            if (syncFailed) void workspaceTarget.recover();
+            if (packageSyncFailed) void packageReadTarget.current?.recover();
+            if (creationOverviewFailed) void creationOverviewTarget.recover();
+            if (creationSyncFailed) void rereadCreation();
+          }}
         />
         {worldContent}
         {authoringContent}
@@ -924,6 +1010,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             sillyTavernContentImport={
               <SillyTavernContentImport
                 client={client}
+                onFailure={() => workspaceTarget.recover()}
                 onImported={(receipt) => {
                   acceptPackage(receipt);
                   switchLocation({
@@ -947,6 +1034,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 disabled={importPending || samplePending || archivePending}
                 onBusyChange={setArchivePending}
                 onImported={acceptWorld}
+                onFailure={() => workspaceTarget.recover()}
               />
             }
             renderWorldBackupExport={(world) => (
@@ -956,6 +1044,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 label="导出备份"
                 disabled={importPending || archivePending || samplePending}
                 onBusyChange={setArchivePending}
+                onFailure={() => workspaceTarget.recover()}
               />
             )}
             samplePending={samplePending}
@@ -970,9 +1059,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onConfigureModel={() => navigate("model")}
             onImportPackage={() => void importPackage()}
             onOpenPackage={(packageId) => void openPackage(packageId)}
-            onRenamePackage={(item, name) =>
-              void renamePackage(name, item.localId)
-            }
+            onRenamePackage={(item, name) => renamePackage(name, item.localId)}
             onDeletePackage={(item) => {
               if (
                 globalThis.confirm(
@@ -985,9 +1072,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 void contentCommand("content.delete", item.localId);
             }}
             onOpenWorld={openWorld}
-            onRenameWorld={(world, name) =>
-              void renameWorld(world.worldId, name).catch(report)
-            }
+            onRenameWorld={async (world, name) => {
+              try {
+                await renameWorld(world.worldId, name);
+                return true;
+              } catch (error) {
+                report(error);
+                return false;
+              }
+            }}
             onDeleteWorld={(world) => void deleteWorld(world)}
           />
         )}
@@ -1053,7 +1146,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             selectedId={selected}
             pending={creatingWorld}
             modelConfigured={workspace.model.configured}
-            onSelect={setSelected}
+            onSelect={(id) => {
+              worldCreation.clear();
+              setSelected(id);
+            }}
             onCreate={(template) => void createWorld(template)}
             onNavigationLockChange={setChildNavigationLocked}
             onEdit={() => navigate("content")}

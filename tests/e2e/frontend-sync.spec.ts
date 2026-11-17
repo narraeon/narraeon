@@ -1,6 +1,9 @@
 import { expect, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
 
 test.use({ runtimeScope: "frontend-sync" });
 
@@ -13,6 +16,104 @@ test.beforeEach(async ({ page, runtimeUrl }) => {
     type: "content.create-sample",
     locale: "zh-CN",
   });
+});
+
+test("an archive import with a lost receipt appears once after a read-only workspace recovery", async ({
+  page,
+  runtimeUrl,
+}) => {
+  const source = await worldArchiveFixture();
+  try {
+    await source.worlds.renameWorld(source.worldId, "Lost archive receipt");
+    await source.archives.exportWorld({
+      worldId: source.worldId,
+      operationId: "lost-receipt",
+    });
+    let imports = 0;
+    let reads = 0;
+    await page.route("**/api/runtime/v1", async (route) => {
+      const input = (route.request().postDataJSON() as { request: V1Request })
+        .request;
+      if (input.type === "world.archive.import") {
+        imports++;
+        const response = await route.fetch();
+        expect(response.ok()).toBe(true);
+        await route.abort("failed");
+      } else {
+        if (imports > 0 && input.type === "workspace.read") reads++;
+        await route.continue();
+      }
+    });
+    await page.goto("/#/");
+    await page
+      .getByLabel("世界备份 ZIP 文件")
+      .setInputFiles(
+        join(source.root, "world-archives/exports/lost-receipt/archive.zip"),
+      );
+    await expect(
+      page.getByRole("button", {
+        name: "打开世界：Lost archive receipt",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(imports).toBe(1);
+    expect(reads).toBe(1);
+    const after = await runtime<{ worlds: { title: string }[] }>(
+      page,
+      runtimeUrl,
+      { type: "workspace.read" },
+    );
+    expect(
+      after.worlds.filter(({ title }) => title === "Lost archive receipt"),
+    ).toHaveLength(1);
+    await expect(page).toHaveURL(/#\/$/u);
+  } finally {
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
+
+test("a content import with a lost receipt updates the library once and keeps its selected file", async ({
+  page,
+  runtimeUrl,
+}) => {
+  const before = await workspace(page, runtimeUrl);
+  const archive = await runtime<{ base64: string; fileName: string }>(
+    page,
+    runtimeUrl,
+    { type: "content.export", packageId: before.contentPackages[0]!.localId },
+  );
+  let imports = 0;
+  let reads = 0;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type === "content.import") {
+      imports++;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await route.abort("failed");
+    } else {
+      if (imports > 0 && input.type === "workspace.read") reads++;
+      await route.continue();
+    }
+  });
+  await page.goto("/#/");
+  await page.locator("summary").filter({ hasText: "导入内容包 ZIP" }).click();
+  await page.getByLabel("内容包 ZIP 文件").setInputFiles({
+    name: "Retained package.zip",
+    mimeType: "application/zip",
+    buffer: Buffer.from(archive.base64, "base64"),
+  });
+  await page.getByRole("button", { name: "导入 ZIP", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /^打开内容包：/u }),
+  ).toHaveCount(before.contentPackages.length + 1);
+  await expect(
+    page.getByText("Retained package.zip", { exact: false }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/#\/$/u);
+  expect(imports).toBe(1);
+  expect(reads).toBe(1);
 });
 
 test("a committed sample with a lost receipt appears once without navigating to a same-name package", async ({

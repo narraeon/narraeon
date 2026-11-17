@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi, type Mock } from "vitest";
 
@@ -134,6 +140,33 @@ test("备份可以下载时只做轻量检查，再以同一路径触发浏览�
       download: "雾港.narraeon-world.zip",
     },
   ]);
+});
+
+test("a native archive save failure reports at the export entry and recovers only related state", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))),
+  );
+  vi.stubGlobal("NarraeonAndroid", {
+    addEventListener: vi.fn(),
+    postMessage: vi.fn(() => {
+      throw new Error("Native storage unavailable");
+    }),
+  });
+  const client = exportClient();
+  const recover = vi.fn(() => Promise.resolve());
+  render(
+    createElement(WorldBackupExportButton, {
+      client,
+      worldId: "world-1",
+      onFailure: recover,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: uiText("导出世界备份") }));
+  await screen.findByText("Native storage unavailable");
+  await waitFor(() => expect(recover).toHaveBeenCalledTimes(1));
+  expect(client.request).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText(uiText("世界备份已开始下载。"))).toBeNull();
 });
 
 test.each(["null", "{}", '{"uploadId":""}'])(

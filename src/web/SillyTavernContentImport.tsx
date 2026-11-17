@@ -1,10 +1,12 @@
 import type { HomeContentPackage } from "./HomeScreen.tsx";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ContentInspection,
   ContentSelection,
 } from "../protocol/sillyTavernContent.ts";
 import type { ContentTreeFile, V1Request } from "../protocol/v1.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import { uiText } from "./i18n.ts";
 
 function ruleValue(rules: Record<string, unknown>, ...keys: string[]): unknown {
@@ -124,9 +126,11 @@ function fieldLabel(key: string): string {
 export function SillyTavernContentImport({
   client,
   onImported,
+  onFailure,
 }: {
   client: { request<T = unknown>(request: V1Request): Promise<T> };
   onImported: (receipt: HomeContentPackage) => void;
+  onFailure?: () => Promise<unknown>;
 }): React.JSX.Element {
   const [source, setSource] = useState("");
   const [name, setName] = useState("SillyTavern");
@@ -144,6 +148,56 @@ export function SillyTavernContentImport({
   }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const {
+    target: inspectTarget,
+    syncFailed: inspectFailed,
+    syncError: inspectError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        source
+          ? client.request<ContentInspection>({
+              type: "content.sillytavern.inspect",
+              source,
+            })
+          : Promise.resolve(null),
+      [client, source],
+    ),
+    useCallback((inspected: ContentInspection | null) => {
+      if (inspected === null) return;
+      setView(inspected);
+      setActive(
+        inspected.kind === "character"
+          ? `field:${["description", "scenario", "mes_example", "system_prompt", "name", "personality"].find((key) => inspected.fields[key] !== undefined) ?? "name"}`
+          : inspected.entries[0]
+            ? `entry:${inspected.entries[0].id}`
+            : "fields",
+      );
+    }, []),
+  );
+  useEffect(() => {
+    if (source) void inspectTarget.read();
+  }, [inspectTarget, source]);
+  const {
+    target: previewTarget,
+    syncFailed: previewFailed,
+    syncError: previewError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<NonNullable<typeof preview>>({
+          type: "content.sillytavern.preview",
+          source,
+          name,
+          selection,
+        }),
+      [client, source, name, selection],
+    ),
+    useCallback((value: NonNullable<typeof preview>) => {
+      setPreview(value);
+      setShowResult(true);
+    }, []),
+  );
   const dialog = useRef<HTMLDivElement>(null);
   const isOpen = Boolean(source || error);
   useEffect(() => {
@@ -229,18 +283,6 @@ export function SillyTavernContentImport({
               setName(
                 file.name.replace(/\.(json|png)$/iu, "") || "SillyTavern",
               );
-              const inspected = await client.request<ContentInspection>({
-                type: "content.sillytavern.inspect",
-                source: encoded,
-              });
-              setView(inspected);
-              setActive(
-                inspected.kind === "character"
-                  ? `field:${["description", "scenario", "mes_example", "system_prompt", "name", "personality"].find((key) => inspected.fields[key] !== undefined) ?? "name"}`
-                  : inspected.entries[0]
-                    ? `entry:${inspected.entries[0].id}`
-                    : "fields",
-              );
             });
           }}
         />
@@ -261,6 +303,16 @@ export function SillyTavernContentImport({
             )}
           </p>
           {error && <p role="alert">{errorText(error)}</p>}
+          <SyncNotice
+            failed={inspectFailed}
+            reason={inspectError}
+            onRead={() => void inspectTarget.recover()}
+          />
+          <SyncNotice
+            failed={previewFailed}
+            reason={previewError}
+            onRead={() => void previewTarget.recover()}
+          />
           {view && (
             <>
               <fieldset disabled={busy}>
@@ -648,15 +700,7 @@ export function SillyTavernContentImport({
                 disabled={busy || !name.trim()}
                 onClick={() =>
                   void run(async () => {
-                    setPreview(
-                      await client.request({
-                        type: "content.sillytavern.preview",
-                        source,
-                        name,
-                        selection,
-                      }),
-                    );
-                    setShowResult(true);
+                    await previewTarget.read();
                   })
                 }
               >
@@ -709,14 +753,18 @@ export function SillyTavernContentImport({
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
-                        const result = await client.request<HomeContentPackage>(
-                          {
+                        let result: HomeContentPackage;
+                        try {
+                          result = await client.request<HomeContentPackage>({
                             type: "content.sillytavern.import",
                             source,
                             name,
                             selection,
-                          },
-                        );
+                          });
+                        } catch (error) {
+                          await onFailure?.();
+                          throw error;
+                        }
                         close();
                         onImported(result);
                       })

@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { V1Request } from "../protocol/v1.ts";
+import { RuntimeRequestError } from "./RuntimeResponse.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import { uiText } from "./i18n.ts";
 
 export function PackageScriptPermissionControl({
@@ -26,34 +29,33 @@ export function PackageScriptPermissionControl({
   const status = result?.target === target ? result : null;
   const error = status?.error;
   const version = useRef(0);
-  const [readAttempt, setReadAttempt] = useState(0);
-  useEffect(
-    () => () => {
-      version.current += 1;
-    },
-    [target],
+  const {
+    target: permissionTarget,
+    syncFailed,
+    syncError,
+  } = useReadTarget(
+    useCallback(
+      async () =>
+        permissionStatus(
+          await client.request(
+            kind === "content"
+              ? { type: "content.scripts.read", packageId: id }
+              : { type: "world.package-scripts.read", worldId: id },
+          ),
+        ),
+      [client, kind, id],
+    ),
+    useCallback(
+      (value: { enabled: boolean }) => setResult({ target, ...value }),
+      [target],
+    ),
   );
   useEffect(() => {
-    let active = true;
-    const readVersion = version.current;
-    void client
-      .request(
-        kind === "content"
-          ? { type: "content.scripts.read", packageId: id }
-          : { type: "world.package-scripts.read", worldId: id },
-      )
-      .then((value) => {
-        if (active && readVersion === version.current)
-          setResult({ target, ...permissionStatus(value) });
-      })
-      .catch((error: unknown) => {
-        if (active && readVersion === version.current)
-          setResult({ target, error: String(error) });
-      });
+    void permissionTarget.read();
     return () => {
-      active = false;
+      version.current += 1;
     };
-  }, [client, kind, id, dirty, readAttempt, target]);
+  }, [permissionTarget, dirty]);
   async function change(enabled: boolean): Promise<void> {
     if (pending) return;
     const writeVersion = ++version.current;
@@ -65,17 +67,22 @@ export function PackageScriptPermissionControl({
           : { type: "world.package-scripts.set", worldId: id, enabled },
       );
       if (writeVersion === version.current) {
+        permissionTarget.accept();
         setResult({ target, ...permissionStatus(value) });
         onChange?.();
       }
     } catch (error) {
-      if (writeVersion === version.current)
-        setResult({ target, error: String(error) });
-    } finally {
       if (writeVersion === version.current) {
-        version.current += 1;
-        setWriteTarget(null);
+        await permissionTarget.recover();
+        if (error instanceof RuntimeRequestError && error.kind === "runtime")
+          setResult((current) => ({
+            ...(current?.target === target ? current : { target }),
+            error: error.message,
+          }));
       }
+    } finally {
+      if (writeVersion === version.current) version.current += 1;
+      setWriteTarget((current) => (current === target ? null : current));
     }
   }
   return (
@@ -104,18 +111,12 @@ export function PackageScriptPermissionControl({
         {uiText("撤销全部包脚本授权")}
       </button>
       {dirty ? <p>{uiText("请先保存修改，再授权资源代码。")}</p> : null}
-      {error && (
-        <div role="alert">
-          {error}{" "}
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => setReadAttempt((value) => value + 1)}
-          >
-            {uiText("重试")}
-          </button>
-        </div>
-      )}
+      {error ? <p role="alert">{error}</p> : null}
+      <SyncNotice
+        failed={syncFailed}
+        reason={syncError}
+        onRead={() => void permissionTarget.recover()}
+      />
     </section>
   );
 }

@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import type { V1Request } from "../protocol/v1.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import { uiText } from "./i18n.ts";
 
 interface Props {
@@ -29,35 +31,29 @@ function ContextDetails({
 }: Props): React.JSX.Element {
   const [context, setContext] = useState<PlayRequestContext | null>(null);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const active = useRef(false);
-  const loading = useRef(false);
   const expanded = useRef(false);
+  const loadContext = useRef(load);
   useEffect(() => {
-    active.current = true;
-    return () => {
-      active.current = false;
-    };
-  }, []);
+    loadContext.current = load;
+  }, [load]);
+  const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(
+      () =>
+        loadContext.current({
+          type: "play.timeline.context",
+          worldId,
+          chainId,
+          eventId,
+        }),
+      [worldId, chainId, eventId],
+    ),
+    useCallback((value: PlayRequestContext) => setContext(value), []),
+  );
   const read = async () => {
-    if (loading.current || context !== null) return;
-    loading.current = true;
+    if (context !== null) return;
     setPending(true);
-    setFailed(false);
-    try {
-      const result = await load({
-        type: "play.timeline.context",
-        worldId,
-        chainId,
-        eventId,
-      });
-      if (active.current) setContext(result);
-    } catch {
-      if (active.current) setFailed(true);
-    } finally {
-      loading.current = false;
-      if (active.current) setPending(false);
-    }
+    await target.read();
+    setPending(false);
   };
   return (
     <details
@@ -70,14 +66,11 @@ function ContextDetails({
     >
       <summary>{label ?? uiText("当时的上下文")}</summary>
       {pending ? <p role="status">{uiText("正在加载…")}</p> : null}
-      {failed ? (
-        <p role="alert">
-          {uiText("上下文加载失败")}{" "}
-          <button type="button" onClick={() => void read()}>
-            {uiText("重试")}
-          </button>
-        </p>
-      ) : null}
+      <SyncNotice
+        failed={syncFailed}
+        reason={syncError}
+        onRead={() => void target.recover()}
+      />
       {context?.status === "unavailable" ? (
         <p>{uiText("当时的上下文不可用（旧记录缺少完整证据或记录已失效）")}</p>
       ) : null}

@@ -23,6 +23,7 @@ test("context is fetched only on expansion, retries errors and ignores an old wo
     .fn()
     .mockReturnValueOnce(first)
     .mockRejectedValueOnce(new Error("failed"))
+    .mockRejectedValueOnce(new Error("failed recovery"))
     .mockResolvedValue({
       status: "available",
       messages: [{ role: "user", text: "new-context" }],
@@ -54,13 +55,13 @@ test("context is fetched only on expansion, retries errors and ignores an old wo
   expect(screen.queryByText("stale-context")).toBeNull();
   expect(load).toHaveBeenCalledTimes(1);
   toggle(view.container, true);
-  await screen.findByRole("alert");
+  await screen.findByText("暂时无法同步");
   fireEvent.click(screen.getByRole("button"));
   await screen.findByText("new-context");
-  expect(load).toHaveBeenCalledTimes(3);
+  expect(load).toHaveBeenCalledTimes(4);
   toggle(view.container, false);
   toggle(view.container, true);
-  expect(load).toHaveBeenCalledTimes(3);
+  expect(load).toHaveBeenCalledTimes(4);
 });
 
 function toggle(container: HTMLElement, open: boolean): void {

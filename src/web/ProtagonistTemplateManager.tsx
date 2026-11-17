@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isProtagonistTemplateContent,
   type ProtagonistTemplate,
@@ -8,6 +8,8 @@ import type { V1Request } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 import { useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 
 export function ProtagonistTemplateManager({
   client,
@@ -28,6 +30,27 @@ export function ProtagonistTemplateManager({
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [failure, setFailure] = useState("");
+  const applyTemplates = useRef(onChange);
+  useEffect(() => {
+    applyTemplates.current = onChange;
+  }, [onChange]);
+  const {
+    target: templatesTarget,
+    syncFailed,
+    syncError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<ProtagonistTemplatesView>({
+          type: "protagonist-templates.read",
+        }),
+      [client],
+    ),
+    useCallback(
+      (view: ProtagonistTemplatesView) => applyTemplates.current(view),
+      [],
+    ),
+  );
   const dirty =
     name !== (baseline?.name ?? "") || body !== (baseline?.body ?? "");
   useEffect(() => {
@@ -57,6 +80,7 @@ export function ProtagonistTemplateManager({
     setFailure("");
     try {
       const view = await client.request<ProtagonistTemplatesView>(request);
+      templatesTarget.accept();
       onChange(view);
       select(
         request.type === "protagonist-templates.delete"
@@ -67,6 +91,7 @@ export function ProtagonistTemplateManager({
             : (view.templates.at(-1) ?? null),
       );
     } catch (error: unknown) {
+      await templatesTarget.recover();
       setFailure(
         error instanceof Error ? error.message : uiText("主角模板保存失败"),
       );
@@ -154,6 +179,11 @@ export function ProtagonistTemplateManager({
               {uiText("名称为 1–80 个字符；正文为自由 Markdown，最多 16 KiB。")}
             </small>
             {failure && <p role="alert">{failure}</p>}
+            <SyncNotice
+              failed={syncFailed}
+              reason={syncError}
+              onRead={() => void templatesTarget.recover()}
+            />
             <div className="button-row">
               <button
                 className="primary-button"

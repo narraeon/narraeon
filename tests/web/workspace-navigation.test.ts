@@ -249,6 +249,135 @@ test("创建响应丢失时从同一操作的创建回执进入世界", async ()
   ).toHaveLength(1);
 });
 
+test("创建结果核对连续失败后只重读原操作，不按列表同名项跳转", async () => {
+  window.history.replaceState(null, "", "#/create");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let outcomeReads = 0;
+  let operationId = "";
+  request.mockImplementation(async (r) => {
+    if (r.type === "protagonist-templates.read") return { templates: [] };
+    if (r.type === "world.create") {
+      operationId = r.operationId;
+      throw new Error("lost receipt");
+    }
+    if (r.type === "world.creation-outcome") {
+      expect(r.operationId).toBe(operationId);
+      if (++outcomeReads <= 2) throw new Error("outcome offline");
+      return {
+        outcome: "created",
+        world: {
+          worldId: "confirmed",
+          title: "同名世界",
+          gameplay: { mode: "interactive-fiction" },
+          lastActivityAt: null,
+          playerTurns: 0,
+          excerpt: null,
+        },
+      };
+    }
+    if (r.type === "workspace.read")
+      return {
+        ...((await original(r)) as object),
+        worlds: [
+          {
+            worldId: "same-name",
+            title: "同名世界",
+            gameplay: { mode: "interactive-fiction" },
+            lastActivityAt: null,
+            playerTurns: 0,
+            excerpt: null,
+          },
+        ],
+      };
+    return original(r);
+  });
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从当前内容包创建" }),
+  );
+  await screen.findByText("暂时无法同步");
+  expect(window.location.hash).toBe("#/create");
+  expect(outcomeReads).toBe(2);
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/world/confirmed"));
+  expect(
+    request.mock.calls.filter(([r]) => r.type === "world.create"),
+  ).toHaveLength(1);
+  expect(outcomeReads).toBe(3);
+});
+
+test("内容包导航预读取失败保留原位置，手动重读成功后才进入请求的身份", async () => {
+  window.history.replaceState(null, "", "#/");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let reads = 0;
+  request.mockImplementation(async (input) => {
+    if (
+      input.type === "content.read" &&
+      input.packageId === "chosen" &&
+      ++reads <= 2
+    )
+      throw new Error("package offline");
+    return original(input);
+  });
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "打开内容包：当前创作" }),
+  );
+  await screen.findByText("暂时无法同步");
+  expect(reads).toBe(2);
+  expect(window.location.hash).toBe("#/");
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await screen.findByRole("heading", { name: "当前创作 · AI 设定完善" });
+  expect(window.location.hash).toBe("#/content/chosen");
+  expect(
+    request.mock.calls.some(([input]) => input.type === "world.create"),
+  ).toBe(false);
+});
+
+test("创建前检查手动恢复只读取，必须再次明确创建才派发世界命令", async () => {
+  window.history.replaceState(null, "", "#/create");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let reads = 0;
+  request.mockImplementation(async (input) => {
+    if (input.type === "protagonist-templates.read") return { templates: [] };
+    if (input.type === "setting-improvement.overview" && ++reads <= 2)
+      throw new Error("preflight offline");
+    if (input.type === "world.create")
+      return {
+        world: {
+          worldId: "created-once",
+          title: "World",
+          gameplay: { mode: "interactive-fiction" },
+          lastActivityAt: null,
+          playerTurns: 0,
+          excerpt: null,
+        },
+      };
+    return original(input);
+  });
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从当前内容包创建" }),
+  );
+  await screen.findByText("暂时无法同步");
+  expect(reads).toBe(2);
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
+  expect(
+    request.mock.calls.some(([input]) => input.type === "world.create"),
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "从当前内容包创建" }));
+  await waitFor(() =>
+    expect(window.location.hash).toBe("#/world/created-once"),
+  );
+  expect(
+    request.mock.calls.filter(([input]) => input.type === "world.create"),
+  ).toHaveLength(1);
+});
+
 test("世界创建进行中时后退保持来源页面和地址", async () => {
   window.history.replaceState(null, "", "#/create");
   const { client, request } = fixture();

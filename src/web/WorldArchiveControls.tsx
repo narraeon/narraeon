@@ -24,12 +24,14 @@ export function WorldBackupExportButton({
   label = "导出世界备份",
   disabled = false,
   onBusyChange,
+  onFailure,
 }: {
   client: ArchiveClient;
   worldId: string;
   label?: "导出世界备份" | "导出备份";
   disabled?: boolean;
   onBusyChange?: (busy: boolean) => void;
+  onFailure?: () => Promise<unknown>;
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -52,6 +54,7 @@ export function WorldBackupExportButton({
       setMessage(outcome === "cancelled" ? "" : uiText("世界备份已开始下载。"));
     } catch (error) {
       setMessage(archiveDownloadErrorMessage(error));
+      await onFailure?.();
     } finally {
       setBusy(false);
       onBusyChange?.(false);
@@ -83,11 +86,13 @@ export function WorldBackupImportButton({
   disabled = false,
   onBusyChange,
   onImported,
+  onFailure,
 }: {
   client: ArchiveClient;
   disabled?: boolean;
   onBusyChange: (busy: boolean) => void;
   onImported: (world: HomeWorld) => void;
+  onFailure?: () => Promise<unknown>;
 }): React.JSX.Element {
   const picker = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -115,6 +120,7 @@ export function WorldBackupImportButton({
       setMessage(uiText("世界备份已导入，新世界已加入列表。"));
     } catch (error) {
       setMessage(archiveErrorMessage(error));
+      await onFailure?.();
     } finally {
       setBusy(false);
       onBusyChange(false);

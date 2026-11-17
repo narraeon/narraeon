@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import type {
   ProtagonistTemplate,
@@ -7,6 +7,8 @@ import type {
 import { ProtagonistTemplateManager } from "./ProtagonistTemplateManager.tsx";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 
 export function CreateWorldScreen({
@@ -40,71 +42,58 @@ export function CreateWorldScreen({
   const [templates, setTemplates] = useState<ProtagonistTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [templatesLoading, setTemplatesLoading] = useState(true);
-  const [templatesFailure, setTemplatesFailure] = useState("");
-  const [templateRead, setTemplateRead] = useState(0);
   const [managingTemplates, setManagingTemplates] = useState(false);
+  const {
+    target: templateTarget,
+    syncFailed: templatesFailed,
+    syncError: templatesError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<ProtagonistTemplatesView>({
+          type: "protagonist-templates.read",
+        }),
+      [client],
+    ),
+    useCallback((view: ProtagonistTemplatesView) => {
+      setTemplates(view.templates);
+      setTemplatesLoading(false);
+    }, []),
+  );
   useEffect(() => {
-    let active = true;
-    void client
-      .request<ProtagonistTemplatesView>({ type: "protagonist-templates.read" })
-      .then((view) => {
-        if (active) {
-          setTemplates(view.templates);
-          setTemplatesFailure("");
-        }
-      })
-      .catch((error: unknown) => {
-        if (active)
-          setTemplatesFailure(
-            error instanceof Error ? error.message : uiText("主角模板读取失败"),
-          );
-      })
-      .finally(() => {
-        if (active) setTemplatesLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [client, templateRead]);
+    void templateTarget.read().finally(() => setTemplatesLoading(false));
+  }, [templateTarget]);
   const selected = packages.find(({ localId }) => localId === selectedId);
   const [preview, setPreview] = useState<{
     packageId: string;
     opening: string;
-    failure: string;
   } | null>(null);
-  useEffect(() => {
-    let active = true;
-    if (selectedId !== "") {
-      void client
-        .request<{ files: ContentTreeFile[] }>({
+  const {
+    target: openingTarget,
+    syncFailed: openingFailed,
+    syncError: openingError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<{ files: ContentTreeFile[] }>({
           type: "content.read",
           packageId: selectedId,
-        })
-        .then(({ files }) => {
-          if (active)
-            setPreview({
-              packageId: selectedId,
-              failure: "",
-              opening:
-                files.find(({ path }) => path === "opening.md")?.contents ?? "",
-            });
-        })
-        .catch((error: unknown) => {
-          if (active)
-            setPreview({
-              packageId: selectedId,
-              opening: "",
-              failure:
-                error instanceof Error
-                  ? error.message
-                  : uiText("内容包读取失败"),
-            });
-        });
-    }
-    return () => {
-      active = false;
-    };
-  }, [client, selectedId]);
+        }),
+      [client, selectedId],
+    ),
+    useCallback(
+      ({ files }: { files: ContentTreeFile[] }) =>
+        setPreview({
+          packageId: selectedId,
+          opening:
+            files.find(({ path }) => path === "opening.md")?.contents ?? "",
+        }),
+      [selectedId],
+    ),
+  );
+  useEffect(() => {
+    if (selectedId) void openingTarget.read();
+  }, [openingTarget, selectedId]);
 
   return (
     <main className="create-world-screen">
@@ -149,26 +138,16 @@ export function CreateWorldScreen({
         </label>
         <button
           type="button"
-          disabled={pending || templatesLoading || templatesFailure !== ""}
+          disabled={pending || templatesLoading || templatesFailed}
           onClick={() => setManagingTemplates(true)}
         >
           {uiText("管理主角模板")}
         </button>
-        {templatesFailure && (
-          <p role="alert">
-            {templatesFailure}
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => {
-                setTemplatesLoading(true);
-                setTemplateRead((value) => value + 1);
-              }}
-            >
-              {uiText("重新读取主角模板")}
-            </button>
-          </p>
-        )}
+        <SyncNotice
+          failed={templatesFailed}
+          reason={templatesError}
+          onRead={() => void templateTarget.recover()}
+        />
         {selected?.status === "needs_repair" && (
           <p role="status">{uiText("内容包需要修复后才能创建世界。")}</p>
         )}
@@ -202,9 +181,12 @@ export function CreateWorldScreen({
             {gameplayLabel(selected.gameplay, getWebLocale())}
           </p>
         )}
-        {preview?.packageId === selectedId && preview.failure ? (
-          <p role="alert">{preview.failure}</p>
-        ) : preview?.packageId === selectedId ? (
+        <SyncNotice
+          failed={openingFailed}
+          reason={openingError}
+          onRead={() => void openingTarget.recover()}
+        />
+        {preview?.packageId === selectedId ? (
           <p className="create-world-opening">
             {preview.opening || uiText("这份内容包还没有开场白。")}
           </p>
@@ -217,6 +199,7 @@ export function CreateWorldScreen({
           client={client}
           templates={templates}
           onChange={(view) => {
+            templateTarget.accept();
             setTemplates(view.templates);
             if (!view.templates.some(({ id }) => id === templateId))
               setTemplateId("");

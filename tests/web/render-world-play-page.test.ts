@@ -1475,12 +1475,16 @@ describe("世界游玩页面", () => {
       items: [],
       nextCursor: "earlier",
     };
+    let pageReads = 0;
     const client = {
       request: vi.fn(<T>(request: V1Request): Promise<T> => {
         if (request.type === "world.play-decorations.read")
           return Promise.resolve(decorations as T);
-        if (request.type === "play.timeline.page")
+        if (request.type === "play.timeline.page") {
+          if (++pageReads <= 2)
+            return Promise.reject(new Error("page offline"));
           return Promise.resolve(early as T);
+        }
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         return Promise.resolve({
           ...worldView(chain),
@@ -1492,7 +1496,11 @@ describe("世界游玩页面", () => {
     await screen.findByRole("heading", { name: "宿舍世界" });
     expect(screen.queryByTitle("panel")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "加载更早的故事" }));
+    await screen.findByText("暂时无法同步");
+    expect(pageReads).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
     await screen.findByText("早期 AI 原文");
+    expect(pageReads).toBe(3);
     await waitFor(() => expect(screen.getAllByTitle("panel")).toHaveLength(1));
     const reply = screen.getByText("早期 AI 原文").closest("article")!;
     expect(within(reply).getByTitle("panel").getAttribute("srcdoc")).toContain(
@@ -1899,8 +1907,8 @@ describe("世界游玩页面", () => {
       fireEvent.click(button);
       const expected =
         action === "apply"
-          ? "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：refresh unavailable"
-          : "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：refresh unavailable";
+          ? "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：暂时无法同步"
+          : "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：暂时无法同步";
       expect(await screen.findByRole("alert")).toHaveProperty(
         "textContent",
         expected,
@@ -2412,6 +2420,7 @@ describe("世界游玩页面", () => {
         totalTokens: "provider",
       },
     };
+    let detailReads = 0;
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
         if (request.type === "world.read")
@@ -2419,10 +2428,13 @@ describe("世界游玩页面", () => {
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "play.chain.inspect")
           return Promise.resolve(chain as T);
-        if (request.type === "play.timeline.detail")
+        if (request.type === "play.timeline.detail") {
+          if (++detailReads <= 2)
+            return Promise.reject(new Error("detail offline"));
           return Promise.resolve(
             chain.events.find(({ id }) => id === request.eventId) as T,
           );
+        }
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
@@ -2447,6 +2459,13 @@ describe("世界游玩页面", () => {
     const details = screen.getByText("查看模型诊断详情").closest("details");
     expect(details).not.toBeNull();
     fireEvent.click(details!.querySelector("summary")!);
+    await within(details!).findByText("暂时无法同步");
+    expect(detailReads).toBe(2);
+    fireEvent.click(within(details!).getByRole("button", { name: "重新读取" }));
+    await waitFor(() =>
+      expect(within(details!).queryByText("暂时无法同步")).toBeNull(),
+    );
+    expect(detailReads).toBe(3);
     expect(
       await within(details!).findByText(
         "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。",
@@ -5706,7 +5725,7 @@ test("装饰读取失败时在扩展区域显示原因，重试成功后提示�
         return Promise.resolve(worldView(null));
       if (request.type === "world.play-decorations.read") {
         reads += 1;
-        return reads === 1
+        return reads <= 2
           ? Promise.reject(new Error("World does not exist"))
           : Promise.resolve(
               playDecorations("正文附件", "world-one", "commit:1"),
@@ -5718,13 +5737,13 @@ test("装饰读取失败时在扩展区域显示原因，重试成功后提示�
   };
   renderWorld(client);
   await screen.findByRole("heading", { name: "宿舍世界" });
-  const notice = "扩展内容读取失败：世界不存在，可能已被删除。";
+  const notice = "暂时无法同步";
   await screen.findByText(notice);
   expect(screen.queryByTitle("panel")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
   await screen.findByTitle("panel");
   expect(screen.queryByText(notice)).toBeNull();
-  expect(reads).toBe(2);
+  expect(reads).toBe(3);
 });
 
 test("同一世界装饰读取连续失败时只保留一条提示", async () => {
@@ -5740,20 +5759,99 @@ test("同一世界装饰读取连续失败时只保留一条提示", async () =>
   };
   renderWorld(client);
   await screen.findByRole("heading", { name: "宿舍世界" });
-  const notice = "扩展内容读取失败：世界不存在，可能已被删除。";
+  const notice = "暂时无法同步";
   await screen.findByText(notice);
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
   await waitFor(() =>
     expect(
       client.request.mock.calls.filter(
         ([request]) => request.type === "world.play-decorations.read",
       ),
-    ).toHaveLength(2),
+    ).toHaveLength(3),
   );
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy(),
+    expect(screen.getByRole("button", { name: "重新读取" })).toBeTruthy(),
   );
   expect(screen.getAllByText(notice)).toHaveLength(1);
+});
+
+test("世界文件面板首次读取失败有界恢复，手动重读只加载文件表面", async () => {
+  let stateReads = 0;
+  const full = worldView(null);
+  const client = {
+    request: vi.fn(async (input: V1Request): Promise<unknown> => {
+      await Promise.resolve();
+      if (input.type === "world.read")
+        return { ...full, state: [], control: [] };
+      if (input.type === "world.play-decorations.read")
+        return playDecorations(null, "world-one", full.head);
+      if (input.type === "world.surface.read") {
+        if (input.surface === "state" && ++stateReads <= 2)
+          throw new Error("offline files");
+        return input.surface === "state"
+          ? full.state
+          : input.surface === "control"
+            ? full.control
+            : full.runtime;
+      }
+      throw new Error(input.type);
+    }),
+  };
+  const view = renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByRole("button", { name: "世界" }));
+  const rail = view.container.querySelector<HTMLElement>(
+    ".world-overlay-rail-right",
+  )!;
+  await within(rail).findByText("暂时无法同步");
+  expect(stateReads).toBe(2);
+  const worldReads = client.request.mock.calls.filter(
+    ([input]) => input.type === "world.read",
+  ).length;
+  fireEvent.click(within(rail).getByRole("button", { name: "重新读取" }));
+  await waitFor(() =>
+    expect(within(rail).queryByText("暂时无法同步")).toBeNull(),
+  );
+  expect(stateReads).toBe(3);
+  expect(
+    client.request.mock.calls.filter(([input]) => input.type === "world.read"),
+  ).toHaveLength(worldReads);
+  expect(
+    client.request.mock.calls.some(([input]) =>
+      input.type.startsWith("play.chain"),
+    ),
+  ).toBe(false);
+});
+
+test("AI 读取面板暂时断网时在原位置重读自己的查询", async () => {
+  let readingCalls = 0;
+  const client = {
+    request: vi.fn(async (input: V1Request): Promise<unknown> => {
+      await Promise.resolve();
+      if (input.type === "world.read") return worldView(null);
+      if (input.type === "world.play-decorations.read")
+        return playDecorations(null, "world-one", "commit:1");
+      if (input.type === "world.play-context.read") {
+        if (++readingCalls <= 2) throw new Error("reading offline");
+        return playReadingView();
+      }
+      throw new Error(input.type);
+    }),
+  };
+  const view = renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  fireEvent.click(screen.getByRole("button", { name: "AI 读取" }));
+  const rail = view.container.querySelector<HTMLElement>(
+    ".world-overlay-rail-right",
+  )!;
+  await within(rail).findByText("暂时无法同步");
+  expect(readingCalls).toBe(2);
+  fireEvent.click(within(rail).getByRole("button", { name: "重新读取" }));
+  await within(rail).findByText("精确节点");
+  expect(readingCalls).toBe(3);
+  expect(
+    client.request.mock.calls.filter(([input]) => input.type === "world.read"),
+  ).toHaveLength(1);
 });
 
 test("世界扩展开关设置失败时原因显示在该开关旁，开关保持服务端状态", async () => {

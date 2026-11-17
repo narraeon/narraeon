@@ -32,7 +32,6 @@ import { type ObserveConversation } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { runtimeErrorText } from "./RuntimeErrorText.ts";
 import {
   hasHandledCheckpoint,
   rememberHandledCheckpoint,
@@ -188,6 +187,7 @@ export function WorldPage({
   onConfigureModel,
   onRenameWorld,
   onOpenWorld,
+  onRecoverWorkspace,
   onNavigationLockChange,
   onReadingPreferencesChange,
   initialReadingPreferences = defaultAppReadingPreferences,
@@ -204,6 +204,7 @@ export function WorldPage({
   onConfigureModel: () => void;
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
+  onRecoverWorkspace?: () => Promise<unknown>;
   onNavigationLockChange?: (locked: boolean) => void;
   onReadingPreferencesChange?: (value: AppReadingPreferences) => void;
   initialReadingPreferences?: AppReadingPreferences;
@@ -212,17 +213,15 @@ export function WorldPage({
   onProtagonistRevisionFinished?: () => void;
 }): React.JSX.Element {
   const [world, setWorld] = useState<WorldReadView | null>(null);
+  const [stateHead, setStateHead] = useState<string | null>(null);
+  const [controlHead, setControlHead] = useState<string | null>(null);
+  const [runtimeHead, setRuntimeHead] = useState<string | null>(null);
   // Decorations have their own lifetime: lightweight world reads intentionally
   // contain empty artifact arrays and must not replace this loaded projection.
   const [decorations, setDecorations] = useState<
     (WorldPlayDecorationsView & { worldId: string }) | null
   >(null);
   const [decorationRevision, setDecorationRevision] = useState(0);
-  const [decorationFailure, setDecorationFailure] = useState<{
-    worldId: string;
-    message: string;
-  } | null>(null);
-  const decorationRequestId = useRef(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
   const playerViewFold = usePlayerViewFoldController();
@@ -283,7 +282,9 @@ export function WorldPage({
   const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
   if (lastWorldTitle !== worldTitle) {
     setLastWorldTitle(worldTitle);
-    setWorldNameDraft(worldTitle);
+    setWorldNameDraft((current) =>
+      current === lastWorldTitle ? worldTitle : current,
+    );
   }
   const [playCallChain, setPlayCallChain] =
     useState<V1PlayCallChainView | null>(null);
@@ -307,6 +308,10 @@ export function WorldPage({
   const [controlFiles, setControlFiles] = useState("[]");
   const [authoringLocked, setAuthoringLocked] = useState(false);
   const [controlDirty, setControlDirty] = useState(false);
+  const controlDirtyRef = useRef(false);
+  useLayoutEffect(() => {
+    controlDirtyRef.current = controlDirty;
+  }, [controlDirty]);
   const [controlPreview, setControlPreview] = useState<unknown>(null);
   const { workspace: revisionWorkspace, state: authoring } =
     useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
@@ -347,7 +352,22 @@ export function WorldPage({
       worldProjectionVersion.current++;
       const nextChain = next.playCallChain;
       const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
-      setWorld(next);
+      setWorld((current) =>
+        current?.worldId === next.worldId &&
+        next.state.length === 0 &&
+        next.control.length === 0
+          ? {
+              ...next,
+              state: current.state,
+              control: current.control,
+              runtime: current.runtime,
+            }
+          : next,
+      );
+      if (next.state.length > 0) setStateHead(next.head);
+      if (next.control.length > 0) setControlHead(next.head);
+      if (!isResponseRecord(next.runtime) || next.runtime.surfaces !== "lazy")
+        setRuntimeHead(next.head);
       const submission = unconfirmedSubmission.current;
       if (
         submission?.worldId === next.worldId &&
@@ -361,7 +381,7 @@ export function WorldPage({
           current?.submission === submission.exchangeId ? null : current,
         );
       }
-      if (!preserveControlDraft) {
+      if (!preserveControlDraft && next.control.length > 0) {
         setControlFiles(JSON.stringify(next.control, null, 2));
         setControlDirty(false);
         setControlPreview(null);
@@ -406,9 +426,10 @@ export function WorldPage({
         });
         setPlayProgressNow(Date.now());
       } else setPlayProgress(null);
-      setSelectedDocument((current) =>
-        selectedStateDocument(next.state, current),
-      );
+      if (next.state.length > 0)
+        setSelectedDocument((current) =>
+          selectedStateDocument(next.state, current),
+        );
     },
     [],
   );
@@ -432,37 +453,37 @@ export function WorldPage({
     },
     [applyWorld],
   );
-  const { target: worldTarget, syncFailed } = useReadTarget(
-    loadWorld,
-    applyReadWorld,
-  );
+  const {
+    target: worldTarget,
+    syncFailed,
+    syncError: worldSyncError,
+  } = useReadTarget(loadWorld, applyReadWorld);
   useEffect(() => {
     void worldTarget.read();
   }, [worldTarget]);
 
+  const {
+    target: decorationTarget,
+    syncFailed: decorationFailed,
+    syncError: decorationError,
+  } = useReadTarget(
+    useCallback(
+      () => requestPlayDecorations(client, worldId),
+      [client, worldId],
+    ),
+    useCallback(
+      (next: WorldPlayDecorationsView) => {
+        if (next.head === worldHead) setDecorations({ ...next, worldId });
+      },
+      [worldId, worldHead],
+    ),
+  );
   useEffect(() => {
-    if (world?.worldId !== worldId) return;
-    let active = true;
-    const expectedHead = world.head;
-    const requestId = ++decorationRequestId.current;
-    void requestPlayDecorations(client, worldId).then(
-      (next) => {
-        if (!active || requestId !== decorationRequestId.current) return;
-        setDecorationFailure(null);
-        if (next.head === expectedHead) setDecorations({ ...next, worldId });
-      },
-      (reason: unknown) => {
-        if (!active || requestId !== decorationRequestId.current) return;
-        setDecorationFailure({
-          worldId,
-          message: decorationFailureMessage(reason),
-        });
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [client, world, worldId, decorationRevision]);
+    if (openedWorldId === worldId)
+      void (decorationRevision > 0
+        ? decorationTarget.recover()
+        : decorationTarget.read());
+  }, [decorationTarget, openedWorldId, worldId, decorationRevision]);
 
   const displayedDecorations =
     decorations?.worldId === worldId && decorations.head === worldHead
@@ -617,81 +638,141 @@ export function WorldPage({
     historyEndRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [openedWorldId]);
 
-  useEffect(() => {
-    if (world === null || (!rightRailOpen && dialog === null)) return;
-    if (world.state.length > 0 && world.control.length > 0) return;
-    let active = true;
-    const loadSurfaces = async (): Promise<void> => {
-      try {
-        const [state, control, runtime] = await Promise.all([
-          requestRuntime<ContentTreeFile[]>(client, {
-            type: "world.surface.read",
-            worldId,
-            surface: "state",
-          }),
-          requestRuntime<ContentTreeFile[]>(client, {
-            type: "world.surface.read",
-            worldId,
-            surface: "control",
-          }),
-          requestRuntime<unknown>(client, {
-            type: "world.surface.read",
-            worldId,
-            surface: "runtime",
-          }),
-        ]);
-        if (!active) return;
+  const stateVisible =
+    world !== null && (rightRailOpen || dialog === "reading");
+  const managementVisible = dialog === "manage";
+  const {
+    target: stateTarget,
+    syncFailed: stateFailed,
+    syncError: stateError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        stateVisible && worldHead !== undefined
+          ? requestRuntime<ContentTreeFile[]>(client, {
+              type: "world.surface.read",
+              worldId,
+              surface: "state",
+            })
+          : Promise.resolve(null),
+      [client, worldId, worldHead, stateVisible],
+    ),
+    useCallback(
+      (state: ContentTreeFile[] | null) => {
+        if (state === null) return;
         setWorld((current) =>
-          current === null ? null : { ...current, state, control, runtime },
+          current !== null && current.head === worldHead
+            ? { ...current, state }
+            : current,
         );
+        setStateHead(worldHead ?? null);
         setSelectedDocument((current) => selectedStateDocument(state, current));
-        if (!controlDirty) setControlFiles(JSON.stringify(control, null, 2));
-      } catch (reason: unknown) {
-        if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
-      }
-    };
-    void loadSurfaces();
-    return () => {
-      active = false;
-    };
-  }, [client, controlDirty, dialog, rightRailOpen, world, worldId]);
-
+      },
+      [worldHead],
+    ),
+  );
+  const {
+    target: controlTarget,
+    syncFailed: controlFailed,
+    syncError: controlError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        managementVisible && worldHead !== undefined
+          ? requestRuntime<ContentTreeFile[]>(client, {
+              type: "world.surface.read",
+              worldId,
+              surface: "control",
+            })
+          : Promise.resolve(null),
+      [client, worldId, worldHead, managementVisible],
+    ),
+    useCallback(
+      (control: ContentTreeFile[] | null) => {
+        if (control === null) return;
+        setWorld((current) =>
+          current !== null && current.head === worldHead
+            ? { ...current, control }
+            : current,
+        );
+        setControlHead(worldHead ?? null);
+        if (!controlDirtyRef.current)
+          setControlFiles(JSON.stringify(control, null, 2));
+      },
+      [worldHead],
+    ),
+  );
+  const {
+    target: runtimeTarget,
+    syncFailed: runtimeFailed,
+    syncError: runtimeError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        managementVisible && worldHead !== undefined
+          ? requestRuntime<unknown>(client, {
+              type: "world.surface.read",
+              worldId,
+              surface: "runtime",
+            })
+          : Promise.resolve(null),
+      [client, worldId, worldHead, managementVisible],
+    ),
+    useCallback(
+      (runtime: unknown) => {
+        if (runtime === null) return;
+        setWorld((current) =>
+          current !== null && current.head === worldHead
+            ? { ...current, runtime }
+            : current,
+        );
+        setRuntimeHead(worldHead ?? null);
+      },
+      [worldHead],
+    ),
+  );
   useEffect(() => {
-    if (
-      !rightRailOpen ||
-      rightRailTab !== "ai-reading" ||
-      worldHead === undefined
-    )
-      return;
-    let active = true;
-    const loadingTimer = window.setTimeout(() => {
-      if (active) setAiReadingLoading(true);
-    }, 0);
-    void requestRuntime<V1PlayContextReadingView>(client, {
-      type: "world.play-context.read",
-      worldId,
-    })
-      .then((reading) => {
-        if (active) setAiReading(reading);
-      })
-      .catch((reason: unknown) => {
-        if (active) setFeedback({ kind: "error", text: errorMessage(reason) });
-      })
-      .finally(() => {
-        if (active) setAiReadingLoading(false);
-      });
-    return () => {
-      active = false;
-      window.clearTimeout(loadingTimer);
-    };
-  }, [
-    client,
-    playCallChain?.updatedAt,
-    rightRailOpen,
-    rightRailTab,
-    worldHead,
-    worldId,
-  ]);
+    if (stateVisible && stateHead !== worldHead) void stateTarget.read();
+  }, [stateTarget, stateVisible, stateHead, worldHead]);
+  useEffect(() => {
+    if (managementVisible && controlHead !== worldHead)
+      void controlTarget.read();
+  }, [controlTarget, managementVisible, controlHead, worldHead]);
+  useEffect(() => {
+    if (managementVisible && runtimeHead !== worldHead)
+      void runtimeTarget.read();
+  }, [runtimeTarget, managementVisible, runtimeHead, worldHead]);
+
+  const aiReadingVisible =
+    (rightRailOpen && rightRailTab === "ai-reading") || dialog === "reading";
+  const {
+    target: aiReadingTarget,
+    syncFailed: aiReadingFailed,
+    syncError: aiReadingError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        aiReadingVisible && worldHead !== undefined
+          ? requestRuntime<V1PlayContextReadingView>(client, {
+              type: "world.play-context.read",
+              worldId,
+            })
+          : Promise.resolve(null),
+      [client, worldId, worldHead, aiReadingVisible],
+    ),
+    useCallback((reading: V1PlayContextReadingView | null) => {
+      if (reading !== null) setAiReading(reading);
+    }, []),
+  );
+  useEffect(() => {
+    if (!aiReadingVisible || worldHead === undefined) return;
+    const timer = window.setTimeout(() => setAiReadingLoading(true), 0);
+    void aiReadingTarget.read().finally(() => {
+      window.clearTimeout(timer);
+      setAiReadingLoading(false);
+    });
+    return () => window.clearTimeout(timer);
+  }, [aiReadingTarget, aiReadingVisible, worldHead, playCallChain?.updatedAt]);
 
   useEffect(() => {
     let previous = revisionWorkspace.getSnapshot().target?.revision;
@@ -876,11 +957,9 @@ export function WorldPage({
   async function refreshWorld(
     preserveControlDraft = true,
   ): Promise<WorldReadView> {
-    const next = await requestRuntime<WorldReadView>(client, {
-      type: "world.read",
-      worldId,
-    });
-    applyWorld(next, preserveControlDraft);
+    const next = await worldTarget.read();
+    if (next === null) throw new Error(uiText("暂时无法同步"));
+    if (!preserveControlDraft) applyWorld(next, false);
     return next;
   }
 
@@ -1091,14 +1170,16 @@ export function WorldPage({
     );
     setFeedback({ kind: "status", text: uiText("正在取消模型生成…") });
     try {
-      const result = await requestRuntime<{
-        outcome: "cancellation_requested" | "not_running";
-      }>(client, {
-        type: "play.chain.cancel",
-        worldId,
-        chainId,
-        exchangeId,
-      });
+      const result = await worldTarget.command(() =>
+        requestRuntime<{
+          outcome: "cancellation_requested" | "not_running";
+        }>(client, {
+          type: "play.chain.cancel",
+          worldId,
+          chainId,
+          exchangeId,
+        }),
+      );
       if (result.outcome === "not_running") {
         if (cancelledExchangeRef.current === exchangeId)
           cancelledExchangeRef.current = null;
@@ -1123,16 +1204,26 @@ export function WorldPage({
     }
   }
 
-  async function loadEarlierTimeline(): Promise<void> {
-    if (playTimeline?.nextCursor === null || playTimeline === null) return;
-    setPending("timeline-page");
-    try {
-      const earlier = await requestRuntime<V1PlayTimelinePage>(client, {
-        type: "play.timeline.page",
-        worldId,
-        limit: 40,
-        cursor: playTimeline.nextCursor,
-      });
+  const timelineCursor = playTimeline?.nextCursor ?? null;
+  const {
+    target: earlierTimelineTarget,
+    syncFailed: earlierTimelineFailed,
+    syncError: earlierTimelineError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        timelineCursor === null
+          ? Promise.resolve(null)
+          : requestRuntime<V1PlayTimelinePage>(client, {
+              type: "play.timeline.page",
+              worldId,
+              limit: 40,
+              cursor: timelineCursor,
+            }),
+      [client, worldId, timelineCursor],
+    ),
+    useCallback((earlier: V1PlayTimelinePage | null) => {
+      if (earlier === null) return;
       setPlayTimeline((current) =>
         current === null
           ? earlier
@@ -1144,26 +1235,41 @@ export function WorldPage({
                 nextCursor: earlier.nextCursor,
               },
       );
-    } catch (reason: unknown) {
-      setFeedback({ kind: "error", text: errorMessage(reason) });
-    } finally {
-      setPending(null);
-    }
+    }, []),
+  );
+  async function loadEarlierTimeline(): Promise<void> {
+    if (timelineCursor === null) return;
+    setPending("timeline-page");
+    await earlierTimelineTarget.read();
+    setPending(null);
   }
 
+  const {
+    target: controlPreviewTarget,
+    syncFailed: controlPreviewFailed,
+    syncError: controlPreviewError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        managementVisible
+          ? client.request({ type: "world.control-draft.preview", worldId })
+          : Promise.resolve(null),
+      [client, worldId, managementVisible],
+    ),
+    useCallback((preview: unknown) => setControlPreview(preview), []),
+  );
+  useEffect(() => {
+    controlPreviewTarget.accept();
+  }, [controlPreviewTarget, controlFiles]);
   async function previewControl(): Promise<void> {
     setPending("control-preview");
     try {
       const files = JSON.parse(controlFiles) as ContentTreeFile[];
-      await client.request({
-        type: "world.control-draft.save",
-        worldId,
-        files,
-      });
-      const preview = await readAfterCommit(() =>
-        client.request({ type: "world.control-draft.preview", worldId }),
+      await worldTarget.command(() =>
+        client.request({ type: "world.control-draft.save", worldId, files }),
       );
-      setControlPreview(preview);
+      const preview = await controlPreviewTarget.read();
+      if (preview === null) return;
       setFeedback({
         kind: "status",
         text: uiText("控制草稿已通过真实提示词预览；确认后才会整批应用。"),
@@ -1180,7 +1286,9 @@ export function WorldPage({
     if (controlPreview === null || activeStatus === "running") return;
     setPending("control-apply");
     try {
-      await client.request({ type: "world.control-draft.apply", worldId });
+      await worldTarget.command(() =>
+        client.request({ type: "world.control-draft.apply", worldId }),
+      );
       setControlPreview(null);
       setControlDirty(false);
       await readAfterCommit(() => refreshWorld(false));
@@ -1258,17 +1366,17 @@ export function WorldPage({
     if (sourceHead === undefined) return;
     setPending("derive");
     try {
-      const derived = await requestRuntime<{ world: { worldId: string } }>(
-        client,
-        {
+      const derived = await worldTarget.command(() =>
+        requestRuntime<{ world: { worldId: string } }>(client, {
           type: "world.derive",
           operationId: createClientId("derive"),
           sourceWorldId: world.worldId,
           sourceHead,
-        },
+        }),
       );
       await readAfterCommit(() => onOpenWorld(derived.world.worldId));
     } catch (reason: unknown) {
+      await onRecoverWorkspace?.();
       setFeedback({ kind: "error", text: errorMessage(reason) });
       setPending(null);
     }
@@ -1282,19 +1390,7 @@ export function WorldPage({
     setPlayContextUsage(projectPlayContextUsage(chain));
     setPlayCallChain(null);
     setPlayTimeline(legacyTimelinePage({ ...previous, playCallChain: chain }));
-    await readAfterCommit(async () => {
-      try {
-        await refreshWorld();
-      } catch (error) {
-        const page = await requestRuntime<V1PlayTimelinePage>(client, {
-          type: "play.timeline.page",
-          worldId,
-          limit: 40,
-        }).catch(() => null);
-        if (page !== null) setPlayTimeline(page);
-        throw error;
-      }
-    });
+    await readAfterCommit(() => refreshWorld());
   }
 
   async function regenerateNarrative(
@@ -1311,13 +1407,15 @@ export function WorldPage({
     setPending("play-append");
     setFeedback({ kind: "status", text: uiText("正在重新生成叙事…") });
     try {
-      const result = await requestRuntime<V1PlayCallChainView>(client, {
-        type: "play.chain.regenerate-narrative",
-        operationId: createClientId("regenerate-narrative"),
-        worldId: world.worldId,
-        chainId,
-        eventId,
-      });
+      const result = await worldTarget.command(() =>
+        requestRuntime<V1PlayCallChainView>(client, {
+          type: "play.chain.regenerate-narrative",
+          operationId: createClientId("regenerate-narrative"),
+          worldId: world.worldId,
+          chainId,
+          eventId,
+        }),
+      );
       await refreshRevisedTimeline(result, world);
       setFeedback({
         kind: result.status === "interrupted" ? "error" : "status",
@@ -1374,25 +1472,27 @@ export function WorldPage({
         : uiText("正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…"),
     });
     try {
-      const revised = await requestRuntime<{
-        outcome: "revised";
-        worldId: string;
-        playCallChain: V1PlayCallChainView;
-        sentAfterRevision?: boolean;
-      }>(client, {
-        type: "play.chain.revise-player",
-        operationId: createClientId("revise-player"),
-        worldId: world.worldId,
-        chainId,
-        eventId,
-        replacementExchangeId,
-        replacementText: editedText,
-        ...turnNoteField(turnNote),
-        continuation,
-        requireCompatible:
-          modelConfigured && continuation === "continue_context",
-        sendAfterRevision: modelConfigured,
-      });
+      const revised = await worldTarget.command(() =>
+        requestRuntime<{
+          outcome: "revised";
+          worldId: string;
+          playCallChain: V1PlayCallChainView;
+          sentAfterRevision?: boolean;
+        }>(client, {
+          type: "play.chain.revise-player",
+          operationId: createClientId("revise-player"),
+          worldId: world.worldId,
+          chainId,
+          eventId,
+          replacementExchangeId,
+          replacementText: editedText,
+          ...turnNoteField(turnNote),
+          continuation,
+          requireCompatible:
+            modelConfigured && continuation === "continue_context",
+          sendAfterRevision: modelConfigured,
+        }),
+      );
       // The revised chain is bound to the revision's own head.
       setForceFreshContext(false);
       if (continuation === "fresh_context") consumeCheckpointPreference();
@@ -1514,6 +1614,7 @@ export function WorldPage({
       if (outcome !== "cancelled")
         setFeedback({ kind: "status", text: uiText("故事已导出。") });
     } catch (reason: unknown) {
+      await worldTarget.recover();
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -1529,6 +1630,7 @@ export function WorldPage({
       await onRenameWorld(name);
       setFeedback({ kind: "status", text: uiText("世界名称已保存。") });
     } catch (reason: unknown) {
+      await worldTarget.recover();
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -1570,7 +1672,11 @@ export function WorldPage({
             {uiText("← 返回工作区")}
           </button>
         )}
-        <SyncNotice failed={syncFailed} onRead={recoverPlay} />
+        <SyncNotice
+          failed={syncFailed}
+          reason={worldSyncError}
+          onRead={recoverPlay}
+        />
         {feedback?.kind === "error" ? (
           <p role="alert">{feedback.text}</p>
         ) : !syncFailed ? (
@@ -1830,16 +1936,23 @@ export function WorldPage({
             >
               <ArtifactExtensionMount mount="story" />
               {playTimeline?.nextCursor === null ? null : (
-                <button
-                  type="button"
-                  className="secondary-button timeline-load-earlier"
-                  disabled={pending !== null}
-                  onClick={() => void loadEarlierTimeline()}
-                >
-                  {pending === "timeline-page"
-                    ? uiText("正在加载…")
-                    : uiText("加载更早的故事")}
-                </button>
+                <>
+                  <SyncNotice
+                    failed={earlierTimelineFailed}
+                    reason={earlierTimelineError}
+                    onRead={() => void earlierTimelineTarget.recover()}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button timeline-load-earlier"
+                    disabled={pending !== null}
+                    onClick={() => void loadEarlierTimeline()}
+                  >
+                    {pending === "timeline-page"
+                      ? uiText("正在加载…")
+                      : uiText("加载更早的故事")}
+                  </button>
+                </>
               )}
               {playTimeline !== null && playTimeline.items.length > 0 ? (
                 <PlayTimeline
@@ -1938,23 +2051,11 @@ export function WorldPage({
 
           <footer ref={composerRef} className="world-composer-dock">
             <ArtifactExtensionMount mount="composer_above" />
-            {decorationFailure?.worldId === worldId ? (
-              <div className="extension-read-failure" role="alert">
-                <p>
-                  {uiText("扩展内容读取失败：{reason}", {
-                    reason: decorationFailure.message,
-                  })}
-                </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDecorationRevision((current) => current + 1)
-                  }
-                >
-                  {uiText("重试")}
-                </button>
-              </div>
-            ) : null}
+            <SyncNotice
+              failed={decorationFailed}
+              reason={decorationError}
+              onRead={() => void decorationTarget.recover()}
+            />
             {(displayedDecorations?.extensionControls ??
               world.extensionControls) === undefined ? null : (
               <WorldExtensionMenu
@@ -1963,27 +2064,26 @@ export function WorldPage({
                     world.extensionControls)!
                 }
                 onChange={async (key, value) => {
-                  const requestId = ++decorationRequestId.current;
-                  await requestRuntime(client, {
-                    type: "world.extensions.set",
-                    worldId,
-                    key,
-                    value,
-                  });
-                  try {
-                    const next = await requestPlayDecorations(client, worldId);
-                    if (requestId === decorationRequestId.current) {
-                      setDecorations({ ...next, worldId });
-                      setDecorationFailure(null);
-                    }
-                  } catch (reason: unknown) {
-                    if (requestId === decorationRequestId.current)
-                      setDecorationFailure({
-                        worldId,
-                        message: decorationFailureMessage(reason),
-                      });
-                  }
-                  setDecorationRevision((current) => current + 1);
+                  const receipt = await decorationTarget.command(() =>
+                    requestRuntime<WorldExtensionsView>(client, {
+                      type: "world.extensions.set",
+                      worldId,
+                      key,
+                      value,
+                    }),
+                  );
+                  decorationTarget.accept({ complete: false });
+                  setDecorations((current) =>
+                    current?.worldId === worldId
+                      ? { ...current, extensionControls: receipt }
+                      : current,
+                  );
+                  setWorld((current) =>
+                    current === null
+                      ? null
+                      : { ...current, extensionControls: receipt },
+                  );
+                  await decorationTarget.read();
                 }}
               />
             )}
@@ -2008,8 +2108,11 @@ export function WorldPage({
               </div>
             ) : null}
             <SyncNotice
+              reason={worldSyncError}
               failed={
-                syncFailed || (observationStopped && activeStatus === "running")
+                dialog === null &&
+                (syncFailed ||
+                  (observationStopped && activeStatus === "running"))
               }
               onRead={recoverPlay}
             />
@@ -2505,6 +2608,18 @@ export function WorldPage({
               </button>
             </nav>
             <div className="world-overlay-rail-body">
+              <SyncNotice
+                failed={
+                  stateFailed ||
+                  (rightRailTab === "ai-reading" && aiReadingFailed)
+                }
+                reason={aiReadingError ?? stateError}
+                onRead={() => {
+                  if (stateFailed) void stateTarget.recover();
+                  if (rightRailTab === "ai-reading" && aiReadingFailed)
+                    void aiReadingTarget.recover();
+                }}
+              />
               {rightRailTab === "documents" ? (
                 <WorldDocumentRail
                   documents={documents}
@@ -2549,6 +2664,17 @@ export function WorldPage({
 
           {dialog === "reading" ? (
             <AiReadingDialog
+              syncNotice={
+                <SyncNotice
+                  failed={aiReadingFailed || stateFailed || syncFailed}
+                  reason={aiReadingError ?? stateError ?? worldSyncError}
+                  onRead={() => {
+                    if (aiReadingFailed) void aiReadingTarget.recover();
+                    if (stateFailed) void stateTarget.recover();
+                    if (syncFailed) recoverPlay();
+                  }}
+                />
+              }
               reading={aiReading}
               documents={documents}
               onClose={() => setDialog(null)}
@@ -2557,10 +2683,34 @@ export function WorldPage({
 
           {dialog === "manage" ? (
             <WorldManagementDialog
+              syncNotice={
+                <SyncNotice
+                  failed={
+                    controlFailed ||
+                    runtimeFailed ||
+                    controlPreviewFailed ||
+                    syncFailed
+                  }
+                  reason={
+                    controlPreviewError ??
+                    controlError ??
+                    runtimeError ??
+                    worldSyncError
+                  }
+                  onRead={() => {
+                    if (controlFailed) void controlTarget.recover();
+                    if (runtimeFailed) void runtimeTarget.recover();
+                    if (controlPreviewFailed)
+                      void controlPreviewTarget.recover();
+                    if (syncFailed) recoverPlay();
+                  }}
+                />
+              }
               worldBackupExport={
                 <WorldBackupExportButton
                   client={client}
                   worldId={worldId}
+                  onFailure={() => worldTarget.recover()}
                   disabled={
                     pending !== null ||
                     activeStatus === "running" ||
@@ -3042,28 +3192,32 @@ function TimelineEvent({
 }): React.JSX.Element {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
   const [editedText, setEditedText] = useState<string | null>(null);
   const [revisionContinuation, setRevisionContinuation] =
     useState<PlayerRevisionContinuation>("continue_context");
-  const loadDetail = async (): Promise<void> => {
-    if (detail !== null || detailPending) return;
-    setDetailPending(true);
-    setDetailError(null);
-    try {
-      setDetail(
-        await requestRuntime<V1PlayCallChainEvent>(client, {
+  const eventId = event.id;
+  const {
+    target: detailTarget,
+    syncFailed: detailFailed,
+    syncError: detailError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        requestRuntime<V1PlayCallChainEvent>(client, {
           type: "play.timeline.detail",
           worldId,
           chainId,
-          eventId: event.id,
+          eventId,
         }),
-      );
-    } catch (reason: unknown) {
-      setDetailError(errorMessage(reason));
-    } finally {
-      setDetailPending(false);
-    }
+      [client, worldId, chainId, eventId],
+    ),
+    useCallback((value: V1PlayCallChainEvent) => setDetail(value), []),
+  );
+  const loadDetail = async (): Promise<void> => {
+    if (detail !== null || detailPending) return;
+    setDetailPending(true);
+    await detailTarget.read();
+    setDetailPending(false);
   };
 
   if (event.kind === "player")
@@ -3229,7 +3383,11 @@ function TimelineEvent({
           >
             <summary>{uiText("查看模型诊断详情")}</summary>
             {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-            {detailError === null ? null : <p role="alert">{detailError}</p>}
+            <SyncNotice
+              failed={detailFailed}
+              reason={detailError}
+              onRead={() => void detailTarget.recover()}
+            />
             {full?.reasoning === undefined ? null : (
               <>
                 <p>
@@ -3411,7 +3569,11 @@ function TimelineEvent({
             </span>
           </summary>
           {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          <SyncNotice
+            failed={detailFailed}
+            reason={detailError}
+            onRead={() => void detailTarget.recover()}
+          />
           {full === null ? null : <pre>{safeJson(full.arguments)}</pre>}
         </details>
       </li>
@@ -3445,7 +3607,11 @@ function TimelineEvent({
             <span>{event.ok ? uiText("成功") : uiText("拒绝／失败")}</span>
           </summary>
           {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          <SyncNotice
+            failed={detailFailed}
+            reason={detailError}
+            onRead={() => void detailTarget.recover()}
+          />
           {full === null ? null : <pre>{full.markdown}</pre>}
         </details>
       </li>
@@ -3473,7 +3639,11 @@ function TimelineEvent({
             </span>
           </summary>
           {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          {detailError === null ? null : <p role="alert">{detailError}</p>}
+          <SyncNotice
+            failed={detailFailed}
+            reason={detailError}
+            onRead={() => void detailTarget.recover()}
+          />
           {full === null ? null : (
             <>
               <p>
@@ -4006,8 +4176,4 @@ async function requestPlayDecorations(
     worldId,
   });
   return result as WorldPlayDecorationsView;
-}
-
-function decorationFailureMessage(reason: unknown): string {
-  return runtimeErrorText(errorMessage(reason));
 }
