@@ -26,8 +26,8 @@ const englishMessages: Record<string, string> = {
     "The Narraeon service returned an unreadable response (HTTP {status}). Try again shortly; if you use a reverse proxy, check its configuration.",
   "模型正在生成，请等它完成或先取消，再进行这项操作。":
     "The model is still generating. Wait for it to finish or cancel it, then try again.",
-  "世界刚被其他操作更新，这次操作没有生效。请刷新页面后重试。":
-    "The world was just updated by another operation, so this action did not take effect. Refresh the page and try again.",
+  "世界端点已经变化。请刷新页面，核对当前记录。":
+    "The world endpoint changed. Refresh the page and check the current record.",
   "世界正在修订，游玩和其他修改已锁定。请先应用或放弃修订。":
     "The world is being revised, so play and other changes are locked. Apply or discard the revision first.",
   "这个世界来自备份，请先开启全新上下文再继续。":

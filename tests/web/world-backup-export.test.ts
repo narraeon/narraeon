@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi, type Mock } from "vitest";
 
-import { WorldBackupExportButton } from "../../src/web/WorldArchiveControls.tsx";
+import {
+  WorldBackupExportButton,
+  WorldBackupImportButton,
+} from "../../src/web/WorldArchiveControls.tsx";
 import { uiText } from "../../src/web/i18n.ts";
 
 afterEach(() => {
@@ -132,3 +135,34 @@ test("备份可以下载时只做轻量检查，再以同一路径触发浏览�
     },
   ]);
 });
+
+test.each(["null", "{}", '{"uploadId":""}'])(
+  "ignores an invalid upload receipt %s without importing",
+  async (responseText) => {
+    class Upload {
+      status = 200;
+      responseText = responseText;
+      upload = {};
+      onload?: () => void;
+      open = vi.fn();
+      setRequestHeader = vi.fn();
+      send() {
+        this.onload?.();
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", Upload);
+    const client = { request: vi.fn() };
+    render(
+      createElement(WorldBackupImportButton, {
+        client,
+        onBusyChange: vi.fn(),
+        onImported: vi.fn(),
+      }),
+    );
+    fireEvent.change(screen.getByLabelText(uiText("世界备份 ZIP 文件")), {
+      target: { files: [new File(["example"], "test.zip")] },
+    });
+    await screen.findByText(/无法识别的响应/u);
+    expect(client.request).not.toHaveBeenCalled();
+  },
+);

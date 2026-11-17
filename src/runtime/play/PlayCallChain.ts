@@ -1340,7 +1340,7 @@ export class PlayCallChain {
         input.modelHost.binding().provider,
       )
     )
-      throw new PlayCallChainError(
+      throw PlayCallChainError.requiresFreshContext(
         "The saved native continuation is incompatible; start a fresh context.",
       );
     const savedPrefix = source.lastRequest.appended.filter(
@@ -1639,7 +1639,7 @@ export class PlayCallChain {
       input.continuation === "continue_context" &&
       sourceContext.importedFromArchive
     )
-      throw new PlayCallChainError(
+      throw PlayCallChainError.requiresFreshContext(
         "This model context was imported from a backup; start a fresh context before continuing.",
       );
     const eventIndex = sourceContext.events.findIndex(
@@ -1670,7 +1670,7 @@ export class PlayCallChain {
           input.modelHost.binding().provider,
         )
       )
-        throw new PlayCallChainError(
+        throw PlayCallChainError.requiresFreshContext(
           "The saved native continuation is incompatible; switch back or start a fresh context.",
         );
     }
@@ -4010,7 +4010,7 @@ function assertModelHostBinding(
   modelHost: ModelHost,
 ): void {
   if (!equalModelHostBinding(frozen, modelHost.binding()))
-    throw new PlayCallChainError(
+    throw PlayCallChainError.requiresFreshContext(
       "The selected model connection does not match the frozen model binding; start a fresh context.",
     );
 }
@@ -4020,7 +4020,7 @@ function assertSessionModelHostBinding(
   modelHost: ModelHost,
 ): void {
   if (session.modelBinding === undefined)
-    throw new PlayCallChainError(
+    throw PlayCallChainError.requiresFreshContext(
       "This model context predates durable provider continuation bindings; start a fresh context.",
     );
   if (session.modelBinding.provider !== modelHost.binding().provider)

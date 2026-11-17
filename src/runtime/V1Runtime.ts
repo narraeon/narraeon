@@ -1,3 +1,4 @@
+import { mayChangeUserState } from "../protocol/requestEffect.ts";
 import {
   inspectSillyTavernContent,
   convertSillyTavernContent,
@@ -293,12 +294,7 @@ export class V1Runtime {
     } finally {
       // Explicit commands may partially settle before failing. Readers recover
       // through the same Runtime projection, never infer success from this signal.
-      if (
-        request.type !== "world.story.export" &&
-        !/\.(read|status|overview|inspect|page|detail|list|preview)$/.test(
-          request.type,
-        )
-      ) {
+      if (mayChangeUserState(request.type)) {
         if ("packageId" in request)
           this.#conversationChanges.publish(`setting:${request.packageId}`);
         if ("worldId" in request) {
@@ -1719,6 +1715,7 @@ async function playCall<Value>(
   } catch (error: unknown) {
     if (error instanceof PlayCallChainError)
       throw new V1ProtocolError(error.code, error.message, {
+        ...(error.details === undefined ? {} : { details: error.details }),
         cause: error,
       });
     throw error;

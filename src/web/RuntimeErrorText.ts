@@ -12,7 +12,7 @@ const runtimeErrorTexts: readonly [RegExp, string][] = [
   ],
   [
     /^(?:The parent endpoint of the (?:play|Authority) operation has changed|Another operation has advanced the current world|World advanced before background capture|The call-chain record differs from the current world endpoint|The prepared Authority fact no longer extends the current endpoint)/u,
-    "世界刚被其他操作更新，这次操作没有生效。请刷新页面后重试。",
+    "世界端点已经变化。请刷新页面，核对当前记录。",
   ],
   [
     /^(?:Play is locked|Timeline editing is locked|World play and other changes are locked|World control drafts are locked) while a world revision is open|^World control is locked while a world revision opens/u,

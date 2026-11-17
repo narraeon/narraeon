@@ -4076,6 +4076,77 @@ describe("世界游玩页面", () => {
     else expect(button).toBeNull();
   });
 
+  test.each(["refresh", "rejected", "partial"] as const)(
+    "regeneration offers only available recovery after %s",
+    async (scenario) => {
+      const original = playChainView("original", "first", "Begin.");
+      let submitted = false;
+      const client = {
+        request: vi.fn((request: V1Request): Promise<unknown> => {
+          if (request.type === "world.read") {
+            if (submitted && scenario === "refresh")
+              return Promise.reject(new Error("World read unavailable"));
+            return Promise.resolve(worldView(original));
+          }
+          if (request.type === "world.play-decorations.read")
+            return Promise.resolve({ artifacts: [], debug: [] });
+          if (request.type === "play.chain.revise-player") {
+            submitted = true;
+            if (scenario === "rejected")
+              return Promise.reject(
+                new RuntimeRequestError("This event is stale.", {
+                  protocolCode: "invalid_request",
+                }),
+              );
+            const chain = playChainView(
+              "rewritten",
+              request.replacementExchangeId,
+              request.replacementText,
+            );
+            if (scenario === "refresh") {
+              const narrative = chain.events.find(
+                (event) => event.kind === "assistant",
+              );
+              if (narrative?.kind === "assistant")
+                narrative.text = "Revised once.";
+            } else {
+              chain.canContinuePartial = true;
+              chain.canRetry = false;
+              chain.status = "interrupted";
+              chain.lastFailureKind = "output_limit";
+              Object.assign(original, chain);
+            }
+            return Promise.resolve({
+              outcome: "revised",
+              playCallChain: chain,
+            });
+          }
+          if (request.type === "artifacts.debug") return Promise.resolve([]);
+          return Promise.reject(new Error("Read unavailable"));
+        }),
+      };
+      renderWorld(client);
+      fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+      if (scenario === "refresh") {
+        await screen.findByText(/操作已完成，但页面刷新失败/u);
+        expect(screen.getByText("Revised once.")).toBeTruthy();
+        expect(
+          screen.queryByText("Alex opens the door and lets you go first."),
+        ).toBeNull();
+      } else if (scenario === "rejected")
+        await screen.findByText("This event is stale.");
+      else await screen.findByText("修改已保存，可以继续发送中断的回复。");
+      expect(
+        screen.queryByRole("button", { name: "用全新上下文重新生成" }),
+      ).toBeNull();
+      expect(
+        client.request.mock.calls.filter(
+          ([r]) => r.type === "play.chain.revise-player",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
   test("世界在故事外前进后重新生成仍沿原上下文直接提交", async () => {
     const originalText = "  原始玩家输入\n";
     let chain = playChainView("original", "first", originalText);
@@ -4175,6 +4246,7 @@ describe("世界游玩页面", () => {
               return Promise.reject(
                 new RuntimeRequestError("Missing provider continuation", {
                   protocolCode: "invalid_request",
+                  details: { recovery: "fresh_context" },
                 }),
               );
             fresh = request.continuation === "fresh_context";

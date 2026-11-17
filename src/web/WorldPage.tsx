@@ -1,6 +1,8 @@
 import { PlayRequestContextDetails } from "./PlayRequestContextDetails.tsx";
 import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
-import { RuntimeRequestError } from "./runtimeClient.ts";
+import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
+import { readAfterCommit } from "./RequestOutcome.ts";
+import { submitPlay } from "./PlaySubmission.ts";
 import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
 import {
@@ -26,7 +28,7 @@ import {
 } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import { runtimeErrorText } from "./RuntimeErrorText.ts";
 import {
   hasHandledCheckpoint,
@@ -432,7 +434,8 @@ export function WorldPage({
         );
         if (
           cancelledExchangeRef.current !== null &&
-          next.status !== "running"
+          (next.lastCancelled === true ||
+            next.events.at(-1)?.kind === "cancellation")
         ) {
           setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
         }
@@ -825,7 +828,7 @@ export function WorldPage({
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
     cancelledExchangeRef.current = null;
-    setPlayFailure(null);
+
     setRetryRejection(null);
     if (activeChainId !== null && lastActiveEvent?.kind === "event")
       setSupersededFailure({
@@ -866,128 +869,50 @@ export function WorldPage({
             playerText: submittedText,
             ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
-      let response: V1PlayCallChainView | null = null;
-      let chain: V1PlayCallChainView | null;
-      let sendError: unknown;
-      try {
-        response = await requestRuntime<V1PlayCallChainView>(client, request);
-        chain = response;
-      } catch (reason: unknown) {
-        sendError = reason;
-        chain = await requestRuntime<V1PlayCallChainView | null>(client, {
-          type: "play.chain.inspect",
-          worldId,
-        }).catch(() => null);
-      }
+      const {
+        world: projection,
+        chain,
+        timeline,
+        outcome,
+        playerAccepted,
+        projectionFailure,
+      } = await submitPlay(client, request, () =>
+        requestRuntime<WorldReadView>(client, { type: "world.read", worldId }),
+      );
       if (chain !== null) applyPlayCallChain(chain);
-      // A lost projection read can be retried independently of the model call.
-      let projectionError: unknown;
-      const projection = await refreshWorld().catch(() =>
-        refreshWorld().catch((reason: unknown) => {
-          projectionError = reason;
-          return null;
-        }),
-      );
-      let timeline = projection?.playTimeline;
-      if (projection === null) {
-        timeline = await requestRuntime<V1PlayTimelinePage>(client, {
-          type: "play.timeline.page",
-          worldId,
-          limit: 40,
-        }).catch(() => undefined);
-        if (timeline !== undefined) {
-          setPlayTimeline(timeline);
-          setPlayCallChain(null);
-        } else if (chain !== null) {
-          applyPlayTimelineFrame(
-            {
-              kind: "snapshot",
-              value: chain,
-              final: chain.status !== "running",
-            },
-            setPlayTimeline,
-          );
-        }
+      if (projection !== null) {
+        applyWorld(projection, true);
+      } else if (timeline !== undefined) {
+        setPlayTimeline(timeline);
+        setPlayCallChain(null);
+      } else if (chain !== null) {
+        applyPlayTimelineFrame(
+          { kind: "snapshot", value: chain, final: chain.status !== "running" },
+          setPlayTimeline,
+        );
       }
-      chain = projection?.playCallChain ?? chain;
-      const lastItem = timeline?.items.findLast(
-        (item) =>
-          item.kind === "event" && item.chainId === timeline.activeChainId,
-      );
-      const observed =
-        timeline === undefined
-          ? chain
-          : {
-              chainId: timeline.activeChainId,
-              status: timeline.activeStatus,
-              canRetry: timeline.activeCanRetry,
-              lastFailure: timeline.activeLastFailure,
-              lastFailureKind: timeline.activeLastFailureKind,
-              lastCancelled:
-                lastItem?.kind === "event" &&
-                lastItem.event.kind === "cancellation",
-            };
-      const outcome = response ?? observed;
-      // A ready context can still be the one from before a rejected send.
-      const pageExchange = activePlayExchangeId(
-        null,
-        timeline ?? null,
-        chainId,
-      );
-      const chainPlayer =
-        chain?.chainId === chainId
-          ? chain.events.findLast((event) => event.kind === "player")
-          : undefined;
-      const playerRecorded =
-        (pageExchange ?? chainPlayer?.exchangeId) === exchangeId;
-      const accepted =
-        response !== null ||
-        (observed?.chainId === chainId &&
-          (playerRecorded ||
-            (observed.status === "running" &&
-              chain?.activeInvocation?.exchangeId === exchangeId)));
-      const status = outcome?.status;
-      const cancelled =
-        cancelledExchangeRef.current === exchangeId ||
-        (accepted &&
-          (outcome?.lastCancelled === true ||
-            (timeline === undefined &&
-              chain?.events.at(-1)?.kind === "cancellation")));
-      if (cancelled) {
-        setPlayFailure(null);
+      if (outcome.kind === "cancelled") {
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
-      } else if (!accepted) {
-        const message = errorMessage(sendError);
-        setPlayFailure(null);
-        // A rejected retry still has a recoverable interrupted request.
-        if (
-          !hasSubmittedText &&
-          observed?.chainId === chainId &&
-          status === "interrupted" &&
-          !(
-            sendError instanceof RuntimeRequestError &&
-            sendError.protocolCode === "model_protocol_mismatch"
-          )
-        ) {
+      } else if (outcome.kind === "unconfirmed") {
+        const message = errorMessage(outcome.error);
+
+        if (outcome.retryRejected) {
           setRetryRejection(message);
           setFeedback(null);
         } else {
           setFeedback({ kind: "error", text: message });
         }
-      } else if (outcome?.status === "interrupted") {
-        const description = playFailureDescription(
-          outcome.lastFailureKind,
-          outcome.canRetry,
-        );
-        setRetryRejection(outcome.lastFailure ?? description);
-        setPlayFailure(description);
+      } else if (outcome.kind === "interrupted") {
+        const { lastFailure, lastFailureKind, canRetry } = outcome.failure;
+        const description = playFailureDescription(lastFailureKind, canRetry);
+        setRetryRejection(lastFailure ?? description);
+
         setFeedback(null);
-      } else if (projection === null) {
-        setFeedback({ kind: "error", text: errorMessage(projectionError) });
-      } else if (status === "running") {
+      } else if (projectionFailure !== null) {
+        setFeedback({ kind: "error", text: projectionFailure.message });
+      } else if (outcome.kind === "running") {
         setFeedback(null);
       } else {
-        setPlayFailure(null);
         setFeedback({
           kind: "status",
           technical: true,
@@ -997,16 +922,13 @@ export function WorldPage({
               : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
         });
       }
-      if (accepted) {
-        if (fresh) setForceFreshContext(false);
-        if (hasSubmittedText && (response !== null || playerRecorded))
-          setPlayerText("");
-        if (status === "ready") {
-          setTurnNote("");
-          setTurnNoteOpen(false);
-        }
+      if (outcome.kind !== "unconfirmed" && fresh) setForceFreshContext(false);
+      if (hasSubmittedText && playerAccepted) setPlayerText("");
+      if (outcome.kind === "ready") {
+        setTurnNote("");
+        setTurnNoteOpen(false);
       }
-      if (accepted && status === "running") {
+      if (outcome.kind === "running") {
         setPlayProgress((current) =>
           progressFromCallChain(
             chainId,
@@ -1054,7 +976,10 @@ export function WorldPage({
           kind: "status",
           text: uiText("模型调用已经结束，正在刷新结果…"),
         });
-        await refreshWorld();
+        setPlayProgress(null);
+        await refreshWorld().catch((error: unknown) =>
+          setFeedback({ kind: "error", text: errorMessage(error) }),
+        );
       }
     } catch (reason: unknown) {
       if (cancelledExchangeRef.current === exchangeId)
@@ -1105,10 +1030,9 @@ export function WorldPage({
         worldId,
         files,
       });
-      const preview = await client.request({
-        type: "world.control-draft.preview",
-        worldId,
-      });
+      const preview = await readAfterCommit(() =>
+        client.request({ type: "world.control-draft.preview", worldId }),
+      );
       setControlPreview(preview);
       setFeedback({
         kind: "status",
@@ -1127,7 +1051,9 @@ export function WorldPage({
     setPending("control-apply");
     try {
       await client.request({ type: "world.control-draft.apply", worldId });
-      await refreshWorld(false);
+      setControlPreview(null);
+      setControlDirty(false);
+      await readAfterCommit(() => refreshWorld(false));
       setFeedback({ kind: "status", text: uiText("世界控制已整批应用。") });
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -1211,11 +1137,34 @@ export function WorldPage({
           sourceHead,
         },
       );
-      await onOpenWorld(derived.world.worldId);
+      await readAfterCommit(() => onOpenWorld(derived.world.worldId));
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
       setPending(null);
     }
+  }
+
+  async function refreshRevisedTimeline(
+    chain: V1PlayCallChainView,
+    previous: WorldReadView,
+  ): Promise<void> {
+    // Regeneration replaces history. Reusing the old tail as an append would keep removed replies.
+    setPlayContextUsage(projectPlayContextUsage(chain));
+    setPlayCallChain(null);
+    setPlayTimeline(legacyTimelinePage({ ...previous, playCallChain: chain }));
+    await readAfterCommit(async () => {
+      try {
+        await refreshWorld();
+      } catch (error) {
+        const page = await requestRuntime<V1PlayTimelinePage>(client, {
+          type: "play.timeline.page",
+          worldId,
+          limit: 40,
+        }).catch(() => null);
+        if (page !== null) setPlayTimeline(page);
+        throw error;
+      }
+    });
   }
 
   async function regenerateNarrative(
@@ -1239,13 +1188,12 @@ export function WorldPage({
         chainId,
         eventId,
       });
-      applyPlayCallChain(result);
-      await refreshWorld();
+      await refreshRevisedTimeline(result, world);
       setFeedback({
         kind: result.status === "interrupted" ? "error" : "status",
         text:
           result.status === "interrupted"
-            ? uiText("叙事生成中断；可以重新发送已保存的请求。")
+            ? playFailureDescription(result.lastFailureKind, result.canRetry)
             : uiText("已重新生成叙事。"),
       });
     } catch (reason: unknown) {
@@ -1283,7 +1231,6 @@ export function WorldPage({
       eventId,
       originalText: editedText,
     };
-    let revisionAccepted = false;
     const replacementExchangeId = createClientId("play-exchange");
     setPending("revise");
     setFeedback({
@@ -1312,7 +1259,6 @@ export function WorldPage({
           modelConfigured && continuation === "continue_context",
         sendAfterRevision: modelConfigured,
       });
-      revisionAccepted = true;
       // The revised chain is bound to the revision's own head.
       setForceFreshContext(false);
       if (continuation === "fresh_context") consumeCheckpointPreference();
@@ -1326,9 +1272,8 @@ export function WorldPage({
           chainId: revised.playCallChain.chainId,
           eventId: revisedPlayer.id,
         };
-      applyPlayCallChain(revised.playCallChain);
-      await refreshWorld();
       if (!modelConfigured) {
+        await refreshRevisedTimeline(revised.playCallChain, world);
         setFeedback({
           kind: "status",
           text: regenerate
@@ -1351,21 +1296,27 @@ export function WorldPage({
         regenerate &&
         continuation === "continue_context" &&
         continued.status === "interrupted" &&
-        !continued.canRetry
+        !continued.canRetry &&
+        !continued.canContinuePartial
       )
         setRegenerationFallback(regenerationTarget);
-      applyPlayCallChain(continued);
-      await refreshWorld();
+      await refreshRevisedTimeline(continued, world);
       setFeedback({
         kind:
-          continued.status === "interrupted" && !continued.canRetry
+          continued.status === "interrupted" &&
+          !continued.canRetry &&
+          !continued.canContinuePartial
             ? "error"
             : "status",
         text:
           continued.status === "interrupted"
             ? continued.canRetry
               ? uiText("修改已保存；模型请求中断，可以重新发送已保存的请求。")
-              : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
+              : continued.canContinuePartial
+                ? getWebLocale() === "en"
+                  ? "Edit saved. Continue the interrupted response."
+                  : "修改已保存，可以继续发送中断的回复。"
+                : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
             : regenerate
               ? uiText("已重新生成；原回复已离开当前时间线")
               : continuation === "fresh_context"
@@ -1373,15 +1324,14 @@ export function WorldPage({
                 : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
-      // Offer an explicit new-context action after a known rejection, or after
-      // the revision is confirmed. Do not replay a revision with unknown outcome.
+      // A refresh error or generic rejection cannot establish a context incompatibility.
       if (
         regenerate &&
         continuation === "continue_context" &&
-        (revisionAccepted ||
-          (reason instanceof RuntimeRequestError &&
-            (reason.protocolCode === "invalid_request" ||
-              reason.protocolCode === "model_protocol_mismatch")))
+        reason instanceof RuntimeRequestError &&
+        (reason.protocolCode === "model_protocol_mismatch" ||
+          (isResponseRecord(reason.details) &&
+            reason.details.recovery === "fresh_context"))
       )
         setRegenerationFallback(regenerationTarget);
       setFeedback({ kind: "error", text: errorMessage(reason) });
@@ -1570,7 +1520,9 @@ export function WorldPage({
         onBack={() => {
           revisionWorkspace.close();
           setDialog(null);
-          void refreshWorld(false);
+          void refreshWorld(false).catch((reason: unknown) =>
+            setFeedback({ kind: "error", text: errorMessage(reason) }),
+          );
         }}
         {...(protagonistRevision !== undefined ||
         epoch?.locked === true ||

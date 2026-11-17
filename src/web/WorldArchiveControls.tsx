@@ -5,13 +5,14 @@ import {
 } from "../protocol/worldArchives.ts";
 import type { V1Request } from "../protocol/v1.ts";
 import { createClientId } from "./ClientId.ts";
-import { RuntimeRequestError } from "./runtimeClient.ts";
+import {
+  RuntimeRequestError,
+  httpResponseError,
+  isResponseRecord,
+  unreadableResponse,
+} from "./RuntimeResponse.ts";
 import { saveFile } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
-import {
-  runtimeErrorText,
-  runtimeUnreadableResponseText,
-} from "./RuntimeErrorText.ts";
 
 interface ArchiveClient {
   request(request: V1Request): Promise<unknown>;
@@ -158,33 +159,36 @@ function uploadWorldBackup(
         progress(Math.round((100 * event.loaded) / event.total));
     };
     request.onerror = () =>
-      reject(new Error(uiText("世界备份上传失败，请重试。")));
+      reject(
+        new RuntimeRequestError(uiText("世界备份上传失败，请重试。"), {
+          kind: "connection",
+        }),
+      );
     request.onabort = request.onerror;
     request.onload = () => {
-      let result: {
-        uploadId: string;
-        error?: { code?: string; message?: string };
-      };
+      let payload: unknown;
       try {
-        result = JSON.parse(request.responseText) as typeof result;
-      } catch {
-        reject(
-          new RuntimeRequestError(
-            runtimeUnreadableResponseText(request.status),
-          ),
-        );
+        payload = JSON.parse(request.responseText);
+      } catch (cause) {
+        reject(unreadableResponse(request.status, cause));
         return;
       }
-      if (request.status < 200 || request.status >= 300)
+      if (request.status < 200 || request.status >= 300) {
         reject(
-          new RuntimeRequestError(
-            result.error?.message === undefined
-              ? uiText("世界备份上传失败，请重试。")
-              : runtimeErrorText(result.error.message),
-            { protocolCode: result.error?.code },
-          ),
+          httpResponseError(request.status, payload, {
+            runtimeEnvelope: true,
+            fallback: uiText("世界备份上传失败，请重试。"),
+          }),
         );
-      else resolve(result);
+      } else if (
+        isResponseRecord(payload) &&
+        typeof payload.uploadId === "string" &&
+        payload.uploadId.trim() !== ""
+      ) {
+        resolve({ uploadId: payload.uploadId });
+      } else {
+        reject(unreadableResponse(request.status));
+      }
     };
     request.send(file);
   });
@@ -199,18 +203,19 @@ async function confirmArchiveDownload(path: string): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`${path}/check`);
-  } catch {
-    throw new RuntimeRequestError(uiText("下载失败，请重试。"));
+  } catch (cause) {
+    throw new RuntimeRequestError(uiText("下载失败，请重试。"), {
+      kind: "connection",
+      cause,
+    });
   }
-  if (response.ok) return;
-  const body = (await response.json().catch(() => undefined)) as
-    { error?: { code?: string; message?: string } } | undefined;
-  throw new RuntimeRequestError(
-    body?.error?.message === undefined
-      ? uiText("下载失败，请重试。")
-      : runtimeErrorText(body.error.message),
-    { protocolCode: body?.error?.code },
-  );
+  if (response.status === 204) return;
+  if (response.ok) throw unreadableResponse(response.status);
+  const payload: unknown = await response.json().catch(() => undefined);
+  throw httpResponseError(response.status, payload, {
+    runtimeEnvelope: true,
+    fallback: uiText("下载失败，请重试。"),
+  });
 }
 
 function archiveDownloadErrorMessage(error: unknown): string {

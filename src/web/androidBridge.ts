@@ -106,12 +106,16 @@ export async function saveFile(
           mimeType: "application/octet-stream",
           path: source.path,
         };
-  const reply = new Promise<SaveFileOutcome>((resolve, reject) => {
-    pendingSaves.set(id, { resolve, reject });
-  });
   listenForReplies(bridge);
-  bridge.postMessage(JSON.stringify(message));
-  return reply;
+  return new Promise<SaveFileOutcome>((resolve, reject) => {
+    pendingSaves.set(id, { resolve, reject });
+    try {
+      bridge.postMessage(JSON.stringify(message));
+    } catch (cause) {
+      pendingSaves.delete(id);
+      reject(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  });
 }
 
 let nextSaveId = 0;
@@ -126,16 +130,25 @@ const pendingSaves = new Map<
 
 function listenForReplies(bridge: AndroidBridge): void {
   if (listening) return;
-  listening = true;
   bridge.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
-    let reply: { id?: unknown; outcome?: unknown; error?: unknown };
+    let reply: unknown;
     try {
-      reply = JSON.parse(event.data) as typeof reply;
+      reply = JSON.parse(event.data);
     } catch {
       return;
     }
-    if (typeof reply.id !== "string") return;
+    if (
+      typeof reply !== "object" ||
+      reply === null ||
+      !("id" in reply) ||
+      typeof reply.id !== "string" ||
+      !("outcome" in reply) ||
+      (reply.outcome !== "saved" &&
+        reply.outcome !== "cancelled" &&
+        reply.outcome !== "failed")
+    )
+      return;
     const pending = pendingSaves.get(reply.id);
     if (pending === undefined) return;
     pendingSaves.delete(reply.id);
@@ -144,10 +157,13 @@ function listenForReplies(bridge: AndroidBridge): void {
     else
       pending.reject(
         new Error(
-          typeof reply.error === "string" ? reply.error : "Save failed",
+          "error" in reply && typeof reply.error === "string"
+            ? reply.error
+            : "Save failed",
         ),
       );
   });
+  listening = true;
 }
 
 function downloadInBrowser(fileName: string, source: SaveFileSource): void {

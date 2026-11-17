@@ -49,7 +49,7 @@ test("意外 Runtime 错误显示服务端原文对应的友好提示", async ()
   const failure = await requestFailure();
   expect(failure).toBeInstanceOf(RuntimeRequestError);
   expect(failure).toMatchObject({
-    message: "世界刚被其他操作更新，这次操作没有生效。请刷新页面后重试。",
+    message: "世界端点已经变化。请刷新页面，核对当前记录。",
     protocolCode: undefined,
   });
 });
@@ -176,4 +176,49 @@ test("页面渲染出错时显示原因和重新加载按钮，而不是空白�
   ).toBeTruthy();
   expect(screen.getByRole("button", { name: "重新加载页面" })).toBeTruthy();
   expect(screen.getByText("技术详情")).toBeTruthy();
+});
+
+test.each([
+  null,
+  [],
+  {},
+  { protocol: "narraeon.runtime/v1" },
+  { protocol: "narraeon.runtime/v1", result: 42, error: {} },
+])("rejects malformed successful RPC envelopes (%j)", async (payload) => {
+  respondWith(Response.json(payload));
+  expect(await requestFailure()).toMatchObject({
+    name: "RuntimeRequestError",
+    kind: "unreadable_response",
+    status: 200,
+  });
+});
+
+test.each([null, false, 0, ""])(
+  "preserves a valid RPC result (%j)",
+  async (result) => {
+    respondWith(Response.json({ protocol: "narraeon.runtime/v1", result }));
+    expect(await new RuntimeClient().request({ type: "workspace.read" })).toBe(
+      result,
+    );
+  },
+);
+
+test("an unacknowledged write reports an unknown outcome without replaying the request", async () => {
+  const fetch = vi.fn(() =>
+    Promise.resolve(
+      Response.json(
+        { error: { code: "proxy_error", message: "Bad gateway" } },
+        { status: 502 },
+      ),
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const command = new RuntimeClient().request({ type: "content.create" });
+  await expect(command).rejects.toThrow("请先核对当前记录");
+  await expect(command).rejects.toMatchObject({
+    kind: "http",
+    status: 502,
+    protocolCode: undefined,
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
