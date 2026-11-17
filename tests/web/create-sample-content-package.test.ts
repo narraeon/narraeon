@@ -157,3 +157,53 @@ test("a failed sample request reports the error and lets the player retry from t
     ).toHaveLength(2),
   );
 });
+
+test("a lost sample receipt rereads the home without navigating to a same-name package", async () => {
+  window.location.hash = "#/";
+  const sample = sampleContentPackageForLocale("zh-CN");
+  const packages = [
+    {
+      localId: "older",
+      title: sample.title,
+      status: "usable",
+      gameplay: { mode: "interactive-fiction" },
+    },
+  ];
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    await Promise.resolve();
+    if (input.type === "workspace.read")
+      return {
+        preferences: { locale: "zh-CN", reading: defaultAppReadingPreferences },
+        contentPackages: [...packages],
+        worlds: [],
+        playPresets: { currentPresetId: "", presets: [] },
+        storageNotices: [],
+        model: {
+          configured: false,
+          activeConnectionId: null,
+          connections: [],
+          presets: [],
+        },
+      };
+    if (input.type === "content.create-sample") {
+      packages.push({ ...packages[0]!, localId: "new" });
+      throw new Error("lost reply");
+    }
+    throw new Error(`Unexpected request: ${input.type}`);
+  });
+  render(
+    createElement(App, { client: { request } as unknown as RuntimeClient }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "从示例新建" }));
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("button", { name: `打开内容包：${sample.title}` }),
+    ).toHaveLength(2),
+  );
+  expect(window.location.hash).toBe("#/");
+  expect(
+    request.mock.calls.filter(
+      ([input]) => input.type === "content.create-sample",
+    ),
+  ).toHaveLength(1);
+});

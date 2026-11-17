@@ -7,6 +7,8 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  暂时无法同步: "Temporarily unable to sync",
+  重新读取: "Read again",
   页面出错了: "Something went wrong",
   导出诊断日志: "Export diagnostic logs",
   "页面显示时发生错误，已保存的故事和世界不受影响。请重新加载页面；如果反复出现，请把下面的技术详情发给开发者。":

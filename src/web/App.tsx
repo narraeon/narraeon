@@ -5,7 +5,13 @@ import {
   WorldBackupImportButton,
 } from "./WorldArchiveControls.tsx";
 import { PackageScriptPermissionControl } from "./PackageScriptPermissionControl.tsx";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
@@ -18,6 +24,8 @@ import {
 import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { compareWorldActivity } from "../shared/world-activity-order.ts";
 import { saveFile } from "./androidBridge.ts";
@@ -67,10 +75,10 @@ interface PlayPresetLibrary {
 type Screen = WorkspaceScreen;
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const workspaceReadVersion = useRef(0);
-  const currentWorkspace = useEffectEvent(() => workspace);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const workspaceReceiptVersion = useRef(0);
+  const currentWorkspace = useEffectEvent(() => workspace);
+
   const [screen, setScreen] = useState<Screen>("home");
   const locationRef = useRef<WorkspaceLocation>({ screen: "home" });
   const [selectedPresetId, setSelectedPresetId] = useState("");
@@ -210,37 +218,26 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const version = ++packageOpenRequest.current;
     if (workspace === null) return;
     const hash = window.location.hash;
-    const readVersion = ++workspaceReadVersion.current;
-    const canRestore = () => {
+    const receiptVersion = workspaceReceiptVersion.current;
+    void workspaceTarget.read().then((next) => {
       if (
         version !== packageOpenRequest.current ||
         window.location.hash !== hash
       )
-        return false;
+        return;
       if (navigationLockedRef.current || creatingWorldRef.current) {
         preserveLocation();
-        return false;
+        return;
       }
-      if (readVersion !== workspaceReadVersion.current) {
-        const latest = currentWorkspace();
-        if (latest) restoreAddress(latest);
-        return false;
-      }
-      return true;
-    };
-    void client.request<Workspace>({ type: "workspace.read" }).then(
-      (next) => {
-        if (!canRestore()) return;
-        setWebLocale(next.preferences.locale);
-        setWorkspace(next);
-        restoreAddress(next);
-      },
-      (error: unknown) => {
-        if (!canRestore()) return;
+      const latest =
+        next ??
+        (receiptVersion !== workspaceReceiptVersion.current
+          ? currentWorkspace()
+          : null);
+      if (latest !== null) restoreAddress(latest);
+      else
         window.history.pushState(null, "", workspaceHash(locationRef.current));
-        report(error);
-      },
-    );
+    });
   });
 
   useEffect(() => {
@@ -248,28 +245,29 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+  const { target: workspaceTarget, syncFailed } = useReadTarget(
+    useCallback(
+      () => client.request<Workspace>({ type: "workspace.read" }),
+      [client],
+    ),
+    useCallback((next: Workspace) => {
+      setWebLocale(next.preferences.locale);
+      setWorkspace(next);
+      setSelected((current) =>
+        next.contentPackages.some(({ localId }) => localId === current)
+          ? current
+          : (next.contentPackages[0]?.localId ?? ""),
+      );
+      setNotice("");
+    }, []),
+  );
   async function refresh(): Promise<void> {
-    const version = ++workspaceReadVersion.current;
-    let next: Workspace;
-    try {
-      next = await client.request<Workspace>({ type: "workspace.read" });
-    } catch (error) {
-      if (version === workspaceReadVersion.current) throw error;
-      return;
-    }
-    if (version !== workspaceReadVersion.current) return;
-    setWebLocale(next.preferences.locale);
-    setWorkspace(next);
-    setSelected((current) =>
-      next.contentPackages.some(({ localId }) => localId === current)
-        ? current
-        : (next.contentPackages[0]?.localId ?? ""),
-    );
-    setNotice("");
+    await workspaceTarget.read();
   }
 
   function updateWorkspace(update: (current: Workspace) => Workspace): void {
-    workspaceReadVersion.current += 1;
+    workspaceReceiptVersion.current++;
+    workspaceTarget.accept({ complete: false });
     setWorkspace((current) => (current === null ? null : update(current)));
   }
 
@@ -305,7 +303,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       const detail = authoringWorkspace.getSnapshot().target?.packageDetail;
       if (detail === undefined || detail === previous) return;
       previous = detail;
-      workspaceReadVersion.current += 1;
+      workspaceReceiptVersion.current++;
+      workspaceTarget.accept({ complete: false });
       setWorkspace((current) =>
         current === null
           ? null
@@ -317,34 +316,21 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             },
       );
     });
-  }, [authoringWorkspace]);
+  }, [authoringWorkspace, workspaceTarget]);
 
   useEffect(() => {
     let active = true;
-    void client
-      .request<Workspace>({ type: "workspace.read" })
-      .then((next) => {
-        if (!active) return;
-        setWebLocale(next.preferences.locale);
-        setWorkspace(next);
-        setSelected(next.contentPackages[0]?.localId ?? "");
-        setNotice("");
-        restoreAddress(next);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setNotice(
-            error instanceof Error ? error.message : uiText("工作区读取失败"),
-          );
-          setLoadFailed(true);
-        }
-      });
+    const read =
+      loadAttempt === 0 ? workspaceTarget.read() : workspaceTarget.recover();
+    void read.then((next) => {
+      if (active && next !== null) restoreAddress(next);
+    });
     return () => {
       active = false;
       packageOpenRequest.current += 1;
       presetPageInstanceRef.current += 1;
     };
-  }, [client, loadAttempt]);
+  }, [workspaceTarget, loadAttempt]);
 
   async function saveLocale(locale: AppLocale): Promise<void> {
     if (workspace === null || localeSaving) return;
@@ -440,10 +426,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     samplePendingRef.current = true;
     setSamplePending(true);
     try {
-      const created = await client.request<HomeContentPackage>({
-        type: "content.create-sample",
-        locale: workspace.preferences.locale,
-      });
+      const created = await workspaceTarget.command(() =>
+        client.request<HomeContentPackage>({
+          type: "content.create-sample",
+          locale: workspace.preferences.locale,
+        }),
+      );
       acceptPackage(created);
       setSelected(created.localId);
       switchLocation({ screen: "create" });
@@ -690,18 +678,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   if (workspace === null)
     return (
       <main className="center-card" role="status">
-        {notice}
-        {loadFailed && (
-          <button
-            type="button"
-            onClick={() => {
-              setLoadFailed(false);
-              setNotice(uiText("正在读取工作区…"));
-              setLoadAttempt((current) => current + 1);
-            }}
-          >
-            {uiText("重试")}
-          </button>
+        {syncFailed ? (
+          <SyncNotice
+            failed
+            onRead={() => setLoadAttempt((current) => current + 1)}
+          />
+        ) : (
+          notice
         )}
       </main>
     );
@@ -914,6 +897,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         />
       ) : null}
       <div className="workspace-body">
+        {screen === "home" && (
+          <SyncNotice
+            failed={syncFailed}
+            onRead={() => void workspaceTarget.recover()}
+          />
+        )}
         {worldContent}
         {authoringContent}
         {screen !== "content" &&

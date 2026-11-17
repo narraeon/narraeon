@@ -202,14 +202,15 @@ test("首屏读取失败后可重读并恢复原书签", async () => {
   window.history.replaceState(null, "", "#/models");
   const { client, request } = fixture();
   request.mockRejectedValueOnce(new Error("Workspace temporarily unavailable"));
+  request.mockRejectedValueOnce(new Error("Workspace still unavailable"));
   render(createElement(App, { client }));
-  await screen.findByText("Workspace temporarily unavailable");
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await screen.findByText("暂时无法同步");
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
   await screen.findByLabelText("配置名称");
   expect(window.location.hash).toBe("#/models");
   expect(
     request.mock.calls.filter(([r]) => r.type === "workspace.read"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 });
 
 test("创建响应丢失时从同一操作的创建回执进入世界", async () => {
