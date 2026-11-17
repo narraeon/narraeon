@@ -470,7 +470,8 @@ export function PlayPresetScreen({
       return;
     }
     setSelectedId(selected?.id ?? "");
-    onSelectionChange?.(selected?.id ?? "");
+    if ((selected?.id ?? "") !== selectedId)
+      onSelectionChange?.(selected?.id ?? "");
     const editable = selected === undefined ? null : toEditablePreset(selected);
     setDraft(editable);
     setDraftBase(editable);

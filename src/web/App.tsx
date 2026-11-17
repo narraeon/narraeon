@@ -1141,6 +1141,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onSelectionChange={(presetId) => {
               if (
                 locationRef.current.screen !== "plays" ||
+                window.location.hash !== workspaceHash(locationRef.current) ||
                 presetPageInstanceRef.current !== presetPageInstance
               )
                 return;

@@ -137,6 +137,47 @@ test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原�
   ]);
 });
 
+test("被动重读不重复报告当前选择，主动切换和预设删除仍报告真实选择变化", async () => {
+  const first = fixture();
+  const second = { ...first, id: "second", name: "第二份预设" };
+  const onSelectionChange = vi.fn();
+  const props = {
+    client: { request: <T>() => Promise.resolve({} as T) },
+    initialLibrary: { currentPresetId: first.id, presets: [first, second] },
+    onLibraryChange: vi.fn(),
+    onDirtyChange: vi.fn(),
+    onSelectionChange,
+  };
+  const view = render(createElement(PlayPresetScreen, props));
+  view.rerender(
+    createElement(PlayPresetScreen, {
+      ...props,
+      initialLibrary: {
+        ...props.initialLibrary,
+        presets: [{ ...first, name: "读回的新名称" }, second],
+      },
+    }),
+  );
+  await screen.findByRole("option", { name: "读回的新名称" });
+  expect(onSelectionChange).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("切换预设"), {
+    target: { value: second.id },
+  });
+  expect(onSelectionChange).toHaveBeenLastCalledWith(second.id);
+  view.rerender(
+    createElement(PlayPresetScreen, {
+      ...props,
+      initialLibrary: { currentPresetId: first.id, presets: [first] },
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+      first.id,
+    ),
+  );
+  expect(onSelectionChange).toHaveBeenLastCalledWith(first.id);
+});
+
 test("删除回执生效后列表读取失败，重试只读取重建的预设", async () => {
   const removed = fixture();
   const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认预设" };

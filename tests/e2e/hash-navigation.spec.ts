@@ -137,6 +137,63 @@ test("世界、内容包、预设刷新恢复，书签直接打开世界沿用�
   await expect(page.getByLabel("切换预设")).toHaveValue(data.presets[0]!);
 });
 
+for (const removed of [false, true])
+  test(`预设刷新后浏览器后退恢复内容包页面与地址（${removed ? "原预设已删除" : "原预设仍存在"}）`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+    const package_ = await runtime<{ localId: string }>(page, {
+      type: "content.create",
+    });
+    await runtime(page, {
+      type: "content.rename",
+      packageId: package_.localId,
+      name: "返回的内容包",
+    });
+    const preset = await runtime<{ preset: { id: string } }>(page, {
+      type: "play.create",
+      name: "返回前的预设",
+    });
+    await page.goto(`/#/content/${package_.localId}`);
+    await expect(
+      page.getByRole("heading", {
+        name: "返回的内容包 · AI 设定完善",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "工作区导航" })
+      .getByRole("button", { name: "预设", exact: true })
+      .click();
+    await page.getByLabel("切换预设").selectOption(preset.preset.id);
+    await page.reload();
+    await expect(page.getByLabel("切换预设")).toHaveValue(preset.preset.id);
+    if (removed)
+      await runtime(page, { type: "play.delete", presetId: preset.preset.id });
+    await page.goBack();
+    await expect(page).toHaveURL(
+      new RegExp(`#/content/${package_.localId}$`, "u"),
+    );
+    await expect(
+      page.getByRole("heading", {
+        name: "返回的内容包 · AI 设定完善",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.goForward();
+    if (removed) {
+      await expect(page).toHaveURL(/#\/$/u);
+      await expect(
+        page.getByText("找不到该预设。", { exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(page.getByLabel("切换预设")).toHaveValue(preset.preset.id);
+      await expect(page).toHaveURL(
+        new RegExp(`#/presets/${preset.preset.id}$`, "u"),
+      );
+    }
+  });
+
 test("后退、前进按页面历史切换，新建、预览、模型页支持书签", async ({
   page,
 }) => {
