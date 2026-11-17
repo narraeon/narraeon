@@ -33,6 +33,9 @@ test.each(["zh-CN", "en"] as const)(
       recovery,
     };
     const view = render(createElement(PlayFailureNotice, props));
+    expect(view.container.querySelector("p")?.textContent).toContain(
+      locale === "en" ? "saved partial reply" : "从已保存的部分回复接着生成",
+    );
     const name = locale === "en" ? "Continue response" : "继续发送";
     expect(
       screen.queryByRole("button", {

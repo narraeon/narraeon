@@ -1,5 +1,5 @@
 import type { PlayFailureKind } from "../protocol/playFailure.ts";
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 
 export const failureText: Record<
   PlayFailureKind,
@@ -49,7 +49,14 @@ export const failureText: Record<
 export function playFailureDescription(
   kind: PlayFailureKind | undefined,
   canRetry: boolean,
+  canContinuePartial = false,
 ): string {
+  if (!canRetry && canContinuePartial)
+    return getWebLocale() === "en"
+      ? "Use Continue response to resume from the saved partial reply."
+      : "可以点击“继续发送”，从已保存的部分回复接着生成。";
+  if (!canRetry && kind === "retryable")
+    return uiText(failureText.other.description);
   return uiText(
     canRetry
       ? "可以使用当前选中的兼容连接，从本地最后已结算的步骤重新发送，不会重复提交玩家原文。"

@@ -25,14 +25,17 @@ export function PlayFailureNotice({
   recovery?: PlayFailureRecovery | undefined;
 }): React.JSX.Element {
   const kind = failureKind ?? (canRetry ? "retryable" : "other");
-  const text = failureText[kind];
+  const canResend = canRetry && (recovery?.canRetry ?? true);
+  const text = failureText[kind === "retryable" && !canResend ? "other" : kind];
   return (
     <>
       <strong>{uiText(text.title)}</strong>
-      <p>{playFailureDescription(kind, canRetry)}</p>
+      <p>
+        {playFailureDescription(kind, canResend, recovery?.canContinuePartial)}
+      </p>
       {recovery === undefined ? null : (
         <div className="play-failure-actions">
-          {canRetry && recovery.canRetry ? (
+          {canResend ? (
             <button
               type="button"
               disabled={recovery.playDisabled}

@@ -904,7 +904,11 @@ export function WorldPage({
         }
       } else if (outcome.kind === "interrupted") {
         const { lastFailure, lastFailureKind, canRetry } = outcome.failure;
-        const description = playFailureDescription(lastFailureKind, canRetry);
+        const description = playFailureDescription(
+          lastFailureKind,
+          canRetry,
+          outcome.failure.canContinuePartial,
+        );
         setRetryRejection(lastFailure ?? description);
 
         setFeedback(null);
@@ -1193,7 +1197,11 @@ export function WorldPage({
         kind: result.status === "interrupted" ? "error" : "status",
         text:
           result.status === "interrupted"
-            ? playFailureDescription(result.lastFailureKind, result.canRetry)
+            ? playFailureDescription(
+                result.lastFailureKind,
+                result.canRetry,
+                result.canContinuePartial,
+              )
             : uiText("已重新生成叙事。"),
       });
     } catch (reason: unknown) {

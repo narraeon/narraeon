@@ -13,7 +13,12 @@ type PlayCommand = Extract<
 >;
 type PlayState = Pick<
   V1PlayCallChainView,
-  "status" | "lastFailure" | "lastFailureKind" | "canRetry" | "lastCancelled"
+  | "status"
+  | "lastFailure"
+  | "lastFailureKind"
+  | "canRetry"
+  | "canContinuePartial"
+  | "lastCancelled"
 >;
 
 export type PlaySubmissionOutcome =
@@ -38,6 +43,7 @@ function observedState(page: V1PlayTimelinePage): PlayState | null {
       ? {}
       : { lastFailureKind: page.activeLastFailureKind }),
     canRetry: page.activeCanRetry,
+    canContinuePartial: page.activeCanContinuePartial ?? false,
     ...(lastItem?.kind === "event" && lastItem.event.kind === "cancellation"
       ? { lastCancelled: true }
       : {}),
