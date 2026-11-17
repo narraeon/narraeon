@@ -408,19 +408,27 @@ export function WorldPage({
         }
         const next = observation.value;
         const verifyFirst = observationNeedsVerification(next);
-        if (next === null) {
-          if (!verifyFirst) return;
+        const readProjection = async (): Promise<WorldReadView | null> => {
           const version = worldProjectionVersion.current;
-          const projection = await requestRuntime<WorldReadView>(client, {
-            type: "world.read",
-            worldId,
-          });
-          if (
+          const current = () =>
             active &&
             isCurrent?.() !== false &&
-            version === worldProjectionVersion.current
-          )
-            applyWorld(projection, true);
+            version === worldProjectionVersion.current;
+          try {
+            const projection = await requestRuntime<WorldReadView>(client, {
+              type: "world.read",
+              worldId,
+            });
+            return current() ? projection : null;
+          } catch (error) {
+            if (current()) throw error;
+            return null;
+          }
+        };
+        if (next === null) {
+          if (!verifyFirst) return;
+          const projection = await readProjection();
+          if (projection !== null) applyWorld(projection, true);
           return;
         }
         // Ignore token deltas. Follow-up outcomes (including failure/clear),
@@ -469,17 +477,8 @@ export function WorldPage({
           verifyFirst ||
           hydratedHead !== `${next.parentHead}:${next.status}`
         ) {
-          const version = worldProjectionVersion.current;
-          const projection = await requestRuntime<WorldReadView>(client, {
-            type: "world.read",
-            worldId,
-          });
-          if (
-            !active ||
-            isCurrent?.() === false ||
-            version !== worldProjectionVersion.current
-          )
-            return;
+          const projection = await readProjection();
+          if (projection === null) return;
           hydratedHead = `${next.parentHead}:${next.status}`;
           setWorld(projection);
           const page =
