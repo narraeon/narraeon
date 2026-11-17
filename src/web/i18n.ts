@@ -2689,6 +2689,8 @@ Object.assign(englishMessages, {
   调整最大输出: "Adjust maximum output",
   检查模型连接: "Check model connection",
   技术详情: "Technical details",
+  "无法刷新对话内容：{message}":
+    "Could not refresh the conversation: {message}",
 });
 
 export function setWebLocale(locale: AppLocale): void {

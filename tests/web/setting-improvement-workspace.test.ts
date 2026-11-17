@@ -112,6 +112,23 @@ test.each(["content-package", "world-revision"] as const)(
   },
 );
 
+test("resubmitting an unconfirmed draft reuses its Runtime request ID", async () => {
+  const onSend = vi
+    .fn<(message: string, requestId: string) => Promise<void>>()
+    .mockResolvedValue(undefined);
+  onSend.mockRejectedValueOnce(new Error("response lost"));
+  renderPanel(undefined, { onSend });
+  const input = screen.getByLabelText<HTMLTextAreaElement>("继续这段对话");
+  fireEvent.change(input, { target: { value: "Keep my message" } });
+  const send = screen.getByRole("button", { name: "发送" });
+  fireEvent.click(send);
+  await waitFor(() => expect(input.value).toBe("Keep my message"));
+  fireEvent.click(send);
+  await waitFor(() => expect(onSend.mock.calls).toHaveLength(2));
+  expect(onSend.mock.calls[1]).toEqual(onSend.mock.calls[0]);
+  await waitFor(() => expect(input.value).toBe(""));
+});
+
 test("retry button resumes once and is disabled for unsaved file drafts", async () => {
   const onResume = vi.fn(() => Promise.resolve());
   renderPanel(undefined, { retryable: true, onResume });
@@ -309,7 +326,7 @@ function renderPanel(
   options: {
     currentFileContents?: string;
     target?: "content-package" | "world-revision";
-    onSend?: (text: string) => Promise<void>;
+    onSend?: (text: string, requestId: string) => Promise<void>;
     onCreateWorld?: () => void;
     history?: V1SettingImprovementHistoryItem[];
     onSelectSession?: (sessionId: string) => Promise<void>;
@@ -476,7 +493,10 @@ for (const target of ["content-package", "world-revision"] as const) {
     fireEvent.change(input, { target: { value: "第一行\n第二行" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() =>
-      expect(onSend).toHaveBeenCalledExactlyOnceWith("第一行\n第二行"),
+      expect(onSend).toHaveBeenCalledExactlyOnceWith(
+        "第一行\n第二行",
+        expect.any(String),
+      ),
     );
   });
 
@@ -498,7 +518,10 @@ for (const target of ["content-package", "world-revision"] as const) {
     expect(onSend).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledExactlyOnceWith("检查这份内容");
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(
+      "检查这份内容",
+      expect.any(String),
+    );
     finish();
     await waitFor(() =>
       expect((input as HTMLTextAreaElement).disabled).toBe(false),

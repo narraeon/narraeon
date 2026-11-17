@@ -343,6 +343,72 @@ describe("世界游玩页面", () => {
     ).toHaveLength(1);
   });
 
+  test("an older interrupted observation cannot replace a newer ready timeline", async () => {
+    const stale = interruptedChainView();
+    const view = {
+      ...worldView(null),
+      playTimeline: {
+        worldId: stale.worldId,
+        generation: "current",
+        activeChainId: stale.chainId,
+        activeStatus: "ready",
+        activeLastFailure: null,
+        activeCanRetry: false,
+        items: [
+          {
+            kind: "event",
+            chainId: stale.chainId,
+            current: true,
+            event: {
+              id: 99,
+              kind: "assistant",
+              status: "completed",
+              responseKind: "narrative",
+              text: "Current accepted reply.",
+              hasReasoning: false,
+              hasToolFragment: false,
+              hasUsage: false,
+              detailsAvailable: false,
+              exchange: 2,
+              attempt: 1,
+              committedHead: "commit:9",
+            },
+          },
+        ],
+        nextCursor: null,
+      } satisfies V1PlayTimelinePage,
+    };
+    let receive!: Parameters<ObserveConversation>[1];
+    let reads = 0;
+    let finishRead!: () => void;
+    const request = vi.fn((input: V1Request) => {
+      if (input.type !== "world.read") return Promise.resolve([]);
+      if (++reads === 1) return Promise.resolve(view);
+      return new Promise((resolve) => {
+        finishRead = () => resolve(view);
+      });
+    });
+    renderWorld({
+      request,
+      observeConversation: (_target, cb) => {
+        receive = cb;
+        return () => undefined;
+      },
+    });
+    await screen.findByText("Current accepted reply.");
+    let receiving!: void | Promise<void>;
+    act(() => {
+      receiving = receive({ kind: "play", value: stale }, true);
+    });
+    expect(screen.queryByRole("alert", { name: "模型调用失败" })).toBeNull();
+    await act(async () => {
+      finishRead();
+      await receiving;
+    });
+    expect(screen.queryByRole("alert", { name: "模型调用失败" })).toBeNull();
+    expect(screen.getByText("Current accepted reply.")).toBeTruthy();
+  });
+
   test("a rejected resend displays its new rejection instead of the unchanged inspected error", async () => {
     const chain = interruptedChainView();
     const client = {
@@ -5246,6 +5312,12 @@ test("世界修订 fresh 订阅不绑定旧 latest，命令完成不覆盖后来
         return request.sessionId === old.sessionId ? old : latest;
       if (request.type === "world.revision.message")
         return await new Promise<V1WorldRevisionView>((resolve) => {
+          created.requestPreviews = [
+            {
+              requestId: request.requestId,
+              compilation: promptPreviewFixture().compilation,
+            },
+          ];
           finish = resolve;
         });
       throw new Error(`Unexpected request ${request.type}`);

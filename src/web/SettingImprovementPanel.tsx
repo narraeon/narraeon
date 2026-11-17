@@ -1,4 +1,7 @@
-import type { AuthoringConversationView } from "./AuthoringTarget.ts";
+import {
+  confirmsAuthoringRequest,
+  type AuthoringConversationView,
+} from "./AuthoringTarget.ts";
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { createClientId } from "./ClientId.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
@@ -48,10 +51,11 @@ interface SettingImprovementPanelProps {
   latestSessionId: string | null;
   notice: string;
   requestFailure: string | null;
+  syncFailure?: string | null;
   now: number;
   contentEditor: ContentTreeEditorProps;
   onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
-  onSend: (message: string) => Promise<void>;
+  onSend: (message: string, requestId: string) => Promise<void>;
   onEditMessage?: (
     messageId: string,
     message: string,
@@ -107,6 +111,7 @@ export function SettingImprovementPanel({
   latestSessionId,
   notice,
   requestFailure,
+  syncFailure,
   now,
   contentEditor,
   onSend,
@@ -205,6 +210,17 @@ export function SettingImprovementPanel({
       ? undefined
       : new Set(revisionActions.changes.map(({ changeSetId }) => changeSetId));
 
+  const [unconfirmedDraft, setUnconfirmedDraft] = useState<{
+    text: string;
+    requestId: string;
+  } | null>(null);
+  if (
+    unconfirmedDraft !== null &&
+    confirmsAuthoringRequest(view, unconfirmedDraft.requestId)
+  ) {
+    setUnconfirmedDraft(null);
+    if (message === unconfirmedDraft.text) setMessage("");
+  }
   const sendText = useCallback(
     async (text: string): Promise<void> => {
       if (disabled || submittingRef.current || text.trim().length === 0) return;
@@ -212,16 +228,22 @@ export function SettingImprovementPanel({
       setSubmitting(true);
       setMessage("");
       setRightRailOpen(false);
+      const requestId =
+        unconfirmedDraft?.text === text
+          ? unconfirmedDraft.requestId
+          : createClientId("authoring-message");
       try {
-        await onSend(text);
+        await onSend(text, requestId);
+        setUnconfirmedDraft(null);
       } catch {
+        setUnconfirmedDraft({ text, requestId });
         setMessage((current) => (current.length === 0 ? text : current));
       } finally {
         submittingRef.current = false;
         setSubmitting(false);
       }
     },
-    [disabled, onSend],
+    [disabled, onSend, unconfirmedDraft],
   );
 
   const resume = async (recovery?: "continue_partial"): Promise<void> => {
@@ -451,7 +473,10 @@ export function SettingImprovementPanel({
           <button
             type="button"
             disabled={interactionLocked || loading}
-            onClick={onFreshContext}
+            onClick={() => {
+              setUnconfirmedDraft(null);
+              onFreshContext();
+            }}
           >
             {uiText("全新上下文")}
           </button>
@@ -789,6 +814,7 @@ export function SettingImprovementPanel({
                   </button>
                 </div>
               ) : null}
+              {syncFailure ? <p role="status">{syncFailure}</p> : null}
               {requestFailure !== null ? (
                 <div className="setting-conversation-failure" role="alert">
                   {requestFailure}
@@ -908,6 +934,7 @@ export function SettingImprovementPanel({
               }
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {
+                setUnconfirmedDraft(null);
                 await onSelectSession(sessionId);
                 setLeftRailOpen(false);
               }}

@@ -3,6 +3,9 @@ import type {
   ContentTreeFile,
   V1SettingImprovementRollbackResult,
 } from "../protocol/v1.ts";
+import { RuntimeRequestError } from "./runtimeClient.ts";
+import { createClientId } from "./ClientId.ts";
+import { readAfterCommit } from "./RequestOutcome.ts";
 import { uiText } from "./i18n.ts";
 import {
   conversationConnectionText,
@@ -10,6 +13,7 @@ import {
 } from "./ConversationObserver.ts";
 import {
   AuthoringConflictError,
+  confirmsAuthoringRequest,
   type AuthoringTarget,
   type AuthoringTargetSnapshot,
   sameAuthoringFiles,
@@ -32,6 +36,7 @@ export interface AuthoringWorkspaceState {
   applying: boolean;
   requestFailure: string | null;
   observationFailure: string | null;
+  projectionFailure: string | null;
   notice: string;
   now: number;
 }
@@ -57,6 +62,7 @@ export class AuthoringWorkspace {
     applying: false,
     requestFailure: null,
     observationFailure: null,
+    projectionFailure: null,
     notice: "",
     now: 0,
   };
@@ -67,11 +73,11 @@ export class AuthoringWorkspace {
   private active = false;
   private target: AuthoringTarget;
   private observe: ObserveConversation | undefined;
-  private selection:
-    string | { previousSessionId: string | null; started: boolean } | null =
-    null;
+  private selection: string | { requestId?: string } | null = null;
   private selectionVersion = 0;
   private observationVersion = 0;
+  private projectionVersion = 0;
+  private unconfirmedRequest: { id: string; warning: string } | null = null;
   private timer: ReturnType<typeof setInterval> | undefined;
   constructor(target: AuthoringTarget, observe?: ObserveConversation) {
     this.target = target;
@@ -97,9 +103,11 @@ export class AuthoringWorkspace {
     for (const listener of this.listeners) listener();
   }
   private accept(snapshot: AuthoringTargetSnapshot): void {
+    this.projectionVersion++;
     const files = cloneFiles(snapshot.files);
     this.update({
       target: snapshot,
+      projectionFailure: null,
       serverFiles: files,
       ...(!this.state.dirty && this.saving === null
         ? {
@@ -122,7 +130,7 @@ export class AuthoringWorkspace {
     this.update({ draftsLocked: true });
     try {
       await change();
-      if (alive()) await this.refresh();
+      if (alive()) await this.refreshAfterCommit(alive);
     } finally {
       this.draftHolds -= 1;
       this.update({ draftsLocked: this.draftHolds > 0 });
@@ -132,9 +140,56 @@ export class AuthoringWorkspace {
   /** Re-reads the saved package after a change made outside the file editor. */
   async refresh(): Promise<void> {
     if (!this.active || this.state.applying || this.state.dirty) return;
-    const valid = this.current();
-    const next = await this.target.read();
-    if (valid()) this.accept(next);
+    await this.refreshProjection(this.current());
+  }
+  private async refreshProjection(valid: () => boolean): Promise<void> {
+    const version = ++this.projectionVersion;
+    const current = () => valid() && version === this.projectionVersion;
+    try {
+      const next = await this.target.read();
+      if (!current()) return;
+      const selection = this.selection;
+      const selected = typeof selection === "string" ? selection : undefined;
+      const view =
+        selected !== undefined && selected !== next.latest?.sessionId
+          ? await this.target.readSession(selected)
+          : next.latest;
+      if (!current()) return;
+      this.accept(next);
+      if (
+        this.unconfirmedRequest !== null &&
+        confirmsAuthoringRequest(view, this.unconfirmedRequest.id)
+      ) {
+        if (this.state.requestFailure === this.unconfirmedRequest.warning)
+          this.update({ requestFailure: null });
+        this.unconfirmedRequest = null;
+      }
+      if (selection === null || typeof selection === "string") {
+        this.selection = view?.sessionId ?? null;
+        this.update({ view });
+      } else if (
+        selection.requestId !== undefined &&
+        view !== null &&
+        confirmsAuthoringRequest(view, selection.requestId)
+      ) {
+        this.selection = view.sessionId;
+        this.update({ view });
+      }
+      if (
+        selected !==
+        (typeof this.selection === "string" ? this.selection : undefined)
+      )
+        this.observeSelection();
+    } catch (error) {
+      if (current()) throw error;
+    }
+  }
+  private async refreshAfterCommit(valid: () => boolean): Promise<void> {
+    try {
+      await readAfterCommit(() => this.refreshProjection(valid));
+    } catch (error) {
+      if (valid()) this.update({ projectionFailure: errorMessage(error) });
+    }
   }
   async open(): Promise<void> {
     this.close();
@@ -153,6 +208,7 @@ export class AuthoringWorkspace {
       applying: false,
       requestFailure: null,
       observationFailure: null,
+      projectionFailure: null,
       notice: "",
     });
     const valid = this.current();
@@ -193,40 +249,11 @@ export class AuthoringWorkspace {
         id: this.target.id,
         ...(selected === undefined ? {} : { sessionId: selected }),
       },
-      async (observation, changed) => {
+      async (observation, changed, isCurrent) => {
+        const deliveryCurrent = () => alive() && isCurrent?.() !== false;
         if (!alive() || observation.kind !== this.target.kind) return;
         if (changed) {
-          try {
-            const next = await this.target.read();
-            if (!alive()) return;
-            const selection = this.selection;
-            const view =
-              typeof selection === "string" &&
-              selection !== next.latest?.sessionId
-                ? await this.target.readSession(selection)
-                : next.latest;
-            if (!alive()) return;
-            this.accept(next);
-            if (selection === null) {
-              this.selection = next.latest?.sessionId ?? null;
-              this.update({ view });
-            } else if (typeof selection === "string") this.update({ view });
-            else if (
-              selection.started &&
-              next.latest !== null &&
-              next.latest.sessionId !== selection.previousSessionId
-            ) {
-              this.selection = next.latest.sessionId;
-              this.update({ view: next.latest });
-            }
-            if (
-              selected !==
-              (typeof this.selection === "string" ? this.selection : undefined)
-            )
-              this.observeSelection();
-          } catch (error: unknown) {
-            if (alive()) throw error;
-          }
+          await this.refreshProjection(deliveryCurrent);
         } else {
           const status = observation.value.selected;
           const view = this.state.view;
@@ -252,6 +279,7 @@ export class AuthoringWorkspace {
   close(): void {
     this.active = false;
     this.scope += 1;
+    this.unconfirmedRequest = null;
     this.selectionVersion += 1;
     this.observationVersion += 1;
     this.editOpening = null;
@@ -263,20 +291,31 @@ export class AuthoringWorkspace {
   }
   startFresh(): void {
     if (!this.active || this.state.applying) return;
+    this.unconfirmedRequest = null;
     this.selectionVersion += 1;
-    this.selection = {
-      previousSessionId: this.state.target?.latest?.sessionId ?? null,
-      started: false,
-    };
-    this.update({ view: null, loading: false, requestFailure: null });
+    this.selection = {};
+    this.update({
+      view: null,
+      loading: false,
+      requestFailure: null,
+      observationFailure: null,
+      projectionFailure: null,
+    });
     this.observeSelection();
   }
   async selectSession(sessionId: string): Promise<void> {
     if (!this.active || this.state.applying) return;
+    this.unconfirmedRequest = null;
     this.selectionVersion += 1;
     this.selection = sessionId;
     const valid = this.current();
-    this.update({ view: null, loading: true, requestFailure: null });
+    this.update({
+      view: null,
+      loading: true,
+      requestFailure: null,
+      observationFailure: null,
+      projectionFailure: null,
+    });
     this.observeSelection();
     try {
       const view =
@@ -290,22 +329,20 @@ export class AuthoringWorkspace {
       if (valid()) this.update({ loading: false });
     }
   }
-  async send(message: string): Promise<void> {
+  async send(
+    message: string,
+    requestId = createClientId("authoring-message"),
+  ): Promise<void> {
     if (!this.active || this.state.applying) return;
     const valid = this.current();
     if (this.state.dirty)
       throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
-    if (typeof this.selection !== "string") {
-      if (this.selection === null)
-        this.selection = {
-          previousSessionId: this.state.target?.latest?.sessionId ?? null,
-          started: true,
-        };
-      else this.selection.started = true;
-    }
     const sessionId =
       typeof this.selection === "string" ? this.selection : null;
-    await this.settleRequest(valid, () => this.target.send(message, sessionId));
+    if (sessionId === null) this.selection = { requestId };
+    await this.settleRequest(valid, sessionId, requestId, () =>
+      this.target.send(message, sessionId, requestId),
+    );
   }
 
   async editMessage(
@@ -324,17 +361,14 @@ export class AuthoringWorkspace {
     if (this.state.dirty)
       throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
     const sessionId = this.selection;
-    await this.settleRequest(
-      this.current(),
-      () =>
-        this.target.editMessage!(
-          sessionId,
-          messageId,
-          message,
-          filePolicy,
-          requestId,
-        ),
-      true,
+    await this.settleRequest(this.current(), sessionId, requestId, () =>
+      this.target.editMessage!(
+        sessionId,
+        messageId,
+        message,
+        filePolicy,
+        requestId,
+      ),
     );
   }
   /** Continues the selected conversation after it paused at its exchange budget. */
@@ -349,32 +383,60 @@ export class AuthoringWorkspace {
     if (this.state.dirty)
       throw new Error(uiText("请先保存文件编辑，再继续 AI 设定完善。"));
     const sessionId = this.selection;
-    await this.settleRequest(valid, () =>
-      this.target.resume(sessionId, recovery),
+    const requestId = createClientId("authoring-resume");
+    await this.settleRequest(valid, sessionId, requestId, () =>
+      this.target.resume(sessionId, requestId, recovery),
     );
   }
   private async settleRequest(
     valid: () => boolean,
+    sessionId: string | null,
+    requestId: string,
     request: () => Promise<AuthoringConversationView>,
-    acceptedOnRefreshFailure = false,
   ): Promise<void> {
+    this.unconfirmedRequest = null;
     this.update({ requestFailure: null, notice: "" });
-    let accepted = false;
+    let view: AuthoringConversationView;
     try {
-      const view = await request();
-      accepted = true;
+      view = await request();
+    } catch (error) {
       if (!valid()) return;
-      this.selection = view.sessionId;
-      this.update({ view });
-      this.observeSelection();
-      const next = await this.target.read();
-      if (valid()) this.accept(next);
-    } catch (error: unknown) {
+      if (
+        !(error instanceof RuntimeRequestError) ||
+        error.protocolCode !== undefined
+      ) {
+        this.update({ requestFailure: errorMessage(error) });
+        throw error;
+      }
+      // A Runtime or SSE view is a receipt only for the exact submitted request.
+      const observed = this.state.view;
+      const matching = (candidate: AuthoringConversationView | null) =>
+        candidate !== null &&
+        (sessionId === null || candidate.sessionId === sessionId) &&
+        confirmsAuthoringRequest(candidate, requestId);
+      let candidate = matching(observed)
+        ? observed
+        : await (
+            sessionId === null
+              ? this.target.read().then((snapshot) => snapshot.latest)
+              : this.target.readSession(sessionId)
+          ).catch(() => null);
       if (!valid()) return;
-      this.update({ requestFailure: errorMessage(error) });
-      if (accepted && acceptedOnRefreshFailure) return;
-      throw error;
+      if (!matching(candidate) && matching(this.state.view))
+        candidate = this.state.view;
+      if (candidate === null || !matching(candidate)) {
+        const warning = error.message;
+        this.unconfirmedRequest = { id: requestId, warning };
+        this.update({ requestFailure: warning });
+        throw error;
+      }
+      view = candidate;
     }
+    if (!valid()) return;
+    this.selection = view.sessionId;
+    this.update({ view });
+    this.observeSelection();
+    await this.refreshAfterCommit(valid);
   }
   async cancel(): Promise<void> {
     if (
@@ -401,18 +463,21 @@ export class AuthoringWorkspace {
     this.update({ loading: true, requestFailure: null });
     try {
       const next = await this.target.deleteSession(sessionId);
-      if (!valid()) return;
-      this.accept(next);
+      if (!valid() || this.state.target === null) return;
+      this.accept({
+        ...this.state.target,
+        ...next,
+        files: next.revision?.epoch?.files ?? this.state.serverFiles,
+      });
       if (this.selection === sessionId || this.selection === null) {
         this.selection = next.latest?.sessionId ?? null;
         this.update({ view: next.latest });
-        this.observeSelection();
-      } else if (typeof this.selection === "object" && !this.selection.started)
-        this.selection.previousSessionId = next.latest?.sessionId ?? null;
+      }
       this.observeSelection();
       this.update({
         notice: uiText(this.target.messages.deleted),
       });
+      await this.refreshAfterCommit(valid);
     } catch (error: unknown) {
       if (!valid()) return;
       this.update({ requestFailure: errorMessage(error) });
@@ -443,20 +508,8 @@ export class AuthoringWorkspace {
       throw error;
     }
     if (!valid()) return result;
-    try {
-      const next = await this.target.read();
-      if (valid()) {
-        this.accept(next);
-        this.observeSelection();
-      }
-    } catch (error: unknown) {
-      if (valid())
-        this.update({
-          requestFailure: uiText(this.target.messages.rollbackReadFailure, {
-            message: errorMessage(error),
-          }),
-        });
-    }
+    this.observeSelection();
+    await this.refreshAfterCommit(valid);
     if (valid())
       this.update({
         notice: uiText(

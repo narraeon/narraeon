@@ -37,6 +37,7 @@ import {
 import {
   Fragment,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -254,7 +255,7 @@ export function WorldPage({
   const [playObservationFailure, setPlayObservationFailure] = useState<
     string | null
   >(null);
-  const [playFailure, setPlayFailure] = useState<string | null>(null);
+  const worldProjectionVersion = useRef(0);
   const [supersededFailure, setSupersededFailure] = useState<{
     worldId: string;
     chainId: string;
@@ -384,6 +385,12 @@ export function WorldPage({
       ? decorations
       : null;
 
+  const observationNeedsVerification = useEffectEvent(
+    (chain: V1PlayCallChainView | null) =>
+      playTimeline?.worldId === worldId &&
+      playTimeline.activeChainId !== null &&
+      (chain === null || timelineHasNewerActivity(playTimeline, chain)),
+  );
   useEffect(() => {
     if (client.observeConversation === undefined || openedWorldId !== worldId)
       return;
@@ -393,14 +400,29 @@ export function WorldPage({
     let observedExtensions: number | undefined;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
-      async (observation) => {
+      async (observation, _changed, isCurrent) => {
         if (!active || observation.kind !== "play") return;
         if (observation.extensionsRevision !== observedExtensions) {
           observedExtensions = observation.extensionsRevision;
           setDecorationRevision((current) => current + 1);
         }
         const next = observation.value;
-        if (next === null) return;
+        const verifyFirst = observationNeedsVerification(next);
+        if (next === null) {
+          if (!verifyFirst) return;
+          const version = worldProjectionVersion.current;
+          const projection = await requestRuntime<WorldReadView>(client, {
+            type: "world.read",
+            worldId,
+          });
+          if (
+            active &&
+            isCurrent?.() !== false &&
+            version === worldProjectionVersion.current
+          )
+            applyWorld(projection, true);
+          return;
+        }
         // Ignore token deltas. Follow-up outcomes (including failure/clear),
         // chain transitions and reconnect snapshots invalidate the projection.
         const revision = JSON.stringify([
@@ -415,39 +437,56 @@ export function WorldPage({
           observedDecorations = revision;
           setDecorationRevision((current) => current + 1);
         }
-        applyPlayCallChain(next);
-        setPlayFailure(playCallFailureMessage(next));
-        if (next.status === "running") {
-          setPlayProgress((current) =>
-            progressFromCallChain(
-              next.chainId,
-              activePlayExchangeId(next, null, next.chainId),
-              next,
-              current,
-            ),
+        const showObservation = () => {
+          applyPlayCallChain(next);
+          if (next.status === "running") {
+            setPlayProgress((current) =>
+              progressFromCallChain(
+                next.chainId,
+                activePlayExchangeId(next, null, next.chainId),
+                next,
+                current,
+              ),
+            );
+            setPlayProgressNow(Date.now());
+          } else setPlayProgress(null);
+          applyPlayTimelineFrame(
+            { kind: "snapshot", value: next, final: next.status !== "running" },
+            setPlayTimeline,
           );
-          setPlayProgressNow(Date.now());
-        } else setPlayProgress(null);
-        applyPlayTimelineFrame(
-          { kind: "snapshot", value: next, final: next.status !== "running" },
-          setPlayTimeline,
-        );
+          if (
+            cancelledExchangeRef.current !== null &&
+            (next.lastCancelled === true ||
+              next.events.at(-1)?.kind === "cancellation")
+          ) {
+            setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+          }
+        };
+        // A revision can legitimately shorten a chain. Verify an older-looking
+        // snapshot before exposing it in place of a newer visible event.
+        if (!verifyFirst) showObservation();
         if (
-          cancelledExchangeRef.current !== null &&
-          (next.lastCancelled === true ||
-            next.events.at(-1)?.kind === "cancellation")
+          verifyFirst ||
+          hydratedHead !== `${next.parentHead}:${next.status}`
         ) {
-          setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
-        }
-        if (hydratedHead !== `${next.parentHead}:${next.status}`) {
+          const version = worldProjectionVersion.current;
           const projection = await requestRuntime<WorldReadView>(client, {
             type: "world.read",
             worldId,
           });
-          if (!active) return;
+          if (
+            !active ||
+            isCurrent?.() === false ||
+            version !== worldProjectionVersion.current
+          )
+            return;
           hydratedHead = `${next.parentHead}:${next.status}`;
           setWorld(projection);
-          const page = projection.playTimeline;
+          const page =
+            projection.playTimeline ??
+            (verifyFirst ? legacyTimelinePage(projection) : undefined);
+          if (verifyFirst && page && !timelineHasNewerActivity(page, next))
+            showObservation();
           if (page !== undefined) {
             setPlayTimeline((current) => mergePlayTimelinePage(current, page));
             setPlayContextUsage((current) =>
@@ -701,9 +740,19 @@ export function WorldPage({
     supersededFailure.chainId === activeChainId &&
     lastActiveEvent?.kind === "event" &&
     lastActiveEvent.event.id <= supersededFailure.eventId;
-  const visiblePlayFailure = failureWasSuperseded
-    ? retryRejection
-    : playFailure;
+  const currentPlayFailure =
+    activeStatus === "interrupted" &&
+    !playCallChain?.lastCancelled &&
+    !(
+      lastActiveEvent?.kind === "event" &&
+      lastActiveEvent.event.kind === "cancellation"
+    )
+      ? (playCallChain?.lastFailure ?? playTimeline?.activeLastFailure ?? null)
+      : null;
+  const visiblePlayFailure =
+    activeStatus === "interrupted" && failureWasSuperseded
+      ? retryRejection
+      : currentPlayFailure;
   const activeFailureVisible =
     !failureWasSuperseded &&
     activeStatus === "interrupted" &&
@@ -742,6 +791,7 @@ export function WorldPage({
     next: WorldReadView,
     preserveControlDraft: boolean,
   ): void {
+    worldProjectionVersion.current++;
     const nextChain = next.playCallChain;
     const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
     setWorld(next);
@@ -762,7 +812,6 @@ export function WorldPage({
           : null,
     );
     setPlayTimeline(nextTimeline);
-    setPlayFailure(playCallFailureMessage(nextChain));
     if (nextChain?.status === "running") {
       setPlayProgress((current) =>
         progressFromCallChain(
@@ -780,6 +829,7 @@ export function WorldPage({
   }
 
   function applyPlayCallChain(next: V1PlayCallChainView): void {
+    worldProjectionVersion.current++;
     setPlayCallChain(next);
     setPlayContextUsage(projectPlayContextUsage(next));
   }
@@ -828,7 +878,6 @@ export function WorldPage({
     const exchangeId = createClientId("play-exchange");
     const startedAt = Date.now();
     cancelledExchangeRef.current = null;
-
     setRetryRejection(null);
     if (activeChainId !== null && lastActiveEvent?.kind === "event")
       setSupersededFailure({
@@ -1469,8 +1518,9 @@ export function WorldPage({
         history={revisionOverview?.history ?? []}
         latestSessionId={revisionOverview?.latest?.sessionId ?? null}
         notice={authoring.notice}
-        requestFailure={
-          authoring.requestFailure ?? authoring.observationFailure
+        requestFailure={authoring.requestFailure}
+        syncFailure={
+          authoring.projectionFailure ?? authoring.observationFailure
         }
         now={authoring.now}
         contentEditor={{
@@ -1507,7 +1557,9 @@ export function WorldPage({
                 revisionWorkspace.startFresh();
               },
             })}
-        onSend={(message) => revisionWorkspace.send(message)}
+        onSend={(message, requestId) =>
+          revisionWorkspace.send(message, requestId)
+        }
         onEditMessage={(messageId, message, filePolicy, requestId) =>
           revisionWorkspace.editMessage(
             messageId,
@@ -3527,26 +3579,6 @@ function errorMessage(reason: unknown): string {
       "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
     );
   return reason instanceof Error ? reason.message : uiText("操作失败");
-}
-
-function playCallFailureMessage(
-  chain: V1PlayCallChainView | null,
-): string | null {
-  if (
-    chain?.status !== "interrupted" ||
-    chain.events.at(-1)?.kind === "cancellation"
-  )
-    return null;
-  const event = chain.events.findLast(
-    (
-      candidate,
-    ): candidate is Extract<V1PlayCallChainEvent, { kind: "failure" }> =>
-      candidate.kind === "failure",
-  );
-  return playFailureDescription(
-    chain.lastFailureKind ?? event?.failureKind,
-    chain.canRetry,
-  );
 }
 
 function requestRuntime<T>(

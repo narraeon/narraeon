@@ -38,6 +38,38 @@ test("world revision target keeps its native identity without package fields", a
   expect(result).not.toHaveProperty("legacyDraft");
 });
 
+function preview(
+  requestId: string,
+): NonNullable<V1SettingImprovementView["requestPreviews"]>[number] {
+  return {
+    requestId,
+    compilation: {
+      logicalMessages: [],
+      provider: { messages: [] },
+      tools: [],
+      coverage: [],
+      cache: {
+        strategy: "provider_managed",
+        stablePrefixFingerprint: "test",
+        breakpoints: [],
+        estimatedCacheableBytes: 0,
+        firstDynamicByte: 0,
+      },
+      budget: {
+        estimator: "disabled",
+        messageTokens: 0,
+        toolTokens: 0,
+        outputReserveTokens: 0,
+        forcedTailReserveTokens: 0,
+        safetyMarginTokens: 0,
+        requiredTokens: 0,
+        contextWindowTokens: 1024,
+        status: "not_checked",
+      },
+    },
+  };
+}
+
 function fixture(kind: "setting" | "revision") {
   let files: ContentTreeFile[] = [
     { path: "control/frame.yaml", contents: "saved" },
@@ -208,10 +240,95 @@ test("an acknowledged edit stays accepted when refreshing package files fails", 
   await expect(
     f.workspace.editMessage("message", "Revised", "keep", "edit-1"),
   ).resolves.toBeUndefined();
-  expect(f.workspace.getSnapshot().requestFailure).toContain("refresh failed");
+  expect(f.workspace.getSnapshot().projectionFailure).toContain(
+    "refresh failed",
+  );
   expect(f.workspace.getSnapshot().view?.sessionId).toBe("recent");
   f.workspace.close();
 });
+
+test.each(["setting", "revision"] as const)(
+  "%s a confirmed send survives a projection failure and the warning clears on hydration",
+  async (kind) => {
+    const f = fixture(kind);
+    await f.workspace.open();
+    const original = f.request.getMockImplementation()!;
+    let failRead = true;
+    f.request.mockImplementation((input) => {
+      if (input.type.endsWith(".message"))
+        return Promise.resolve(f.view("recent"));
+      if (failRead && input.type.endsWith(".overview"))
+        return Promise.reject(new Error("files offline"));
+      return original(input);
+    });
+    try {
+      await expect(f.workspace.send("Open the door")).resolves.toBeUndefined();
+      expect(f.workspace.getSnapshot().requestFailure).toBeNull();
+      expect(f.workspace.getSnapshot().projectionFailure).toContain(
+        "files offline",
+      );
+      failRead = false;
+      await f.publish();
+      expect(f.workspace.getSnapshot().projectionFailure).toBeNull();
+      expect(
+        f.request.mock.calls.filter(([input]) =>
+          input.type.endsWith(".message"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      f.workspace.close();
+    }
+  },
+);
+
+test.each(["setting", "revision"] as const)(
+  "%s checks the exact authoring receipt after losing a reply",
+  async (kind) => {
+    const f = fixture(kind);
+    const original = f.request.getMockImplementation()!;
+    let stored = f.view("recent");
+    let accepted = false;
+    await f.workspace.open();
+    f.request.mockImplementation(async (input) => {
+      if ("requestId" in input && input.type.endsWith(".message")) {
+        stored = {
+          ...stored,
+          requestPreviews: [
+            preview(accepted ? input.requestId : "other-request"),
+          ],
+        };
+        f.setLatest(stored);
+        throw new RuntimeRequestError("offline");
+      }
+      if (input.type.endsWith(".session.read")) return stored;
+      return original(input);
+    });
+    try {
+      await expect(f.workspace.send("Identical text")).rejects.toThrow(
+        "offline",
+      );
+      expect(f.workspace.getSnapshot().requestFailure).toBe("offline");
+      const first = f.request.mock.calls.find(([input]) =>
+        input.type.endsWith(".message"),
+      )![0];
+      if (!("requestId" in first)) throw new Error("missing request id");
+      f.setLatest({ ...stored, requestPreviews: [preview(first.requestId)] });
+      await f.publish();
+      expect(f.workspace.getSnapshot().requestFailure).toBeNull();
+      accepted = true;
+      await expect(f.workspace.send("Identical text")).resolves.toBeUndefined();
+      expect(f.workspace.getSnapshot()).toMatchObject({
+        requestFailure: null,
+        view: stored,
+      });
+      expect(
+        f.request.mock.calls.filter(([r]) => r.type.endsWith(".message")),
+      ).toHaveLength(2);
+    } finally {
+      f.workspace.close();
+    }
+  },
+);
 
 test("a late edit response cannot overwrite another selected session", async () => {
   const f = fixture("setting");
@@ -315,7 +432,17 @@ test.each(["setting", "revision"] as const)(
     expect([...f.subscribers][0]!.target).toEqual({ kind, id: "target" });
     await f.publish();
     expect(f.workspace.getSnapshot().view).toBeNull();
-    f.setLatest(f.view("created"));
+    f.setLatest(f.view("unrelated"));
+    await f.publish();
+    expect(f.workspace.getSnapshot().view).toBeNull();
+    const sent = f.request.mock.calls.findLast(([input]) =>
+      input.type.endsWith(".message"),
+    )![0];
+    if (!("requestId" in sent)) throw new Error("missing request ID");
+    f.setLatest({
+      ...f.view("created"),
+      requestPreviews: [preview(sent.requestId)],
+    });
     await f.publish();
     expect(f.workspace.getSnapshot().view?.sessionId).toBe("created");
     expect([...f.subscribers][0]!.target).toEqual({

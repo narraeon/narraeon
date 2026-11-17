@@ -8,7 +8,6 @@ import type {
   V1SettingPromptPreview,
   V1WorldRevisionOverview,
 } from "../protocol/v1.ts";
-import { createClientId } from "./ClientId.ts";
 import { uiText } from "./i18n.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 
@@ -19,6 +18,18 @@ export type AuthoringConversationView = Omit<
 > & {
   legacyDraft?: V1SettingImprovementView["legacyDraft"];
 };
+
+export function confirmsAuthoringRequest(
+  view: AuthoringConversationView | null,
+  requestId: string,
+): boolean {
+  // A legacy bootstrap can identify session creation before any message was accepted.
+  return (
+    view?.requestPreviews?.some(
+      (preview) => !preview.legacyBootstrap && preview.requestId === requestId,
+    ) === true
+  );
+}
 
 export interface AuthoringClient {
   request(request: V1Request): Promise<unknown>;
@@ -64,7 +75,6 @@ export interface AuthoringTargetMessages {
   reset: string | null;
   rolledBack: string;
   alreadyRolledBack: string;
-  rollbackReadFailure: string;
 }
 const contentPackageMessages: AuthoringTargetMessages = {
   opened: "",
@@ -74,8 +84,6 @@ const contentPackageMessages: AuthoringTargetMessages = {
   reset: "已放弃未保存修改；内容包当前树未改变。",
   rolledBack: "已回滚这个文件；对话历史仍然保留。",
   alreadyRolledBack: "当前文件已是修改前版本。",
-  rollbackReadFailure:
-    "Runtime 已确认回滚结果，但重新读取内容包失败：{message}",
 };
 const worldRevisionMessages: AuthoringTargetMessages = {
   opened: "浏览不会锁定世界；首次编辑或发送消息后才会锁定。",
@@ -85,8 +93,6 @@ const worldRevisionMessages: AuthoringTargetMessages = {
   reset: null,
   rolledBack: "已回滚所选文件；其他修订保持不变。",
   alreadyRolledBack: "这个文件已经是该次修改前的版本。",
-  rollbackReadFailure:
-    "Runtime 已确认回滚结果，但重新读取修订工作树失败：{message}",
 };
 export interface AuthoringTarget {
   messages: AuthoringTargetMessages;
@@ -97,6 +103,7 @@ export interface AuthoringTarget {
   send(
     message: string,
     sessionId: string | null,
+    requestId: string,
   ): Promise<AuthoringConversationView>;
   editMessage?(
     sessionId: string,
@@ -108,9 +115,12 @@ export interface AuthoringTarget {
   cancel(sessionId: string): Promise<AuthoringConversationView>;
   resume(
     sessionId: string,
+    requestId: string,
     recovery?: "continue_partial",
   ): Promise<AuthoringConversationView>;
-  deleteSession(sessionId: string): Promise<AuthoringTargetSnapshot>;
+  deleteSession(
+    sessionId: string,
+  ): Promise<Pick<AuthoringTargetSnapshot, "latest" | "history" | "revision">>;
   beginEdit(
     snapshot: AuthoringTargetSnapshot,
   ): Promise<AuthoringTargetSnapshot> | null;
@@ -196,12 +206,12 @@ export function contentPackageTarget(
         packageId: id,
         sessionId,
       }),
-    send: (message, sessionId) =>
+    send: (message, sessionId, requestId) =>
       request(client, {
         type: "setting-improvement.message",
         packageId: id,
         message,
-        requestId: createClientId("setting-message"),
+        requestId,
         continuation: continuation(sessionId),
       }),
     editMessage: async (
@@ -264,26 +274,20 @@ export function contentPackageTarget(
     },
     cancel: (sessionId) =>
       request(client, { type: "setting-improvement.cancel", sessionId }),
-    resume: (sessionId, recovery) =>
+    resume: (sessionId, requestId, recovery) =>
       request(client, {
         type: "setting-improvement.resume",
         ...(recovery === undefined ? {} : { recovery }),
         packageId: id,
         sessionId,
-        requestId: createClientId("setting-resume"),
+        requestId,
       }),
-    deleteSession: async (sessionId) => {
-      const overview = await request<V1SettingImprovementOverview>(client, {
+    deleteSession: (sessionId) =>
+      request<V1SettingImprovementOverview>(client, {
         type: "setting-improvement.session.delete",
         packageId: id,
         sessionId,
-      });
-      const detail = await request<AuthoringPackageDetail>(client, {
-        type: "content.read",
-        packageId: id,
-      });
-      return { ...overview, files: detail.files, packageDetail: detail };
-    },
+      }),
     beginEdit: () => null,
     save: async (files, base, snapshot) => {
       if (base.treeRevision === null)
@@ -377,12 +381,12 @@ export function worldRevisionTarget(
         worldId: id,
         sessionId,
       }),
-    send: async (message, sessionId) =>
+    send: async (message, sessionId, requestId) =>
       request(client, {
         type: "world.revision.message",
         worldId: id,
         message,
-        requestId: createClientId("world-revision-message"),
+        requestId,
         continuation: continuation(sessionId),
       }),
     editMessage: async (
@@ -444,22 +448,22 @@ export function worldRevisionTarget(
     },
     cancel: async (sessionId) =>
       request(client, { type: "world.revision.cancel", sessionId }),
-    resume: async (sessionId, recovery) =>
+    resume: async (sessionId, requestId, recovery) =>
       request(client, {
         type: "world.revision.resume",
         ...(recovery === undefined ? {} : { recovery }),
         worldId: id,
         sessionId,
-        requestId: createClientId("world-revision-resume"),
+        requestId,
       }),
-    deleteSession: async (sessionId) =>
-      snapshot(
-        await request(client, {
-          type: "world.revision.session.delete",
-          worldId: id,
-          sessionId,
-        }),
-      ),
+    deleteSession: async (sessionId) => {
+      const revision = await request<V1WorldRevisionOverview>(client, {
+        type: "world.revision.session.delete",
+        worldId: id,
+        sessionId,
+      });
+      return { latest: revision.latest, history: revision.history, revision };
+    },
     beginEdit: (current) =>
       current.revision?.epoch?.locked
         ? null

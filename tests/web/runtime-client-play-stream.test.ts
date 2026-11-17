@@ -142,7 +142,7 @@ test("status updates arriving during hydration are coalesced and delivered after
   close();
 });
 
-test("failed hydration retries the same revision after reconnect", async () => {
+test("failed hydration retries the same revision and clears the warning on the same connection", async () => {
   vi.stubGlobal("EventSource", Source);
   let first = true;
   const changes: boolean[] = [];
@@ -165,10 +165,42 @@ test("failed hydration retries the same revision after reconnect", async () => {
   };
   source.update("first:1", update);
   await flush();
-  source.update("reconnect:1", update);
+  source.update("first:2", update);
   await flush();
   expect(changes).toEqual([true, true]);
-  expect(connection).toHaveBeenCalledWith("failed", "temporary read failure");
+  expect(connection.mock.calls).toEqual([
+    ["projection_failed", "temporary read failure"],
+    ["synchronized"],
+  ]);
+  close();
+});
+
+test("disconnect invalidates an in-flight projection and its late failure", async () => {
+  vi.stubGlobal("EventSource", Source);
+  let fail!: (error: unknown) => void;
+  let current!: () => boolean;
+  const status = vi.fn();
+  const close = new RuntimeClient().observeConversation(
+    { kind: "play", id: "world-one" },
+    (_state, _changed, valid) => {
+      current = valid!;
+      return new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      });
+    },
+    status,
+  );
+  const source = Source.instances[0]!;
+  source.update("epoch:1", {
+    kind: "snapshot",
+    value: { kind: "play", value: chainView("running", "") },
+  });
+  expect(current()).toBe(true);
+  source.onerror!();
+  expect(current()).toBe(false);
+  fail(new Error("old projection"));
+  await flush();
+  expect(status.mock.calls).toEqual([["reconnecting"]]);
   close();
 });
 

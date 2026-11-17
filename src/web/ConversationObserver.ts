@@ -8,12 +8,18 @@ import { v1Protocol } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 import { runtimeErrorText } from "./RuntimeErrorText.ts";
 
-export type ConversationConnection = "connected" | "reconnecting" | "failed";
+export type ConversationConnection =
+  | "connected"
+  | "reconnecting"
+  | "failed"
+  | "projection_failed"
+  | "synchronized";
 export type ObserveConversation = (
   target: ConversationTarget,
   receive: (
     state: ConversationState,
     durableChanged: boolean,
+    isCurrent?: () => boolean,
   ) => void | Promise<void>,
   connection?: (state: ConversationConnection, message?: string) => void,
 ) => () => void;
@@ -32,6 +38,13 @@ export const observeConversation: ObserveConversation = (
   let pending: ConversationState | null = null;
   let delivering = false;
   let hydratedRevision: string | undefined;
+  let deliveryVersion = 0;
+  let projectionFailure: string | null = null;
+  const invalidateDelivery = (): void => {
+    deliveryVersion++;
+    pending = null;
+    hydratedRevision = undefined;
+  };
   let epoch = "";
   let sequence = 0;
   const deliver = async (): Promise<void> => {
@@ -41,22 +54,31 @@ export const observeConversation: ObserveConversation = (
       while (pending !== null && !disposed) {
         const next = pending;
         pending = null;
+        const version = deliveryVersion;
+        const isCurrent = () => !disposed && version === deliveryVersion;
         try {
           const revision =
             next.kind === "play" ? undefined : next.value.revision;
           await receive(
             next,
             revision === undefined || revision !== hydratedRevision,
+            isCurrent,
           );
+          if (!isCurrent()) continue;
           hydratedRevision = revision;
+          if (projectionFailure !== null) {
+            projectionFailure = null;
+            connection?.("synchronized");
+          }
         } catch (error: unknown) {
-          if (!disposed)
-            connection?.(
-              "failed",
+          if (isCurrent()) {
+            hydratedRevision = undefined;
+            projectionFailure =
               error instanceof Error
                 ? error.message
-                : "Conversation could not be displayed",
-            );
+                : "Conversation could not be displayed";
+            connection?.("projection_failed", projectionFailure);
+          }
         }
       }
     } finally {
@@ -69,19 +91,29 @@ export const observeConversation: ObserveConversation = (
       query.set("sessionId", target.sessionId);
     const current = new EventSource(`/api/runtime/v1/events?${query}`);
     source = current;
-    const alive = () => !disposed && source === current;
+    let closed = false;
+    const alive = () => !disposed && !closed && source === current;
+    const closeSource = () => {
+      closed = true;
+      current.close();
+      invalidateDelivery();
+    };
     current.onopen = () => {
-      if (alive()) connection?.("connected");
+      if (!alive()) return;
+      invalidateDelivery();
+      connection?.("connected");
+      if (projectionFailure !== null)
+        connection?.("projection_failed", projectionFailure);
     };
     current.onerror = () => {
-      if (alive())
-        connection?.(
-          current.readyState === EventSource.CLOSED ? "failed" : "reconnecting",
-        );
+      if (!alive()) return;
+      invalidateDelivery();
+      closed = current.readyState === EventSource.CLOSED;
+      connection?.(closed ? "failed" : "reconnecting");
     };
     current.addEventListener("failure", (event) => {
       if (!alive()) return;
-      current.close();
+      closeSource();
       connection?.(
         "failed",
         observationFailureMessage((event as MessageEvent<string>).data),
@@ -109,13 +141,14 @@ export const observeConversation: ObserveConversation = (
           (nextEpoch !== epoch || nextSequence !== sequence + 1) &&
           payload.update.kind !== "snapshot"
         ) {
-          current.close();
+          closeSource();
           state = null;
           epoch = "";
           sequence = 0;
           connect();
           return;
         }
+        if (nextEpoch !== epoch) invalidateDelivery();
         state = applyConversationUpdate(state, payload.update);
         if (state.kind !== target.kind)
           throw new Error("Conversation target changed unexpectedly");
@@ -124,7 +157,7 @@ export const observeConversation: ObserveConversation = (
         pending = state;
         void deliver();
       } catch (error: unknown) {
-        current.close();
+        closeSource();
         connection?.(
           "failed",
           error instanceof Error
@@ -147,7 +180,9 @@ export function conversationConnectionText(
   state: ConversationConnection,
   message?: string,
 ): string | null {
-  if (state === "connected") return null;
+  if (state === "connected" || state === "synchronized") return null;
+  if (state === "projection_failed")
+    return uiText("无法刷新对话内容：{message}", { message: message ?? "" });
   if (state === "reconnecting") return uiText("对话连接已断开，正在重新连接…");
   return message === undefined || message.trim() === ""
     ? uiText("对话同步失败，请重新打开此页面。")
