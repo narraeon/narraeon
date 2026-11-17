@@ -158,6 +158,56 @@ test("failed recovery retains the homepage and selected import; manual recovery 
   expect(reads).toBe(2);
 });
 
+test("a non-home workspace refresh failure keeps its receipt and draft with one visible reread action", async ({
+  page,
+}) => {
+  let saved = false;
+  let offline = false;
+  let writes = 0;
+  let reads = 0;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type === "preferences.save") {
+      writes++;
+      const response = await route.fetch();
+      saved = true;
+      offline = true;
+      await route.fulfill({ response });
+    } else if (input.type === "workspace.read" && saved) {
+      reads++;
+      if (offline) await route.abort("failed");
+      else await route.continue();
+    } else await route.continue();
+  });
+  await page.goto("/#/models");
+  await page.getByLabel("界面语言").selectOption("en");
+  await expect(
+    page.getByText("Temporarily unable to sync", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Read again", exact: true }),
+  ).toHaveCount(1);
+  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  await expect(
+    page.getByText("Interface language saved.", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Configuration name").fill("Keep this unsaved model");
+  expect(reads).toBe(2);
+  offline = false;
+  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await expect(
+    page.getByText("Temporarily unable to sync", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Configuration name")).toHaveValue(
+    "Keep this unsaved model",
+  );
+  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  await expect(page).toHaveURL(/#\/models$/u);
+  expect(writes).toBe(1);
+  expect(reads).toBe(3);
+});
+
 async function runtime<T>(
   page: Page,
   url: string,

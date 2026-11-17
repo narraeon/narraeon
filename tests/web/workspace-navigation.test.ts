@@ -706,3 +706,58 @@ test("创建页重新核验所选包的运行状态，避免使用其他标签�
     false,
   );
 });
+
+test("工作区补读在模型页失败时保留语言回执并提供唯一只读恢复入口", async () => {
+  window.history.replaceState(null, "", "#/models");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let locale = "zh-CN";
+  let failures = 0;
+  request.mockImplementation(async (input) => {
+    if (input.type === "preferences.save") {
+      locale = input.locale!;
+      failures = 2;
+      return { locale };
+    }
+    if (input.type === "workspace.read") {
+      if (failures > 0) {
+        failures--;
+        throw new Error("Workspace read offline");
+      }
+      const result = (await original(input)) as { preferences: object };
+      return { ...result, preferences: { ...result.preferences, locale } };
+    }
+    return original(input);
+  });
+  render(createElement(App, { client }));
+  await screen.findByLabelText("配置名称");
+  fireEvent.change(screen.getByLabelText("界面语言"), {
+    target: { value: "en" },
+  });
+  await screen.findByText("Temporarily unable to sync");
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Interface language").value,
+  ).toBe("en");
+  expect(screen.getByText("Interface language saved.")).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: "Read again" })).toHaveLength(1);
+  expect(window.location.hash).toBe("#/models");
+  fireEvent.change(screen.getByLabelText("Configuration name"), {
+    target: { value: "Keep the model draft" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Read again" }));
+  await waitFor(() =>
+    expect(screen.queryByText("Temporarily unable to sync")).toBeNull(),
+  );
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Configuration name").value,
+  ).toBe("Keep the model draft");
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Interface language").value,
+  ).toBe("en");
+  expect(
+    request.mock.calls.filter(([input]) => input.type === "preferences.save"),
+  ).toHaveLength(1);
+  expect(
+    request.mock.calls.filter(([input]) => input.type === "workspace.read"),
+  ).toHaveLength(4);
+});

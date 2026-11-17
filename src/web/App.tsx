@@ -897,12 +897,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         />
       ) : null}
       <div className="workspace-body">
-        {screen === "home" && (
-          <SyncNotice
-            failed={syncFailed}
-            onRead={() => void workspaceTarget.recover()}
-          />
-        )}
+        <SyncNotice
+          failed={syncFailed}
+          onRead={() => void workspaceTarget.recover()}
+        />
         {worldContent}
         {authoringContent}
         {screen !== "content" &&
