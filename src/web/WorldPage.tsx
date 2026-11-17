@@ -2,7 +2,13 @@ import { PlayRequestContextDetails } from "./PlayRequestContextDetails.tsx";
 import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
-import { submitPlay } from "./PlaySubmission.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
+import {
+  recordedPlaySubmission,
+  submitPlay,
+  type PlayCommand,
+} from "./PlaySubmission.ts";
 import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
 import {
@@ -22,10 +28,7 @@ import {
 } from "./PlayerViewFoldState.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import {
-  conversationConnectionText,
-  type ObserveConversation,
-} from "./ConversationObserver.ts";
+import { type ObserveConversation } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
@@ -36,6 +39,7 @@ import {
 } from "./CheckpointContextPreferences.ts";
 import {
   Fragment,
+  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -167,6 +171,7 @@ interface Feedback {
   kind: "status" | "error";
   text: string;
   technical?: boolean;
+  submission?: string;
 }
 
 interface WorldPageClient {
@@ -252,10 +257,10 @@ export function WorldPage({
   const [turnNote, setTurnNote] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [playObservationFailure, setPlayObservationFailure] = useState<
-    string | null
-  >(null);
   const worldProjectionVersion = useRef(0);
+  const initializedWorldId = useRef<string | null>(null);
+  const [observationStopped, setObservationStopped] = useState(false);
+  const [observationRevision, setObservationRevision] = useState(0);
   const [supersededFailure, setSupersededFailure] = useState<{
     worldId: string;
     chainId: string;
@@ -274,6 +279,7 @@ export function WorldPage({
   const [playProgressNow, setPlayProgressNow] = useState(0);
   const cancelledExchangeRef = useRef<string | null>(null);
   const playSubmissionInFlight = useRef(false);
+  const unconfirmedSubmission = useRef<PlayCommand | null>(null);
   const [worldNameDraft, setWorldNameDraft] = useState(worldTitle);
   const [lastWorldTitle, setLastWorldTitle] = useState(worldTitle);
   if (lastWorldTitle !== worldTitle) {
@@ -333,28 +339,94 @@ export function WorldPage({
     return () => onNavigationLockChange?.(false);
   }, [onNavigationLockChange, revisionDirty, controlDirty, authoringLocked]);
 
-  useEffect(() => {
-    let active = true;
-    const open = async (): Promise<void> => {
-      try {
-        const next = await requestRuntime<WorldReadView>(client, {
-          type: "world.read",
-          worldId,
-        });
-        if (!active) return;
-        applyWorld(next, false);
-      } catch (reason: unknown) {
-        if (!active) return;
-        setFeedback({ kind: "error", text: errorMessage(reason) });
-      } finally {
-        if (active) setPending(null);
+  const applyWorld = useCallback(
+    (
+      next: WorldReadView,
+      preserveControlDraft: boolean,
+      mergeTimeline = false,
+    ): void => {
+      worldProjectionVersion.current++;
+      const nextChain = next.playCallChain;
+      const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
+      setWorld(next);
+      const submission = unconfirmedSubmission.current;
+      if (
+        submission?.worldId === next.worldId &&
+        recordedPlaySubmission(submission, nextChain, next.playTimeline)
+      ) {
+        unconfirmedSubmission.current = null;
+        setPlayerText((current) =>
+          current === submission.playerText ? "" : current,
+        );
+        setFeedback((current) =>
+          current?.submission === submission.exchangeId ? null : current,
+        );
       }
-    };
-    void open();
-    return () => {
-      active = false;
-    };
-  }, [client, worldId]);
+      if (!preserveControlDraft) {
+        setControlFiles(JSON.stringify(next.control, null, 2));
+        setControlDirty(false);
+        setControlPreview(null);
+      }
+      // Retain only usage metadata across lightweight reads, never the old
+      // endpoint or running/retry state that would override the new timeline.
+      setPlayCallChain(nextChain);
+      setPlayContextUsage((current) =>
+        nextChain !== null
+          ? projectPlayContextUsage(nextChain)
+          : current?.worldId === next.worldId &&
+              current.chainId === nextTimeline.activeChainId
+            ? current
+            : null,
+      );
+      setPlayTimeline((current) =>
+        mergeTimeline && next.playTimeline !== undefined
+          ? mergePlayTimelinePage(current, nextTimeline)
+          : nextTimeline,
+      );
+      if (nextChain?.status === "running") {
+        setPlayProgress((current) =>
+          progressFromCallChain(
+            nextChain.chainId,
+            activePlayExchangeId(nextChain, nextTimeline, nextChain.chainId),
+            nextChain,
+            current,
+          ),
+        );
+        setPlayProgressNow(Date.now());
+      } else setPlayProgress(null);
+      setSelectedDocument((current) =>
+        selectedStateDocument(next.state, current),
+      );
+    },
+    [],
+  );
+
+  function applyPlayCallChain(next: V1PlayCallChainView): void {
+    worldProjectionVersion.current++;
+    setPlayCallChain(next);
+    setPlayContextUsage(projectPlayContextUsage(next));
+  }
+
+  const loadWorld = useCallback(
+    () =>
+      requestRuntime<WorldReadView>(client, { type: "world.read", worldId }),
+    [client, worldId],
+  );
+  const applyReadWorld = useCallback(
+    (next: WorldReadView) => {
+      const initialized = initializedWorldId.current === next.worldId;
+      initializedWorldId.current = next.worldId;
+      applyWorld(next, initialized, true);
+    },
+    [applyWorld],
+  );
+  const { target: worldTarget, syncFailed } = useReadTarget(
+    loadWorld,
+    applyReadWorld,
+  );
+  useEffect(() => {
+    void worldTarget.read();
+  }, [worldTarget]);
 
   useEffect(() => {
     if (world?.worldId !== worldId) return;
@@ -398,10 +470,12 @@ export function WorldPage({
     let hydratedHead: string | undefined;
     let observedDecorations: string | undefined;
     let observedExtensions: number | undefined;
+    let outage = false;
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
       async (observation, _changed, isCurrent) => {
         if (!active || observation.kind !== "play") return;
+        setObservationStopped(false);
         if (observation.extensionsRevision !== observedExtensions) {
           observedExtensions = observation.extensionsRevision;
           setDecorationRevision((current) => current + 1);
@@ -409,26 +483,12 @@ export function WorldPage({
         const next = observation.value;
         const verifyFirst = observationNeedsVerification(next);
         const readProjection = async (): Promise<WorldReadView | null> => {
-          const version = worldProjectionVersion.current;
-          const current = () =>
-            active &&
-            isCurrent?.() !== false &&
-            version === worldProjectionVersion.current;
-          try {
-            const projection = await requestRuntime<WorldReadView>(client, {
-              type: "world.read",
-              worldId,
-            });
-            return current() ? projection : null;
-          } catch (error) {
-            if (current()) throw error;
-            return null;
-          }
+          const projection = await worldTarget.read();
+          return active && isCurrent?.() !== false ? projection : null;
         };
         if (next === null) {
           if (!verifyFirst) return;
-          const projection = await readProjection();
-          if (projection !== null) applyWorld(projection, true);
+          await readProjection();
           return;
         }
         // Ignore token deltas. Follow-up outcomes (including failure/clear),
@@ -445,7 +505,10 @@ export function WorldPage({
           observedDecorations = revision;
           setDecorationRevision((current) => current + 1);
         }
-        const showObservation = () => {
+        const needsHydration =
+          verifyFirst || hydratedHead !== `${next.parentHead}:${next.status}`;
+        const showObservation = (worldHydrated = false) => {
+          worldTarget.accept({ complete: worldHydrated || !needsHydration });
           applyPlayCallChain(next);
           if (next.status === "running") {
             setPlayProgress((current) =>
@@ -473,19 +536,14 @@ export function WorldPage({
         // A revision can legitimately shorten a chain. Verify an older-looking
         // snapshot before exposing it in place of a newer visible event.
         if (!verifyFirst) showObservation();
-        if (
-          verifyFirst ||
-          hydratedHead !== `${next.parentHead}:${next.status}`
-        ) {
+        if (needsHydration) {
           const projection = await readProjection();
           if (projection === null) return;
           hydratedHead = `${next.parentHead}:${next.status}`;
-          setWorld(projection);
           const page =
-            projection.playTimeline ??
-            (verifyFirst ? legacyTimelinePage(projection) : undefined);
-          if (verifyFirst && page && !timelineHasNewerActivity(page, next))
-            showObservation();
+            projection.playTimeline ?? legacyTimelinePage(projection);
+          if (page && !timelineHasNewerActivity(page, next))
+            showObservation(true);
           if (page !== undefined) {
             setPlayTimeline((current) => mergePlayTimelinePage(current, page));
             setPlayContextUsage((current) =>
@@ -507,23 +565,27 @@ export function WorldPage({
           }
         }
       },
-      (connection, message) => {
-        if (active && connection === "connected") {
+      (connection) => {
+        if (!active) return;
+        if (connection === "connected" || connection === "synchronized") {
+          outage = false;
           hydratedHead = undefined;
           observedDecorations = undefined;
           setDecorationRevision((current) => current + 1);
+        } else {
+          if (connection === "failed") setObservationStopped(true);
+          if (!outage) {
+            outage = true;
+            void worldTarget.recover();
+          }
         }
-        if (active)
-          setPlayObservationFailure(
-            conversationConnectionText(connection, message),
-          );
       },
     );
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [client, worldId, openedWorldId]);
+  }, [client, worldId, openedWorldId, worldTarget, observationRevision]);
 
   useEffect(() => {
     if (openedWorldId === undefined) return;
@@ -786,53 +848,6 @@ export function WorldPage({
     return () => clearInterval(timer);
   }, [playProgressActive]);
 
-  function applyWorld(
-    next: WorldReadView,
-    preserveControlDraft: boolean,
-  ): void {
-    worldProjectionVersion.current++;
-    const nextChain = next.playCallChain;
-    const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
-    setWorld(next);
-    if (!preserveControlDraft) {
-      setControlFiles(JSON.stringify(next.control, null, 2));
-      setControlDirty(false);
-      setControlPreview(null);
-    }
-    // Retain only usage metadata across lightweight reads, never the old
-    // endpoint or running/retry state that would override the new timeline.
-    setPlayCallChain(nextChain);
-    setPlayContextUsage((current) =>
-      nextChain !== null
-        ? projectPlayContextUsage(nextChain)
-        : current?.worldId === next.worldId &&
-            current.chainId === nextTimeline.activeChainId
-          ? current
-          : null,
-    );
-    setPlayTimeline(nextTimeline);
-    if (nextChain?.status === "running") {
-      setPlayProgress((current) =>
-        progressFromCallChain(
-          nextChain.chainId,
-          activePlayExchangeId(nextChain, nextTimeline, nextChain.chainId),
-          nextChain,
-          current,
-        ),
-      );
-      setPlayProgressNow(Date.now());
-    } else setPlayProgress(null);
-    setSelectedDocument((current) =>
-      selectedStateDocument(next.state, current),
-    );
-  }
-
-  function applyPlayCallChain(next: V1PlayCallChainView): void {
-    worldProjectionVersion.current++;
-    setPlayCallChain(next);
-    setPlayContextUsage(projectPlayContextUsage(next));
-  }
-
   async function refreshWorld(
     preserveControlDraft = true,
   ): Promise<WorldReadView> {
@@ -842,6 +857,11 @@ export function WorldPage({
     });
     applyWorld(next, preserveControlDraft);
     return next;
+  }
+
+  function recoverPlay(): void {
+    void worldTarget.recover();
+    if (observationStopped) setObservationRevision((current) => current + 1);
   }
 
   function consumeCheckpointPreference(): void {
@@ -917,27 +937,51 @@ export function WorldPage({
             playerText: submittedText,
             ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
+      unconfirmedSubmission.current = request;
+      const submissionVersion = worldProjectionVersion.current;
       const {
         world: projection,
         chain,
         timeline,
         outcome,
         playerAccepted,
-        projectionFailure,
-      } = await submitPlay(client, request, () =>
-        requestRuntime<WorldReadView>(client, { type: "world.read", worldId }),
+      } = await submitPlay(
+        client,
+        request,
+        (recover) => (recover ? worldTarget.recover() : worldTarget.read()),
+        (receipt) => {
+          worldTarget.accept({ complete: false });
+          applyPlayCallChain(receipt);
+          applyPlayTimelineFrame(
+            {
+              kind: "snapshot",
+              value: receipt,
+              final: receipt.status !== "running",
+            },
+            setPlayTimeline,
+          );
+        },
       );
-      if (chain !== null) applyPlayCallChain(chain);
-      if (projection !== null) {
-        applyWorld(projection, true);
-      } else if (timeline !== undefined) {
-        setPlayTimeline(timeline);
-        setPlayCallChain(null);
-      } else if (chain !== null) {
-        applyPlayTimelineFrame(
-          { kind: "snapshot", value: chain, final: chain.status !== "running" },
-          setPlayTimeline,
-        );
+      // The read target already applied valid projections. Fallback evidence must
+      // not overwrite a newer observation that arrived while reconciling.
+      if (
+        projection === null &&
+        worldProjectionVersion.current === submissionVersion
+      ) {
+        if (timeline !== undefined) {
+          setPlayTimeline(timeline);
+          setPlayCallChain(null);
+        } else if (chain !== null) {
+          applyPlayCallChain(chain);
+          applyPlayTimelineFrame(
+            {
+              kind: "snapshot",
+              value: chain,
+              final: chain.status !== "running",
+            },
+            setPlayTimeline,
+          );
+        }
       }
       if (outcome.kind === "cancelled") {
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
@@ -948,7 +992,14 @@ export function WorldPage({
           setRetryRejection(message);
           setFeedback(null);
         } else {
-          setFeedback({ kind: "error", text: message });
+          setFeedback({
+            kind: "error",
+            text: message,
+            ...(outcome.error instanceof RuntimeRequestError &&
+            outcome.error.kind === "runtime"
+              ? {}
+              : { submission: exchangeId }),
+          });
         }
       } else if (outcome.kind === "interrupted") {
         const { lastFailure, lastFailureKind, canRetry } = outcome.failure;
@@ -960,8 +1011,6 @@ export function WorldPage({
         setRetryRejection(lastFailure ?? description);
 
         setFeedback(null);
-      } else if (projectionFailure !== null) {
-        setFeedback({ kind: "error", text: projectionFailure.message });
       } else if (outcome.kind === "running") {
         setFeedback(null);
       } else {
@@ -975,7 +1024,10 @@ export function WorldPage({
         });
       }
       if (outcome.kind !== "unconfirmed" && fresh) setForceFreshContext(false);
-      if (hasSubmittedText && playerAccepted) setPlayerText("");
+      if (hasSubmittedText && playerAccepted) {
+        unconfirmedSubmission.current = null;
+        setPlayerText((current) => (current === submittedText ? "" : current));
+      }
       if (outcome.kind === "ready") {
         setTurnNote("");
         setTurnNoteOpen(false);
@@ -1481,7 +1533,7 @@ export function WorldPage({
     submitCurrentMode,
   );
 
-  if (world === null)
+  if (world?.worldId !== worldId)
     return (
       <main className="world-reader-page world-page-loading">
         {showWorkspaceBack && (
@@ -1492,11 +1544,12 @@ export function WorldPage({
             {uiText("← 返回工作区")}
           </button>
         )}
+        <SyncNotice failed={syncFailed} onRead={recoverPlay} />
         {feedback?.kind === "error" ? (
           <p role="alert">{feedback.text}</p>
-        ) : (
+        ) : !syncFailed ? (
           <p role="status">{uiText("正在打开世界…")}</p>
-        )}
+        ) : null}
       </main>
     );
 
@@ -1928,9 +1981,12 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
-            {playObservationFailure === null ? null : (
-              <p role="status">{playObservationFailure}</p>
-            )}
+            <SyncNotice
+              failed={
+                syncFailed || (observationStopped && activeStatus === "running")
+              }
+              onRead={recoverPlay}
+            />
             {visiblePlayFailure === null || activeFailureVisible ? null : (
               <div
                 className="play-call-failure"
@@ -1961,7 +2017,7 @@ export function WorldPage({
                     "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。",
                   )}
                 </p>
-                {failureRecovery.canRetry ? (
+                {activeCanRetry && !activeChainStale ? (
                   <button
                     type="button"
                     disabled={failureRecovery.playDisabled}

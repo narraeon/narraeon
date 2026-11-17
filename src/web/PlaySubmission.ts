@@ -3,11 +3,9 @@ import type {
   V1PlayTimelinePage,
   V1Request,
 } from "../protocol/v1.ts";
-import { activePlayExchangeId } from "./PlayRunProgressState.ts";
 import { RuntimeRequestError } from "./RuntimeResponse.ts";
-import { ProjectionRefreshError } from "./RequestOutcome.ts";
 
-type PlayCommand = Extract<
+export type PlayCommand = Extract<
   V1Request,
   { type: "play.chain.start" | "play.chain.append" }
 >;
@@ -50,11 +48,34 @@ function observedState(page: V1PlayTimelinePage): PlayState | null {
   };
 }
 
+/** Durable player identity, independent of matching text or the currently open context. */
+export function recordedPlaySubmission(
+  command: Pick<PlayCommand, "chainId" | "exchangeId">,
+  chain: V1PlayCallChainView | null,
+  timeline: V1PlayTimelinePage | undefined,
+): boolean {
+  return (
+    timeline?.items.some(
+      (item) =>
+        item.kind === "event" &&
+        item.chainId === command.chainId &&
+        item.event.kind === "player" &&
+        item.event.exchangeId === command.exchangeId,
+    ) === true ||
+    (chain?.chainId === command.chainId &&
+      chain.events.some(
+        (event) =>
+          event.kind === "player" && event.exchangeId === command.exchangeId,
+      ))
+  );
+}
+
 /** Dispatch once. Only a receipt or this exchange's durable/live identity can confirm the submission. */
 export async function submitPlay<T extends WorldProjection>(
   client: { request(request: V1Request): Promise<unknown> },
   command: PlayCommand,
-  readWorld: () => Promise<T>,
+  readWorld: (recover: boolean) => Promise<T | null>,
+  acceptReceipt: (receipt: V1PlayCallChainView) => void,
 ) {
   let receipt: V1PlayCallChainView | null = null;
   let chain: V1PlayCallChainView | null;
@@ -62,6 +83,7 @@ export async function submitPlay<T extends WorldProjection>(
   try {
     receipt = (await client.request(command)) as V1PlayCallChainView;
     chain = receipt;
+    acceptReceipt(receipt);
   } catch (error) {
     sendError = error;
     chain = (await client
@@ -69,14 +91,8 @@ export async function submitPlay<T extends WorldProjection>(
       .catch(() => null)) as V1PlayCallChainView | null;
   }
 
-  // A second read recovers a dropped projection response. Never replay the command.
-  let projectionError: unknown;
-  const world = await readWorld()
-    .catch(() => readWorld())
-    .catch((error: unknown) => {
-      projectionError = error;
-      return null;
-    });
+  // The page target owns retries and synchronization state. Never replay the command.
+  const world = await readWorld(receipt === null);
   const timeline =
     world === null
       ? ((await client
@@ -92,13 +108,7 @@ export async function submitPlay<T extends WorldProjection>(
   const sameChain =
     (timeline === undefined ? chain?.chainId : timeline.activeChainId) ===
     command.chainId;
-  const player =
-    chain?.chainId === command.chainId
-      ? chain.events.findLast((event) => event.kind === "player")
-      : undefined;
-  const playerRecorded =
-    (activePlayExchangeId(null, timeline ?? null, command.chainId) ??
-      player?.exchangeId) === command.exchangeId;
+  const playerRecorded = recordedPlaySubmission(command, chain, timeline);
   const accepted =
     receipt !== null ||
     (sameChain &&
@@ -136,9 +146,5 @@ export async function submitPlay<T extends WorldProjection>(
     timeline,
     outcome,
     playerAccepted: receipt !== null || (playerRecorded && sameChain),
-    projectionFailure:
-      world === null && accepted
-        ? new ProjectionRefreshError(projectionError)
-        : null,
   };
 }

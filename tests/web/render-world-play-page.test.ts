@@ -401,6 +401,7 @@ describe("世界游玩页面", () => {
       receiving = receive({ kind: "play", value: stale }, true);
     });
     expect(screen.queryByRole("alert", { name: "模型调用失败" })).toBeNull();
+    await waitFor(() => expect(finishRead).toBeTypeOf("function"));
     await act(async () => {
       finishRead();
       await receiving;
@@ -1303,7 +1304,7 @@ describe("世界游玩页面", () => {
         client.request.mock.calls.filter(
           ([request]) => request.type === "world.read",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(trigger === "command" ? 3 : 2);
       expect(
         client.request.mock.calls.some(([request]) =>
           [
@@ -6175,3 +6176,166 @@ test.each(["keep", "revert"] as const)(
     await screen.findByText("修改后的消息");
   },
 );
+
+test("a disconnected play observation recovers once and keeps the action draft", async () => {
+  let connection: Parameters<ObserveConversation>[2];
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read")
+      return await Promise.resolve(worldView(null));
+    if (input.type === "world.play-decorations.read")
+      return { artifacts: [], debug: [] };
+    throw new Error(input.type);
+  });
+  renderWorld({
+    request,
+    observeConversation: (_target, _receive, notify) => {
+      connection = notify;
+      return () => undefined;
+    },
+  });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  fireEvent.change(input, { target: { value: "Keep this draft" } });
+  const reads = request.mock.calls.filter(
+    ([r]) => r.type === "world.read",
+  ).length;
+  act(() => {
+    connection?.("reconnecting");
+    connection?.("reconnecting");
+    connection?.("failed");
+  });
+  await waitFor(() =>
+    expect(
+      request.mock.calls.filter(([r]) => r.type === "world.read"),
+    ).toHaveLength(reads + 1),
+  );
+  expect(input.value).toBe("Keep this draft");
+  expect(screen.queryByText("对话连接已断开，正在重新连接…")).toBeNull();
+});
+
+test("a lost play response and failed recovery preserve the draft until a read confirms its exchange", async () => {
+  let chain: V1PlayCallChainView | null = null;
+  let offline = false;
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read") {
+      if (offline) throw new Error("World is offline");
+      return await Promise.resolve(worldView(chain));
+    }
+    if (input.type === "world.play-decorations.read")
+      return { artifacts: [], debug: [] };
+    if (input.type === "play.chain.start") {
+      chain = playChainView(input.chainId, input.exchangeId, input.playerText);
+      offline = true;
+      throw new RuntimeRequestError("The response was lost", {
+        kind: "connection",
+      });
+    }
+    if (
+      input.type === "play.chain.inspect" ||
+      input.type === "play.timeline.page"
+    )
+      throw new Error("Offline");
+    throw new Error(input.type);
+  });
+  renderWorld({ request });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  fireEvent.change(input, { target: { value: "Look outside." } });
+  fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+  await screen.findByText("暂时无法同步");
+  expect(input.value).toBe("Look outside.");
+  offline = false;
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await screen.findByText("Alex opens the door and lets you go first.");
+  await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
+  expect(input.value).toBe("");
+  expect(screen.queryByText("The response was lost")).toBeNull();
+  expect(
+    request.mock.calls.filter(([next]) => next.type === "play.chain.start"),
+  ).toHaveLength(1);
+});
+
+test("a recovered older exchange with identical action text cannot confirm a lost submission", async () => {
+  const chain = playChainView("existing", "older-exchange", "Look outside.");
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read")
+      return await Promise.resolve(worldView(chain));
+    if (input.type === "world.play-decorations.read")
+      return { artifacts: [], debug: [] };
+    if (input.type === "play.chain.inspect") return chain;
+    if (input.type === "play.chain.append")
+      throw new RuntimeRequestError("No response received", {
+        kind: "connection",
+      });
+    throw new Error(input.type);
+  });
+  renderWorld({ request });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  fireEvent.change(input, { target: { value: "Look outside." } });
+  fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+  await screen.findByText("No response received");
+  expect(input.value).toBe("Look outside.");
+  expect(screen.queryByText("暂时无法同步")).toBeNull();
+  expect(
+    request.mock.calls.filter(([next]) => next.type === "play.chain.append"),
+  ).toHaveLength(1);
+  expect(
+    request.mock.calls.filter(([next]) => next.type === "world.read"),
+  ).toHaveLength(2);
+});
+
+test("a later action in the same context cannot hide the recovered submission identity", async () => {
+  let chain = playChainView("existing", "first", "Begin.");
+  const request = vi.fn(async (input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read")
+      return await Promise.resolve(worldView(chain));
+    if (input.type === "world.play-decorations.read")
+      return { artifacts: [], debug: [] };
+    if (input.type === "play.chain.inspect") return chain;
+    if (input.type === "play.chain.append") {
+      chain = {
+        ...chain,
+        parentHead: "commit:7",
+        events: [
+          ...chain.events,
+          {
+            id: 5,
+            kind: "player",
+            text: input.playerText,
+            context: "append",
+            exchangeId: input.exchangeId,
+            committedHead: "commit:5",
+          },
+          {
+            id: 6,
+            kind: "player",
+            text: "A later action from another page.",
+            context: "append",
+            exchangeId: "peer-exchange",
+            committedHead: "commit:6",
+          },
+        ],
+      };
+      throw new RuntimeRequestError("No response received", {
+        kind: "connection",
+      });
+    }
+    throw new Error(input.type);
+  });
+  renderWorld({ request });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  fireEvent.change(input, { target: { value: "Look outside." } });
+  fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+  await screen.findByText("A later action from another page.");
+  await waitFor(() => expect(input.value).toBe(""));
+  expect(screen.queryByText("No response received")).toBeNull();
+  expect(
+    request.mock.calls.filter(([next]) => next.type === "play.chain.append"),
+  ).toHaveLength(1);
+});
