@@ -51,6 +51,7 @@ export function PackageScriptPermissionControl({
     ),
   );
   useEffect(() => {
+    permissionTarget.accept({ complete: false });
     void permissionTarget.read();
     return () => {
       version.current += 1;

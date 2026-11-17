@@ -274,11 +274,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     useCallback((next: Workspace) => {
       setWebLocale(next.preferences.locale);
       setWorkspace(next);
-      setSelected((current) =>
-        next.contentPackages.some(({ localId }) => localId === current)
+      setSelected((current) => {
+        const location = locationRef.current;
+        if (location.screen === "content") return location.packageId;
+        if (location.screen === "create" && current !== "") return current;
+        return next.contentPackages.some(({ localId }) => localId === current)
           ? current
-          : (next.contentPackages[0]?.localId ?? ""),
-      );
+          : (next.contentPackages[0]?.localId ?? "");
+      });
       setNotice("");
     }, []),
   );
@@ -352,6 +355,34 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       presetPageInstanceRef.current += 1;
     };
   }, [workspaceTarget, loadAttempt]);
+
+  const reconcileVisibleResource = useEffectEvent(() => {
+    if (
+      workspace === null ||
+      navigationLockedRef.current ||
+      creatingWorldRef.current
+    )
+      return;
+    const location = locationRef.current;
+    const missingPackage =
+      (location.screen === "content" ||
+        (location.screen === "create" && selected !== "")) &&
+      !workspace.contentPackages.some(
+        ({ localId }) =>
+          localId ===
+          (location.screen === "content" ? location.packageId : selected),
+      );
+    const missingWorld =
+      location.screen === "world" &&
+      !workspace.worlds.some((world) => world.worldId === location.worldId);
+    if (!missingPackage && !missingWorld) return;
+    switchLocation({ screen: "home" }, "replace");
+    setSelected(workspace.contentPackages[0]?.localId ?? "");
+    setNotice(uiText(missingPackage ? "找不到该内容包。" : "找不到该世界。"));
+  });
+  useEffect(() => {
+    reconcileVisibleResource();
+  }, [workspace, screen, selected, navigationLocked, creatingWorld]);
 
   async function saveLocale(locale: AppLocale): Promise<void> {
     if (workspace === null || localeSaving) return;
@@ -845,6 +876,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           }))
         }
         onOpenWorld={async (nextWorldId) => {
+          workspaceTarget.accept({ complete: false });
           openWorld(nextWorldId);
           await readAfterCommit(refresh).catch(report);
         }}
@@ -857,7 +889,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         showWorkspaceBack={false}
         key={selected}
         onPreview={() => authoringWorkspace.preview()}
-        packageName={selectedPackage?.title ?? selected}
+        packageName={
+          selectedPackage?.title ?? selectedPackageDetail?.title ?? selected
+        }
         modelConfigured={workspace.model.configured}
         {...(selectedGameplay === undefined
           ? {}
@@ -919,7 +953,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           onCopy: () => void contentCommand("content.copy"),
           onExport: () => void exportPackage(),
           onDelete: () => void contentCommand("content.delete"),
-          title: selectedPackage?.title ?? selected,
+          title:
+            selectedPackage?.title ?? selectedPackageDetail?.title ?? selected,
           onRename: (name) => void renamePackage(name),
         }}
         onSend={(message, requestId) => {

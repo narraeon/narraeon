@@ -1213,6 +1213,7 @@ export function WorldPage({
           exchangeId,
         }),
       );
+      worldTarget.accept({ complete: false });
       if (result.outcome === "not_running") {
         if (cancelledExchangeRef.current === exchangeId)
           cancelledExchangeRef.current = null;
@@ -1294,6 +1295,19 @@ export function WorldPage({
   useEffect(() => {
     controlPreviewTarget.accept();
   }, [controlPreviewTarget, controlFiles]);
+
+  function acceptWorldChange(): void {
+    worldTarget.accept({ complete: false });
+    stateTarget.accept({ complete: false });
+    controlTarget.accept({ complete: false });
+    runtimeTarget.accept({ complete: false });
+    aiReadingTarget.accept({ complete: false });
+    decorationTarget.accept({ complete: false });
+    // Old timeline cursors and previews no longer describe the committed world.
+    earlierTimelineTarget.accept();
+    controlPreviewTarget.accept();
+  }
+
   async function previewControl(): Promise<void> {
     setPending("control-preview");
     try {
@@ -1301,6 +1315,7 @@ export function WorldPage({
       await worldTarget.command(() =>
         client.request({ type: "world.control-draft.save", worldId, files }),
       );
+      controlPreviewTarget.accept({ complete: false });
       const preview = await controlPreviewTarget.read();
       if (preview === null) return;
       setFeedback({
@@ -1322,6 +1337,7 @@ export function WorldPage({
       await worldTarget.command(() =>
         client.request({ type: "world.control-draft.apply", worldId }),
       );
+      acceptWorldChange();
       setControlPreview(null);
       setControlDirty(false);
       await readAfterCommit(() => refreshWorld(false));
@@ -1343,6 +1359,7 @@ export function WorldPage({
   async function applyRevision(): Promise<void> {
     const result = await revisionWorkspace.finish("apply");
     if (result === null) return;
+    acceptWorldChange();
     revisionWorkspace.close();
     onProtagonistRevisionFinished?.();
     setDialog(null);
@@ -1375,6 +1392,7 @@ export function WorldPage({
       return;
     const result = await revisionWorkspace.finish("discard");
     if (result === null) return;
+    worldTarget.accept({ complete: false });
     revisionWorkspace.close();
     onProtagonistRevisionFinished?.();
     setDialog(null);
@@ -1419,6 +1437,7 @@ export function WorldPage({
     chain: V1PlayCallChainView,
     previous: WorldReadView,
   ): Promise<void> {
+    acceptWorldChange();
     // Regeneration replaces history. Reusing the old tail as an append would keep removed replies.
     setPlayContextUsage(projectPlayContextUsage(chain));
     setPlayCallChain(null);
@@ -2773,6 +2792,7 @@ export function WorldPage({
                   client={client}
                   kind="world"
                   id={worldId}
+                  dirty={controlDirty}
                   onChange={() =>
                     setDecorationRevision((current) => current + 1)
                   }

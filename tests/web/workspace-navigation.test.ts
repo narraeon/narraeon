@@ -336,6 +336,59 @@ test("内容包导航预读取失败保留原位置，手动重读成功后才�
   ).toBe(false);
 });
 
+test.each([false, true])(
+  "删除当前内容包丢回执后返回首页，不打开其他身份或空身份：最后一份=%s",
+  async (lastPackage) => {
+    window.history.replaceState(null, "", "#/content/chosen");
+    const { client, request } = fixture();
+    const original = request.getMockImplementation()!;
+    let deleted = false;
+    request.mockImplementation(async (input) => {
+      if (input.type === "content.delete") {
+        deleted = true;
+        throw new Error("Lost deletion receipt");
+      }
+      if (input.type === "workspace.read") {
+        const value = (await original(input)) as {
+          contentPackages: { localId: string }[];
+        };
+        return {
+          ...value,
+          contentPackages: deleted
+            ? value.contentPackages.filter(
+                ({ localId }) => !lastPackage && localId !== "chosen",
+              )
+            : value.contentPackages,
+        };
+      }
+      return original(input);
+    });
+    render(createElement(App, { client }));
+    await screen.findByRole("heading", { name: "当前创作 · AI 设定完善" });
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "设定完善工具" }),
+      ).getByRole("button", { name: "编辑" }),
+    );
+    const deleteButton = await screen.findByRole<HTMLButtonElement>("button", {
+      name: "删除内容包",
+    });
+    await waitFor(() => expect(deleteButton.disabled).toBe(false));
+    const before = request.mock.calls.length;
+    fireEvent.click(deleteButton);
+    await screen.findByRole("heading", { name: "世界工作区" });
+    expect(window.location.hash).toBe("#/");
+    expect(
+      request.mock.calls
+        .slice(before)
+        .filter(([input]) => input.type === "content.read"),
+    ).toHaveLength(0);
+    expect(
+      request.mock.calls.filter(([input]) => input.type === "content.delete"),
+    ).toHaveLength(1);
+  },
+);
+
 test("创建前检查手动恢复只读取，必须再次明确创建才派发世界命令", async () => {
   window.history.replaceState(null, "", "#/create");
   const { client, request } = fixture();

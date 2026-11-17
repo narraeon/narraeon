@@ -4241,6 +4241,69 @@ describe("世界游玩页面", () => {
     },
   );
 
+  test("重新生成确认后忽略命令前在途的世界读取，并只补一次最新端点读取", async () => {
+    const original = playChainView("original", "first", "Begin.");
+    let current = original;
+    let reads = 0;
+    let onConnection: Parameters<ObserveConversation>[2] | undefined;
+    const oldRead = Promise.withResolvers<ReturnType<typeof worldView>>();
+    const oldWorld = worldView(original);
+    const client = {
+      observeConversation: ((_target, _receive, connection) => {
+        onConnection = connection;
+        return () => undefined;
+      }) satisfies ObserveConversation,
+      request: vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "world.read") {
+          if (++reads === 2) return oldRead.promise;
+          return Promise.resolve(worldView(current));
+        }
+        if (input.type === "world.play-decorations.read")
+          return Promise.resolve(
+            playDecorations(null, "world-one", current.parentHead),
+          );
+        if (input.type === "play.chain.revise-player") {
+          current = playChainView(
+            "rewritten",
+            input.replacementExchangeId,
+            input.replacementText,
+          );
+          current.parentHead = "commit:9";
+          const narrative = current.events.find(
+            (event) => event.kind === "assistant",
+          );
+          if (narrative?.kind === "assistant")
+            narrative.text = "Confirmed replacement narrative.";
+          return Promise.resolve({
+            outcome: "revised",
+            playCallChain: current,
+          });
+        }
+        return Promise.reject(new Error(`Unexpected ${input.type}`));
+      }),
+    };
+    renderWorld(client);
+    await screen.findByText("Alex opens the door and lets you go first.");
+    act(() => onConnection?.("reconnecting"));
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await screen.findByText("Confirmed replacement narrative.");
+    await act(async () => {
+      oldRead.resolve(oldWorld);
+      await oldRead.promise;
+    });
+    await waitFor(() => expect(reads).toBe(3));
+    await screen.findByText("Confirmed replacement narrative.");
+    expect(
+      screen.queryByText("Alex opens the door and lets you go first."),
+    ).toBeNull();
+    expect(
+      client.request.mock.calls.filter(
+        ([input]) => input.type === "play.chain.revise-player",
+      ),
+    ).toHaveLength(1);
+  });
+
   test("世界在故事外前进后重新生成仍沿原上下文直接提交", async () => {
     const originalText = "  原始玩家输入\n";
     let chain = playChainView("original", "first", originalText);
