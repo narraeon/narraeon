@@ -246,6 +246,103 @@ describe("世界游玩页面", () => {
     },
   );
 
+  test.each([
+    "lost response",
+    "failed refresh",
+    "unaccepted action",
+    "unreachable runtime",
+    "running",
+  ] as const)("reconciles play submission feedback: %s", async (scenario) => {
+    let chain = playChainView("existing", "first", "Begin.");
+    const unconfirmed =
+      scenario === "unaccepted action" || scenario === "unreachable runtime";
+    let submitted = false;
+    let refreshFailed = false;
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (submitted && scenario === "unreachable runtime")
+        return Promise.reject(new Error("Runtime unreachable"));
+      if (input.type === "world.read") {
+        if (submitted && scenario === "failed refresh" && !refreshFailed) {
+          refreshFailed = true;
+          return Promise.reject(new Error("World read disconnected"));
+        }
+        return Promise.resolve(worldView(chain));
+      }
+      if (input.type === "world.play-decorations.read")
+        return Promise.resolve({ artifacts: [], debug: [] });
+      if (input.type === "artifacts.debug") return Promise.resolve([]);
+      if (input.type === "play.chain.inspect") return Promise.resolve(chain);
+      if (input.type !== "play.chain.append")
+        return Promise.reject(new Error(input.type));
+      submitted = true;
+      if (!unconfirmed) {
+        chain = {
+          ...chain,
+          parentHead: "commit:5",
+          status: scenario === "running" ? "running" : "ready",
+          events: [
+            ...chain.events,
+            {
+              id: 5,
+              kind: "player",
+              text: input.playerText,
+              context: "append",
+              exchangeId: input.exchangeId,
+              committedHead: "commit:4",
+            },
+          ],
+        };
+        if (scenario !== "running")
+          chain.events.push({
+            id: 6,
+            kind: "assistant",
+            text: "The path is clear.",
+            status: "completed",
+            responseKind: "narrative",
+            exchange: 2,
+            attempt: 1,
+            committedHead: "commit:5",
+          });
+      }
+      if (scenario === "failed refresh") return Promise.resolve(chain);
+      return Promise.reject(new Error("Send disconnected"));
+    });
+    renderWorld({ request });
+    const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+      name: "你的行动",
+    });
+    fireEvent.change(input, { target: { value: "Look outside." } });
+    fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+    if (unconfirmed) {
+      expect((await screen.findByRole("alert")).textContent).toContain(
+        "Send disconnected",
+      );
+      expect(input.value).toBe("Look outside.");
+    } else {
+      await waitFor(() => expect(input.value).toBe(""));
+      if (scenario === "running") {
+        expect(
+          await screen.findByRole("button", { name: "取消生成" }),
+        ).toBeTruthy();
+      } else {
+        await screen.findByText("The path is clear.");
+        fireEvent.change(input, { target: { value: "Continue." } });
+        expect(
+          screen.getByRole<HTMLButtonElement>("button", {
+            name: "追加上下文",
+          }).disabled,
+        ).toBe(false);
+      }
+    }
+    expect(screen.queryByText("调用链中断")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "从全新上下文继续" }),
+    ).toBeNull();
+    expect(
+      request.mock.calls.filter(([call]) => call.type === "play.chain.append"),
+    ).toHaveLength(1);
+  });
+
   test("a rejected resend displays its new rejection instead of the unchanged inspected error", async () => {
     const chain = interruptedChainView();
     const client = {

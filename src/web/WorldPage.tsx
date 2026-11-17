@@ -866,29 +866,125 @@ export function WorldPage({
             playerText: submittedText,
             ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
-      const next = await requestRuntime<V1PlayCallChainView>(client, request);
-      applyPlayCallChain(next);
-      if (next.status === "ready") {
-        setTurnNote("");
-        setTurnNoteOpen(false);
+      let response: V1PlayCallChainView | null = null;
+      let chain: V1PlayCallChainView | null;
+      let sendError: unknown;
+      try {
+        response = await requestRuntime<V1PlayCallChainView>(client, request);
+        chain = response;
+      } catch (reason: unknown) {
+        sendError = reason;
+        chain = await requestRuntime<V1PlayCallChainView | null>(client, {
+          type: "play.chain.inspect",
+          worldId,
+        }).catch(() => null);
       }
-      if (fresh) setForceFreshContext(false);
-      if (hasSubmittedText) setPlayerText("");
-      await refreshWorld();
-      const wasCancelled = cancelledExchangeRef.current === exchangeId;
-      if (wasCancelled) {
+      if (chain !== null) applyPlayCallChain(chain);
+      // A lost projection read can be retried independently of the model call.
+      let projectionError: unknown;
+      const projection = await refreshWorld().catch(() =>
+        refreshWorld().catch((reason: unknown) => {
+          projectionError = reason;
+          return null;
+        }),
+      );
+      let timeline = projection?.playTimeline;
+      if (projection === null) {
+        timeline = await requestRuntime<V1PlayTimelinePage>(client, {
+          type: "play.timeline.page",
+          worldId,
+          limit: 40,
+        }).catch(() => undefined);
+        if (timeline !== undefined) {
+          setPlayTimeline(timeline);
+          setPlayCallChain(null);
+        } else if (chain !== null) {
+          applyPlayTimelineFrame(
+            {
+              kind: "snapshot",
+              value: chain,
+              final: chain.status !== "running",
+            },
+            setPlayTimeline,
+          );
+        }
+      }
+      chain = projection?.playCallChain ?? chain;
+      const lastItem = timeline?.items.findLast(
+        (item) =>
+          item.kind === "event" && item.chainId === timeline.activeChainId,
+      );
+      const observed =
+        timeline === undefined
+          ? chain
+          : {
+              chainId: timeline.activeChainId,
+              status: timeline.activeStatus,
+              canRetry: timeline.activeCanRetry,
+              lastFailure: timeline.activeLastFailure,
+              lastFailureKind: timeline.activeLastFailureKind,
+              lastCancelled:
+                lastItem?.kind === "event" &&
+                lastItem.event.kind === "cancellation",
+            };
+      const outcome = response ?? observed;
+      // A ready context can still be the one from before a rejected send.
+      const pageExchange = activePlayExchangeId(
+        null,
+        timeline ?? null,
+        chainId,
+      );
+      const chainPlayer =
+        chain?.chainId === chainId
+          ? chain.events.findLast((event) => event.kind === "player")
+          : undefined;
+      const playerRecorded =
+        (pageExchange ?? chainPlayer?.exchangeId) === exchangeId;
+      const accepted =
+        response !== null ||
+        (observed?.chainId === chainId &&
+          (playerRecorded ||
+            (observed.status === "running" &&
+              chain?.activeInvocation?.exchangeId === exchangeId)));
+      const status = outcome?.status;
+      const cancelled =
+        cancelledExchangeRef.current === exchangeId ||
+        (accepted &&
+          (outcome?.lastCancelled === true ||
+            (timeline === undefined &&
+              chain?.events.at(-1)?.kind === "cancellation")));
+      if (cancelled) {
         setPlayFailure(null);
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
-      } else if (next.status === "interrupted") {
-        setRetryRejection(next.lastFailure ?? playCallFailureMessage(next));
-        setPlayFailure(
-          playCallFailureMessage(next) ??
-            (next.canRetry
-              ? uiText(
-                  "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。",
-                )
-              : uiText("调用链处理失败；旧请求不能重发，请使用全新上下文。")),
+      } else if (!accepted) {
+        const message = errorMessage(sendError);
+        setPlayFailure(null);
+        // A rejected retry still has a recoverable interrupted request.
+        if (
+          !hasSubmittedText &&
+          observed?.chainId === chainId &&
+          status === "interrupted" &&
+          !(
+            sendError instanceof RuntimeRequestError &&
+            sendError.protocolCode === "model_protocol_mismatch"
+          )
+        ) {
+          setRetryRejection(message);
+          setFeedback(null);
+        } else {
+          setFeedback({ kind: "error", text: message });
+        }
+      } else if (outcome?.status === "interrupted") {
+        const description = playFailureDescription(
+          outcome.lastFailureKind,
+          outcome.canRetry,
         );
+        setRetryRejection(outcome.lastFailure ?? description);
+        setPlayFailure(description);
+        setFeedback(null);
+      } else if (projection === null) {
+        setFeedback({ kind: "error", text: errorMessage(projectionError) });
+      } else if (status === "running") {
         setFeedback(null);
       } else {
         setPlayFailure(null);
@@ -901,53 +997,32 @@ export function WorldPage({
               : uiText("调用链已返回；模型完成的叙事和世界变化已经分别提交。"),
         });
       }
-    } catch (reason: unknown) {
-      const inspected = await requestRuntime<V1PlayCallChainView | null>(
-        client,
-        { type: "play.chain.inspect", worldId },
-      ).catch(() => null);
-      if (inspected !== null) {
-        applyPlayCallChain(inspected);
-        if (fresh && inspected.chainId === chainId) {
-          setForceFreshContext(false);
-        }
-        if (
-          hasSubmittedText &&
-          inspected.events.some(
-            (event) =>
-              event.kind === "player" && event.exchangeId === exchangeId,
-          )
-        )
+      if (accepted) {
+        if (fresh) setForceFreshContext(false);
+        if (hasSubmittedText && (response !== null || playerRecorded))
           setPlayerText("");
+        if (status === "ready") {
+          setTurnNote("");
+          setTurnNoteOpen(false);
+        }
       }
-      const timeline = await requestRuntime<V1PlayTimelinePage>(client, {
-        type: "play.timeline.page",
-        worldId,
-        limit: 40,
-      }).catch(() => null);
-      if (timeline !== null) setPlayTimeline(timeline);
-      if (cancelledExchangeRef.current === exchangeId) {
-        setPlayFailure(null);
-        setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
-      } else if (
-        reason instanceof RuntimeRequestError &&
-        reason.protocolCode === "model_protocol_mismatch"
-      ) {
-        setPlayFailure(null);
-        setFeedback({ kind: "error", text: errorMessage(reason) });
-      } else {
-        setRetryRejection(errorMessage(reason));
-        setPlayFailure(
-          playCallFailureMessage(inspected) ?? errorMessage(reason),
+      if (accepted && status === "running") {
+        setPlayProgress((current) =>
+          progressFromCallChain(
+            chainId,
+            exchangeId,
+            chain?.status === "running" ? chain : null,
+            current,
+          ),
         );
-        setFeedback(null);
+      } else {
+        setPlayProgress((current) =>
+          current?.exchangeId === exchangeId ? null : current,
+        );
       }
     } finally {
       if (cancelledExchangeRef.current === exchangeId)
         cancelledExchangeRef.current = null;
-      setPlayProgress((current) =>
-        current?.exchangeId === exchangeId ? null : current,
-      );
       playSubmissionInFlight.current = false;
       setPending(null);
     }
