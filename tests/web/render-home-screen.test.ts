@@ -230,7 +230,7 @@ describe("世界工作区主页", () => {
     setWebLocale("zh-CN");
   });
 
-  test("应用把世界卡片提交的新名称保存到 Runtime 并刷新工作区", async () => {
+  test("主页采用 Runtime 改名回执更新世界卡片", async () => {
     let worldTitle = "雾港第一夜";
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       const resolvedInput = await Promise.resolve(input);
@@ -240,6 +240,10 @@ describe("世界工作区主页", () => {
           worldId: resolvedInput.worldId,
           title: resolvedInput.name,
           parentEndpoint: "genesis",
+          gameplay: { mode: "interactive-fiction" },
+          lastActivityAt: null,
+          excerpt: null,
+          playerTurns: 0,
         };
       }
       if (resolvedInput.type === "workspace.read")
@@ -335,7 +339,7 @@ describe("世界工作区主页", () => {
             ? { ...item, title: input.name }
             : item,
         );
-        return {};
+        return packages.find((item) => item.localId === input.packageId);
       }
       if (input.type === "content.delete") {
         packages = packages.filter((item) => item.localId !== input.packageId);

@@ -15,21 +15,23 @@ import {
   type AppLocale,
   type AppPreferences,
 } from "../protocol/appPreferences.ts";
-import type {
-  ContentTreeFile,
-  V1SettingImprovementOverview,
-} from "../protocol/v1.ts";
+import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { readAfterCommit } from "./RequestOutcome.ts";
+import { compareWorldActivity } from "../shared/world-activity-order.ts";
 import { saveFile } from "./androidBridge.ts";
-import { createClientId } from "./ClientId.ts";
+import { WorldCreation } from "./WorldCreation.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
-import type { ContentTreeIssue } from "./ContentTreeEditor.tsx";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
 import { CreateContentPackageDialog } from "./CreateContentPackageDialog.tsx";
 import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
-import { HomeScreen, type HomeWorld } from "./HomeScreen.tsx";
+import {
+  HomeScreen,
+  type HomeWorld,
+  type HomeContentPackage,
+} from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
@@ -44,7 +46,7 @@ import {
 
 interface Workspace {
   preferences: AppPreferences;
-  contentPackages: PackageSummary[];
+  contentPackages: HomeContentPackage[];
   playPresets: PlayPresetLibrary;
   worlds: HomeWorld[];
   storageNotices: { surface: string; message: string }[];
@@ -62,22 +64,13 @@ interface PlayPresetLibrary {
   }[];
 }
 
-interface PackageSummary {
-  localId: string;
-  title: string;
-  gameplay: Gameplay;
-  status: "usable" | "needs_repair";
-  files?: ContentTreeFile[];
-}
-
-interface PackageDetail extends PackageSummary {
-  files: ContentTreeFile[];
-  issues: ContentTreeIssue[];
-}
-
 type Screen = WorkspaceScreen;
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const workspaceReadVersion = useRef(0);
+  const currentWorkspace = useEffectEvent(() => workspace);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [screen, setScreen] = useState<Screen>("home");
   const locationRef = useRef<WorkspaceLocation>({ screen: "home" });
   const [selectedPresetId, setSelectedPresetId] = useState("");
@@ -86,6 +79,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
+  const [worldCreation] = useState(() => new WorldCreation());
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigationLocked, setChildNavigationLocked] = useState(false);
@@ -127,6 +121,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     archivePending ||
     samplePending ||
     creatingWorld ||
+    creatingPackage ||
     childNavigationLocked;
   navigationLockedRef.current = navigationLocked;
   navigationDraftLockedRef.current =
@@ -141,7 +136,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const hash = workspaceHash(next);
     packageOpenRequest.current += 1;
     if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
-    if (workspaceHash(previous) !== hash) authoringWorkspace.close();
+    if (workspaceHash(previous) !== hash) {
+      worldCreation.clear();
+      authoringWorkspace.close();
+    }
     locationRef.current = next;
     if (next.screen === "content") setSelected(next.packageId);
     if (next.screen === "world") setWorldId(next.worldId);
@@ -212,23 +210,33 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const version = ++packageOpenRequest.current;
     if (workspace === null) return;
     const hash = window.location.hash;
+    const readVersion = ++workspaceReadVersion.current;
+    const canRestore = () => {
+      if (
+        version !== packageOpenRequest.current ||
+        window.location.hash !== hash
+      )
+        return false;
+      if (navigationLockedRef.current || creatingWorldRef.current) {
+        preserveLocation();
+        return false;
+      }
+      if (readVersion !== workspaceReadVersion.current) {
+        const latest = currentWorkspace();
+        if (latest) restoreAddress(latest);
+        return false;
+      }
+      return true;
+    };
     void client.request<Workspace>({ type: "workspace.read" }).then(
       (next) => {
-        if (
-          version !== packageOpenRequest.current ||
-          window.location.hash !== hash
-        )
-          return;
-        if (navigationLockedRef.current || creatingWorldRef.current) {
-          preserveLocation();
-          return;
-        }
+        if (!canRestore()) return;
         setWebLocale(next.preferences.locale);
         setWorkspace(next);
         restoreAddress(next);
       },
       (error: unknown) => {
-        if (version !== packageOpenRequest.current) return;
+        if (!canRestore()) return;
         window.history.pushState(null, "", workspaceHash(locationRef.current));
         report(error);
       },
@@ -241,7 +249,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   async function refresh(): Promise<void> {
-    const next = await client.request<Workspace>({ type: "workspace.read" });
+    const version = ++workspaceReadVersion.current;
+    let next: Workspace;
+    try {
+      next = await client.request<Workspace>({ type: "workspace.read" });
+    } catch (error) {
+      if (version === workspaceReadVersion.current) throw error;
+      return;
+    }
+    if (version !== workspaceReadVersion.current) return;
     setWebLocale(next.preferences.locale);
     setWorkspace(next);
     setSelected((current) =>
@@ -252,12 +268,44 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice("");
   }
 
+  function updateWorkspace(update: (current: Workspace) => Workspace): void {
+    workspaceReadVersion.current += 1;
+    setWorkspace((current) => (current === null ? null : update(current)));
+  }
+
+  function acceptPackage({
+    localId,
+    title,
+    gameplay,
+    status,
+  }: HomeContentPackage): void {
+    const summary = { localId, title, gameplay, status };
+    updateWorkspace((current) => ({
+      ...current,
+      contentPackages: [
+        ...current.contentPackages.filter((item) => item.localId !== localId),
+        summary,
+      ].sort((left, right) => left.localId.localeCompare(right.localId)),
+    }));
+  }
+
+  function acceptWorld(world: HomeWorld): void {
+    updateWorkspace((current) => ({
+      ...current,
+      worlds: [
+        ...current.worlds.filter((item) => item.worldId !== world.worldId),
+        world,
+      ].sort(compareWorldActivity),
+    }));
+  }
+
   useEffect(() => {
     let previous: typeof packageDetail = null;
     return authoringWorkspace.subscribe(() => {
       const detail = authoringWorkspace.getSnapshot().target?.packageDetail;
       if (detail === undefined || detail === previous) return;
       previous = detail;
+      workspaceReadVersion.current += 1;
       setWorkspace((current) =>
         current === null
           ? null
@@ -284,17 +332,19 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         restoreAddress(next);
       })
       .catch((error: unknown) => {
-        if (active)
+        if (active) {
           setNotice(
             error instanceof Error ? error.message : uiText("工作区读取失败"),
           );
+          setLoadFailed(true);
+        }
       });
     return () => {
       active = false;
       packageOpenRequest.current += 1;
       presetPageInstanceRef.current += 1;
     };
-  }, [client]);
+  }, [client, loadAttempt]);
 
   async function saveLocale(locale: AppLocale): Promise<void> {
     if (workspace === null || localeSaving) return;
@@ -305,7 +355,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         locale,
       });
       setWebLocale(preferences.locale);
-      await refresh();
+      updateWorkspace((current) => ({ ...current, preferences }));
+      await readAfterCommit(refresh);
       setNotice(uiText("界面语言已保存。"));
     } catch (error: unknown) {
       report(error);
@@ -321,7 +372,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
     try {
-      await client.request<PackageDetail>({
+      await client.request({
         type: "content.read",
         packageId,
       });
@@ -356,17 +407,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function createPackage(gameplay: Gameplay): Promise<void> {
     setCreatingPackage(true);
     try {
-      const created = await client.request<PackageSummary>({
+      const created = await client.request<HomeContentPackage>({
         type: "content.create",
         gameplay,
       });
       setPackageDialogOpen(false);
-      try {
-        await refresh();
-        await openPackage(created.localId);
-      } catch (error: unknown) {
-        report(error);
-      }
+      acceptPackage(created);
+      switchLocation({ screen: "content", packageId: created.localId });
     } finally {
       setCreatingPackage(false);
     }
@@ -393,11 +440,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     samplePendingRef.current = true;
     setSamplePending(true);
     try {
-      const created = await client.request<PackageSummary>({
+      const created = await client.request<HomeContentPackage>({
         type: "content.create-sample",
         locale: workspace.preferences.locale,
       });
-      await refresh();
+      acceptPackage(created);
       setSelected(created.localId);
       switchLocation({ screen: "create" });
     } catch (error: unknown) {
@@ -412,10 +459,30 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     type: "content.copy" | "content.delete",
     packageId = selected,
   ): Promise<void> {
+    const origin = locationRef.current;
     try {
-      await client.request({ type, packageId });
-      await refresh();
-      switchLocation({ screen: "home" });
+      if (type === "content.copy") {
+        acceptPackage(
+          await client.request<HomeContentPackage>({ type, packageId }),
+        );
+      } else {
+        await client.request({ type, packageId });
+        updateWorkspace((current) => ({
+          ...current,
+          contentPackages: current.contentPackages.filter(
+            (item) => item.localId !== packageId,
+          ),
+        }));
+        setSelected((id) =>
+          id === packageId
+            ? (workspace?.contentPackages.find(
+                (item) => item.localId !== packageId,
+              )?.localId ?? "")
+            : id,
+        );
+      }
+      if (locationRef.current === origin && !navigationDraftLockedRef.current)
+        switchLocation({ screen: "home" });
     } catch (error: unknown) {
       report(error);
     }
@@ -426,12 +493,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageId = selected,
   ): Promise<void> {
     try {
-      await client.request({
+      const receipt = await client.request<HomeContentPackage>({
         type: "content.rename",
         packageId,
         name: title,
       });
-      await refresh();
+      acceptPackage(receipt);
       setNotice(uiText("内容包已重命名。"));
     } catch (error: unknown) {
       report(error);
@@ -447,14 +514,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setImportPending(true);
     try {
       const archiveBase64 = await readFileAsBase64(importArchive);
-      const imported = await client.request<PackageSummary>({
+      const imported = await client.request<HomeContentPackage>({
         type: "content.import",
         archiveBase64,
         title: contentPackageTitleFromArchiveName(importArchive.name),
       });
       setImportArchive(null);
-      await refresh();
-      await openPackage(imported.localId);
+      acceptPackage(imported);
+      switchLocation({ screen: "content", packageId: imported.localId });
       setNotice(uiText("ZIP 内容包已导入为新的本地身份。"));
     } catch (error: unknown) {
       report(error);
@@ -532,23 +599,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setNotice(uiText("这份内容包正在完善，请在回复完成后创建世界。"));
         return;
       }
-      const created = await client.request<{ world: { worldId: string } }>({
-        type: "world.create",
-        operationId: createClientId("create"),
-        packageId,
-        model,
-      });
+      const created = await worldCreation.create(
+        client,
+        { packageId, model },
+        packageDetail?.localId === packageId
+          ? packageDetail.treeRevision
+          : undefined,
+      );
       if (template !== undefined)
         setProtagonistRevision({
-          worldId: created.world.worldId,
+          worldId: created.worldId,
           message: uiText(
             "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
             { body: template.body },
           ),
           started: false,
         });
-      await refresh();
-      openWorld(created.world.worldId);
+      acceptWorld(created);
+      openWorld(created.worldId);
     } catch (error: unknown) {
       report(error);
     } finally {
@@ -581,13 +649,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   async function renameWorld(worldId: string, name: string): Promise<void> {
-    await client.request({
+    const renamed = await client.request<HomeWorld>({
       type: "world.rename",
       worldId,
       name,
     });
-    await refresh();
-    setNotice(uiText("世界已重命名为“{name}”。", { name }));
+    acceptWorld(renamed);
+    setNotice(uiText("世界已重命名为“{name}”。", { name: renamed.title }));
   }
 
   async function deleteWorld(world: {
@@ -605,7 +673,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       return;
     try {
       await client.request({ type: "world.delete", worldId: world.worldId });
-      await refresh();
+      updateWorkspace((current) => ({
+        ...current,
+        worlds: current.worlds.filter((item) => item.worldId !== world.worldId),
+      }));
       setNotice(uiText("世界已从本机删除。"));
     } catch (error: unknown) {
       report(error);
@@ -620,6 +691,18 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     return (
       <main className="center-card" role="status">
         {notice}
+        {loadFailed && (
+          <button
+            type="button"
+            onClick={() => {
+              setLoadFailed(false);
+              setNotice(uiText("正在读取工作区…"));
+              setLoadAttempt((current) => current + 1);
+            }}
+          >
+            {uiText("重试")}
+          </button>
+        )}
       </main>
     );
 
@@ -697,18 +780,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           workspace.preferences.reading ?? defaultAppReadingPreferences
         }
         onReadingPreferencesChange={(reading) =>
-          setWorkspace((current) =>
-            current === null
-              ? null
-              : {
-                  ...current,
-                  preferences: { ...current.preferences, reading },
-                },
-          )
+          updateWorkspace((current) => ({
+            ...current,
+            preferences: { ...current.preferences, reading },
+          }))
         }
         onOpenWorld={async (nextWorldId) => {
-          await refresh();
           openWorld(nextWorldId);
+          await readAfterCommit(refresh).catch(report);
         }}
       />
     ) : null;
@@ -742,8 +821,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           null
         }
         notice={notice || authoring.notice}
-        requestFailure={
-          authoring.requestFailure ?? authoring.observationFailure
+        requestFailure={authoring.requestFailure}
+        syncFailure={
+          authoring.projectionFailure ?? authoring.observationFailure
         }
         now={authoring.now}
         contentEditor={{
@@ -783,9 +863,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           title: selectedPackage?.title ?? selected,
           onRename: (name) => void renamePackage(name),
         }}
-        onSend={(message) => {
+        onSend={(message, requestId) => {
           setNotice("");
-          return authoringWorkspace.send(message);
+          return authoringWorkspace.send(message, requestId);
         }}
         onEditMessage={(messageId, message, filePolicy, requestId) =>
           authoringWorkspace.editMessage(
@@ -857,9 +937,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             sillyTavernContentImport={
               <SillyTavernContentImport
                 client={client}
-                onImported={async (id) => {
-                  await refresh();
-                  await openPackage(id);
+                onImported={(receipt) => {
+                  acceptPackage(receipt);
+                  switchLocation({
+                    screen: "content",
+                    packageId: receipt.localId,
+                  });
                 }}
               />
             }
@@ -876,7 +959,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 client={client}
                 disabled={importPending || samplePending || archivePending}
                 onBusyChange={setArchivePending}
-                onImported={refresh}
+                onImported={acceptWorld}
               />
             }
             renderWorldBackupExport={(world) => (
@@ -941,11 +1024,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
               workspace.preferences.locale,
             )}
-            onLibraryChange={(playPresets) =>
-              setWorkspace((current) =>
-                current === null ? current : { ...current, playPresets },
-              )
-            }
+            onLibraryChange={(playPresets) => {
+              if (presetPageInstanceRef.current !== presetPageInstance) {
+                // A receipt from a retired editor was applied to its old library.
+                void readAfterCommit(refresh).catch(report);
+                return;
+              }
+              updateWorkspace((current) => ({ ...current, playPresets }));
+            }}
             onDirtyChange={setPlayPresetDraftDirty}
             renderPromptPreview={(target) => (
               <PromptPreviewScreen
@@ -967,9 +1053,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             client={client}
             library={workspace.model}
             onLibraryChange={(model) =>
-              setWorkspace((current) =>
-                current === null ? current : { ...current, model },
-              )
+              updateWorkspace((current) => ({ ...current, model }))
             }
             onNotice={setNotice}
             onDirtyChange={setModelDraftDirty}

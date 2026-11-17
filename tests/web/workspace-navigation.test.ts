@@ -36,24 +36,22 @@ function delayedPresetCopyFixture() {
   const other = { ...base, id: "preset-other", name: "第二份预设" };
   const copied = { ...base, id: "preset-copy", name: "复制的预设" };
   let library = { currentPresetId: base.id, presets: [base, other] };
-  let finishRead: (value: typeof library) => void = () => undefined;
+  const delivered = Promise.withResolvers<void>();
   request.mockImplementation(async (input) => {
     if (input.type === "workspace.read")
       return { ...((await original(input)) as object), playPresets: library };
     if (input.type === "play.copy") {
       library = { ...library, presets: [...library.presets, copied] };
-      return { preset: copied };
+      await delivered.promise;
+      return { currentPresetId: base.id, preset: copied };
     }
-    if (input.type === "play.read")
-      return new Promise((resolve) => {
-        finishRead = resolve;
-      });
+
     return original(input);
   });
   return {
     client,
     request,
-    finishRead: () => finishRead(library),
+    finishCopy: () => delivered.resolve(),
     firstId: base.id,
     otherId: other.id,
     copyId: copied.id,
@@ -61,7 +59,7 @@ function delayedPresetCopyFixture() {
 }
 
 test.each(["model-draft", "reopened-presets"])(
-  "离开预设页面后迟到的复制读取不能导航或覆盖当前选择：%s",
+  "离开预设页面后迟到的复制回执不能导航或覆盖当前选择：%s",
   async (destination) => {
     const scenario = delayedPresetCopyFixture();
     render(createElement(App, { client: scenario.client }));
@@ -76,7 +74,9 @@ test.each(["model-draft", "reopened-presets"])(
     fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
     fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
     await waitFor(() =>
-      expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+      expect(scenario.request).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "play.copy" }),
+      ),
     );
     fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
     if (destination === "model-draft") {
@@ -92,7 +92,7 @@ test.each(["model-draft", "reopened-presets"])(
     const address = window.location.hash;
     const historyLength = window.history.length;
     await act(async () => {
-      scenario.finishRead();
+      scenario.finishCopy();
       await Promise.resolve();
     });
     expect(window.location.hash).toBe(address);
@@ -130,10 +130,12 @@ test("当前预设页面的选择和有效复制回调仍替换 URL", async () =
   fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
   fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
   await waitFor(() =>
-    expect(scenario.request).toHaveBeenCalledWith({ type: "play.read" }),
+    expect(scenario.request).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "play.copy" }),
+    ),
   );
   await act(async () => {
-    scenario.finishRead();
+    scenario.finishCopy();
     await Promise.resolve();
   });
   expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
@@ -194,6 +196,56 @@ test("后退立即恢复地址并保留模型草稿", async () => {
     "未保存的模型名称",
   );
   expect(request.mock.calls.length).toBe(calls);
+});
+
+test("首屏读取失败后可重读并恢复原书签", async () => {
+  window.history.replaceState(null, "", "#/models");
+  const { client, request } = fixture();
+  request.mockRejectedValueOnce(new Error("Workspace temporarily unavailable"));
+  render(createElement(App, { client }));
+  await screen.findByText("Workspace temporarily unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await screen.findByLabelText("配置名称");
+  expect(window.location.hash).toBe("#/models");
+  expect(
+    request.mock.calls.filter(([r]) => r.type === "workspace.read"),
+  ).toHaveLength(2);
+});
+
+test("创建响应丢失时从同一操作的创建回执进入世界", async () => {
+  window.history.replaceState(null, "", "#/create");
+  const { client, request } = fixture();
+  const original = request.getMockImplementation()!;
+  let operationId: string | undefined;
+  request.mockImplementation(async (r) => {
+    if (r.type === "world.create") {
+      operationId = r.operationId;
+      throw new Error("Lost create response");
+    }
+    if (r.type === "world.creation-outcome") {
+      expect(r.operationId).toBe(operationId);
+      return {
+        outcome: "created",
+        world: {
+          worldId: "recovered",
+          title: "New world",
+          gameplay: { mode: "interactive-fiction" },
+          lastActivityAt: null,
+          playerTurns: 0,
+          excerpt: null,
+        },
+      };
+    }
+    return original(r);
+  });
+  render(createElement(App, { client }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从当前内容包创建" }),
+  );
+  await waitFor(() => expect(window.location.hash).toBe("#/world/recovered"));
+  expect(
+    request.mock.calls.filter(([r]) => r.type === "world.create"),
+  ).toHaveLength(1);
 });
 
 test("世界创建进行中时后退保持来源页面和地址", async () => {
@@ -309,7 +361,7 @@ test.each(["model", "preset"])(
       }
       if (input.type === "play.delete") {
         presets = [{ ...preset, id: "default", name: "默认预设" }];
-        return {};
+        return { currentPresetId: "default", deleted: true };
       }
       if (input.type === "play.read") return library();
       return original(input);
@@ -472,6 +524,7 @@ test("顶栏不选择任意世界，快捷创建使用当前编辑的内容包�
   await waitFor(() => expect(create.hasAttribute("disabled")).toBe(false));
   fireEvent.click(create);
   await waitFor(() => expect(creates()).toHaveLength(2));
+  expect(creates()[1]?.operationId).toBe(creates()[0]?.operationId);
 });
 
 test("文件草稿阻止全局导航与快捷创建，放弃草稿后恢复", async () => {

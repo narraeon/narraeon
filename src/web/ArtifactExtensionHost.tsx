@@ -994,13 +994,26 @@ function ArtifactExtensionInstance({
     renderError ??
     (pipeline.failure === "fail" ? pipeline.error : undefined);
 
-  const refreshPanel = useCallback((): void => {
-    setChildReady(false);
-    setLifecycle((current) => ({
-      epoch: current.epoch + 1,
-      nonce: randomNonce(),
-    }));
-    void onRefresh();
+  const [refreshFailure, setRefreshFailure] = useState<string | null>(null);
+  const refreshPending = useRef(false);
+  const refreshPanel = useCallback(async (): Promise<void> => {
+    if (refreshPending.current) return;
+    refreshPending.current = true;
+    setRefreshFailure(null);
+    try {
+      await onRefresh();
+      setChildReady(false);
+      setLifecycle((current) => ({
+        epoch: current.epoch + 1,
+        nonce: randomNonce(),
+      }));
+    } catch (reason: unknown) {
+      setRefreshFailure(
+        reason instanceof Error ? reason.message : String(reason),
+      );
+    } finally {
+      refreshPending.current = false;
+    }
   }, [onRefresh]);
 
   const sendAppUpdate = useCallback((): void => {
@@ -1114,7 +1127,7 @@ function ArtifactExtensionInstance({
         onDisable();
         respond(event, event.data, { accepted: true });
       } else if (event.data.command === "panel.refresh") {
-        refreshPanel();
+        void refreshPanel();
         respond(event, event.data, { accepted: true });
       } else if (event.data.command === "diagnostic") {
         onError(
@@ -1161,6 +1174,14 @@ function ArtifactExtensionInstance({
         artifact.frontend.authority ?? "non_authoritative_artifact"
       }
     >
+      {refreshFailure !== null && (
+        <div role="alert">
+          {refreshFailure}{" "}
+          <button type="button" onClick={() => void refreshPanel()}>
+            {uiText("重试")}
+          </button>
+        </div>
+      )}
       {disabled ||
       instanceError ||
       artifact.frontend.fallback === "raw" ||

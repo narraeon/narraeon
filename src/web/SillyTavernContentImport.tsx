@@ -1,3 +1,4 @@
+import type { HomeContentPackage } from "./HomeScreen.tsx";
 import { useEffect, useRef, useState } from "react";
 import type {
   ContentInspection,
@@ -125,7 +126,7 @@ export function SillyTavernContentImport({
   onImported,
 }: {
   client: { request<T = unknown>(request: V1Request): Promise<T> };
-  onImported: (id: string) => Promise<void>;
+  onImported: (receipt: HomeContentPackage) => void;
 }): React.JSX.Element {
   const [source, setSource] = useState("");
   const [name, setName] = useState("SillyTavern");
@@ -708,16 +709,16 @@ export function SillyTavernContentImport({
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
-                        const result = await client.request<{
-                          localId: string;
-                        }>({
-                          type: "content.sillytavern.import",
-                          source,
-                          name,
-                          selection,
-                        });
+                        const result = await client.request<HomeContentPackage>(
+                          {
+                            type: "content.sillytavern.import",
+                            source,
+                            name,
+                            selection,
+                          },
+                        );
                         close();
-                        await onImported(result.localId);
+                        onImported(result);
                       })
                     }
                   >

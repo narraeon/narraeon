@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Gameplay } from "../../src/protocol/gameplay.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
+import { PackageScriptPermissionControl } from "../../src/web/PackageScriptPermissionControl.tsx";
 import { App } from "../../src/web/App.tsx";
 import { PackageGameplaySection } from "../../src/web/PackageGameplaySection.tsx";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
@@ -22,6 +24,35 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 afterEach(() => {
   cleanup();
   setWebLocale("zh-CN");
+});
+
+test("迟到的权限读取不能覆盖已确认的撤销", async () => {
+  const read = Promise.withResolvers<{ enabled: boolean }>();
+  const client = {
+    request: vi.fn((input: V1Request) =>
+      input.type === "content.scripts.read"
+        ? read.promise
+        : Promise.resolve({ enabled: false }),
+    ),
+  };
+  render(
+    createElement(PackageScriptPermissionControl, {
+      client,
+      kind: "content",
+      id: "package",
+    }),
+  );
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "撤销全部包脚本授权" })),
+  );
+  await act(async () => {
+    read.resolve({ enabled: true });
+  });
+  expect(screen.getByRole<HTMLInputElement>("checkbox").checked).toBe(false);
+  expect(client.request.mock.calls.map(([r]) => r.type)).toEqual([
+    "content.scripts.read",
+    "content.scripts.set",
+  ]);
 });
 
 test("内容包页面可修改历史消息并选择撤回文件改动", async () => {

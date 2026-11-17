@@ -49,6 +49,7 @@ function host(
   artifacts: FrontendArtifactProjection[],
   onSetComposerDraft = vi.fn(),
   interactionDisabled = false,
+  onRefresh = vi.fn(),
 ) {
   return createElement(
     ArtifactExtensionHost,
@@ -58,7 +59,7 @@ function host(
       playerViews: { views: [{ id: "view-1", title: "当前" }] },
       interactionDisabled,
       onSetComposerDraft,
-      onRefresh: vi.fn(),
+      onRefresh,
     },
     createElement(ArtifactExtensionMount, { mount: "sidebar" }),
   );
@@ -192,6 +193,60 @@ describe("ArtifactExtensionHost React lifetime", () => {
     const frame = screen.getByTitle("panel");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("srcdoc")).toContain("__rendererEscaped");
+  });
+
+  test("失败的扩展刷新显示在本面板，重读成功后可继续", async () => {
+    const onRefresh = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Panel read failed"))
+      .mockResolvedValue(undefined);
+    render(
+      host(
+        [
+          artifact({
+            frontend: {
+              ...artifact().frontend,
+              trustedLocalCode: true,
+              renderer: {
+                mode: "app",
+                revision: "v1",
+                document: "<main>app</main>",
+                scripts: [],
+                assets: [],
+                trustedLocalCode: true,
+              },
+            },
+          }),
+        ],
+        vi.fn(),
+        false,
+        onRefresh,
+      ),
+    );
+    const frame = screen.getByTitle<HTMLIFrameElement>("panel");
+    const source = frame.getAttribute("srcdoc") ?? "";
+    const instanceId = /narraeonInstance=\\?"([^"]+)\\?"/u.exec(source)?.[1];
+    const nonce = /narraeonNonce=\\?"([^"]+)\\?"/u.exec(source)?.[1];
+    expect(instanceId).toBeTruthy();
+    expect(nonce).toBeTruthy();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          source: frame.contentWindow,
+          data: {
+            namespace: "narraeon.extension.v1",
+            command: "panel.refresh",
+            instanceId,
+            nonce,
+            requestId: "refresh",
+          },
+        }),
+      );
+    });
+    await screen.findByText("Panel read failed");
+    await act(async () => screen.getByRole("button", { name: "重试" }).click());
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Panel read failed")).toBeNull();
   });
 
   test("bridge composer.set_draft 只接受当前 iframe 的 nonce/instance", () => {

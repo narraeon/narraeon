@@ -46,10 +46,7 @@ function setup(preset = fixture()) {
   let current = preset;
   const request = vi.fn((request: V1Request): Promise<unknown> => {
     if (request.type === "play.read")
-      return Promise.resolve({
-        currentPresetId: current.id,
-        presets: [current],
-      });
+      return Promise.reject(new Error("preset listing unavailable"));
     if (request.type === "play.save") {
       current = {
         ...current,
@@ -63,8 +60,10 @@ function setup(preset = fixture()) {
             }
           : {}),
       };
-      return Promise.resolve({});
+      return Promise.resolve({ currentPresetId: current.id, preset: current });
     }
+    if (request.type === "play.select")
+      return Promise.resolve({ currentPresetId: current.id, preset: current });
     if (request.type === "play.workbench.read")
       return Promise.resolve({
         id: current.id,
@@ -95,6 +94,44 @@ function addFollowup() {
 function outputs() {
   fireEvent.click(screen.getByRole("button", { name: "界面产物" }));
 }
+
+test("删除回执生效后列表读取失败，重试只读取重建的预设", async () => {
+  const removed = fixture();
+  const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认预设" };
+  let reads = 0;
+  const request = vi.fn(async (r: V1Request) => {
+    if (r.type === "play.delete")
+      return { deleted: true, currentPresetId: rebuilt.id };
+    if (r.type === "play.read") {
+      if (++reads === 1) throw new Error("Library unavailable");
+      return { currentPresetId: rebuilt.id, presets: [rebuilt] };
+    }
+    return {};
+  });
+  render(
+    createElement(PlayPresetScreen, {
+      client: { request: request as <T>(r: V1Request) => Promise<T> },
+      initialLibrary: { currentPresetId: removed.id, presets: [removed] },
+      onLibraryChange: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除预设" }));
+  const error = await screen.findByRole("alert");
+  expect(error.textContent).toContain("操作已完成");
+  expect(error.textContent).toContain("Library unavailable");
+  expect(screen.queryByRole("button", { name: "删除预设" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+      rebuilt.id,
+    ),
+  );
+  expect(
+    request.mock.calls.filter(([r]) => r.type === "play.delete"),
+  ).toHaveLength(1);
+});
 
 test("one directory exposes prompts, followups and pure interface without file or preview tabs", () => {
   setup();

@@ -1,3 +1,4 @@
+import { readAfterCommit } from "./RequestOutcome.ts";
 import {
   editPresetResources,
   presetResourceUsage,
@@ -212,6 +213,11 @@ export interface PlayPresetScreenLibrary {
   presets: PlayPresetScreenPreset[];
 }
 
+export interface PlayPresetReceipt {
+  currentPresetId: string;
+  preset: PlayPresetScreenPreset;
+}
+
 export interface RecommendedPlayPresetTemplate {
   id: string;
   label: string;
@@ -324,6 +330,7 @@ export function PlayPresetScreen({
       ? ""
       : preferredPresetFilePath(initial.draft?.files ?? initial.files),
   );
+  const [needsLibraryRead, setNeedsLibraryRead] = useState(false);
   const [newName, setNewName] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
   const [workspaceView, setWorkspaceView] =
@@ -387,10 +394,25 @@ export function PlayPresetScreen({
 
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
-  async function refresh(preferredId?: string): Promise<void> {
-    const next = await client.request<PlayPresetScreenLibrary>({
-      type: "play.read",
-    });
+  function acceptPreset({ currentPresetId, preset }: PlayPresetReceipt): void {
+    const exists = library.presets.some(({ id }) => id === preset.id);
+    applyLibrary(
+      {
+        currentPresetId,
+        presets: exists
+          ? library.presets.map((item) =>
+              item.id === preset.id ? preset : item,
+            )
+          : [...library.presets, preset],
+      },
+      preset.id,
+    );
+  }
+
+  function applyLibrary(
+    next: PlayPresetScreenLibrary,
+    preferredId?: string,
+  ): void {
     const selected =
       next.presets.find(({ id }) => id === preferredId) ??
       next.presets.find(({ id }) => id === selectedId) ??
@@ -406,6 +428,14 @@ export function PlayPresetScreen({
     setFilePath(
       editable === null ? "" : preferredPresetFilePath(editable.files),
     );
+  }
+
+  async function reloadLibrary(): Promise<void> {
+    const next = await client.request<PlayPresetScreenLibrary>({
+      type: "play.read",
+    });
+    applyLibrary(next);
+    setNeedsLibraryRead(false);
   }
 
   async function run(work: () => Promise<void>): Promise<void> {
@@ -525,7 +555,7 @@ export function PlayPresetScreen({
       return;
     }
     await run(async () => {
-      await client.request({
+      const receipt = await client.request<PlayPresetReceipt>({
         type: "play.save",
         presetId: draft.id,
         name: draft.name,
@@ -538,7 +568,7 @@ export function PlayPresetScreen({
               structure: draft.structure as unknown as Record<string, unknown>,
             }),
       });
-      await refresh(draft.id);
+      acceptPreset(receipt);
       setFeedback({
         kind: "status",
         text: uiText("预设已保存。"),
@@ -580,15 +610,13 @@ export function PlayPresetScreen({
         throw new Error(
           uiText("无法识别此预设。请选择通过“导出预设”生成的文件。"),
         );
-      const result = await client.request<{
-        preset: PlayPresetScreenPreset;
-      }>({
+      const result = await client.request<PlayPresetReceipt>({
         type: "play.import",
         name:
           file.name.replace(/\.play-preset\.json$/iu, "") || uiText("导入玩法"),
         files: parsed as { path: string; contents: string }[],
       });
-      await refresh(result.preset.id);
+      acceptPreset(result);
       setFeedback({
         kind: "status",
         text: uiText(
@@ -656,6 +684,15 @@ export function PlayPresetScreen({
         />
       )}
 
+      {needsLibraryRead && (
+        <button
+          type="button"
+          disabled={pending || dirty}
+          onClick={() => void run(reloadLibrary)}
+        >
+          {uiText("重试")}
+        </button>
+      )}
       <fieldset disabled={pending} className="play-preset-workspace">
         <legend className="visually-hidden">{uiText("玩法预设工作区")}</legend>
         <div className="play-preset-layout">
@@ -698,15 +735,12 @@ export function PlayPresetScreen({
                     disabled={pending || dirty || newName.trim() === ""}
                     onClick={() =>
                       void run(async () => {
-                        const result = await client.request<{
-                          currentPresetId: string;
-                          preset: PlayPresetScreenPreset;
-                        }>({
+                        const result = await client.request<PlayPresetReceipt>({
                           type: "play.create",
                           name: newName.trim(),
                         });
                         setNewName("");
-                        await refresh(result.preset.id);
+                        acceptPreset(result);
                         setFeedback({
                           kind: "status",
                           text: uiText("已新建普通玩法预设。"),
@@ -724,15 +758,13 @@ export function PlayPresetScreen({
                       disabled={pending || dirty}
                       onClick={() =>
                         void run(async () => {
-                          const result = await client.request<{
-                            currentPresetId: string;
-                            preset: PlayPresetScreenPreset;
-                          }>({
-                            type: "play.create",
-                            name: template.name,
-                            files: structuredClone(template.files),
-                          });
-                          await refresh(result.preset.id);
+                          const result =
+                            await client.request<PlayPresetReceipt>({
+                              type: "play.create",
+                              name: template.name,
+                              files: structuredClone(template.files),
+                            });
+                          acceptPreset(result);
                           setFeedback({
                             kind: "status",
                             text: uiText("已复制推荐{name}，可独立编辑。", {
@@ -749,8 +781,8 @@ export function PlayPresetScreen({
                   <SillyTavernImport
                     client={client}
                     disabled={pending || dirty}
-                    onImported={async (id) => {
-                      await refresh(id);
+                    onImported={(receipt) => {
+                      acceptPreset(receipt);
                       setFeedback({
                         kind: "status",
                         text: uiText(
@@ -837,12 +869,13 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            await client.request({
-                              type: "play.enable",
-                              presetId: draft.id,
-                              enabled: draft.enabled === false,
-                            });
-                            await refresh(draft.id);
+                            const receipt =
+                              await client.request<PlayPresetReceipt>({
+                                type: "play.enable",
+                                presetId: draft.id,
+                                enabled: draft.enabled === false,
+                              });
+                            acceptPreset(receipt);
                             setFeedback({
                               kind: "status",
                               text: uiText("玩法预设状态已更新。"),
@@ -860,12 +893,13 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            await client.request({
-                              type: "play.scripts",
-                              presetId: draft.id,
-                              enabled: draft.scriptsEnabled !== true,
-                            });
-                            await refresh(draft.id);
+                            const receipt =
+                              await client.request<PlayPresetReceipt>({
+                                type: "play.scripts",
+                                presetId: draft.id,
+                                enabled: draft.scriptsEnabled !== true,
+                              });
+                            acceptPreset(receipt);
                             setFeedback({
                               kind: "status",
                               text:
@@ -890,10 +924,12 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            const copied = await client.request<{
-                              preset: PlayPresetScreenPreset;
-                            }>({ type: "play.copy", presetId: draft.id });
-                            await refresh(copied.preset.id);
+                            const copied =
+                              await client.request<PlayPresetReceipt>({
+                                type: "play.copy",
+                                presetId: draft.id,
+                              });
+                            acceptPreset(copied);
                             setFeedback({
                               kind: "status",
                               text: uiText("已复制为独立预设。"),
@@ -917,11 +953,29 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            await client.request({
+                            const receipt = await client.request<{
+                              currentPresetId: string;
+                            }>({
                               type: "play.delete",
                               presetId: draft.id,
                             });
-                            await refresh();
+                            const remaining = library.presets.filter(
+                              (p) => p.id !== draft.id,
+                            );
+                            const currentStillPresent = remaining.some(
+                              (p) =>
+                                p.enabled !== false &&
+                                p.id === receipt.currentPresetId,
+                            );
+                            applyLibrary({
+                              currentPresetId: receipt.currentPresetId,
+                              presets: currentStillPresent ? remaining : [],
+                            });
+                            // Runtime rebuilds the default library after deletion of the last enabled preset.
+                            if (!currentStillPresent) {
+                              setNeedsLibraryRead(true);
+                              await readAfterCommit(reloadLibrary);
+                            }
                             setFeedback({
                               kind: "status",
                               text: uiText(
@@ -1206,11 +1260,13 @@ export function PlayPresetScreen({
                     }
                     onClick={() =>
                       void run(async () => {
-                        await client.request({
-                          type: "play.select",
-                          presetId: draft.id,
-                        });
-                        await refresh(draft.id);
+                        const receipt = await client.request<PlayPresetReceipt>(
+                          {
+                            type: "play.select",
+                            presetId: draft.id,
+                          },
+                        );
+                        acceptPreset(receipt);
                         setFeedback({
                           kind: "status",
                           text: uiText(

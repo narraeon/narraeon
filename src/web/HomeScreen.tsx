@@ -3,7 +3,7 @@ import { getWebLocale, uiText } from "./i18n.ts";
 import { useState, type ReactNode } from "react";
 import { relativeActivityTime } from "./worldActivityPresentation.ts";
 
-interface HomeContentPackage {
+export interface HomeContentPackage {
   localId: string;
   title: string;
   gameplay: Gameplay;

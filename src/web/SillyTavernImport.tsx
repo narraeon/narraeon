@@ -1,3 +1,4 @@
+import type { PlayPresetReceipt } from "./PlayPresetScreen.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { V1Request } from "../protocol/v1.ts";
@@ -121,7 +122,7 @@ export function SillyTavernImport({
 }: {
   client: { request<T = unknown>(request: V1Request): Promise<T> };
   disabled: boolean;
-  onImported: (id: string) => Promise<void>;
+  onImported: (receipt: PlayPresetReceipt) => void;
 }): React.JSX.Element {
   const [source, setSource] = useState<string>();
   const [name, setName] = useState("");
@@ -807,11 +808,13 @@ export function SillyTavernImport({
                       disabled={busy || disabled}
                       onClick={() =>
                         void run(async () => {
-                          const result = await client.request<{
-                            preset: { id: string };
-                          }>({ type: "play.sillytavern.import", ...request() });
+                          const result =
+                            await client.request<PlayPresetReceipt>({
+                              type: "play.sillytavern.import",
+                              ...request(),
+                            });
                           cancel();
-                          await onImported(result.preset.id);
+                          onImported(result);
                         })
                       }
                     >

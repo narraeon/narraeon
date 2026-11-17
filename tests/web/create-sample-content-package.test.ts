@@ -24,7 +24,6 @@ test.each(appLocales)(
   "sample entry uses the current UI locale (%s), blocks duplicates and selects the new package",
   async (locale) => {
     const sample = sampleContentPackageForLocale(locale);
-    const pending = Promise.withResolvers<{ localId: string }>();
     const packages = [
       {
         localId: "existing",
@@ -33,9 +32,12 @@ test.each(appLocales)(
         gameplay: { mode: "interactive-fiction" },
       },
     ];
+    const pending = Promise.withResolvers<(typeof packages)[number]>();
     const request = vi.fn(async (input: V1Request): Promise<unknown> => {
       await Promise.resolve();
-      if (input.type === "workspace.read")
+      if (input.type === "workspace.read") {
+        if (packages.length > 1)
+          throw new Error("Workspace read unavailable after creation");
         return {
           preferences: { locale, reading: defaultAppReadingPreferences },
           contentPackages: [...packages],
@@ -49,6 +51,7 @@ test.each(appLocales)(
             presets: [],
           },
         };
+      }
       if (input.type === "content.create-sample") {
         const created = await pending.promise;
         packages.push({
@@ -86,7 +89,12 @@ test.each(appLocales)(
         })
         .hasAttribute("disabled"),
     ).toBe(true);
-    pending.resolve({ localId: "sample-new" });
+    pending.resolve({
+      localId: "sample-new",
+      title: sample.title,
+      status: "usable",
+      gameplay: { mode: "interactive-fiction" },
+    });
     await waitFor(() =>
       expect(
         container

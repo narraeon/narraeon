@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { V1Request } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 
@@ -18,8 +18,22 @@ export function PackageScriptPermissionControl({
   const [status, setStatus] = useState<{ enabled: boolean } | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const writeVersion = useRef(0);
+  const writing = useRef(false);
+  const [readAttempt, setReadAttempt] = useState(0);
   useEffect(() => {
+    writing.current = false;
+    setPending(false);
+    return () => {
+      writeVersion.current += 1;
+    };
+  }, [client, kind, id]);
+  useEffect(() => {
+    if (writing.current) return;
     let active = true;
+    const version = writeVersion.current;
+    setStatus(null);
+    setError("");
     void client
       .request(
         kind === "content"
@@ -27,16 +41,20 @@ export function PackageScriptPermissionControl({
           : { type: "world.package-scripts.read", worldId: id },
       )
       .then((result) => {
-        if (active) setStatus(permissionStatus(result));
+        if (active && version === writeVersion.current)
+          setStatus(permissionStatus(result));
       })
       .catch((error) => {
-        if (active) setError(String(error));
+        if (active && version === writeVersion.current) setError(String(error));
       });
     return () => {
       active = false;
     };
-  }, [client, kind, id, dirty]);
+  }, [client, kind, id, dirty, readAttempt]);
   async function change(enabled: boolean): Promise<void> {
+    if (writing.current) return;
+    writing.current = true;
+    const version = ++writeVersion.current;
     setPending(true);
     setError("");
     try {
@@ -45,12 +63,17 @@ export function PackageScriptPermissionControl({
           ? { type: "content.scripts.set", packageId: id, enabled }
           : { type: "world.package-scripts.set", worldId: id, enabled },
       );
-      setStatus(permissionStatus(result));
-      onChange?.();
+      if (version === writeVersion.current) {
+        setStatus(permissionStatus(result));
+        onChange?.();
+      }
     } catch (error) {
-      setError(String(error));
+      if (version === writeVersion.current) setError(String(error));
     } finally {
-      setPending(false);
+      if (version === writeVersion.current) {
+        writing.current = false;
+        setPending(false);
+      }
     }
   }
   return (
@@ -79,7 +102,18 @@ export function PackageScriptPermissionControl({
         {uiText("撤销全部包脚本授权")}
       </button>
       {dirty ? <p>{uiText("请先保存修改，再授权资源代码。")}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error && (
+        <div role="alert">
+          {error}{" "}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setReadAttempt((value) => value + 1)}
+          >
+            {uiText("重试")}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

@@ -1,3 +1,4 @@
+import type { HomeWorld } from "./HomeScreen.tsx";
 import { useRef, useState } from "react";
 import {
   worldArchiveLimits,
@@ -86,7 +87,7 @@ export function WorldBackupImportButton({
   client: ArchiveClient;
   disabled?: boolean;
   onBusyChange: (busy: boolean) => void;
-  onImported: () => Promise<void>;
+  onImported: (world: HomeWorld) => void;
 }): React.JSX.Element {
   const picker = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -105,12 +106,12 @@ export function WorldBackupImportButton({
         setMessage(uiText("正在上传世界备份：{progress}%", { progress })),
       );
       setMessage(uiText("正在校验并导入世界备份…"));
-      await client.request({
+      const imported = (await client.request({
         type: "world.archive.import",
         operationId: createClientId("archive-import"),
         uploadId,
-      });
-      await onImported();
+      })) as { world: HomeWorld };
+      onImported(imported.world);
       setMessage(uiText("世界备份已导入，新世界已加入列表。"));
     } catch (error) {
       setMessage(archiveErrorMessage(error));

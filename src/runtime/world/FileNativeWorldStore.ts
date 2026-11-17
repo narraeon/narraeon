@@ -1,3 +1,4 @@
+import { compareWorldActivity } from "../../shared/world-activity-order.ts";
 import {
   captureNarrativeOrigin,
   snapshotBackground,
@@ -432,12 +433,7 @@ export class FileNativeWorldStore {
         )),
       );
     }
-    return worlds.sort(
-      (left, right) =>
-        (right.lastActivityAt ?? -1) - (left.lastActivityAt ?? -1) ||
-        left.title.localeCompare(right.title) ||
-        left.worldId.localeCompare(right.worldId),
-    );
+    return worlds.sort(compareWorldActivity);
   }
 
   /** Explicit full-history read; independent of page and model projections. */
