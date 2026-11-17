@@ -73,9 +73,11 @@ export class AuthoringWorkspace {
   private selection: string | { requestId?: string } | null = null;
   private selectionVersion = 0;
   private observationVersion = 0;
+  private progressVersion = 0;
   private reader: ReadTarget<{
     snapshot: AuthoringTargetSnapshot;
     view: AuthoringConversationView | null;
+    progressVersion: number;
   }>;
   private connectionFault = false;
   private observationClosed = false;
@@ -156,6 +158,7 @@ export class AuthoringWorkspace {
     return new ReadTarget({
       load: async () => {
         const selection = this.selection;
+        const progressVersion = this.progressVersion;
         const snapshot = await this.target.read();
         const view =
           typeof selection === "string" &&
@@ -163,10 +166,23 @@ export class AuthoringWorkspace {
           snapshot.history.some((session) => session.sessionId === selection)
             ? await this.target.readSession(selection)
             : snapshot.latest;
-        return { snapshot, view };
+        return { snapshot, view, progressVersion };
       },
-      apply: ({ snapshot, view }) => {
+      apply: ({ snapshot, view, progressVersion }) => {
         if (!valid()) return;
+        const live = this.state.view;
+        // Keep progress delivered during this read; a newer Runtime snapshot still wins.
+        if (
+          progressVersion !== this.progressVersion &&
+          view !== null &&
+          live?.sessionId === view.sessionId &&
+          live.progress.updatedAt > view.progress.updatedAt
+        )
+          view = {
+            ...view,
+            runStatus: live.runStatus,
+            progress: live.progress,
+          };
         this.accept(snapshot, false);
         const unconfirmed = this.unconfirmedRequest;
         if (
@@ -285,20 +301,17 @@ export class AuthoringWorkspace {
       },
       (observation, changed, isCurrent) => {
         const deliveryCurrent = () => alive() && isCurrent?.() !== false;
-        if (!alive() || observation.kind !== this.target.kind) return;
+        if (!deliveryCurrent() || observation.kind !== this.target.kind) return;
         if (changed) {
-          if (deliveryCurrent()) {
-            // Let observation delivery continue while files hydrate. A newer
-            // revision needs a read begun after its notification.
-            void (receivedRevision
-              ? this.reader.recover()
-              : this.reader.read());
-            receivedRevision = true;
-          }
+          // Let observation delivery continue while files hydrate. A newer
+          // revision needs a read begun after its notification.
+          void (receivedRevision ? this.reader.recover() : this.reader.read());
+          receivedRevision = true;
         } else {
           const status = observation.value.selected;
           const view = this.state.view;
-          if (status !== null && view?.sessionId === status.sessionId)
+          if (status !== null && view?.sessionId === status.sessionId) {
+            this.progressVersion++;
             this.update({
               view: {
                 ...view,
@@ -306,6 +319,7 @@ export class AuthoringWorkspace {
                 progress: status.progress,
               },
             });
+          }
         }
         if (alive()) this.update({ now: Date.now() });
       },

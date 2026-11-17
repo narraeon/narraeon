@@ -224,6 +224,136 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+test.each(["setting", "revision"] as const)(
+  "%s a held read preserves newer observed progress without requesting another snapshot",
+  async (kind) => {
+    const f = fixture(kind);
+    const running = { ...f.view("recent"), runStatus: "running" as const };
+    f.setLatest(running);
+    await f.workspace.open();
+    const older = f.overview();
+    const held = deferred<unknown>();
+    const original = f.request.getMockImplementation()!;
+    f.request.mockClear();
+    f.request.mockImplementation((input) =>
+      input.type.endsWith("overview") ? held.promise : original(input),
+    );
+    const reading = f.workspace.refresh();
+    await Promise.resolve();
+    const live = {
+      ...running,
+      progress: {
+        exchange: 1,
+        toolCalls: 0,
+        updatedAt: 10,
+        streaming: {
+          reasoningChars: 0,
+          textChars: 20,
+          toolChars: 0,
+          tail: "The live authoring text",
+          visibleText: "The live authoring text",
+          receivedAt: 10,
+        },
+      },
+    };
+    f.setLatest(live);
+    await f.publish(false);
+    expect(f.workspace.getSnapshot().view?.progress).toEqual(live.progress);
+    held.resolve(older);
+    await reading;
+    expect(f.workspace.getSnapshot().view?.progress).toEqual(live.progress);
+    expect(
+      f.request.mock.calls.filter(([input]) => input.type.endsWith("overview")),
+    ).toHaveLength(1);
+    expect(f.request).toHaveBeenCalledTimes(kind === "setting" ? 2 : 1);
+    const final = {
+      ...f.view("recent"),
+      progress: { exchange: 1, toolCalls: 0, streaming: null, updatedAt: 20 },
+    };
+    f.setLatest(final);
+    f.request.mockImplementation(original);
+    await f.workspace.refresh();
+    expect(f.workspace.getSnapshot().view).toEqual(final);
+    f.workspace.close();
+  },
+);
+
+test.each(["setting", "revision"] as const)(
+  "%s a later cancellation receipt supersedes held reads and observed progress",
+  async (kind) => {
+    const f = fixture(kind);
+    const running = { ...f.view("recent"), runStatus: "running" as const };
+    f.setLatest(running);
+    await f.workspace.open();
+    const older = f.overview();
+    const held = deferred<unknown>();
+    const original = f.request.getMockImplementation()!;
+    const cancelled = {
+      ...f.view("recent"),
+      runStatus: "interrupted" as const,
+      progress: { exchange: 1, toolCalls: 0, streaming: null, updatedAt: 20 },
+    };
+    let reads = 0;
+    f.request.mockClear();
+    f.request.mockImplementation(async (input) => {
+      if (input.type.endsWith("overview") && reads++ === 0) return held.promise;
+      if (input.type.endsWith(".cancel")) {
+        f.setLatest(cancelled);
+        return cancelled;
+      }
+      return original(input);
+    });
+    const reading = f.workspace.refresh();
+    await Promise.resolve();
+    f.setLatest({
+      ...running,
+      progress: { ...running.progress, updatedAt: 10 },
+    });
+    await f.publish(false);
+    const cancelling = f.workspace.cancel();
+    held.resolve(older);
+    await Promise.all([reading, cancelling]);
+    expect(f.workspace.getSnapshot().view).toEqual(cancelled);
+    expect(
+      f.request.mock.calls.filter(([input]) => input.type.endsWith(".cancel")),
+    ).toHaveLength(1);
+    expect(reads).toBe(2);
+    f.workspace.close();
+  },
+);
+
+test.each(["setting", "revision"] as const)(
+  "%s live progress from a previous selection cannot enter the next session",
+  async (kind) => {
+    const f = fixture(kind);
+    const running = { ...f.view("recent"), runStatus: "running" as const };
+    f.setLatest(running);
+    await f.workspace.open();
+    const older = f.overview();
+    const held = deferred<unknown>();
+    const original = f.request.getMockImplementation()!;
+    let reads = 0;
+    f.request.mockImplementation((input) =>
+      input.type.endsWith("overview") && reads++ === 0
+        ? held.promise
+        : original(input),
+    );
+    const reading = f.workspace.refresh();
+    await Promise.resolve();
+    f.setLatest({
+      ...running,
+      progress: { ...running.progress, updatedAt: 10 },
+    });
+    await f.publish(false);
+    await f.workspace.selectSession("old");
+    held.resolve(older);
+    await reading;
+    expect(f.workspace.getSnapshot().view).toEqual(f.view("old"));
+    expect(reads).toBe(2);
+    f.workspace.close();
+  },
+);
+
 test("an acknowledged edit stays accepted when refreshing package files fails", async () => {
   const f = fixture("setting");
   await f.workspace.open();
