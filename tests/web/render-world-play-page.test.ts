@@ -6339,3 +6339,166 @@ test("a later action in the same context cannot hide the recovered submission id
     request.mock.calls.filter(([next]) => next.type === "play.chain.append"),
   ).toHaveLength(1);
 });
+
+function lightweightPlayTimeline(
+  chain: V1PlayCallChainView,
+): V1PlayTimelinePage {
+  return {
+    worldId: chain.worldId,
+    generation: `lightweight:${chain.chainId}`,
+    activeChainId: chain.chainId,
+    activeStatus: chain.status,
+    activeCanRetry: chain.canRetry,
+    activeLastFailure: chain.lastFailure,
+    nextCursor: null,
+    items: chain.events
+      .filter((event) => event.kind === "player" || event.kind === "assistant")
+      .map((event) => ({
+        kind: "event",
+        chainId: chain.chainId,
+        current: true,
+        event: {
+          ...event,
+          hasReasoning: false,
+          hasToolFragment: false,
+          hasUsage: false,
+          detailsAvailable: false,
+        },
+      })),
+  };
+}
+
+test.each(["initial", "recovery", "retry-recovery"] as const)(
+  "a lightweight %s projection keeps the running exchange cancellable",
+  async (phase) => {
+    const now = Date.now();
+    const chain: V1PlayCallChainView = {
+      ...playChainView(
+        "lightweight-running",
+        "lightweight-exchange",
+        "Wait for Alex.",
+      ),
+      status: "running",
+      contextWindowTokens: 10_000,
+      latestCompletedResponse: {
+        id: 4,
+        usage: {
+          ...emptyAggregatedModelUsage(),
+          inputTokens: 6_200,
+          provenance: {
+            ...emptyAggregatedModelUsage().provenance,
+            inputTokens: "provider",
+          },
+        },
+      },
+      activeInvocation: {
+        chainId: "lightweight-running",
+        exchangeId:
+          phase === "retry-recovery"
+            ? "lightweight-retry-exchange"
+            : "lightweight-exchange",
+        phase: "waiting",
+        startedAt: now - 95_000,
+        lastActivityAt: now - 91_000,
+        reasoningChars: 14,
+        textChars: 0,
+        toolChars: 0,
+        toolCalls: 0,
+        dispatches: 1,
+      },
+    };
+    let light = phase === "initial";
+    let connection: Parameters<ObserveConversation>[2];
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read")
+        return Promise.resolve(
+          light
+            ? {
+                ...worldView(null),
+                head: chain.parentHead,
+                playTimeline: lightweightPlayTimeline(chain),
+              }
+            : worldView(chain),
+        );
+      if (input.type === "world.play-decorations.read")
+        return Promise.resolve({ artifacts: [], debug: [] });
+      if (input.type === "play.chain.cancel")
+        return Promise.resolve({ outcome: "cancellation_requested" });
+      if (input.type === "play.chain.inspect") return Promise.resolve(null);
+      return Promise.reject(new Error(input.type));
+    });
+    renderWorld({
+      request,
+      observeConversation: (_target, _receive, notify) => {
+        connection = notify;
+        return () => undefined;
+      },
+    });
+    if (phase !== "initial") {
+      await screen.findByText("上下文 62%");
+      await screen.findByText(/模型调用可能已经卡住/u);
+      light = true;
+      act(() => connection?.("failed"));
+      await waitFor(() =>
+        expect(
+          request.mock.calls.filter(([input]) => input.type === "world.read"),
+        ).toHaveLength(2),
+      );
+      expect(screen.getByText("上下文 62%")).toBeTruthy();
+      expect(screen.getByText(/模型调用可能已经卡住/u)).toBeTruthy();
+    }
+    const cancel = await screen.findByRole("button", { name: "取消生成" });
+    fireEvent.click(cancel);
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith({
+        type: "play.chain.cancel",
+        worldId: "world-one",
+        chainId: "lightweight-running",
+        exchangeId:
+          phase === "retry-recovery"
+            ? "lightweight-retry-exchange"
+            : "lightweight-exchange",
+      }),
+    );
+  },
+);
+
+test("a confirmed play receipt keeps the timeline fallback usable when world reads fail", async () => {
+  let chain: V1PlayCallChainView | null = null;
+  const request = vi.fn((input: V1Request): Promise<unknown> => {
+    if (input.type === "world.read")
+      return chain === null
+        ? Promise.resolve(worldView(null))
+        : Promise.reject(new Error("World read unavailable"));
+    if (input.type === "world.play-decorations.read")
+      return Promise.resolve({ artifacts: [], debug: [] });
+    if (input.type === "play.chain.start") {
+      chain = playChainView(input.chainId, input.exchangeId, input.playerText);
+      return Promise.resolve(chain);
+    }
+    if (input.type === "play.timeline.page" && chain !== null)
+      return Promise.resolve(lightweightPlayTimeline(chain));
+    return Promise.reject(new Error(input.type));
+  });
+  renderWorld({ request, observeConversation: () => () => undefined });
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox", {
+    name: "你的行动",
+  });
+  fireEvent.change(input, { target: { value: "Open the door." } });
+  fireEvent.click(screen.getByRole("button", { name: "追加上下文" }));
+  await screen.findByText("暂时无法同步");
+  await screen.findByText("Alex opens the door and lets you go first.");
+  fireEvent.change(input, {
+    target: { value: "Continue from the committed response." },
+  });
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+      .disabled,
+  ).toBe(false);
+  expect(
+    request.mock.calls.filter(([input]) => input.type === "world.read"),
+  ).toHaveLength(3);
+  expect(
+    request.mock.calls.filter(([input]) => input.type === "play.chain.start"),
+  ).toHaveLength(1);
+});

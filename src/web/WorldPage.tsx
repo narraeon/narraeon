@@ -383,11 +383,17 @@ export function WorldPage({
           ? mergePlayTimelinePage(current, nextTimeline)
           : nextTimeline,
       );
-      if (nextChain?.status === "running") {
+      const runningChainId = nextChain?.chainId ?? nextTimeline.activeChainId;
+      if (
+        (nextChain?.status ?? nextTimeline.activeStatus) === "running" &&
+        runningChainId !== null
+      ) {
         setPlayProgress((current) =>
           progressFromCallChain(
-            nextChain.chainId,
-            activePlayExchangeId(nextChain, nextTimeline, nextChain.chainId),
+            runningChainId,
+            nextChain === null && current?.chainId === runningChainId
+              ? current.exchangeId
+              : activePlayExchangeId(nextChain, nextTimeline, runningChainId),
             nextChain,
             current,
           ),
@@ -938,7 +944,7 @@ export function WorldPage({
             ...turnNoteField(turnNote),
           } satisfies Extract<V1Request, { type: "play.chain.append" }>);
       unconfirmedSubmission.current = request;
-      const submissionVersion = worldProjectionVersion.current;
+      let submissionVersion = worldProjectionVersion.current;
       const {
         world: projection,
         chain,
@@ -952,6 +958,7 @@ export function WorldPage({
         (receipt) => {
           worldTarget.accept({ complete: false });
           applyPlayCallChain(receipt);
+          submissionVersion = worldProjectionVersion.current;
           applyPlayTimelineFrame(
             {
               kind: "snapshot",

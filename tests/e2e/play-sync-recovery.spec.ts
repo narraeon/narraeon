@@ -329,6 +329,67 @@ test("a confirmed Runtime interruption retains its supported resend action", asy
   expect(providerCalls).toBe(1);
 });
 
+for (const late of ["success", "failure"] as const)
+  test(`switching worlds discards a late ${late} from the previous world's recovery`, async ({
+    page,
+  }) => {
+    const oldTitle = `Switch play ${late} old`;
+    const nextTitle = `Switch play ${late} next`;
+    const oldId = await prepareWorld(page, oldTitle, false);
+    await prepareWorld(page, nextTitle, false);
+    await page
+      .getByRole("button", { name: `Open world: ${oldTitle}`, exact: true })
+      .click();
+    await expect(page.getByLabel("Your action", { exact: true })).toBeVisible();
+    let release!: () => void;
+    let captured = false;
+    await page.route("**/api/runtime/v1", async (route) => {
+      const request = runtimeInput(route);
+      if (request?.type !== "world.read" || request.worldId !== oldId)
+        return route.continue();
+      const stale = await route.fetch();
+      captured = true;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (late === "success") await route.fulfill({ response: stale });
+      else await route.abort("failed");
+    });
+    await interruptObservation(page, false);
+    await expect.poll(() => captured).toBe(true);
+    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await page
+      .getByRole("button", { name: `Open world: ${nextTitle}`, exact: true })
+      .click();
+    const input = page.getByLabel("Your action", { exact: true });
+    await input.fill("Keep the new world's draft.");
+    const deliveryFilter = (request: Request) => {
+      if (!request.url().endsWith("/api/runtime/v1")) return false;
+      const input = (request.postDataJSON() as { request?: V1Request } | null)
+        ?.request;
+      return input?.type === "world.read" && input.worldId === oldId;
+    };
+    const delivered =
+      late === "success"
+        ? page.waitForEvent("requestfinished", { predicate: deliveryFilter })
+        : page.waitForEvent("requestfailed", { predicate: deliveryFilter });
+    release();
+    await delivered;
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(
+      page.getByRole("heading", { name: nextTitle, exact: true }),
+    ).toBeVisible();
+    await expect(input).toHaveValue("Keep the new world's draft.");
+    await expect(
+      page.getByText("Temporarily unable to sync", { exact: true }),
+    ).toHaveCount(0);
+  });
+
 function runtimeInput(route: Route): V1Request | undefined {
   return (route.request().postDataJSON() as { request?: V1Request } | null)
     ?.request;
