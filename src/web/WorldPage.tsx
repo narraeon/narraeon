@@ -1597,9 +1597,9 @@ export function WorldPage({
         latestSessionId={revisionOverview?.latest?.sessionId ?? null}
         notice={authoring.notice}
         requestFailure={authoring.requestFailure}
-        syncFailure={
-          authoring.projectionFailure ?? authoring.observationFailure
-        }
+        syncFailed={authoring.syncFailed}
+        syncError={authoring.syncError}
+        onRead={() => void revisionWorkspace.reread()}
         now={authoring.now}
         contentEditor={{
           mode: "world-revision",

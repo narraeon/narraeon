@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   V1AuthoringRequestPreview,
   V1SettingPromptPreview,
 } from "../protocol/v1.ts";
 import { getWebLocale } from "./i18n.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
+import { useReadTarget } from "./useReadTarget.ts";
 
 type Compilation = V1SettingPromptPreview["compilation"];
 
@@ -17,28 +19,30 @@ export function AuthoringPromptPreview({
   const zh = getWebLocale() === "zh-CN";
   const [candidate, setCandidate] = useState<Compilation | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState("");
+  const preview = useRef(onPreview);
+  useEffect(() => {
+    preview.current = onPreview;
+  }, [onPreview]);
+  const load = useCallback(
+    () => preview.current?.() ?? Promise.resolve(null),
+    [],
+  );
+  const apply = useCallback(
+    (value: Compilation | null) => setCandidate(value),
+    [],
+  );
+  const { target, syncFailed, syncError } = useReadTarget(load, apply);
+  const read = (recover = false) => {
+    setBusy(true);
+    void (recover ? target.recover() : target.read()).finally(() =>
+      setBusy(false),
+    );
+  };
   return (
     <section className="authoring-prompt-preview">
       {onPreview && (
         <>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              setFailure("");
-              setCandidate(null);
-              void onPreview()
-                .then(setCandidate)
-                .catch((error: unknown) =>
-                  setFailure(
-                    error instanceof Error ? error.message : String(error),
-                  ),
-                )
-                .finally(() => setBusy(false));
-            }}
-          >
+          <button type="button" disabled={busy} onClick={() => read()}>
             {zh ? "预览下一条请求" : "Preview next send"}
           </button>
           <details className="authoring-preview-help">
@@ -51,7 +55,11 @@ export function AuthoringPromptPreview({
           </details>
         </>
       )}
-      {failure && <p role="alert">{failure}</p>}
+      <SyncNotice
+        failed={syncFailed}
+        onRead={() => read(true)}
+        reason={syncError}
+      />
       {candidate && (
         <details open>
           <summary>

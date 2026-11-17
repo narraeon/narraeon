@@ -37,6 +37,7 @@ import { PackageGameplaySection } from "./PackageGameplaySection.tsx";
 import { useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
+import { SyncNotice } from "./SyncNotice.tsx";
 
 export type SettingImprovementView = AuthoringConversationView;
 
@@ -51,7 +52,9 @@ interface SettingImprovementPanelProps {
   latestSessionId: string | null;
   notice: string;
   requestFailure: string | null;
-  syncFailure?: string | null;
+  syncFailed?: boolean;
+  syncError?: unknown;
+  onRead?: () => void;
   now: number;
   contentEditor: ContentTreeEditorProps;
   onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
@@ -111,7 +114,9 @@ export function SettingImprovementPanel({
   latestSessionId,
   notice,
   requestFailure,
-  syncFailure,
+  syncFailed = false,
+  syncError,
+  onRead,
   now,
   contentEditor,
   onSend,
@@ -213,9 +218,12 @@ export function SettingImprovementPanel({
   const [unconfirmedDraft, setUnconfirmedDraft] = useState<{
     text: string;
     requestId: string;
+    sessionId: string | null;
   } | null>(null);
   if (
     unconfirmedDraft !== null &&
+    (unconfirmedDraft.sessionId === null ||
+      view?.sessionId === unconfirmedDraft.sessionId) &&
     confirmsAuthoringRequest(view, unconfirmedDraft.requestId)
   ) {
     setUnconfirmedDraft(null);
@@ -232,18 +240,19 @@ export function SettingImprovementPanel({
         unconfirmedDraft?.text === text
           ? unconfirmedDraft.requestId
           : createClientId("authoring-message");
+      const sessionId = view?.sessionId ?? null;
       try {
         await onSend(text, requestId);
         setUnconfirmedDraft(null);
       } catch {
-        setUnconfirmedDraft({ text, requestId });
+        setUnconfirmedDraft({ text, requestId, sessionId });
         setMessage((current) => (current.length === 0 ? text : current));
       } finally {
         submittingRef.current = false;
         setSubmitting(false);
       }
     },
-    [disabled, onSend, unconfirmedDraft],
+    [disabled, onSend, unconfirmedDraft, view?.sessionId],
   );
 
   const resume = async (recovery?: "continue_partial"): Promise<void> => {
@@ -692,6 +701,12 @@ export function SettingImprovementPanel({
               </div>
             ) : null}
 
+            <SyncNotice
+              failed={syncFailed}
+              onRead={() => onRead?.()}
+              reason={syncError}
+            />
+
             <AuthoringPromptPreview
               key={`${packageName}:${view?.sessionId ?? "fresh"}:${view?.messages.length ?? 0}`}
               requests={view?.requestPreviews ?? []}
@@ -814,7 +829,6 @@ export function SettingImprovementPanel({
                   </button>
                 </div>
               ) : null}
-              {syncFailure ? <p role="status">{syncFailure}</p> : null}
               {requestFailure !== null ? (
                 <div className="setting-conversation-failure" role="alert">
                   {requestFailure}

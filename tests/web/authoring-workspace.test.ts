@@ -183,6 +183,7 @@ function fixture(kind: "setting" | "revision") {
           },
           durableChanged,
         );
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     },
   };
 }
@@ -240,9 +241,7 @@ test("an acknowledged edit stays accepted when refreshing package files fails", 
   await expect(
     f.workspace.editMessage("message", "Revised", "keep", "edit-1"),
   ).resolves.toBeUndefined();
-  expect(f.workspace.getSnapshot().projectionFailure).toContain(
-    "refresh failed",
-  );
+  expect(f.workspace.getSnapshot().syncFailed).toBe(true);
   expect(f.workspace.getSnapshot().view?.sessionId).toBe("recent");
   f.workspace.close();
 });
@@ -264,12 +263,10 @@ test.each(["setting", "revision"] as const)(
     try {
       await expect(f.workspace.send("Open the door")).resolves.toBeUndefined();
       expect(f.workspace.getSnapshot().requestFailure).toBeNull();
-      expect(f.workspace.getSnapshot().projectionFailure).toContain(
-        "files offline",
-      );
+      expect(f.workspace.getSnapshot().syncFailed).toBe(true);
       failRead = false;
       await f.publish();
-      expect(f.workspace.getSnapshot().projectionFailure).toBeNull();
+      expect(f.workspace.getSnapshot().syncFailed).toBe(false);
       expect(
         f.request.mock.calls.filter(([input]) =>
           input.type.endsWith(".message"),
@@ -508,6 +505,7 @@ test.each(["setting", "revision"] as const)(
       input.type.endsWith("overview") ? read.promise : original(input),
     );
     const opening = f.workspace.open();
+    await Promise.resolve();
     f.workspace.close();
     const closed = f.workspace.getSnapshot();
     read.reject(new Error("closed read"));
@@ -784,7 +782,7 @@ test.each(["setting", "revision"] as const)(
     expect(f.workspace.getSnapshot()).toMatchObject({
       view: null,
       loading: false,
-      observationFailure: null,
+      syncFailed: false,
     });
     f.workspace.close();
   },

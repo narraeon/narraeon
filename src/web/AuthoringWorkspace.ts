@@ -5,12 +5,9 @@ import type {
 } from "../protocol/v1.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
-import { readAfterCommit } from "./RequestOutcome.ts";
+import { ReadTarget } from "./ReadTarget.ts";
 import { uiText } from "./i18n.ts";
-import {
-  conversationConnectionText,
-  type ObserveConversation,
-} from "./ConversationObserver.ts";
+import type { ObserveConversation } from "./ConversationObserver.ts";
 import {
   AuthoringConflictError,
   confirmsAuthoringRequest,
@@ -35,8 +32,8 @@ export interface AuthoringWorkspaceState {
   loading: boolean;
   applying: boolean;
   requestFailure: string | null;
-  observationFailure: string | null;
-  projectionFailure: string | null;
+  syncFailed: boolean;
+  syncError: unknown;
   notice: string;
   now: number;
 }
@@ -61,8 +58,8 @@ export class AuthoringWorkspace {
     loading: true,
     applying: false,
     requestFailure: null,
-    observationFailure: null,
-    projectionFailure: null,
+    syncFailed: false,
+    syncError: undefined,
     notice: "",
     now: 0,
   };
@@ -76,12 +73,22 @@ export class AuthoringWorkspace {
   private selection: string | { requestId?: string } | null = null;
   private selectionVersion = 0;
   private observationVersion = 0;
-  private projectionVersion = 0;
-  private unconfirmedRequest: { id: string; warning: string } | null = null;
+  private reader: ReadTarget<{
+    snapshot: AuthoringTargetSnapshot;
+    view: AuthoringConversationView | null;
+  }>;
+  private connectionFault = false;
+  private observationClosed = false;
+  private unconfirmedRequest: {
+    id: string;
+    sessionId: string | null;
+    warning: string;
+  } | null = null;
   private timer: ReturnType<typeof setInterval> | undefined;
   constructor(target: AuthoringTarget, observe?: ObserveConversation) {
     this.target = target;
     this.observe = observe;
+    this.reader = this.createReader();
   }
   private current() {
     const scope = this.scope;
@@ -102,12 +109,11 @@ export class AuthoringWorkspace {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
-  private accept(snapshot: AuthoringTargetSnapshot): void {
-    this.projectionVersion++;
+  private accept(snapshot: AuthoringTargetSnapshot, receipt = true): void {
+    if (receipt) this.reader.accept({ complete: false });
     const files = cloneFiles(snapshot.files);
     this.update({
       target: snapshot,
-      projectionFailure: null,
       serverFiles: files,
       ...(!this.state.dirty && this.saving === null
         ? {
@@ -130,71 +136,104 @@ export class AuthoringWorkspace {
     this.update({ draftsLocked: true });
     try {
       await change();
-      if (alive()) await this.refreshAfterCommit(alive);
+      if (alive()) {
+        this.reader.accept({ complete: false });
+        await this.refreshAfterCommit(alive);
+      }
+    } catch (error) {
+      await this.recoverCommand(alive);
+      throw error;
     } finally {
-      this.draftHolds -= 1;
-      this.update({ draftsLocked: this.draftHolds > 0 });
+      if (alive()) {
+        this.draftHolds -= 1;
+        this.update({ draftsLocked: this.draftHolds > 0 });
+      }
     }
   }
 
-  /** Re-reads the saved package after a change made outside the file editor. */
-  async refresh(): Promise<void> {
-    if (!this.active || this.state.applying || this.state.dirty) return;
-    await this.refreshProjection(this.current());
+  private createReader() {
+    const valid = this.current();
+    return new ReadTarget({
+      load: async () => {
+        const selection = this.selection;
+        const snapshot = await this.target.read();
+        const view =
+          typeof selection === "string" &&
+          selection !== snapshot.latest?.sessionId &&
+          snapshot.history.some((session) => session.sessionId === selection)
+            ? await this.target.readSession(selection)
+            : snapshot.latest;
+        return { snapshot, view };
+      },
+      apply: ({ snapshot, view }) => {
+        if (!valid()) return;
+        this.accept(snapshot, false);
+        const unconfirmed = this.unconfirmedRequest;
+        if (
+          unconfirmed !== null &&
+          (unconfirmed.sessionId === null ||
+            view?.sessionId === unconfirmed.sessionId) &&
+          confirmsAuthoringRequest(view, unconfirmed.id)
+        ) {
+          if (this.state.requestFailure === unconfirmed.warning)
+            this.update({ requestFailure: null });
+          this.unconfirmedRequest = null;
+        }
+        const selection = this.selection;
+        if (selection === null || typeof selection === "string") {
+          this.selection = view?.sessionId ?? null;
+          this.update({ view });
+        } else if (selection.requestId !== undefined) {
+          // Render the record actually read, but claim a fresh conversation only
+          // when its durable request receipt identifies this submission.
+          if (
+            this.unconfirmedRequest !== null ||
+            confirmsAuthoringRequest(view, selection.requestId)
+          )
+            this.update({ view });
+          if (confirmsAuthoringRequest(view, selection.requestId))
+            this.selection = view!.sessionId;
+        }
+        this.update({ loading: false });
+        if (selection !== this.selection && this.unsubscribe !== undefined)
+          this.observeSelection();
+      },
+      onSyncFailure: (syncFailed, syncError) => {
+        if (valid()) this.update({ syncFailed, syncError, loading: false });
+      },
+    });
   }
-  private async refreshProjection(valid: () => boolean): Promise<void> {
-    const version = ++this.projectionVersion;
-    const current = () => valid() && version === this.projectionVersion;
-    try {
-      const next = await this.target.read();
-      if (!current()) return;
-      const selection = this.selection;
-      const selected = typeof selection === "string" ? selection : undefined;
-      const view =
-        selected !== undefined && selected !== next.latest?.sessionId
-          ? await this.target.readSession(selected)
-          : next.latest;
-      if (!current()) return;
-      this.accept(next);
-      if (
-        this.unconfirmedRequest !== null &&
-        confirmsAuthoringRequest(view, this.unconfirmedRequest.id)
-      ) {
-        if (this.state.requestFailure === this.unconfirmedRequest.warning)
-          this.update({ requestFailure: null });
-        this.unconfirmedRequest = null;
-      }
-      if (selection === null || typeof selection === "string") {
-        this.selection = view?.sessionId ?? null;
-        this.update({ view });
-      } else if (
-        selection.requestId !== undefined &&
-        view !== null &&
-        confirmsAuthoringRequest(view, selection.requestId)
-      ) {
-        this.selection = view.sessionId;
-        this.update({ view });
-      }
-      if (
-        selected !==
-        (typeof this.selection === "string" ? this.selection : undefined)
-      )
-        this.observeSelection();
-    } catch (error) {
-      if (current()) throw error;
+  private replaceReader(): void {
+    this.reader.dispose();
+    this.reader = this.createReader();
+  }
+  /** Reads authoritative files and the selected conversation without replacing drafts. */
+  async refresh(): Promise<void> {
+    if (!this.active || this.state.applying) return;
+    await this.reader.read();
+  }
+  /** Explicit recovery is read-only; a closed observer is attached again after reading. */
+  async reread(): Promise<void> {
+    if (!this.active) return;
+    const valid = this.current();
+    await this.reader.recover();
+    if (valid() && (this.observationClosed || this.unsubscribe === undefined)) {
+      this.connectionFault = false;
+      this.observeSelection();
     }
   }
   private async refreshAfterCommit(valid: () => boolean): Promise<void> {
-    try {
-      await readAfterCommit(() => this.refreshProjection(valid));
-    } catch (error) {
-      if (valid()) this.update({ projectionFailure: errorMessage(error) });
-    }
+    if (valid()) await this.reader.read();
+  }
+  private async recoverCommand(valid: () => boolean): Promise<void> {
+    if (valid()) await this.reader.recover();
   }
   async open(): Promise<void> {
     this.close();
     this.active = true;
     this.selection = null;
+    this.draftHolds = 0;
+    this.replaceReader();
     this.update({
       target: null,
       view: null,
@@ -204,56 +243,58 @@ export class AuthoringWorkspace {
       serverFiles: [],
       dirty: false,
       conflict: false,
+      draftsLocked: false,
       loading: true,
       applying: false,
       requestFailure: null,
-      observationFailure: null,
-      projectionFailure: null,
+      syncFailed: false,
+      syncError: undefined,
       notice: "",
     });
     const valid = this.current();
-    try {
-      const snapshot = await this.target.read();
-      if (!valid()) return;
-      this.accept(snapshot);
-      this.selection = snapshot.latest?.sessionId ?? null;
-      this.update({
-        view: snapshot.latest,
-        loading: false,
-        now: Date.now(),
-        notice: uiText(
-          snapshot.revision?.epoch?.locked
-            ? this.target.messages.locked
-            : this.target.messages.opened,
-        ),
-      });
-      this.observeSelection();
-      this.timer = setInterval(() => {
-        if (this.active) this.update({ now: Date.now() });
-      }, 1000);
-    } catch (error: unknown) {
-      if (valid())
-        this.update({ requestFailure: errorMessage(error), loading: false });
-    }
+    this.timer = setInterval(() => {
+      if (this.active) this.update({ now: Date.now() });
+    }, 1000);
+    await this.reader.read();
+    if (!valid() || this.state.target === null) return;
+    this.update({
+      now: Date.now(),
+      notice: uiText(
+        this.state.target?.revision?.epoch?.locked
+          ? this.target.messages.locked
+          : this.target.messages.opened,
+      ),
+    });
+    this.observeSelection();
   }
   private observeSelection(): void {
     this.unsubscribe?.();
     const version = ++this.observationVersion;
+    this.observationClosed = false;
     const valid = this.current();
     const alive = () => valid() && version === this.observationVersion;
     const selected =
       typeof this.selection === "string" ? this.selection : undefined;
+    let receivedRevision = false;
+    let awaitingReconnect = this.connectionFault;
     this.unsubscribe = this.observe?.(
       {
         kind: this.target.kind,
         id: this.target.id,
         ...(selected === undefined ? {} : { sessionId: selected }),
       },
-      async (observation, changed, isCurrent) => {
+      (observation, changed, isCurrent) => {
         const deliveryCurrent = () => alive() && isCurrent?.() !== false;
         if (!alive() || observation.kind !== this.target.kind) return;
         if (changed) {
-          await this.refreshProjection(deliveryCurrent);
+          if (deliveryCurrent()) {
+            // Let observation delivery continue while files hydrate. A newer
+            // revision needs a read begun after its notification.
+            void (receivedRevision
+              ? this.reader.recover()
+              : this.reader.read());
+            receivedRevision = true;
+          }
         } else {
           const status = observation.value.selected;
           const view = this.state.view;
@@ -268,15 +309,32 @@ export class AuthoringWorkspace {
         }
         if (alive()) this.update({ now: Date.now() });
       },
-      (connection, message) => {
-        if (alive())
-          this.update({
-            observationFailure: conversationConnectionText(connection, message),
-          });
+      (connection) => {
+        if (!alive()) return;
+        if (connection === "connected" || connection === "synchronized") {
+          this.connectionFault = false;
+          awaitingReconnect = false;
+          return;
+        }
+        if (connection === "failed") this.observationClosed = true;
+        if (this.connectionFault) {
+          if (awaitingReconnect) {
+            this.observationClosed = true;
+            this.update({ syncFailed: true });
+          }
+          return;
+        }
+        this.connectionFault = true;
+        void this.reader.recover().then(() => {
+          if (alive() && this.observationClosed && !this.state.syncFailed)
+            this.observeSelection();
+        });
       },
     );
   }
   close(): void {
+    this.reader.dispose();
+    this.connectionFault = false;
     this.active = false;
     this.scope += 1;
     this.unconfirmedRequest = null;
@@ -294,12 +352,13 @@ export class AuthoringWorkspace {
     this.unconfirmedRequest = null;
     this.selectionVersion += 1;
     this.selection = {};
+    this.connectionFault = false;
+    this.replaceReader();
     this.update({
       view: null,
       loading: false,
       requestFailure: null,
-      observationFailure: null,
-      projectionFailure: null,
+      syncFailed: false,
     });
     this.observeSelection();
   }
@@ -308,27 +367,20 @@ export class AuthoringWorkspace {
     this.unconfirmedRequest = null;
     this.selectionVersion += 1;
     this.selection = sessionId;
+    this.connectionFault = false;
+    this.replaceReader();
     const valid = this.current();
     this.update({
       view: null,
       loading: true,
       requestFailure: null,
-      observationFailure: null,
-      projectionFailure: null,
+      syncFailed: false,
     });
     this.observeSelection();
-    try {
-      const view =
-        this.state.target?.latest?.sessionId === sessionId
-          ? this.state.target.latest
-          : await this.target.readSession(sessionId);
-      if (valid()) this.update({ view });
-    } catch (error: unknown) {
-      if (valid()) this.update({ requestFailure: errorMessage(error) });
-    } finally {
-      if (valid()) this.update({ loading: false });
-    }
+    await this.reader.read();
+    if (valid()) this.update({ loading: false });
   }
+
   async send(
     message: string,
     requestId = createClientId("authoring-message"),
@@ -401,39 +453,33 @@ export class AuthoringWorkspace {
       view = await request();
     } catch (error) {
       if (!valid()) return;
+      const warning = errorMessage(error);
+      this.unconfirmedRequest =
+        error instanceof RuntimeRequestError && error.protocolCode === undefined
+          ? { id: requestId, sessionId, warning }
+          : null;
+      this.update({ requestFailure: warning });
+      await this.recoverCommand(valid);
+      if (!valid()) return;
+      const candidate = this.state.view;
       if (
         !(error instanceof RuntimeRequestError) ||
-        error.protocolCode !== undefined
+        error.protocolCode !== undefined ||
+        candidate === null ||
+        (sessionId !== null && candidate.sessionId !== sessionId) ||
+        !confirmsAuthoringRequest(candidate, requestId)
       ) {
-        this.update({ requestFailure: errorMessage(error) });
-        throw error;
-      }
-      // A Runtime or SSE view is a receipt only for the exact submitted request.
-      const observed = this.state.view;
-      const matching = (candidate: AuthoringConversationView | null) =>
-        candidate !== null &&
-        (sessionId === null || candidate.sessionId === sessionId) &&
-        confirmsAuthoringRequest(candidate, requestId);
-      let candidate = matching(observed)
-        ? observed
-        : await (
-            sessionId === null
-              ? this.target.read().then((snapshot) => snapshot.latest)
-              : this.target.readSession(sessionId)
-          ).catch(() => null);
-      if (!valid()) return;
-      if (!matching(candidate) && matching(this.state.view))
-        candidate = this.state.view;
-      if (candidate === null || !matching(candidate)) {
-        const warning = error.message;
-        this.unconfirmedRequest = { id: requestId, warning };
+        // A refusal still has a reason even if a partial operation was published.
         this.update({ requestFailure: warning });
         throw error;
       }
+      this.unconfirmedRequest = null;
+      this.update({ requestFailure: null });
       view = candidate;
     }
     if (!valid()) return;
     this.selection = view.sessionId;
+    this.reader.accept({ complete: false });
     this.update({ view });
     this.observeSelection();
     await this.refreshAfterCommit(valid);
@@ -450,11 +496,16 @@ export class AuthoringWorkspace {
     try {
       const view = await this.target.cancel(this.selection);
       if (valid()) {
+        this.reader.accept({ complete: false });
         this.update({ view });
         this.observeSelection();
+        await this.refreshAfterCommit(valid);
       }
     } catch (error: unknown) {
-      if (valid()) this.update({ requestFailure: errorMessage(error) });
+      if (valid()) {
+        this.update({ requestFailure: errorMessage(error) });
+        await this.recoverCommand(valid);
+      }
     }
   }
   async deleteSession(sessionId: string): Promise<void> {
@@ -481,6 +532,7 @@ export class AuthoringWorkspace {
     } catch (error: unknown) {
       if (!valid()) return;
       this.update({ requestFailure: errorMessage(error) });
+      await this.recoverCommand(valid);
       throw error;
     } finally {
       if (valid()) this.update({ loading: false });
@@ -504,10 +556,14 @@ export class AuthoringWorkspace {
         this.state.target,
       );
     } catch (error: unknown) {
-      if (valid()) this.update({ requestFailure: errorMessage(error) });
+      if (valid()) {
+        this.update({ requestFailure: errorMessage(error) });
+        await this.recoverCommand(valid);
+      }
       throw error;
     }
     if (!valid()) return result;
+    this.reader.accept({ complete: false });
     this.observeSelection();
     await this.refreshAfterCommit(valid);
     if (valid())
@@ -543,7 +599,10 @@ export class AuthoringWorkspace {
       if (!valid()) return null;
       return { changed: epoch.diff.length > 0 };
     } catch (error: unknown) {
-      if (valid()) this.update({ requestFailure: errorMessage(error) });
+      if (valid()) {
+        this.update({ requestFailure: errorMessage(error) });
+        await this.recoverCommand(valid);
+      }
       return null;
     } finally {
       if (valid()) this.update({ applying: false });
@@ -590,8 +649,11 @@ export class AuthoringWorkspace {
           });
         }
       })
-      .catch((error: unknown) => {
-        if (valid()) this.update({ requestFailure: errorMessage(error) });
+      .catch(async (error: unknown) => {
+        if (valid()) {
+          this.update({ requestFailure: errorMessage(error) });
+          await this.recoverCommand(valid);
+        }
       })
       .finally(() => {
         if (this.editOpening === pending) this.editOpening = null;
@@ -652,6 +714,7 @@ export class AuthoringWorkspace {
         this.accept(error.latest);
         this.update({ conflict: true, requestFailure: null });
       } else this.update({ requestFailure: errorMessage(error) });
+      await this.recoverCommand(valid);
     } finally {
       if (valid()) this.update({ loading: false });
     }

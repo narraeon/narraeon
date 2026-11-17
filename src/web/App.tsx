@@ -805,9 +805,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }
         notice={notice || authoring.notice}
         requestFailure={authoring.requestFailure}
-        syncFailure={
-          authoring.projectionFailure ?? authoring.observationFailure
-        }
+        syncFailed={authoring.syncFailed}
+        syncError={authoring.syncError}
+        onRead={() => void authoringWorkspace.reread()}
         now={authoring.now}
         contentEditor={{
           scriptPermission: (
