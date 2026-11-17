@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
+import { CurrentTreeContentLibrary } from "../../src/runtime/content/CurrentTreeContentLibrary.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
@@ -3312,6 +3313,70 @@ test("完整工具响应和原树指纹落盘后，重启只在该 revision 上�
     },
   });
   expect((await store.read(view.sessionId)).pendingSettlement).toBeNull();
+});
+
+test("a fresh authoring request waits for a package projection read and dispatches once", async () => {
+  const fixture = await createFixture([
+    { outcome: "response", text: "First answer." },
+    { outcome: "response", text: "Second answer." },
+  ]);
+  const first = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "before-read",
+    "First message.",
+  );
+  const reader = new CurrentTreeContentLibrary(fixture.root);
+  const readingStarted = Promise.withResolvers<void>();
+  const finishReading = Promise.withResolvers<void>();
+  reader.setBeforeLease(async () => {
+    readingStarted.resolve();
+    await finishReading.promise;
+  });
+  let reading: Promise<unknown> | undefined;
+  const read = fixture.content.readCurrentTreeContentPackage.bind(
+    fixture.content,
+  );
+  vi.spyOn(
+    fixture.content,
+    "readCurrentTreeContentPackage",
+  ).mockImplementationOnce(async (id) => {
+    const snapshot = await read(id);
+    reading = reader.readPackage(id);
+    await readingStarted.promise;
+    return snapshot;
+  });
+  const attempted = Promise.withResolvers<void>();
+  const begin = fixture.content.beginCurrentTreeContentPackageOperation.bind(
+    fixture.content,
+  );
+  const acquisition = vi
+    .spyOn(fixture.content, "beginCurrentTreeContentPackageOperation")
+    .mockImplementation((...args) => {
+      attempted.resolve();
+      return begin(...args);
+    });
+  const sending = sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "after-read",
+    "Second message.",
+  ).then(
+    (view) => view,
+    (error: unknown) => error,
+  );
+  await attempted.promise;
+  expect(fixture.host.requests).toHaveLength(1);
+  finishReading.resolve();
+  await reading;
+  const second = await sending;
+  expect(second).toMatchObject({
+    runStatus: "ready",
+    turns: [{ user: { text: "Second message." } }],
+  });
+  expect(second).not.toMatchObject({ sessionId: first.sessionId });
+  expect(fixture.host.requests).toHaveLength(2);
+  expect(acquisition).toHaveBeenCalledTimes(1);
 });
 
 test("tool settlement waits for an overlapping package operation and persists its receipt", async () => {

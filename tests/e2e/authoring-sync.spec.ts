@@ -634,12 +634,23 @@ for (const kind of ["setting", "revision"] as const) {
       page,
     }) => {
       const target = await prepare(page, kind);
-      await send(page, "First independent conversation.");
-      const firstId = (await target.overview()).latest!.sessionId;
+      const first = await sendFreshConversation(
+        page,
+        target.prefix,
+        "First independent conversation.",
+      );
+      const firstId = first.sessionId;
+      expect(providerCalls).toBe(1);
       await page
         .getByRole("button", { name: "全新上下文", exact: true })
         .click();
-      await send(page, "Second independent conversation.");
+      const second = await sendFreshConversation(
+        page,
+        target.prefix,
+        "Second independent conversation.",
+      );
+      expect(second.sessionId).not.toBe(firstId);
+      expect(providerCalls).toBe(2);
       await expectObservation(page);
       let captured = false;
       let release!: () => void;
@@ -800,6 +811,46 @@ async function send(page: Page, text: string) {
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(composer(page)).toBeEnabled();
 }
+async function sendFreshConversation(page: Page, prefix: string, text: string) {
+  const responsePending = page.waitForResponse((response) => {
+    if (
+      !response.url().endsWith("/api/runtime/v1") ||
+      response.request().method() !== "POST"
+    )
+      return false;
+    const input = (response.request().postDataJSON() as { request: V1Request })
+      .request;
+    return (
+      input.type === `${prefix}.message` &&
+      "message" in input &&
+      input.message === text
+    );
+  });
+  await send(page, text);
+  const response = await responsePending;
+  const body = (await response.json()) as {
+    result: AuthoringConversationView;
+    error?: unknown;
+  };
+  expect(response.ok(), JSON.stringify(body.error)).toBe(true);
+  const input = (response.request().postDataJSON() as { request: V1Request })
+    .request;
+  if (!("requestId" in input) || !("continuation" in input))
+    throw new Error("Missing authoring request identity");
+  expect(input.continuation).toEqual({ kind: "fresh_context" });
+  expect(body.result.runStatus, body.result.lastFailure ?? undefined).toBe(
+    "ready",
+  );
+  expect(body.result.turns).toHaveLength(1);
+  expect(body.result.turns[0]!.user.text).toBe(text);
+  expect(
+    body.result.requestPreviews?.filter(
+      (item) => item.requestId === input.requestId,
+    ),
+  ).toHaveLength(1);
+  return body.result;
+}
+
 async function settlePaint(page: Page) {
   await page.evaluate(
     () =>

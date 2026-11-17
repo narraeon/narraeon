@@ -310,7 +310,10 @@ export class CurrentTreeContentLibrary {
     localId: string,
     enabled?: boolean,
   ): Promise<{ enabled: boolean }> {
-    const lease = await this.acquireOperationLease(localId, { wait: true });
+    const lease = await this.#acquirePackageLease(localId, {
+      wait: true,
+      reading: enabled === undefined,
+    });
     try {
       const root = this.#packageRoot(localId);
       if (enabled !== undefined)
@@ -330,7 +333,10 @@ export class CurrentTreeContentLibrary {
   }
 
   async readPackage(localId: string): Promise<EditableContentPackageDetail> {
-    const lease = await this.acquireOperationLease(localId, { wait: true });
+    const lease = await this.#acquirePackageLease(localId, {
+      wait: true,
+      reading: true,
+    });
     try {
       await ensureStoredPackageTitle(
         this.#packageRoot(localId),
@@ -495,9 +501,20 @@ export class CurrentTreeContentLibrary {
     localId: string,
     options: { wait?: boolean } = {},
   ): Promise<CurrentTreeContentPackageOperationLease> {
+    return this.#acquirePackageLease(localId, { wait: options.wait === true });
+  }
+
+  async #acquirePackageLease(
+    localId: string,
+    options: { wait?: boolean; reading?: boolean },
+  ): Promise<CurrentTreeContentPackageOperationLease> {
     const packageRoot = this.#packageRoot(localId);
     await this.#removeLegacyPackageLocks();
-    await acquireInProcessPackageLease(packageRoot, options.wait === true);
+    await acquireInProcessPackageLease(
+      packageRoot,
+      options.wait === true,
+      options.reading === true,
+    );
 
     let released = false;
     const release = () => {
@@ -1076,29 +1093,43 @@ const packageLeaseWaitMs = 10_000;
 
 /**
  * Package leases held by this process, keyed by package root. A key is present
- * while its lease is held; its array queues waiters in arrival order, and a
+ * while its lease is held; its queue keeps waiters in arrival order, and a
  * release hands the lease straight to the first of them.
  */
-const heldPackageLeases = new Map<string, PackageLeaseWaiter[]>();
+const heldPackageLeases = new Map<
+  string,
+  {
+    reading: boolean;
+    queue: PackageLeaseWaiter[];
+  }
+>();
 
 interface PackageLeaseWaiter {
+  reading: boolean;
   grant(): void;
 }
 
 async function acquireInProcessPackageLease(
   packageRoot: string,
   wait: boolean,
+  reading: boolean,
 ): Promise<void> {
-  const queue = heldPackageLeases.get(packageRoot);
-  if (queue === undefined) {
-    heldPackageLeases.set(packageRoot, []);
+  const held = heldPackageLeases.get(packageRoot);
+  if (held === undefined) {
+    heldPackageLeases.set(packageRoot, { reading, queue: [] });
     return;
   }
-  if (!wait) throw new CurrentTreeContentPackageBusyError();
+  // A projection read must finish before the next operation, but an active or
+  // already queued writer remains a real conflict for a non-waiting caller.
+  if (!wait && (!held.reading || held.queue.some((waiter) => !waiter.reading)))
+    throw new CurrentTreeContentPackageBusyError();
+  const queue = held.queue;
   await new Promise<void>((resolve, reject) => {
     const waiter: PackageLeaseWaiter = {
+      reading,
       grant: () => {
         clearTimeout(timer);
+        held.reading = reading;
         resolve();
       },
     };
@@ -1113,9 +1144,9 @@ async function acquireInProcessPackageLease(
 }
 
 function releaseInProcessPackageLease(packageRoot: string): void {
-  const queue = heldPackageLeases.get(packageRoot);
-  if (queue === undefined) return;
-  const next = queue.shift();
+  const held = heldPackageLeases.get(packageRoot);
+  if (held === undefined) return;
+  const next = held.queue.shift();
   if (next === undefined) heldPackageLeases.delete(packageRoot);
   else next.grant();
 }

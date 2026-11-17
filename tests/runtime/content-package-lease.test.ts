@@ -70,6 +70,74 @@ describe("内容包操作租约只在进程内互斥", () => {
 });
 
 describe("同一进程内同一内容包的租约互斥", () => {
+  test.each(["package", "workspace", "script permissions"] as const)(
+    "%s reads let one following operation wait without concealing competing writers",
+    async (surface) => {
+      const library = new CurrentTreeContentLibrary(root);
+      const created = await library.createPackage({ title: "read then write" });
+      const readingStarted = Promise.withResolvers<void>();
+      const finishReading = Promise.withResolvers<void>();
+      let grants = 0;
+      library.setBeforeLease(async () => {
+        if (++grants === 1) {
+          readingStarted.resolve();
+          await finishReading.promise;
+        }
+      });
+      const reading =
+        surface === "package"
+          ? library.readPackage(created.localId)
+          : surface === "workspace"
+            ? library.listPackages()
+            : library.scriptPermissions(created.localId);
+      await readingStarted.promise;
+      const operation = library.acquireOperationLease(created.localId).then(
+        (lease) => ({ lease }),
+        (error: unknown) => ({ error }),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(grants).toBe(1);
+      await expect(
+        library.acquireOperationLease(created.localId),
+      ).rejects.toBeInstanceOf(CurrentTreeContentPackageBusyError);
+      finishReading.resolve();
+      await reading;
+      const acquired = await operation;
+      try {
+        expect(acquired).not.toHaveProperty("error");
+        expect(grants).toBe(2);
+        await expect(
+          library.acquireOperationLease(created.localId),
+        ).rejects.toBeInstanceOf(CurrentTreeContentPackageBusyError);
+      } finally {
+        if ("lease" in acquired) acquired.lease.release();
+      }
+    },
+  );
+
+  test("script permission changes remain exclusive writers", async () => {
+    const library = new CurrentTreeContentLibrary(root);
+    const created = await library.createPackage({
+      title: "script permission writer",
+    });
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    library.setBeforeLease(async () => {
+      started.resolve();
+      await finish.promise;
+    });
+    const changing = library.scriptPermissions(created.localId, true);
+    await started.promise;
+    try {
+      await expect(
+        library.acquireOperationLease(created.localId),
+      ).rejects.toBeInstanceOf(CurrentTreeContentPackageBusyError);
+    } finally {
+      finish.resolve();
+    }
+    await changing;
+  });
+
   test("不等待的第二个获取得到忙碌错误；等待式的第二个在第一个释放后取得", async () => {
     const library = new CurrentTreeContentLibrary(root);
     const created = await library.createPackage({ title: "lease" });
