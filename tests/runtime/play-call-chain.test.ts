@@ -27,6 +27,8 @@ import {
   parseV1Envelope,
   type V1PlayCallChainView,
   type V1PlayContextReadingView,
+  type V1PlayTimelinePage,
+  type V1Response,
 } from "../../src/protocol/v1.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
 import type { ContentTreeFile } from "../../src/runtime/content/ContentWorkspace.ts";
@@ -5364,6 +5366,241 @@ test("浏览器进度流断开不会隐式取消 Runtime 调用或改变 Authori
   ]);
 });
 
+test.each([
+  { next: "retry", playerText: "", firstStatus: "interrupted" },
+  { next: "continue", playerText: "", firstStatus: "ready" },
+  { next: "new-player", playerText: "I ask Alex again.", firstStatus: "ready" },
+])(
+  "Runtime 页面读取提供当前调用身份：$next",
+  async ({ next, playerText, firstStatus }) => {
+    const { root, worldId, runtime } = await createRuntimeWithModel(
+      "runtime-running-identity",
+    );
+    const dispatches = [
+      Promise.withResolvers<AbortSignal>(),
+      Promise.withResolvers<AbortSignal>(),
+    ];
+    const responses = [
+      Promise.withResolvers<Response>(),
+      Promise.withResolvers<Response>(),
+    ];
+    let dispatch = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (_url, options) => {
+        const signal = options?.signal;
+        if (signal === undefined || signal === null)
+          throw new Error("Provider dispatch requires a cancellation signal");
+        const response = responses[dispatch]!;
+        dispatches[dispatch++]!.resolve(signal);
+        signal.addEventListener("abort", () => response.reject(signal.reason), {
+          once: true,
+        });
+        return response.promise;
+      }),
+    );
+    const chainId = "runtime-running-identity";
+    let running: Promise<V1Response> | undefined;
+    const cancel = (exchangeId: string) =>
+      runtime.handle({
+        type: "play.chain.cancel",
+        worldId,
+        chainId,
+        exchangeId,
+      });
+    const readPage = async () =>
+      (await runtime.handle({ type: "play.timeline.page", worldId, limit: 1 }))
+        .result as V1PlayTimelinePage;
+    try {
+      running = runtime.handle({
+        type: "play.chain.start",
+        worldId,
+        chainId,
+        exchangeId: "original-player",
+        playerText: "I wait for Alex.",
+      });
+      await dispatches[0]!.promise;
+      const opened = (await runtime.handle({ type: "world.read", worldId }))
+        .result as { playCallChain: null; playTimeline: V1PlayTimelinePage };
+      expect(opened.playCallChain).toBeNull();
+      expect(opened.playTimeline).toMatchObject({
+        activeChainId: chainId,
+        activeStatus: "running",
+        activeInvocationExchangeId: "original-player",
+      });
+      expect(await readPage()).toMatchObject({
+        activeInvocationExchangeId: "original-player",
+      });
+      if (next === "retry")
+        expect((await cancel("original-player")).result).toEqual({
+          outcome: "cancellation_requested",
+        });
+      else responses[0]!.resolve(playNarrativeResponse());
+      await running;
+      expect(await readPage()).toMatchObject({
+        activeStatus: firstStatus,
+        activeInvocationExchangeId: null,
+      });
+
+      running = runtime.handle({
+        type: "play.chain.append",
+        worldId,
+        chainId,
+        exchangeId: next,
+        playerText,
+      });
+      const retrySignal = await dispatches[1]!.promise;
+      const retryPage = await readPage();
+      expect(retryPage).toMatchObject({
+        activeChainId: chainId,
+        activeStatus: "running",
+        activeInvocationExchangeId: next,
+      });
+      expect((await cancel("original-player")).result).toEqual({
+        outcome: "not_running",
+      });
+      expect(retrySignal.aborted).toBe(false);
+      const restarted = new V1Runtime({
+        dataRoot: root,
+        configRoot: join(root, "config"),
+      });
+      await restarted.initialize();
+      expect(
+        (await restarted.handle({ type: "world.read", worldId })).result,
+      ).toMatchObject({ playTimeline: { activeInvocationExchangeId: null } });
+      expect(
+        (await cancel(retryPage.activeInvocationExchangeId!)).result,
+      ).toEqual({
+        outcome: "cancellation_requested",
+      });
+      expect(retrySignal.aborted).toBe(true);
+      await running;
+      expect(await readPage()).toMatchObject({
+        activeInvocationExchangeId: null,
+      });
+    } finally {
+      await cancel("original-player");
+      await cancel(next);
+      await running;
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+function playNarrativeResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [
+        {
+          message: { role: "assistant", content: "Alex nods." },
+          finish_reason: "stop",
+        },
+      ],
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
+
+async function createRuntimeWithModel(label: string) {
+  const { root, worldId } = await createWorld(label);
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Play identity",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "test",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    },
+  });
+  return { root, worldId, runtime };
+}
+
+test("Runtime 在后置生成期间显示运行中，完成后清除调用身份", async () => {
+  const { worldId, runtime } = await createRuntimeWithModel(
+    "runtime-followup-identity",
+  );
+  const created = (
+    await runtime.handle({
+      type: "play.create",
+      name: "Followups",
+      files: followupPlayPreset().files,
+    })
+  ).result as { preset: { id: string } };
+  await runtime.handle({ type: "play.select", presetId: created.preset.id });
+  const followupStarted = Promise.withResolvers<void>();
+  let dispatch = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (_url, options) => {
+      if (dispatch++ === 0) return playNarrativeResponse();
+      const signal = options?.signal;
+      if (signal === undefined || signal === null)
+        throw new Error("Provider dispatch requires a cancellation signal");
+      followupStarted.resolve();
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Player cancelled", "AbortError")),
+          {
+            once: true,
+          },
+        );
+      });
+    }),
+  );
+  const chainId = "runtime-followup-identity";
+  const exchangeId = "followup-player";
+  const running = runtime.handle({
+    type: "play.chain.start",
+    worldId,
+    chainId,
+    exchangeId,
+    playerText: "I ask Alex.",
+  });
+  try {
+    await followupStarted.promise;
+    expect(
+      (await runtime.handle({ type: "world.read", worldId })).result,
+    ).toMatchObject({
+      head: "commit:2",
+      playTimeline: {
+        activeStatus: "running",
+        activeInvocationExchangeId: exchangeId,
+      },
+    });
+    expect(
+      (await runtime.handle({ type: "play.timeline.page", worldId, limit: 1 }))
+        .result,
+    ).toMatchObject({
+      activeStatus: "running",
+      activeInvocationExchangeId: exchangeId,
+    });
+  } finally {
+    await runtime.handle({
+      type: "play.chain.cancel",
+      worldId,
+      chainId,
+      exchangeId,
+    });
+    await running;
+    vi.unstubAllGlobals();
+  }
+  expect(
+    (await runtime.handle({ type: "world.read", worldId })).result,
+  ).toMatchObject({
+    playTimeline: { activeStatus: "ready", activeInvocationExchangeId: null },
+  });
+});
+
 test("检查进度不会把本进程仍在等待的 Provider 派发误判为遗留推进", async () => {
   const { worlds, worldId } = await createWorld(
     "play-chain-live-inspection-race",
@@ -5632,7 +5869,7 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
       cursor: tail.nextCursor!,
     })
   ).result;
-  expect(runtimePage).toEqual(earlier);
+  expect(runtimePage).toEqual({ ...earlier, activeInvocationExchangeId: null });
   const runtimeDetail = (
     await runtime.handle({
       type: "play.timeline.detail",

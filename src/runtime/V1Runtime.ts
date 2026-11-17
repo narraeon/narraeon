@@ -23,6 +23,7 @@ import {
   V1ProtocolError,
   v1Protocol,
   type V1PlayCallChainView,
+  type V1PlayTimelinePage,
   type V1Request,
   type V1Response,
 } from "../protocol/v1.ts";
@@ -881,7 +882,7 @@ export class V1Runtime {
                 playerViews,
                 extensionControls,
               ),
-              this.#worlds.playTimeline.readPage(request.worldId, 40),
+              this.#readPlayTimeline(request.worldId, 40),
               this.#worldRevisions.activeEpoch(request.worldId),
             ]);
           return {
@@ -1198,7 +1199,7 @@ export class V1Runtime {
         return this.#playCallChains.inspectWorld(request.worldId);
       case "play.timeline.page":
         await this.#worlds.ensureCurrentStorage(request.worldId);
-        return this.#worlds.playTimeline.readPage(
+        return this.#readPlayTimeline(
           request.worldId,
           request.limit,
           request.cursor,
@@ -1371,6 +1372,37 @@ export class V1Runtime {
         );
         return { cancelled: true };
     }
+  }
+
+  async #readPlayTimeline(
+    worldId: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<V1PlayTimelinePage> {
+    const page = await this.#worlds.playTimeline.readPage(
+      worldId,
+      limit,
+      cursor,
+    );
+    const activeInvocationExchangeId =
+      this.#playCallChains.currentInvocationExchangeId(
+        worldId,
+        page.activeChainId,
+      );
+    // Followups keep the live context running after the durable main reply settles.
+    return {
+      ...page,
+      activeInvocationExchangeId,
+      ...(activeInvocationExchangeId === null
+        ? {}
+        : {
+            activeStatus: "running",
+            activeCanRetry: false,
+            activeCanContinuePartial: false,
+            activeLastFailure: null,
+            activeLastFailureKind: undefined,
+          }),
+    };
   }
 
   async #modelHost(): Promise<FileNativeModelHost> {

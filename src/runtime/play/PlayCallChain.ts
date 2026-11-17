@@ -753,6 +753,19 @@ export class PlayCallChain {
     await this.#persist(session);
   }
 
+  /** A settled resident is finished even before its invocation map entry is removed. */
+  currentInvocationExchangeId(
+    worldId: string,
+    chainId: string | null,
+  ): string | null {
+    const active =
+      chainId === null ? undefined : this.#activeInvocations.get(chainId);
+    return active?.worldId === worldId &&
+      this.#active.get(active.chainId)?.status === "running"
+      ? active.exchangeId
+      : null;
+  }
+
   cancel(input: { worldId: string; chainId: string; exchangeId: string }): {
     outcome: "cancellation_requested" | "not_running";
   } {

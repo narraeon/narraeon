@@ -901,6 +901,8 @@ export interface V1PlayTimelinePage {
   generation: string;
   activeChainId: string | null;
   activeStatus: V1PlayCallChainStatus | null;
+  /** Live invocation identity; null when this Runtime owns none. Absent in legacy views. */
+  activeInvocationExchangeId?: string | null;
   activeCanRetry: boolean;
   activeCanContinuePartial?: boolean;
   activeLastFailure: string | null;
