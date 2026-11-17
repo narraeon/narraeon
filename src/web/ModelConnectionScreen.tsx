@@ -1,5 +1,7 @@
 import { uiText } from "./i18n.ts";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 
 import {
   hasCLIProxyThinkingSuffix,
@@ -82,6 +84,46 @@ export function ModelConnectionScreen({
   const [models, setModels] = useState<string[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const editing = useRef({ dirty, form, onLibraryChange });
+  useEffect(() => {
+    editing.current = { dirty, form, onLibraryChange };
+  });
+  const refreshForm = useCallback((next: ModelConnectionLibraryView) => {
+    const current = editing.current;
+    if (current.dirty) return;
+    const selected = next.connections.find(
+      ({ id }) => id === current.form.connectionId,
+    );
+    if (selected !== undefined) {
+      if (
+        selected.baseUrl !== current.form.baseUrl ||
+        selected.provider !== current.form.provider
+      )
+        setModels([]);
+      setForm(formFor(selected));
+    } else if (current.form.connectionId !== null)
+      setForm(emptyConnectionForm());
+  }, []);
+  const { target, syncFailed } = useReadTarget(
+    useCallback(
+      () => client.request<ModelConnectionLibraryView>({ type: "model.read" }),
+      [client],
+    ),
+    useCallback(
+      (next: ModelConnectionLibraryView) => {
+        editing.current.onLibraryChange(next);
+        refreshForm(next);
+      },
+      [refreshForm],
+    ),
+  );
+  const previousLibrary = useRef(library);
+  useEffect(() => {
+    if (previousLibrary.current === library) return;
+    previousLibrary.current = library;
+    target.accept();
+    refreshForm(library);
+  }, [library, target, refreshForm]);
   const active = library.connections.find(
     ({ id }) => id === library.activeConnectionId,
   );
@@ -99,6 +141,11 @@ export function ModelConnectionScreen({
     },
     [onDirtyChange],
   );
+
+  function acceptLibrary(next: ModelConnectionLibraryView): void {
+    target.accept();
+    onLibraryChange(next);
+  }
 
   function change(
     next: Partial<ConnectionForm>,
@@ -161,33 +208,35 @@ export function ModelConnectionScreen({
     if (pending !== null) return;
     setPending("save");
     try {
-      const next = await client.request<ModelConnectionLibraryView>({
-        type: "model.save",
-        connection: {
-          ...(form.connectionId === null
-            ? {}
-            : { connectionId: form.connectionId }),
-          name: form.name,
-          presetId: form.presetId,
-          provider: form.provider,
-          dialect: form.dialect,
-          baseUrl: form.baseUrl,
-          ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
-          modelId: form.modelId,
-          reasoningEffort: form.reasoningEffort,
-          reasoningSummary: form.reasoningSummary,
-          thinkingMode: form.thinkingMode,
-          supportsAllowedTools: form.supportsAllowedTools,
-          assistantPrefillMode: form.assistantPrefillMode,
-          thinkingBudgetTokens:
-            form.thinkingMode === "enabled"
-              ? Number(form.thinkingBudgetTokens)
-              : null,
-          contextWindowTokens: Number(form.contextWindowTokens),
-          maxOutputTokens: Number(form.maxOutputTokens),
-        },
-      });
-      onLibraryChange(next);
+      const next = await target.command(() =>
+        client.request<ModelConnectionLibraryView>({
+          type: "model.save",
+          connection: {
+            ...(form.connectionId === null
+              ? {}
+              : { connectionId: form.connectionId }),
+            name: form.name,
+            presetId: form.presetId,
+            provider: form.provider,
+            dialect: form.dialect,
+            baseUrl: form.baseUrl,
+            ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
+            modelId: form.modelId,
+            reasoningEffort: form.reasoningEffort,
+            reasoningSummary: form.reasoningSummary,
+            thinkingMode: form.thinkingMode,
+            supportsAllowedTools: form.supportsAllowedTools,
+            assistantPrefillMode: form.assistantPrefillMode,
+            thinkingBudgetTokens:
+              form.thinkingMode === "enabled"
+                ? Number(form.thinkingBudgetTokens)
+                : null,
+            contextWindowTokens: Number(form.contextWindowTokens),
+            maxOutputTokens: Number(form.maxOutputTokens),
+          },
+        }),
+      );
+      acceptLibrary(next);
       setDirty(false);
       const saved = next.connections.find(
         ({ id }) => id === next.activeConnectionId,
@@ -205,11 +254,13 @@ export function ModelConnectionScreen({
     if (pending !== null) return;
     setPending(connectionId);
     try {
-      const next = await client.request<ModelConnectionLibraryView>({
-        type: "model.select",
-        connectionId,
-      });
-      onLibraryChange(next);
+      const next = await target.command(() =>
+        client.request<ModelConnectionLibraryView>({
+          type: "model.select",
+          connectionId,
+        }),
+      );
+      acceptLibrary(next);
       onNotice(uiText("已切换当前模型配置；Runtime 不会自动故障转移。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
@@ -223,17 +274,19 @@ export function ModelConnectionScreen({
     setPending(`copy:${connection.id}`);
     try {
       const name = copyName(connection.name, library.connections);
-      const result = await client.request<CopyModelConnectionResult>({
-        type: "model.copy",
-        connectionId: connection.id,
-        name,
-      });
+      const result = await target.command(() =>
+        client.request<CopyModelConnectionResult>({
+          type: "model.copy",
+          connectionId: connection.id,
+          name,
+        }),
+      );
       const copied = result.library.connections.find(
         ({ id }) => id === result.copiedConnectionId,
       );
       if (copied === undefined)
         throw new Error(uiText("Runtime 没有返回已克隆的模型配置"));
-      onLibraryChange(result.library);
+      acceptLibrary(result.library);
       edit(copied);
       onNotice(
         uiText("已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。", {
@@ -251,11 +304,13 @@ export function ModelConnectionScreen({
     if (pending !== null) return;
     setPending(`delete:${connectionId}`);
     try {
-      const next = await client.request<ModelConnectionLibraryView>({
-        type: "model.delete",
-        connectionId,
-      });
-      onLibraryChange(next);
+      const next = await target.command(() =>
+        client.request<ModelConnectionLibraryView>({
+          type: "model.delete",
+          connectionId,
+        }),
+      );
+      acceptLibrary(next);
       if (form.connectionId === connectionId) startNew();
       onNotice(uiText("模型配置已从本机删除。"));
     } catch (error: unknown) {
@@ -269,15 +324,17 @@ export function ModelConnectionScreen({
     if (pending !== null) return;
     setPending("models");
     try {
-      const result = await client.request<{ models: string[] }>({
-        type: "model.models",
-        ...(form.connectionId === null
-          ? {}
-          : { connectionId: form.connectionId }),
-        provider: form.provider,
-        baseUrl: form.baseUrl,
-        ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
-      });
+      const result = await target.command(() =>
+        client.request<{ models: string[] }>({
+          type: "model.models",
+          ...(form.connectionId === null
+            ? {}
+            : { connectionId: form.connectionId }),
+          provider: form.provider,
+          baseUrl: form.baseUrl,
+          ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
+        }),
+      );
       setModels(result.models);
       onNotice(
         uiText("已从当前端点拉取 {count} 个模型 ID。", {
@@ -309,6 +366,8 @@ export function ModelConnectionScreen({
           <small>{active?.modelId ?? uiText("先保存一份可用连接")}</small>
         </div>
       </header>
+
+      <SyncNotice failed={syncFailed} onRead={() => void target.recover()} />
 
       <fieldset disabled={pending !== null} className="config-layout">
         <form

@@ -3,7 +3,9 @@ import { turnGuideWarnings } from "../shared/turn-guide.ts";
 import type { WorldPromptMaintenance } from "../protocol/worldMaintenance.ts";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 
 import type {
   ModelConnectionLibraryView,
@@ -234,13 +236,11 @@ export function PromptPreviewScreen({
   const [packageId, setPackageId] = useState(initialPackage?.localId ?? "");
   const [playerInput, setPlayerInput] = useState(uiText("我观察当前场景。"));
   const [turnNote, setTurnNote] = useState("");
-  const [preview, setPreview] = useState<PromptPreviewData | null>(null);
-  const [pending, setPending] = useState(false);
-  const [feedback, setFeedback] = useState<{
-    kind: "status" | "error";
-    text: string;
+  const [result, setResult] = useState<{
+    context: object;
+    value: PromptPreviewData;
   } | null>(null);
-  const requestVersion = useRef(0);
+  const [pendingKey, setPendingKey] = useState<object | null>(null);
 
   const selectedPackage = packages.find(
     (package_) => package_.localId === packageId,
@@ -260,48 +260,60 @@ export function PromptPreviewScreen({
     activeConnection !== undefined &&
     playerInput.trim().length > 0;
 
+  const query = {
+    type: "prompt.preview",
+    packageId,
+    playerInput: playerInput.trim(),
+    ...(turnNote.trim() === "" ? {} : { turnNote: turnNote.trim() }),
+    ...(activeConnection === undefined
+      ? {}
+      : { model: modelBinding(activeConnection) }),
+    ...(playPresets === undefined
+      ? {}
+      : {
+          playPresetId:
+            playPresetTarget?.presetId ?? playPresets.currentPresetId,
+          ...(playPresetTarget === undefined
+            ? {}
+            : { playPresetRevision: playPresetTarget.revision }),
+        }),
+  };
+  const contextKey = JSON.stringify({
+    query,
+    revision: currentPreset?.revision,
+    connection: activeConnection,
+  });
+  // A new visit to the same inputs must not revive an earlier in-flight preview.
+  const [context, setContext] = useState({ key: contextKey });
+  if (context.key !== contextKey) setContext({ key: contextKey });
+  const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<PromptPreviewData>(
+          (JSON.parse(context.key) as { query: V1Request }).query,
+        ),
+      [client, context],
+    ),
+    useCallback(
+      (value: PromptPreviewData) => setResult({ context, value }),
+      [context],
+    ),
+  );
+  const preview = result?.context === context ? result.value : null;
+  const pending = pendingKey === context;
+
   function invalidatePreview(): void {
-    requestVersion.current += 1;
-    setPending(false);
-    setPreview(null);
-    setFeedback(null);
+    setPendingKey(null);
+    setResult(null);
   }
 
   async function compilePreview(): Promise<void> {
-    if (!ready || activeConnection === undefined) return;
-    const version = requestVersion.current + 1;
-    requestVersion.current = version;
-    setPending(true);
-    setFeedback(null);
+    if (!ready) return;
+    setPendingKey(context);
     try {
-      const result = await client.request<PromptPreviewData>({
-        type: "prompt.preview",
-        packageId,
-        playerInput: playerInput.trim(),
-        ...(turnNote.trim() === "" ? {} : { turnNote: turnNote.trim() }),
-        model: modelBinding(activeConnection),
-        ...(playPresets === undefined
-          ? {}
-          : {
-              playPresetId:
-                playPresetTarget?.presetId ?? playPresets.currentPresetId,
-              ...(playPresetTarget === undefined
-                ? {}
-                : { playPresetRevision: playPresetTarget.revision }),
-            }),
-      });
-      if (requestVersion.current !== version) return;
-      setPreview(result);
-      setFeedback({
-        kind: "status",
-        text: uiText("真实编译已完成；没有调用模型，也没有改变内容或世界。"),
-      });
-    } catch (error: unknown) {
-      if (requestVersion.current !== version) return;
-      setPreview(null);
-      setFeedback({ kind: "error", text: errorText(error) });
+      await target.read();
     } finally {
-      if (requestVersion.current === version) setPending(false);
+      setPendingKey((current) => (current === context ? null : current));
     }
   }
 
@@ -437,9 +449,14 @@ export function PromptPreviewScreen({
             </>
           )}
 
-          {feedback === null ? null : (
-            <p role={feedback.kind === "error" ? "alert" : "status"}>
-              {feedback.text}
+          <SyncNotice
+            failed={syncFailed}
+            reason={syncError}
+            onRead={() => void target.recover()}
+          />
+          {preview !== null && (
+            <p role="status">
+              {uiText("真实编译已完成；没有调用模型，也没有改变内容或世界。")}
             </p>
           )}
         </section>
@@ -1517,8 +1534,4 @@ function contentBlockType(value: unknown): string {
     typeof value.type === "string"
     ? value.type
     : "raw";
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : uiText("真实提示词编译失败");
 }

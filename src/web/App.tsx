@@ -23,7 +23,7 @@ import {
 } from "../protocol/appPreferences.ts";
 import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
-import type { RuntimeClient } from "./runtimeClient.ts";
+import { RuntimeRequestError, type RuntimeClient } from "./runtimeClient.ts";
 import { ReadTarget } from "./ReadTarget.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
@@ -125,6 +125,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   } | null>(null);
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
+  const [localeRejection, setLocaleRejection] = useState<string | null>(null);
   const filesDirtyRef = useRef(filesDirty);
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
@@ -355,17 +356,22 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function saveLocale(locale: AppLocale): Promise<void> {
     if (workspace === null || localeSaving) return;
     setLocaleSaving(true);
+    setLocaleRejection(null);
     try {
-      const preferences = await client.request<AppPreferences>({
-        type: "preferences.save",
-        locale,
-      });
+      const preferences = await workspaceTarget.command(() =>
+        client.request<AppPreferences>({
+          type: "preferences.save",
+          locale,
+        }),
+      );
       setWebLocale(preferences.locale);
       updateWorkspace((current) => ({ ...current, preferences }));
       await readAfterCommit(refresh);
       setNotice(uiText("界面语言已保存。"));
     } catch (error: unknown) {
-      report(error);
+      if (error instanceof RuntimeRequestError && error.kind === "runtime")
+        setLocaleRejection(error.message);
+      else report(error);
     } finally {
       setLocaleSaving(false);
     }
@@ -987,6 +993,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             if (creationSyncFailed) void rereadCreation();
           }}
         />
+        {localeRejection !== null && (
+          <DismissibleNotice
+            role="alert"
+            text={localeRejection}
+            onDismiss={() => setLocaleRejection(null)}
+          />
+        )}
         {worldContent}
         {authoringContent}
         {screen !== "content" &&

@@ -181,6 +181,76 @@ test("a transient first-load failure recovers the bookmarked page automatically"
   ).toHaveCount(0);
 });
 
+test("a saved language with a lost response rereads preferences without repeating the save", async ({
+  page,
+  runtimeUrl,
+}) => {
+  let writes = 0;
+  let readbacks = 0;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type === "preferences.save") {
+      writes++;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await route.abort("failed");
+    } else {
+      if (writes && input.type === "workspace.read") readbacks++;
+      await route.continue();
+    }
+  });
+  await page.goto("/#/models");
+  await page.getByLabel("界面语言").selectOption("en");
+  await expect(page.getByLabel("Interface language")).toHaveValue("en");
+  expect(writes).toBe(1);
+  expect(readbacks).toBe(1);
+  expect(
+    (
+      await runtime<{ locale: string }>(page, runtimeUrl, {
+        type: "preferences.read",
+      })
+    ).locale,
+  ).toBe("en");
+});
+
+test("a rejected language change keeps its reason after manual recovery", async ({
+  page,
+}) => {
+  let rejected = false;
+  let offline = true;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type === "preferences.save") {
+      rejected = true;
+      return route.fulfill({
+        status: 409,
+        json: {
+          protocol: "narraeon.runtime/v1",
+          error: {
+            code: "preference_conflict",
+            message: "偏好版本冲突，请核对后再保存。",
+          },
+        },
+      });
+    }
+    if (input.type === "workspace.read" && rejected && offline)
+      return route.abort("failed");
+    await route.continue();
+  });
+  await page.goto("/#/models");
+  await page.getByLabel("界面语言").selectOption("en");
+  await expect(page.getByText("暂时无法同步", { exact: true })).toBeVisible();
+  offline = false;
+  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await expect(page.getByText("暂时无法同步", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("偏好版本冲突，请核对后再保存。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
+});
+
 test("first load retries once then offers a read-only recovery in the original position", async ({
   page,
 }) => {

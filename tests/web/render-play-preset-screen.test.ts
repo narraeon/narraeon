@@ -95,6 +95,48 @@ function outputs() {
   fireEvent.click(screen.getByRole("button", { name: "界面产物" }));
 }
 
+test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原因", async () => {
+  const initial = fixture();
+  const latest = { ...fixture(), name: "后台新名称", revision: "rev-new" };
+  const request = vi.fn(async (input: V1Request) => {
+    await Promise.resolve();
+    if (input.type === "play.save") throw new Error("版本冲突；请检查最新预设");
+    if (input.type === "play.read")
+      return { currentPresetId: latest.id, presets: [latest] };
+    return {};
+  });
+  render(
+    createElement(PlayPresetScreen, {
+      client: { request: request as <T>(input: V1Request) => Promise<T> },
+      initialLibrary: { currentPresetId: initial.id, presets: [initial] },
+      onLibraryChange: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
+  fireEvent.change(screen.getByLabelText("玩法预设名称"), {
+    target: { value: "我的名称草稿" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "新增提示词" }));
+  fireEvent.change(screen.getByLabelText("提示词正文"), {
+    target: { value: "我的正文草稿也必须保留" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await screen.findByText("版本冲突；请检查最新预设");
+  expect(screen.getByRole("option", { name: "后台新名称" })).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>("玩法预设名称").value).toBe(
+    "我的名称草稿",
+  );
+  expect(screen.getByText("未保存修改")).toBeTruthy();
+  expect(screen.getByLabelText<HTMLTextAreaElement>("提示词正文").value).toBe(
+    "我的正文草稿也必须保留",
+  );
+  expect(request.mock.calls.map(([input]) => input.type)).toEqual([
+    "play.save",
+    "play.read",
+  ]);
+});
+
 test("删除回执生效后列表读取失败，重试只读取重建的预设", async () => {
   const removed = fixture();
   const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认预设" };
@@ -104,7 +146,7 @@ test("删除回执生效后列表读取失败，重试只读取重建的预设",
     if (r.type === "play.delete")
       return { deleted: true, currentPresetId: rebuilt.id };
     if (r.type === "play.read") {
-      if (++reads === 1) throw new Error("Library unavailable");
+      if (++reads <= 2) throw new Error("Library unavailable");
       return { currentPresetId: rebuilt.id, presets: [rebuilt] };
     }
     return {};
@@ -119,11 +161,12 @@ test("删除回执生效后列表读取失败，重试只读取重建的预设",
   );
   fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
   fireEvent.click(screen.getByRole("button", { name: "删除预设" }));
-  const error = await screen.findByRole("alert");
-  expect(error.textContent).toContain("操作已完成");
-  expect(error.textContent).toContain("Library unavailable");
+  await screen.findByText("暂时无法同步");
+  expect(
+    screen.getByText("玩法预设已删除；删空后会自动重建默认预设。"),
+  ).toBeTruthy();
   expect(screen.queryByRole("button", { name: "删除预设" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
   await waitFor(() =>
     expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
       rebuilt.id,

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import type { V1Request } from "../protocol/v1.ts";
 import type {
   RenderedPlayerView,
@@ -46,12 +48,10 @@ export function InterfaceExtensionPreview({
   );
   const [worldId, setWorldId] = useState("");
   const [result, setResult] = useState<{
-    key: string;
+    context: object;
     preview: PlayerViewPreview;
   } | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestNumber = useRef(0);
+  const [pendingContext, setPendingContext] = useState<object | null>(null);
   const key = JSON.stringify({
     presetId,
     revision,
@@ -61,60 +61,64 @@ export function InterfaceExtensionPreview({
     conflict,
     scriptsEnabled,
   });
-  const [previousKey, setPreviousKey] = useState(key);
-  if (previousKey !== key) {
-    setPreviousKey(key);
-    setResult(null);
-    setPending(false);
-    setError(null);
-  }
-  const visible = result?.key === key ? result.preview : undefined;
+  const context = useMemo(() => ({ key }), [key]);
+  const visible = result?.context === context ? result.preview : undefined;
+  const pending = pendingContext === context;
+  const { target: worldsTarget, syncFailed: worldsSyncFailed } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<{ worlds: typeof worlds }>({ type: "workspace.read" }),
+      [client],
+    ),
+    useCallback(
+      (workspace: { worlds: typeof worlds }) => setWorlds(workspace.worlds),
+      [],
+    ),
+  );
   useEffect(() => {
-    let active = true;
-    void client
-      .request<{ worlds: typeof worlds }>({ type: "workspace.read" })
-      .then((workspace) => {
-        if (active) setWorlds(workspace.worlds);
-      })
-      .catch((error: unknown) => {
-        if (active) setError(String(error));
+    void worldsTarget.read();
+  }, [worldsTarget]);
+  const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(() => {
+      const input = JSON.parse(context.key) as {
+        presetId: string;
+        revision: string;
+        worldId: string;
+        files: Record<string, string>;
+        structure?: Record<string, unknown>;
+      };
+      return client.request<{ playerViewPreview: PlayerViewPreview }>({
+        type: "play.workbench.read",
+        presetId: input.presetId,
+        revision: input.revision,
+        worldId: input.worldId,
+        draft: {
+          files: input.files,
+          ...(input.structure === undefined
+            ? {}
+            : { structure: input.structure }),
+        },
       });
-    return () => {
-      active = false;
-      requestNumber.current += 1;
-    };
-  }, [client]);
-
-  useEffect(() => {
-    requestNumber.current += 1;
-  }, [key]);
+    }, [client, context]),
+    useCallback(
+      (snapshot: { playerViewPreview: PlayerViewPreview }) => {
+        if (
+          snapshot.playerViewPreview.worldId ===
+          (JSON.parse(context.key) as { worldId: string }).worldId
+        )
+          setResult({ context, preview: snapshot.playerViewPreview });
+      },
+      [context],
+    ),
+  );
 
   async function preview(): Promise<void> {
     if (worldId === "" || conflict) return;
-    const number = ++requestNumber.current;
-    setPending(true);
-    setError(null);
-    setResult(null);
+    setPendingContext(context);
     try {
-      const snapshot = await client.request<{
-        playerViewPreview: PlayerViewPreview;
-      }>({
-        type: "play.workbench.read",
-        presetId,
-        revision,
-        worldId,
-        draft: { files, ...(structure === undefined ? {} : { structure }) },
-      });
-      if (
-        number === requestNumber.current &&
-        snapshot.playerViewPreview.worldId === worldId
-      )
-        setResult({ key, preview: snapshot.playerViewPreview });
-    } catch (error: unknown) {
-      if (number === requestNumber.current)
-        setError(error instanceof Error ? error.message : String(error));
+      await target.read();
     } finally {
-      if (number === requestNumber.current) setPending(false);
+      setPendingContext((current) => (current === context ? null : current));
     }
   }
 
@@ -144,6 +148,10 @@ export function InterfaceExtensionPreview({
           ))}
         </select>
       </label>
+      <SyncNotice
+        failed={worldsSyncFailed}
+        onRead={() => void worldsTarget.recover()}
+      />
       <button
         type="button"
         disabled={pending || worldId === "" || conflict}
@@ -159,7 +167,11 @@ export function InterfaceExtensionPreview({
           )}
         </p>
       ) : null}
-      {error === null ? null : <p role="alert">{error}</p>}
+      <SyncNotice
+        failed={syncFailed}
+        reason={syncError}
+        onRead={() => void target.recover()}
+      />
       {visible === undefined ? null : (
         <>
           <datalist id="player-view-preview-sources">

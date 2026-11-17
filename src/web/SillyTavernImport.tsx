@@ -1,10 +1,13 @@
 import type { PlayPresetReceipt } from "./PlayPresetScreen.tsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { V1Request } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 import { scanVariables } from "./sillytavern-variable-preview.ts";
 import { readScripts } from "./sillytavern-scripts.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
+import { RuntimeRequestError } from "./RuntimeResponse.ts";
 
 import type {
   SillyTavernInspection,
@@ -119,10 +122,14 @@ export function SillyTavernImport({
   client,
   disabled,
   onImported,
+  onFailure,
+  librarySync,
 }: {
   client: { request<T = unknown>(request: V1Request): Promise<T> };
   disabled: boolean;
   onImported: (receipt: PlayPresetReceipt) => void;
+  onFailure?: () => Promise<unknown>;
+  librarySync?: { failed: boolean; onRead: () => void };
 }): React.JSX.Element {
   const [source, setSource] = useState<string>();
   const [name, setName] = useState("");
@@ -133,7 +140,10 @@ export function SillyTavernImport({
   const [showSettings, setShowSettings] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [preview, setPreview] = useState<SillyTavernConversion>();
-  const [busy, setBusy] = useState(false);
+  const [commandBusy, setBusy] = useState(false);
+  const [reading, setReading] = useState(false);
+  const busy = commandBusy || reading;
+  const [inspectionQuery, setInspectionQuery] = useState<string | null>(null);
   const [openReference, setOpenReference] = useState<number>();
   const [openDeclaration, setOpenDeclaration] = useState<string>();
   const [visibleDeclarations, setVisibleDeclarations] = useState(100);
@@ -152,6 +162,7 @@ export function SillyTavernImport({
     try {
       await work();
     } catch (cause) {
+      await onFailure?.();
       setError(
         cause instanceof Error
           ? errorMessage(cause.message)
@@ -161,24 +172,54 @@ export function SillyTavernImport({
       setBusy(false);
     }
   }
-  async function inspect(input: string, groupId?: string): Promise<void> {
-    const result = await client.request<SillyTavernInspection>({
+  const {
+    target: inspectionTarget,
+    syncFailed: inspectionSyncFailed,
+    syncError: inspectionSyncError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<SillyTavernInspection>(
+          JSON.parse(inspectionQuery ?? "{}") as V1Request,
+        ),
+      [client, inspectionQuery],
+    ),
+    useCallback((result: SillyTavernInspection) => {
+      setInspection(result);
+      setActive(result.prompts[0]?.id);
+      setActiveScript(undefined);
+      setShowSettings(false);
+      setShowResult(false);
+      setSelected([]);
+      setPreview(undefined);
+    }, []),
+  );
+  useEffect(() => {
+    if (inspectionQuery === null) return;
+    let active = true;
+    void inspectionTarget.read().finally(() => {
+      if (active) setReading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [inspectionTarget, inspectionQuery]);
+  function inspect(input: string, groupId?: string): void {
+    setReading(true);
+    const next = JSON.stringify({
       type: "play.sillytavern.inspect",
       source: input,
       ...(groupId === undefined ? {} : { groupId }),
     });
-    setInspection(result);
-    setActive(result.prompts[0]?.id);
-    setActiveScript(undefined);
-    setShowSettings(false);
-    setShowResult(false);
-    setSelected([]);
-    setPreview(undefined);
+    if (next === inspectionQuery)
+      void inspectionTarget.read().finally(() => setReading(false));
+    else setInspectionQuery(next);
   }
   function cancel(): void {
     setActive(undefined);
     setShowResult(false);
     setSource(undefined);
+    setInspectionQuery(null);
     setInspection(undefined);
     setPreview(undefined);
     setSelected([]);
@@ -301,6 +342,35 @@ export function SillyTavernImport({
     selected,
     name: name.trim(),
   });
+  const conversionQuery = JSON.stringify({
+    type: "play.sillytavern.preview",
+    ...request(),
+  });
+  const {
+    target: conversionTarget,
+    syncFailed: conversionSyncFailed,
+    syncError: conversionSyncError,
+  } = useReadTarget(
+    useCallback(
+      () =>
+        client.request<SillyTavernConversion>(
+          JSON.parse(conversionQuery) as V1Request,
+        ),
+      [client, conversionQuery],
+    ),
+    useCallback((result: SillyTavernConversion) => {
+      setPreview(result);
+      setShowResult(true);
+    }, []),
+  );
+  async function convert(): Promise<void> {
+    setReading(true);
+    try {
+      await conversionTarget.read();
+    } finally {
+      setReading(false);
+    }
+  }
   return (
     <>
       <label className="play-preset-import-control">
@@ -321,7 +391,7 @@ export function SillyTavernImport({
               setSelected([]);
               setSource(text);
               setName(file.name.replace(/\.json$/iu, "") || "SillyTavern");
-              await inspect(text);
+              inspect(text);
             });
           }}
         />
@@ -354,6 +424,28 @@ export function SillyTavernImport({
               )}
             </p>
             {error && <p role="alert">{error}</p>}
+            {librarySync && (
+              <SyncNotice
+                failed={librarySync.failed}
+                onRead={librarySync.onRead}
+              />
+            )}
+            <SyncNotice
+              failed={inspectionSyncFailed}
+              onRead={() => void inspectionTarget.recover()}
+            />
+            <SyncNotice
+              failed={conversionSyncFailed}
+              onRead={() => void conversionTarget.recover()}
+            />
+            {[inspectionSyncError, conversionSyncError].map((reason, index) =>
+              reason instanceof RuntimeRequestError &&
+              reason.kind === "runtime" ? (
+                <p key={index} role="alert">
+                  {errorMessage(reason.message)}
+                </p>
+              ) : null,
+            )}
             {inspection && (
               <>
                 <div className="st-import-fields">
@@ -378,7 +470,7 @@ export function SillyTavernImport({
                         disabled={busy}
                         onChange={(event) => {
                           const id = event.currentTarget.value;
-                          if (id) void run(() => inspect(source, id));
+                          if (id) inspect(source, id);
                         }}
                       >
                         <option value="">{uiText("请选择顺序组")}</option>
@@ -788,17 +880,7 @@ export function SillyTavernImport({
                       (inspection.groups.length > 0 &&
                         !inspection.selectedGroupId)
                     }
-                    onClick={() =>
-                      void run(async () => {
-                        setPreview(
-                          await client.request<SillyTavernConversion>({
-                            type: "play.sillytavern.preview",
-                            ...request(),
-                          }),
-                        );
-                        setShowResult(true);
-                      })
-                    }
+                    onClick={() => void convert()}
                   >
                     {uiText("转换预览")}
                   </button>

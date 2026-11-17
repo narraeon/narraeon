@@ -1,4 +1,5 @@
-import { readAfterCommit } from "./RequestOutcome.ts";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import {
   editPresetResources,
   presetResourceUsage,
@@ -23,7 +24,14 @@ import {
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type { V1Request } from "../protocol/v1.ts";
 
@@ -330,7 +338,7 @@ export function PlayPresetScreen({
       ? ""
       : preferredPresetFilePath(initial.draft?.files ?? initial.files),
   );
-  const [needsLibraryRead, setNeedsLibraryRead] = useState(false);
+  const [draftBase, setDraftBase] = useState(draft);
   const [newName, setNewName] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
   const [workspaceView, setWorkspaceView] =
@@ -342,17 +350,16 @@ export function PlayPresetScreen({
     () => library.presets.find(({ id }) => id === draft?.id),
     [draft?.id, library.presets],
   );
-  const savedEditable = saved?.draft ?? saved;
+  const savedEditable = draftBase;
   const contentDirty =
     draft !== null &&
-    savedEditable !== undefined &&
+    savedEditable !== null &&
     (JSON.stringify(draft.files) !== JSON.stringify(savedEditable.files) ||
       JSON.stringify(draft.structure) !==
         JSON.stringify(savedEditable.structure));
   const nameDirty =
-    draft !== null && saved !== undefined && draft.name !== saved.name;
-  const dirty =
-    draft !== null && saved !== undefined && (nameDirty || contentDirty);
+    draft !== null && draftBase !== null && draft.name !== draftBase.name;
+  const dirty = draft !== null && (nameDirty || contentDirty);
   const structuralPaths = useMemo(() => {
     const callChainPath =
       draft?.structure?.callChainPath ??
@@ -375,18 +382,42 @@ export function PlayPresetScreen({
   );
   const rawStructuralDirty =
     draft !== null &&
-    savedEditable !== undefined &&
+    savedEditable !== null &&
     [...structuralPaths].some(
       (path) => draft.files[path] !== savedEditable.files[path],
     );
   const structuredDirty =
     draft !== null &&
-    savedEditable !== undefined &&
+    savedEditable !== null &&
     JSON.stringify(draft.structure) !== JSON.stringify(savedEditable.structure);
   const structuralConflict = rawStructuralDirty && structuredDirty;
   const currentPreset = library.presets.find(
     ({ id }) => id === library.currentPresetId,
   );
+  const applyRead = useRef<
+    ((next: PlayPresetScreenLibrary) => void) | undefined
+  >(undefined);
+  const previousLibrary = useRef(initialLibrary);
+  useEffect(() => {
+    applyRead.current = (next) => applyLibrary(next, undefined, true);
+  });
+  const { target, syncFailed } = useReadTarget(
+    useCallback(
+      () => client.request<PlayPresetScreenLibrary>({ type: "play.read" }),
+      [client],
+    ),
+    useCallback(
+      (next: PlayPresetScreenLibrary) => applyRead.current?.(next),
+      [],
+    ),
+  );
+  useEffect(() => {
+    if (initialLibrary !== previousLibrary.current) {
+      previousLibrary.current = initialLibrary;
+      target.accept();
+      applyRead.current?.(initialLibrary);
+    }
+  }, [initialLibrary, target]);
 
   useEffect(() => {
     onDirtyChange(dirty);
@@ -395,6 +426,7 @@ export function PlayPresetScreen({
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   function acceptPreset({ currentPresetId, preset }: PlayPresetReceipt): void {
+    target.accept({ complete: false });
     const exists = library.presets.some(({ id }) => id === preset.id);
     applyLibrary(
       {
@@ -412,30 +444,47 @@ export function PlayPresetScreen({
   function applyLibrary(
     next: PlayPresetScreenLibrary,
     preferredId?: string,
+    preserveDraft = false,
   ): void {
     const selected =
       next.presets.find(({ id }) => id === preferredId) ??
       next.presets.find(({ id }) => id === selectedId) ??
       next.presets.find(({ id }) => id === next.currentPresetId) ??
       next.presets[0];
-    if (libraryMenu.current) libraryMenu.current.open = false;
+    if (!preserveDraft && libraryMenu.current) libraryMenu.current.open = false;
     setLibrary(next);
     onLibraryChange(next);
+    if (preserveDraft && dirty) {
+      const updated = next.presets.find(({ id }) => id === draft?.id);
+      if (updated !== undefined)
+        setDraft((current) =>
+          current === null
+            ? null
+            : {
+                ...current,
+                revision: updated.draft?.revision ?? updated.revision,
+                enabled: updated.enabled !== false,
+                scriptsEnabled: updated.scriptsEnabled === true,
+              },
+        );
+      return;
+    }
     setSelectedId(selected?.id ?? "");
     onSelectionChange?.(selected?.id ?? "");
     const editable = selected === undefined ? null : toEditablePreset(selected);
     setDraft(editable);
-    setFilePath(
-      editable === null ? "" : preferredPresetFilePath(editable.files),
+    setDraftBase(editable);
+    setFilePath((path) =>
+      editable === null
+        ? ""
+        : preserveDraft && path in editable.files
+          ? path
+          : preferredPresetFilePath(editable.files),
     );
   }
 
-  async function reloadLibrary(): Promise<void> {
-    const next = await client.request<PlayPresetScreenLibrary>({
-      type: "play.read",
-    });
-    applyLibrary(next);
-    setNeedsLibraryRead(false);
+  function request<T>(input: V1Request): Promise<T> {
+    return target.command(() => client.request<T>(input));
   }
 
   async function run(work: () => Promise<void>): Promise<void> {
@@ -470,6 +519,7 @@ export function PlayPresetScreen({
     onSelectionChange?.(id);
     const editable = toEditablePreset(next);
     setDraft(editable);
+    setDraftBase(editable);
     setFilePath(preferredPresetFilePath(editable.files));
     setFeedback(null);
     setWorkspaceView("call_chain");
@@ -479,6 +529,7 @@ export function PlayPresetScreen({
     if (saved === undefined) return;
     const editable = toEditablePreset(saved);
     setDraft(editable);
+    setDraftBase(editable);
     setFilePath(preferredPresetFilePath(editable.files));
     setFeedback({ kind: "status", text: uiText("已撤销当前未保存修改。") });
   }
@@ -555,7 +606,7 @@ export function PlayPresetScreen({
       return;
     }
     await run(async () => {
-      const receipt = await client.request<PlayPresetReceipt>({
+      const receipt = await request<PlayPresetReceipt>({
         type: "play.save",
         presetId: draft.id,
         name: draft.name,
@@ -579,15 +630,17 @@ export function PlayPresetScreen({
   async function exportPreset(): Promise<void> {
     if (draft === null) return;
     await run(async () => {
-      const result = await client.request<{
+      const result = await request<{
         files: { path: string; contents: string }[];
       }>({ type: "play.export", presetId: draft.id });
       const blob = new Blob([JSON.stringify(result.files, null, 2)], {
         type: "application/json",
       });
-      const outcome = await saveFile(`${draft.name}.play-preset.json`, {
-        blob,
-      });
+      const outcome = await target.command(() =>
+        saveFile(`${draft.name}.play-preset.json`, {
+          blob,
+        }),
+      );
       if (outcome !== "cancelled")
         setFeedback({ kind: "status", text: uiText("预设已导出。") });
     });
@@ -610,7 +663,7 @@ export function PlayPresetScreen({
         throw new Error(
           uiText("无法识别此预设。请选择通过“导出预设”生成的文件。"),
         );
-      const result = await client.request<PlayPresetReceipt>({
+      const result = await request<PlayPresetReceipt>({
         type: "play.import",
         name:
           file.name.replace(/\.play-preset\.json$/iu, "") || uiText("导入玩法"),
@@ -684,15 +737,7 @@ export function PlayPresetScreen({
         />
       )}
 
-      {needsLibraryRead && (
-        <button
-          type="button"
-          disabled={pending || dirty}
-          onClick={() => void run(reloadLibrary)}
-        >
-          {uiText("重试")}
-        </button>
-      )}
+      <SyncNotice failed={syncFailed} onRead={() => void target.recover()} />
       <fieldset disabled={pending} className="play-preset-workspace">
         <legend className="visually-hidden">{uiText("玩法预设工作区")}</legend>
         <div className="play-preset-layout">
@@ -735,7 +780,7 @@ export function PlayPresetScreen({
                     disabled={pending || dirty || newName.trim() === ""}
                     onClick={() =>
                       void run(async () => {
-                        const result = await client.request<PlayPresetReceipt>({
+                        const result = await request<PlayPresetReceipt>({
                           type: "play.create",
                           name: newName.trim(),
                         });
@@ -758,12 +803,11 @@ export function PlayPresetScreen({
                       disabled={pending || dirty}
                       onClick={() =>
                         void run(async () => {
-                          const result =
-                            await client.request<PlayPresetReceipt>({
-                              type: "play.create",
-                              name: template.name,
-                              files: structuredClone(template.files),
-                            });
+                          const result = await request<PlayPresetReceipt>({
+                            type: "play.create",
+                            name: template.name,
+                            files: structuredClone(template.files),
+                          });
                           acceptPreset(result);
                           setFeedback({
                             kind: "status",
@@ -781,6 +825,11 @@ export function PlayPresetScreen({
                   <SillyTavernImport
                     client={client}
                     disabled={pending || dirty}
+                    onFailure={() => target.recover()}
+                    librarySync={{
+                      failed: syncFailed,
+                      onRead: () => void target.recover(),
+                    }}
                     onImported={(receipt) => {
                       acceptPreset(receipt);
                       setFeedback({
@@ -869,12 +918,11 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            const receipt =
-                              await client.request<PlayPresetReceipt>({
-                                type: "play.enable",
-                                presetId: draft.id,
-                                enabled: draft.enabled === false,
-                              });
+                            const receipt = await request<PlayPresetReceipt>({
+                              type: "play.enable",
+                              presetId: draft.id,
+                              enabled: draft.enabled === false,
+                            });
                             acceptPreset(receipt);
                             setFeedback({
                               kind: "status",
@@ -893,12 +941,11 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            const receipt =
-                              await client.request<PlayPresetReceipt>({
-                                type: "play.scripts",
-                                presetId: draft.id,
-                                enabled: draft.scriptsEnabled !== true,
-                              });
+                            const receipt = await request<PlayPresetReceipt>({
+                              type: "play.scripts",
+                              presetId: draft.id,
+                              enabled: draft.scriptsEnabled !== true,
+                            });
                             acceptPreset(receipt);
                             setFeedback({
                               kind: "status",
@@ -924,11 +971,10 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            const copied =
-                              await client.request<PlayPresetReceipt>({
-                                type: "play.copy",
-                                presetId: draft.id,
-                              });
+                            const copied = await request<PlayPresetReceipt>({
+                              type: "play.copy",
+                              presetId: draft.id,
+                            });
                             acceptPreset(copied);
                             setFeedback({
                               kind: "status",
@@ -953,7 +999,7 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() =>
                           void run(async () => {
-                            const receipt = await client.request<{
+                            const receipt = await request<{
                               currentPresetId: string;
                             }>({
                               type: "play.delete",
@@ -967,14 +1013,14 @@ export function PlayPresetScreen({
                                 p.enabled !== false &&
                                 p.id === receipt.currentPresetId,
                             );
+                            target.accept({ complete: false });
                             applyLibrary({
                               currentPresetId: receipt.currentPresetId,
                               presets: currentStillPresent ? remaining : [],
                             });
                             // Runtime rebuilds the default library after deletion of the last enabled preset.
                             if (!currentStillPresent) {
-                              setNeedsLibraryRead(true);
-                              await readAfterCommit(reloadLibrary);
+                              await target.read();
                             }
                             setFeedback({
                               kind: "status",
@@ -1260,12 +1306,10 @@ export function PlayPresetScreen({
                     }
                     onClick={() =>
                       void run(async () => {
-                        const receipt = await client.request<PlayPresetReceipt>(
-                          {
-                            type: "play.select",
-                            presetId: draft.id,
-                          },
-                        );
+                        const receipt = await request<PlayPresetReceipt>({
+                          type: "play.select",
+                          presetId: draft.id,
+                        });
                         acceptPreset(receipt);
                         setFeedback({
                           kind: "status",

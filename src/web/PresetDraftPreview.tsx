@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useReadTarget } from "./useReadTarget.ts";
+import { SyncNotice } from "./SyncNotice.tsx";
 import type { V1Request } from "../protocol/v1.ts";
 import type { PlayPresetWorkbenchSnapshot } from "./PlayPresetScreen.tsx";
 import {
@@ -44,43 +46,41 @@ export function PresetDraftPreview({
     output,
   });
   const [result, setResult] = useState<{
-    key: string;
+    context: object;
     snapshot: PlayPresetWorkbenchSnapshot;
   }>();
-  const [readAttempt, setReadAttempt] = useState(0);
-  const [error, setError] = useState<{ key: string; message: string }>();
   const [sample, setSample] = useState<string>();
   const [draft, setDraft] = useState("");
   const [disabled, setDisabled] = useState(false);
+  const context = useMemo(() => ({ key }), [key]);
+  const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(() => {
+      const input = JSON.parse(context.key) as {
+        presetId: string;
+        revision: string;
+        files: Record<string, string>;
+        structure: Record<string, unknown>;
+      };
+      return client.request<PlayPresetWorkbenchSnapshot>({
+        type: "play.workbench.read",
+        presetId: input.presetId,
+        revision: input.revision,
+        draft: { files: input.files, structure: input.structure },
+      });
+    }, [client, context]),
+    useCallback(
+      (snapshot: PlayPresetWorkbenchSnapshot) =>
+        setResult({ context, snapshot }),
+      [context],
+    ),
+  );
   useEffect(() => {
-    let active = true;
     const timer = setTimeout(() => {
-      void client
-        .request<PlayPresetWorkbenchSnapshot>({
-          type: "play.workbench.read",
-          presetId,
-          revision,
-          draft: { files, structure },
-        })
-        .then((snapshot) => {
-          if (active) {
-            setResult({ key, snapshot });
-            setError(undefined);
-          }
-        })
-        .catch((error: unknown) => {
-          if (active) {
-            setResult(undefined);
-            setError({ key, message: String(error) });
-          }
-        });
+      void target.read();
     }, 250);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [client, key, presetId, revision, files, structure, readAttempt]);
-  const snapshot = result?.key === key ? result.snapshot : undefined;
+    return () => clearTimeout(timer);
+  }, [target]);
+  const snapshot = result?.context === context ? result.snapshot : undefined;
   const artifact = snapshot?.artifactPreviews.find(
     (a) => a.requestId === requestId && a.output === output,
   );
@@ -157,17 +157,12 @@ export function PresetDraftPreview({
           "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this preset's script settings.",
         )}
       </p>
-      {error?.key === key ? (
-        <div role="alert">
-          {error.message}{" "}
-          <button
-            type="button"
-            onClick={() => setReadAttempt((value) => value + 1)}
-          >
-            {t("重试", "Retry")}
-          </button>
-        </div>
-      ) : !snapshot ? (
+      <SyncNotice
+        failed={syncFailed}
+        reason={syncError}
+        onRead={() => void target.recover()}
+      />
+      {!snapshot && !syncFailed ? (
         <p role="status">{t("正在解析当前草稿…", "Resolving draft…")}</p>
       ) : null}
       {artifact && (

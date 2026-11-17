@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import {
@@ -22,6 +22,56 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 afterEach(() => {
   cleanup();
   setWebLocale("zh-CN");
+});
+
+test("拒绝保存后读回最新模型配置并保留表单草稿，恢复失败可以只读重试", async () => {
+  const original = modelLibrary();
+  const latest = modelLibrary();
+  latest.connections[0]!.name = "另一页面保存的模型";
+  let offline = true;
+  const requests: string[] = [];
+  const client = {
+    request: async (input: V1Request) => {
+      await Promise.resolve();
+      requests.push(input.type);
+      if (input.type === "model.save")
+        throw new Error("配置版本冲突；请检查最新配置再保存");
+      if (input.type === "model.read" && !offline) return latest;
+      throw new Error("offline");
+    },
+  } as unknown as RuntimeClient;
+  function Harness() {
+    const [library, setLibrary] = useState(original);
+    const [notice, setNotice] = useState("");
+    return createElement(
+      "div",
+      null,
+      createElement("p", { role: "alert" }, notice),
+      createElement(ModelConnectionScreen, {
+        client,
+        library,
+        onLibraryChange: setLibrary,
+        onNotice: setNotice,
+        onDirtyChange: vi.fn(),
+      }),
+    );
+  }
+  render(createElement(Harness));
+  fireEvent.change(screen.getByLabelText("配置名称"), {
+    target: { value: "保留我的编辑" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
+  await screen.findByText("暂时无法同步");
+  expect(requests).toEqual(["model.save", "model.read"]);
+  offline = false;
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await screen.findByText("另一页面保存的模型", { selector: "strong" });
+  expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
+    "保留我的编辑",
+  );
+  expect(screen.getByText("配置版本冲突；请检查最新配置再保存")).toBeTruthy();
+  expect(screen.queryByText("暂时无法同步")).toBeNull();
+  expect(requests).toEqual(["model.save", "model.read", "model.read"]);
 });
 
 test("模型保存回执到达前保护当前编辑，结束后可继续修改", async () => {

@@ -64,6 +64,7 @@ import type {
 } from "../protocol/v1.ts";
 import {
   defaultAppReadingPreferences,
+  type AppPreferences,
   type AppReadingPreferences,
 } from "../protocol/appPreferences.ts";
 import type {
@@ -458,6 +459,38 @@ export function WorldPage({
     syncFailed,
     syncError: worldSyncError,
   } = useReadTarget(loadWorld, applyReadWorld);
+  const readingChange = useRef(onReadingPreferencesChange);
+  useEffect(() => {
+    readingChange.current = onReadingPreferencesChange;
+  }, [onReadingPreferencesChange]);
+  const applyReadingPreferences = useCallback(
+    (reading: AppReadingPreferences) => {
+      setReadingPreferences(reading);
+    },
+    [],
+  );
+  const { target: readingTarget, syncFailed: readingSyncFailed } =
+    useReadTarget(
+      useCallback(
+        () =>
+          requestRuntime<AppPreferences>(client, { type: "preferences.read" }),
+        [client],
+      ),
+      useCallback(
+        (preferences: AppPreferences) => {
+          applyReadingPreferences(preferences.reading);
+          readingChange.current?.(preferences.reading);
+        },
+        [applyReadingPreferences],
+      ),
+    );
+  const observedReading = useRef(initialReadingPreferences);
+  useEffect(() => {
+    if (initialReadingPreferences === observedReading.current) return;
+    observedReading.current = initialReadingPreferences;
+    readingTarget.accept();
+    applyReadingPreferences(initialReadingPreferences);
+  }, [initialReadingPreferences, readingTarget, applyReadingPreferences]);
   useEffect(() => {
     void worldTarget.read();
   }, [worldTarget]);
@@ -1584,8 +1617,15 @@ export function WorldPage({
     setReadingPreferences(next);
     setReadingPreferencesSaving(true);
     try {
-      await client.request({ type: "preferences.save", reading: next });
-      onReadingPreferencesChange?.(next);
+      const preferences = await readingTarget.command(() =>
+        requestRuntime<AppPreferences>(client, {
+          type: "preferences.save",
+          reading: next,
+        }),
+      );
+      readingTarget.accept();
+      setReadingPreferences(preferences.reading);
+      onReadingPreferencesChange?.(preferences.reading);
     } catch (reason: unknown) {
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
@@ -2654,12 +2694,18 @@ export function WorldPage({
           </aside>
 
           {readingOpen ? (
-            <ReadingPreferencesPopover
-              value={readingPreferences}
-              saving={readingPreferencesSaving}
-              onChange={(next) => void saveReadingPreferences(next)}
-              onClose={() => setReadingOpen(false)}
-            />
+            <>
+              <SyncNotice
+                failed={readingSyncFailed}
+                onRead={() => void readingTarget.recover()}
+              />
+              <ReadingPreferencesPopover
+                value={readingPreferences}
+                saving={readingPreferencesSaving}
+                onChange={(next) => void saveReadingPreferences(next)}
+                onClose={() => setReadingOpen(false)}
+              />
+            </>
           ) : null}
 
           {dialog === "reading" ? (

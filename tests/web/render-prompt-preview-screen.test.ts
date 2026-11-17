@@ -2,21 +2,156 @@
 
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { V1Request } from "../../src/protocol/v1.ts";
+import { RuntimeRequestError } from "../../src/web/RuntimeResponse.ts";
 import {
   PromptPreviewScreen,
   type PromptPreviewData,
 } from "../../src/web/PromptPreviewScreen.tsx";
 
 afterEach(cleanup);
+
+test("Runtime 的预览校验原因保留到当前输入修复", async () => {
+  let invalid = true;
+  const client = {
+    request: <T>() =>
+      invalid
+        ? Promise.reject(
+            new RuntimeRequestError("预设引用的文件不存在：blocks/missing.md", {
+              protocolCode: "preset_invalid",
+            }),
+          )
+        : Promise.resolve(previewFixture() as T),
+  };
+  render(
+    createElement(PromptPreviewScreen, {
+      client,
+      packages: [
+        {
+          localId: "package-dormitory",
+          title: "宿舍内容",
+          status: "usable",
+          gameplay: { mode: "interactive-fiction" },
+        },
+      ],
+      initialPackageId: "package-dormitory",
+      playPresets: presetLibrary(),
+      model: modelLibrary(),
+      onPackageSelect: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+  await screen.findByText("预设引用的文件不存在：blocks/missing.md");
+  invalid = false;
+  fireEvent.change(screen.getByLabelText("预览玩家输入"), {
+    target: { value: "修复后的预览输入" },
+  });
+  expect(
+    screen.queryByText("预设引用的文件不存在：blocks/missing.md"),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+  await screen.findByRole("heading", { name: "编译通过" });
+});
+
+test.each(["success", "failure"])(
+  "切换预设后丢弃旧预览的迟到 %s，返回旧预设也不复活旧结果",
+  async (outcome) => {
+    const deferred = Promise.withResolvers<PromptPreviewData>();
+    const started = Promise.withResolvers<void>();
+    const client = {
+      request: <T>() => {
+        started.resolve();
+        return deferred.promise as Promise<T>;
+      },
+    };
+    const library = presetLibrary();
+    library.presets.push({
+      ...library.presets[0]!,
+      id: "second",
+      name: "另一份预设",
+    });
+    const component = (presetId: string) =>
+      createElement(PromptPreviewScreen, {
+        client,
+        packages: [
+          {
+            localId: "package-dormitory",
+            title: "宿舍内容",
+            status: "usable",
+            gameplay: { mode: "interactive-fiction" },
+          },
+        ],
+        initialPackageId: "package-dormitory",
+        playPresets: library,
+        model: modelLibrary(),
+        onPackageSelect: vi.fn(),
+        playPresetTarget: { presetId, revision: "rev-1" },
+      });
+    const view = render(component("preset-current"));
+    fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+    await started.promise;
+    view.rerender(component("second"));
+    view.rerender(component("preset-current"));
+    await act(async () => {
+      if (outcome === "success") deferred.resolve(previewFixture());
+      else deferred.reject(new Error("old network failure"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("heading", { name: "编译通过" })).toBeNull();
+    expect(screen.queryByText("暂时无法同步")).toBeNull();
+  },
+);
+
+test("预览读取失败保留上次结果，恢复一次后提供只读重新读取", async () => {
+  let offline = false;
+  let reads = 0;
+  const client = {
+    request: async <T>() => {
+      await Promise.resolve();
+      reads++;
+      if (offline) throw new Error("offline");
+      return previewFixture() as T;
+    },
+  };
+  render(
+    createElement(PromptPreviewScreen, {
+      client,
+      packages: [
+        {
+          localId: "package-dormitory",
+          title: "宿舍内容",
+          status: "usable",
+          gameplay: { mode: "interactive-fiction" },
+        },
+      ],
+      initialPackageId: "package-dormitory",
+      playPresets: presetLibrary(),
+      model: modelLibrary(),
+      onPackageSelect: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+  await screen.findByRole("heading", { name: "编译通过" });
+  offline = true;
+  fireEvent.click(screen.getByRole("button", { name: "重新生成真实预览" }));
+  await screen.findByText("暂时无法同步");
+  expect(screen.getByRole("heading", { name: "编译通过" })).toBeTruthy();
+  expect(reads).toBe(3);
+  offline = false;
+  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
+  expect(reads).toBe(4);
+});
 
 describe("提示词预览界面", () => {
   test("先明确预览输入，再按逻辑消息、材料、Provider 和诊断整理真实结果", async () => {

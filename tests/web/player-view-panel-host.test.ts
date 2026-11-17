@@ -7,6 +7,7 @@ import {
   screen,
   fireEvent,
   act,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -107,6 +108,53 @@ function host(panels: FrontendPlayerViewPanelProjection[]) {
 }
 
 describe("player-view panel frontend seam", () => {
+  test("界面预览断网保留最后画面并只自动恢复一次，手动重新读取仍可用", async () => {
+    let offline = false;
+    let reads = 0;
+    const client = {
+      request: async (request: V1Request) => {
+        await Promise.resolve();
+        if (request.type === "workspace.read")
+          return { worlds: [{ worldId: "world-1", title: "世界" }] };
+        reads++;
+        if (offline) throw new Error("offline");
+        return {
+          playerViewPreview: {
+            worldId: "world-1",
+            head: "head-1",
+            panels: [panel("value")],
+            playerViews: { views: [], diagnostics: [] },
+          },
+        };
+      },
+    } as unknown as { request<T>(request: V1Request): Promise<T> };
+    render(
+      createElement(InterfaceExtensionPreview, {
+        client,
+        presetId: "preset-1",
+        revision: "rev-1",
+        files: {},
+        structure: undefined,
+        conflict: false,
+        scriptsEnabled: true,
+      }),
+    );
+    await screen.findByRole("option", { name: "世界" });
+    fireEvent.change(screen.getByLabelText("预览世界"), {
+      target: { value: "world-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "预览界面" }));
+    await screen.findByTitle("current");
+    offline = true;
+    fireEvent.click(screen.getByRole("button", { name: "预览界面" }));
+    await screen.findByText("暂时无法同步");
+    expect(screen.getByTitle("current")).toBeTruthy();
+    expect(reads).toBe(3);
+    offline = false;
+    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
+    expect(reads).toBe(4);
+  });
   test("停用脚本会卸载旧预览，重新启用也不接受停用前的在途结果", async () => {
     const snapshot = {
       playerViewPreview: {
