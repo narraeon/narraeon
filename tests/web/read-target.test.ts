@@ -22,14 +22,13 @@ test("overlapping faults read again after an older read and never replay a comma
 });
 
 test("an ordinary read gets one recovery; manual recovery never retries itself", async () => {
-  const load = vi
-    .fn<() => Promise<string>>()
-    .mockRejectedValue(new Error("offline"));
+  const offline = new Error("offline");
+  const load = vi.fn<() => Promise<string>>().mockRejectedValue(offline);
   const sync = vi.fn();
   const target = new ReadTarget({ load, apply: vi.fn(), onSyncFailure: sync });
   expect(await target.read()).toBeNull();
   expect(load).toHaveBeenCalledTimes(2);
-  expect(sync).toHaveBeenLastCalledWith(true);
+  expect(sync).toHaveBeenLastCalledWith(true, offline);
   load.mockResolvedValue("back online");
   expect(await target.recover()).toBe("back online");
   expect(load).toHaveBeenCalledTimes(3);

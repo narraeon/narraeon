@@ -1,7 +1,7 @@
 interface ReadTargetOptions<T> {
   load: () => Promise<T>;
   apply: (value: T) => void;
-  onSyncFailure: (failed: boolean) => void;
+  onSyncFailure: (failed: boolean, reason?: unknown) => void;
 }
 
 /** A page's read-only recovery boundary. Commands and their receipts stay with the caller. */
@@ -86,9 +86,9 @@ export class ReadTarget<T> {
               this.options.onSyncFailure(false);
               result = value;
             }
-          } catch {
+          } catch (reason) {
             if (current() && version === this.version) {
-              if (recovering) this.options.onSyncFailure(true);
+              if (recovering) this.options.onSyncFailure(true, reason);
               else {
                 this.recoveryNeeded = true;
               }
