@@ -167,8 +167,8 @@ const englishMessages: Record<string, string> = {
     "Append player guidance to input (default)",
   "玩家本轮临时要求放入 instructions":
     "Include player guidance in instructions",
-  "预设和世界的固定本轮提示始终放入 instructions。使用 GPT-6.2 时，可将玩家的本轮临时要求一起放入其中。":
-    "Fixed turn guidance from the preset and world goes in instructions. On GPT-6.2, you can include the player’s guidance for this turn there too.",
+  "预设和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。":
+    "Fixed turn guidance from the preset and world goes in instructions. GPT-6.2 reads that field after input. Enable this option to send temporary player guidance and each follow-up request’s own task there as well.",
   "CLIProxyAPI 转 Claude 的显式缓存标记":
     "Explicit cache markers for Claude via CLIProxyAPI",
   "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。":

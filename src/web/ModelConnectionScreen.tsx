@@ -674,7 +674,7 @@ export function ModelConnectionScreen({
                   </select>
                   <p className="field-note">
                     {uiText(
-                      "预设和世界的固定本轮提示始终放入 instructions。使用 GPT-6.2 时，可将玩家的本轮临时要求一起放入其中。",
+                      "预设和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。",
                     )}
                   </p>
                   {form.dialect === "cliproxyapi" && (
