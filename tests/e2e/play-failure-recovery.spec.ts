@@ -364,7 +364,7 @@ for (const locale of ["zh-CN", "en"] as const)
       .click();
     await page
       .getByRole("button", {
-        name: english ? "Fresh context" : "全新上下文",
+        name: english ? "New context" : "全新上下文",
         exact: true,
       })
       .click();
