@@ -1,3 +1,11 @@
+import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
+import { RequestContextDetails } from "./PlayRequestContextDetails.tsx";
+import {
+  ModelCallDetails,
+  ModelCallDetailsGroup,
+  ModelCallReasoning,
+  ModelCallTools,
+} from "./ModelCallDetails.tsx";
 import {
   confirmsAuthoringRequest,
   type AuthoringConversationView,
@@ -19,6 +27,7 @@ import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
   ContentTreeFile,
   V1SettingConversationExchange,
+  V1AuthoringRequestPreview,
   V1SettingConversationTurn,
   V1SettingAuthoringDiff,
   V1SettingImprovementHistoryItem,
@@ -58,6 +67,14 @@ interface SettingImprovementPanelProps {
   now: number;
   contentEditor: ContentTreeEditorProps;
   onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
+  onCallContext?: (
+    sessionId: string,
+    callId: string,
+  ) => Promise<PlayRequestContext>;
+  onRequestPreview?: (
+    sessionId: string,
+    requestId: string,
+  ) => Promise<V1AuthoringRequestPreview | null>;
   onSend: (message: string, requestId: string) => Promise<void>;
   onEditMessage?: (
     messageId: string,
@@ -124,6 +141,8 @@ export function SettingImprovementPanel({
   initialMessage,
   onInitialMessageStarted,
   onPreview,
+  onCallContext,
+  onRequestPreview,
   onCancel,
   onResume,
   onFreshContext,
@@ -710,6 +729,11 @@ export function SettingImprovementPanel({
             <AuthoringPromptPreview
               key={`${packageName}:${view?.sessionId ?? "fresh"}:${view?.messages.length ?? 0}`}
               requests={view?.requestPreviews ?? []}
+              onRequestPreview={
+                view === null || onRequestPreview === undefined
+                  ? undefined
+                  : (requestId) => onRequestPreview(view.sessionId, requestId)
+              }
               {...(onPreview === undefined ? {} : { onPreview })}
             />
 
@@ -737,7 +761,12 @@ export function SettingImprovementPanel({
                 view.turns.map((turn) => (
                   <SettingConversationTurnView
                     key={turn.id}
-                    turn={turn}
+                    turn={applyStreamingCall(turn, view)}
+                    revisingWorld={revisingWorld}
+                    loadContext={(callId) =>
+                      onCallContext?.(view.sessionId, callId) ??
+                      Promise.resolve({ status: "unavailable", messages: [] })
+                    }
                     currentFiles={contentEditor.files}
                     rollbackDisabled={rollbackDisabled}
                     rollbackableChangeSetIds={rollbackableChangeSetIds}
@@ -835,7 +864,10 @@ export function SettingImprovementPanel({
                 </div>
               ) : null}
               {view === null ? null : (
-                <ModelUsageBreakdown usage={view.usage} />
+                <details className="technical-details">
+                  <summary>{uiText("本对话累计用量")}</summary>
+                  <ModelUsageBreakdown usage={view.usage} />
+                </details>
               )}
             </div>
           </article>
@@ -1272,8 +1304,37 @@ function SettingContentPreview({
   );
 }
 
+function applyStreamingCall(
+  turn: V1SettingConversationTurn,
+  view: SettingImprovementView,
+): V1SettingConversationTurn {
+  const stream = view.progress.streaming;
+  if (stream?.callId === undefined || view.turns.at(-1)?.id !== turn.id)
+    return turn;
+  const exchanges = [...turn.exchanges];
+  const index = exchanges.findIndex(({ id }) => id === stream.callId);
+  const existing = exchanges[index];
+  if (existing?.status !== undefined && existing.status !== "streaming")
+    return turn;
+  const live: V1SettingConversationExchange = {
+    id: stream.callId,
+    exchange: view.progress.exchange,
+    toolCalls: [],
+    ...existing,
+    status: "streaming",
+    reasoning: stream.reasoningText ?? "",
+    text: stream.visibleText ?? "",
+    toolFragment: stream.toolFragment ?? "",
+  };
+  if (index < 0) exchanges.push(live);
+  else exchanges[index] = live;
+  return { ...turn, exchanges };
+}
+
 function SettingConversationTurnView({
   turn,
+  loadContext,
+  revisingWorld,
   currentFiles,
   rollbackDisabled,
   rollbackableChangeSetIds,
@@ -1290,6 +1351,8 @@ function SettingConversationTurnView({
   onSaveEdit,
 }: {
   turn: V1SettingConversationTurn;
+  loadContext: (callId: string) => Promise<PlayRequestContext>;
+  revisingWorld: boolean;
   currentFiles: readonly ContentTreeFile[];
   rollbackDisabled: boolean;
   rollbackableChangeSetIds: ReadonlySet<string> | undefined;
@@ -1305,15 +1368,6 @@ function SettingConversationTurnView({
   onCancelEdit: () => void;
   onSaveEdit: (policy: "keep" | "revert") => Promise<void>;
 }): React.JSX.Element {
-  const traces = turn.exchanges.filter(exchangeHasTrace);
-  const traceCount = traces.reduce(
-    (count, exchange) =>
-      count +
-      exchange.toolCalls.length +
-      (exchange.reasoning?.length ? 1 : 0) +
-      (exchange.toolCalls.length > 0 && exchange.text.length > 0 ? 1 : 0),
-    0,
-  );
   return (
     <section className="setting-conversation-turn">
       <article className="setting-conversation-message setting-conversation-user">
@@ -1363,51 +1417,74 @@ function SettingConversationTurnView({
         )}
       </article>
       {turn.exchanges.map((exchange) =>
-        exchange.toolCalls.length === 0 && exchange.text.length > 0 ? (
+        (exchange.status === "streaming" ||
+          exchange.status === "completed" ||
+          exchange.status === undefined) &&
+        exchange.toolCalls.length === 0 &&
+        exchange.text.length > 0 ? (
           <article
             className="setting-conversation-message setting-conversation-assistant"
             key={`text:${exchange.id}`}
           >
             <span className="setting-conversation-role">{uiText("AI")}</span>
             <p>{exchange.text}</p>
+            {exchange.status === "streaming" ? (
+              <small>{uiText("正在接收的正文")}</small>
+            ) : null}
           </article>
         ) : null,
       )}
-      {traces.length === 0 ? null : (
-        <details className="setting-turn-trace">
-          <summary>
-            <span>{uiText("本段调用详情")}</span>
-            <small>
-              {uiText("{count} 项记录", {
-                count: traceCount,
-              })}
-            </small>
-          </summary>
-          <div className="setting-turn-trace-exchanges">
-            {traces.map((exchange) => (
-              <SettingConversationExchangeTrace
-                key={exchange.id}
-                exchange={exchange}
-                currentFiles={currentFiles}
-                rollbackDisabled={rollbackDisabled}
-                rollbackableChangeSetIds={rollbackableChangeSetIds}
-                rollingBackFile={rollingBackFile}
-                onRollbackFile={onRollbackFile}
-              />
-            ))}
-          </div>
-        </details>
-      )}
+      <ModelCallDetailsGroup count={turn.exchanges.length}>
+        {turn.exchanges.map((exchange, index) => {
+          const original = turn.exchanges.findIndex(
+            ({ id }) => id === exchange.retryOf,
+          );
+          return (
+            <ModelCallDetails
+              key={exchange.id}
+              number={index + 1}
+              status={exchange.status}
+              retryOf={
+                original < 0
+                  ? undefined
+                  : uiText("重试第 {number} 次调用", { number: original + 1 })
+              }
+              failure={exchange.failure}
+              context={
+                <RequestContextDetails load={() => loadContext(exchange.id)} />
+              }
+              reasoning={<ModelCallReasoning text={exchange.reasoning} />}
+              tools={
+                <ModelCallTools
+                  count={exchange.toolCalls.length}
+                  stepText={
+                    exchange.toolCalls.length > 0 ? exchange.text : undefined
+                  }
+                  fragment={exchange.toolFragment}
+                >
+                  <SettingConversationTools
+                    exchange={exchange}
+                    revisingWorld={revisingWorld}
+                    currentFiles={currentFiles}
+                    rollbackDisabled={rollbackDisabled}
+                    rollbackableChangeSetIds={rollbackableChangeSetIds}
+                    rollingBackFile={rollingBackFile}
+                    onRollbackFile={onRollbackFile}
+                  />
+                </ModelCallTools>
+              }
+              usage={exchange.usage}
+            />
+          );
+        })}
+      </ModelCallDetailsGroup>
     </section>
   );
 }
 
-function exchangeHasTrace(exchange: V1SettingConversationExchange): boolean {
-  return (exchange.reasoning?.length ?? 0) > 0 || exchange.toolCalls.length > 0;
-}
-
-function SettingConversationExchangeTrace({
+function SettingConversationTools({
   exchange,
+  revisingWorld,
   currentFiles,
   rollbackDisabled,
   rollbackableChangeSetIds,
@@ -1415,6 +1492,7 @@ function SettingConversationExchangeTrace({
   onRollbackFile,
 }: {
   exchange: V1SettingConversationExchange;
+  revisingWorld: boolean;
   currentFiles: readonly ContentTreeFile[];
   rollbackDisabled: boolean;
   rollbackableChangeSetIds: ReadonlySet<string> | undefined;
@@ -1422,80 +1500,58 @@ function SettingConversationExchangeTrace({
   onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
 }): React.JSX.Element {
   return (
-    <details className="setting-conversation-trace">
-      <summary>
-        <strong>
-          {uiText("第 {exchange} 次模型交换", {
-            exchange: exchange.exchange,
-          })}
-        </strong>
-        <span>
-          {uiText("{count} 次工具调用", {
-            count: exchange.toolCalls.length,
-          })}
-        </span>
-      </summary>
-      <div className="setting-conversation-trace-body">
-        {exchange.reasoning === undefined ||
-        exchange.reasoning.length === 0 ? null : (
-          <details className="setting-exchange-reasoning">
-            <summary>{uiText("Provider 返回推理（不等同隐藏思维链）")}</summary>
-            <pre>{exchange.reasoning}</pre>
-          </details>
-        )}
-        {exchange.toolCalls.length > 0 && exchange.text.length > 0 ? (
-          <details className="setting-exchange-step-text">
-            <summary>{uiText("查看工具步骤文本（未进入最终回复）")}</summary>
-            <p>{exchange.text}</p>
-          </details>
-        ) : null}
-        {exchange.toolCalls.map((call) => (
-          <details
-            className={`setting-exchange-tool ${call.result?.isError === true ? "is-error" : "is-ok"}`}
-            key={call.callId}
-          >
-            <summary>
-              <strong>{uiText("调用 {tool}", { tool: call.name })}</strong>
-              <span>
-                {call.result === null
-                  ? uiText("等待 Runtime 结果")
-                  : call.result.isError
-                    ? uiText("拒绝／失败")
-                    : call.result.changes.length > 0
-                      ? uiText("当时生效 · {count} 个文件", {
+    <div className="model-call-tool-list">
+      {exchange.toolCalls.map((call) => (
+        <details
+          className={`setting-exchange-tool ${call.result?.isError === true ? "is-error" : "is-ok"}`}
+          key={call.callId}
+        >
+          <summary>
+            <strong>{uiText("调用 {tool}", { tool: call.name })}</strong>
+            <span>
+              {call.result === null
+                ? uiText("等待 Runtime 结果")
+                : call.result.isError
+                  ? uiText("拒绝／失败")
+                  : call.result.changes.length > 0
+                    ? uiText(
+                        revisingWorld
+                          ? "已修改修订工作树 · {count} 个文件"
+                          : "已修改内容包 · {count} 个文件",
+                        {
                           count: call.result.changes.length,
-                        })
-                      : uiText("成功")}
-              </span>
-            </summary>
-            <h5>{uiText("工具参数")}</h5>
-            <pre>{safeJson(call.arguments)}</pre>
-            {call.result === null ? null : (
-              <>
-                <h5>{uiText("Runtime 工具结果")}</h5>
-                <pre>{call.result.markdown}</pre>
-                <AcceptedChanges
-                  changes={call.result.changes}
-                  rollback={
-                    call.result.changeSetId === null ||
-                    (rollbackableChangeSetIds !== undefined &&
-                      !rollbackableChangeSetIds.has(call.result.changeSetId))
-                      ? undefined
-                      : {
-                          changeSetId: call.result.changeSetId,
-                          currentFiles,
-                          disabled: rollbackDisabled,
-                          rollingBackFile,
-                          onRollbackFile,
-                        }
-                  }
-                />
-              </>
-            )}
-          </details>
-        ))}
-      </div>
-    </details>
+                        },
+                      )
+                    : uiText("成功")}
+            </span>
+          </summary>
+          <h5>{uiText("工具参数")}</h5>
+          <pre>{safeJson(call.arguments)}</pre>
+          {call.result === null ? null : (
+            <>
+              <h5>{uiText("Runtime 工具结果")}</h5>
+              <pre>{call.result.markdown}</pre>
+              <AcceptedChanges
+                changes={call.result.changes}
+                rollback={
+                  call.result.changeSetId === null ||
+                  (rollbackableChangeSetIds !== undefined &&
+                    !rollbackableChangeSetIds.has(call.result.changeSetId))
+                    ? undefined
+                    : {
+                        changeSetId: call.result.changeSetId,
+                        currentFiles,
+                        disabled: rollbackDisabled,
+                        rollingBackFile,
+                        onRollbackFile,
+                      }
+                }
+              />
+            </>
+          )}
+        </details>
+      ))}
+    </div>
   );
 }
 
@@ -1707,8 +1763,9 @@ function SettingConversationProgress({
       ? 0
       : stream.reasoningChars + stream.textChars + stream.toolChars;
   const hasLiveTrace =
-    (stream?.reasoningText?.length ?? 0) > 0 ||
-    (stream?.toolFragment?.length ?? 0) > 0;
+    stream?.callId === undefined &&
+    ((stream?.reasoningText?.length ?? 0) > 0 ||
+      (stream?.toolFragment?.length ?? 0) > 0);
   return (
     <div className="setting-conversation-running" role="status">
       <span className="setting-conversation-spinner" aria-hidden="true" />
@@ -1734,7 +1791,7 @@ function SettingConversationProgress({
         {!stream?.visibleText?.length && stream?.tail.trim() ? (
           <p>{stream.tail}</p>
         ) : null}
-        {stream?.visibleText?.length ? (
+        {stream?.callId === undefined && stream?.visibleText?.length ? (
           <div className="setting-live-response">
             <strong>{uiText("正在接收的正文")}</strong>
             <pre>{stream.visibleText}</pre>

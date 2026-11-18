@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   V1AuthoringRequestPreview,
+  V1AuthoringRequestIdentity,
   V1SettingPromptPreview,
 } from "../protocol/v1.ts";
 import { getWebLocale } from "./i18n.ts";
@@ -12,8 +13,12 @@ type Compilation = V1SettingPromptPreview["compilation"];
 export function AuthoringPromptPreview({
   requests,
   onPreview,
+  onRequestPreview,
 }: {
-  requests: V1AuthoringRequestPreview[];
+  requests: (V1AuthoringRequestIdentity | V1AuthoringRequestPreview)[];
+  onRequestPreview?:
+    | ((requestId: string) => Promise<V1AuthoringRequestPreview | null>)
+    | undefined;
   onPreview?: () => Promise<Compilation | null>;
 }) {
   const zh = getWebLocale() === "zh-CN";
@@ -79,46 +84,97 @@ export function AuthoringPromptPreview({
               : "These retain each send's actual arrangement, not the next-send candidate."}
           </p>
           {requests.map((request, index) => (
-            <details
+            <RetainedPreview
               key={`${request.legacyBootstrap ? "legacy:" : ""}${request.requestId}`}
-            >
-              <summary>
-                {request.legacyBootstrap
+              request={request}
+              load={onRequestPreview}
+              label={
+                request.legacyBootstrap
                   ? zh
                     ? "旧会话原始提示"
                     : "Original legacy conversation prompt"
                   : zh
                     ? `发送请求 ${index + 1}`
-                    : `Sent request ${index + 1}`}
-              </summary>
-              <CompiledPrompt compilation={request.compilation} />
-              {request.wireRequest && (
-                <details>
-                  <summary>
-                    {zh
-                      ? "实际派发编码及 Runtime 来源"
-                      : "Sent encoding and Runtime sources"}
-                  </summary>
-                  <p>
-                    {zh
-                      ? "System 边界约束当前 epoch；历史中的 Runtime 通知标记切换位置。"
-                      : "The System boundary governs the current epoch; Runtime notices locate transitions in history."}
-                  </p>
-                  {request.wireRequest.redactedProviderContinuation && (
-                    <p>
-                      {zh
-                        ? "Provider 原生续传内容已隐藏。"
-                        : "Provider-native continuation is hidden."}
-                    </p>
-                  )}
-                  <pre>{JSON.stringify(request.wireRequest, null, 2)}</pre>
-                </details>
-              )}
-            </details>
+                    : `Sent request ${index + 1}`
+              }
+            />
           ))}
         </details>
       )}
     </section>
+  );
+}
+
+function RetainedPreview({
+  request,
+  load,
+  label,
+}: {
+  request: V1AuthoringRequestIdentity | V1AuthoringRequestPreview;
+  load:
+    | ((requestId: string) => Promise<V1AuthoringRequestPreview | null>)
+    | undefined;
+  label: string;
+}) {
+  const zh = getWebLocale() === "zh-CN";
+  const [preview, setPreview] = useState<V1AuthoringRequestPreview | null>(
+    "compilation" in request ? request : null,
+  );
+  const loader = useRef(load);
+  useEffect(() => {
+    loader.current = load;
+  }, [load]);
+  const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(
+      () => loader.current?.(request.requestId) ?? Promise.resolve(null),
+      [request.requestId],
+    ),
+    useCallback(
+      (value: V1AuthoringRequestPreview | null) => setPreview(value),
+      [],
+    ),
+  );
+  return (
+    <details
+      onToggle={(event) => {
+        if (event.currentTarget.open && preview === null && load !== undefined)
+          void target.read();
+      }}
+    >
+      <summary>{label}</summary>
+      <SyncNotice
+        failed={syncFailed}
+        reason={syncError}
+        onRead={() => void target.recover()}
+      />
+      {preview === null ? null : (
+        <>
+          <CompiledPrompt compilation={preview.compilation} />
+          {preview.wireRequest && (
+            <details>
+              <summary>
+                {zh
+                  ? "实际派发编码及 Runtime 来源"
+                  : "Sent encoding and Runtime sources"}
+              </summary>
+              <p>
+                {zh
+                  ? "System 边界约束当前 epoch；历史中的 Runtime 通知标记切换位置。"
+                  : "The System boundary governs the current epoch; Runtime notices locate transitions in history."}
+              </p>
+              {preview.wireRequest.redactedProviderContinuation && (
+                <p>
+                  {zh
+                    ? "Provider 原生续传内容已隐藏。"
+                    : "Provider-native continuation is hidden."}
+                </p>
+              )}
+              <pre>{JSON.stringify(preview.wireRequest, null, 2)}</pre>
+            </details>
+          )}
+        </>
+      )}
+    </details>
   );
 }
 

@@ -7649,30 +7649,11 @@ summary:focus-visible {
   background: var(--surface-selected);
 }
 
-.setting-turn-trace {
+.setting-conversation-turn > .model-call-details {
   justify-self: start;
   width: min(94%, 52rem);
   font-family: system-ui, sans-serif;
   font-size: 0.75rem;
-}
-
-.setting-turn-trace > summary {
-  width: fit-content;
-  padding: 0.3rem 0;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.setting-turn-trace > summary small {
-  margin-left: 0.55rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.setting-turn-trace-exchanges {
-  display: grid;
-  gap: 0.55rem;
-  margin-top: 0.45rem;
 }
 
 .setting-reader-page .setting-conversation-trace {
@@ -7684,55 +7665,6 @@ summary:focus-visible {
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--surface-inset);
-}
-
-.setting-conversation-trace > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.52rem 0.65rem;
-  cursor: pointer;
-}
-
-.setting-conversation-trace > summary span {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.setting-conversation-trace-body {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0 0.6rem 0.6rem;
-}
-
-.setting-reader-page .setting-exchange-reasoning,
-.setting-exchange-step-text {
-  display: block;
-  padding: 0;
-  overflow: hidden;
-  border-left: 2px solid var(--border);
-  background: var(--surface);
-}
-
-.setting-exchange-reasoning > summary,
-.setting-exchange-step-text > summary {
-  padding: 0.48rem 0.58rem;
-  color: var(--text);
-  font-size: 0.75rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.setting-exchange-reasoning pre,
-.setting-exchange-step-text p {
-  margin: 0;
-  padding: 0 0.58rem 0.58rem;
-}
-
-.setting-exchange-step-text p {
-  color: var(--muted);
-  white-space: pre-wrap;
 }
 
 .setting-reader-page .setting-exchange-tool {
@@ -8374,31 +8306,6 @@ summary:focus-visible {
   margin-left: 0.55rem;
   color: var(--muted);
   font-size: 0.75rem;
-}
-
-.world-timeline-trace-events {
-  display: grid;
-  gap: 0.7rem;
-  margin: 0.65rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.world-timeline-trace-events .call-chain-assistant-diagnostics article {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.world-timeline-trace-events .call-chain-assistant-diagnostics header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  color: var(--muted);
-}
-
-.world-timeline-trace-events .call-chain-assistant-diagnostics header span {
-  opacity: 0.62;
 }
 
 .world-story-column .call-chain-tool-call,
@@ -10543,5 +10450,61 @@ summary:focus-visible {
   display: block;
   width: 100%;
   text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.model-call-details > summary,
+.model-call > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+
+.model-call-details > summary {
+  display: list-item;
+  cursor: pointer;
+}
+
+.model-call-details > summary small {
+  margin-inline-start: 0.7rem;
+  color: var(--muted);
+}
+
+.model-call-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-block-start: 0.6rem;
+}
+
+.model-call {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.65rem;
+  min-width: 0;
+}
+
+.model-call h4 {
+  margin: 0;
+}
+
+.model-call-sections {
+  display: grid;
+  gap: 0.3rem;
+  margin-block-start: 0.5rem;
+}
+
+.model-call-empty {
+  padding: 0.35rem 0.5rem;
+}
+
+.model-call-step {
+  white-space: pre-wrap;
+}
+
+.model-call-failure {
+  display: grid;
+  gap: 0.25rem;
   overflow-wrap: anywhere;
 }

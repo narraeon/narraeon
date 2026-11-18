@@ -1084,8 +1084,12 @@ test("Google setting conversation settles ordered mixed calls and continues afte
     "Edit the opening.",
   );
   expect(first.runStatus).toBe("ready");
-  expect(first.requestPreviews?.[0]?.compilation).toEqual(candidate);
-  expect(first.requestPreviews?.[0]?.wireRequest?.body).toEqual(sent[0]);
+  const [firstPreview] = await service.readRequestPreviews(
+    localId,
+    first.sessionId,
+  );
+  expect(firstPreview?.compilation).toEqual(candidate);
+  expect(firstPreview?.wireRequest?.body).toEqual(sent[0]);
   const stored = await new FileNativeSettingImprovementStore(root).read(
     first.sessionId,
   );
@@ -1153,11 +1157,31 @@ test("Google setting conversation settles ordered mixed calls and continues afte
   expect(JSON.stringify(sent[2])).toContain("The changes are live.");
   expect(JSON.stringify(sent[2])).toContain("synthetic-signature-secret");
   expect(JSON.stringify(sent[2])).toContain("synthetic-opaque-secret");
-  expect(JSON.stringify(resumed.requestPreviews)).not.toContain(
-    "synthetic-signature-secret",
+  expect(
+    JSON.stringify(
+      await service.readRequestPreviews(localId, resumed.sessionId),
+    ),
+  ).not.toContain("synthetic-signature-secret");
+  expect(
+    JSON.stringify(
+      await service.readRequestPreviews(localId, resumed.sessionId),
+    ),
+  ).not.toContain("synthetic-opaque-secret");
+  const context = await service.readCallContext(
+    localId,
+    resumed.sessionId,
+    resumed.turns[1]!.exchanges[0]!.id,
   );
-  expect(JSON.stringify(resumed.requestPreviews)).not.toContain(
-    "synthetic-opaque-secret",
+  expect(context.status).toBe("available");
+  expect(context.messages).toContainEqual({
+    role: "assistant",
+    text: "The changes are live.",
+  });
+  expect(
+    context.messages.some(({ role }) => role === "tool · write-again"),
+  ).toBe(true);
+  expect(JSON.stringify(context)).not.toMatch(
+    /synthetic-(?:signature|opaque)-secret/u,
   );
   const incompatible = new FileNativeModelHost({
     provider: "chat_completions",
@@ -3290,6 +3314,7 @@ test("完整工具响应和原树指纹落盘后，重启只在该 revision 上�
     ...structuredClone(confirmed.requests![0]!),
     requestId: confirmed.activeRequestId,
     modelItemStart: assistantItemIndex - 1,
+    calls: [],
   });
   await store.save(confirmed);
 
@@ -4937,10 +4962,28 @@ test("new author snapshot corruption fails closed and upgrading keeps the old pr
     continuation: { kind: "continue_context", sessionId: first.sessionId },
   });
   expect(next.requestPreviews).toHaveLength(2);
-  expect(next.requestPreviews![0]).toMatchObject({
+  expect(
+    (
+      await fixture.session.readRequestPreviews(
+        fixture.packageId,
+        next.sessionId,
+      )
+    )[0],
+  ).toMatchObject({
     legacyBootstrap: true,
     compilation: saved.bootstrap,
   });
+  const legacyCall = next.turns[0]!.exchanges[0]!;
+  expect(legacyCall.usage).toBeUndefined();
+  expect(
+    (
+      await fixture.session.readCallContext(
+        fixture.packageId,
+        first.sessionId,
+        legacyCall.id,
+      )
+    ).status,
+  ).toBe("incomplete");
   expect(fixture.host.requests[1]!.bootstrap).toEqual(candidate);
 });
 
@@ -4982,7 +5025,11 @@ test("151 cold resume Google setting after published tools", async () => {
     requestId: "r151",
   });
   expect(next.runStatus).toBe("ready");
-  const previews = next.requestPreviews!;
+  const previews = await serviceFor(
+    root,
+    content,
+    after.host,
+  ).readRequestPreviews(localId, next.sessionId);
   expect(previews).toHaveLength(2);
   expect(previews[0]!.wireRequest?.endpointPath).not.toEqual(
     previews[1]!.wireRequest?.endpointPath,
@@ -5123,6 +5170,8 @@ test("设定完善中断正文在重启后继续发送，保持冻结请求及�
     runStatus: "interrupted",
     canContinuePartial: true,
   });
+  const originalCall = first.turns[0]!.exchanges[0]!;
+  expect(originalCall.status).toBe("interrupted");
   expect(first.messages).toHaveLength(1);
   const cold = serviceFor(
     fixture.root,
@@ -5146,6 +5195,30 @@ test("设定完善中断正文在重启后继续发送，保持冻结请求及�
   expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
     sent[0]?.messages,
   );
+  const retryCall = done.turns[0]!.exchanges[1]!;
+  expect(retryCall).toMatchObject({
+    status: "completed",
+    retryOf: originalCall.id,
+  });
+  const context = await cold.readCallContext(
+    fixture.packageId,
+    first.sessionId,
+    retryCall.id,
+  );
+  expect(context.status).toBe("available");
+  expect(context.messages).toContainEqual({
+    role: "assistant · prefill",
+    text: " \n半🙂",
+  });
+  const originalContext = await cold.readCallContext(
+    fixture.packageId,
+    first.sessionId,
+    originalCall.id,
+  );
+  expect(originalContext.status).toBe("available");
+  expect(
+    originalContext.messages.some(({ role }) => role === "assistant · prefill"),
+  ).toBe(false);
   const stored = await new FileNativeSettingImprovementStore(fixture.root).read(
     first.sessionId,
   );

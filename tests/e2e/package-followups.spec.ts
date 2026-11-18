@@ -323,7 +323,12 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
       .getByRole("button", { name: "关闭" })
       .click();
     await page.getByText("本段调用详情", { exact: true }).click();
-    await page.locator(".call-chain-followup summary").click();
+    const followupCall = page
+      .locator(".model-call")
+      .filter({ has: page.getByRole("heading", { name: /后置请求/u }) });
+    await followupCall.getByText("本次上下文", { exact: true }).click();
+    await expect(followupCall).toContainText("PACKAGE BROWSER PROMPT");
+    await followupCall.getByText("请求编码", { exact: true }).click();
     await expect(
       page.getByText("请求编码不可用（未提供或已超出保留窗口）"),
     ).toBeVisible();

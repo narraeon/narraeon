@@ -217,10 +217,8 @@ test("每轮调用先折叠成窄条，再逐层展开，并可一次全部收�
   renderPanel();
 
   const turnTrace = screen.getByText("本段调用详情").closest("details")!;
-  const exchange = screen.getByText("第 1 次模型交换").closest("details")!;
-  const reasoning = screen
-    .getByText("Provider 返回推理（不等同隐藏思维链）")
-    .closest("details")!;
+  const exchange = screen.getByText("工具调用 · 1 次").closest("details")!;
+  const reasoning = screen.getByText("模型推理").closest("details")!;
   const tool = screen.getByText("调用 setting_write_file").closest("details")!;
   const diff = document.querySelector<HTMLDetailsElement>(
     ".setting-change-diff",
@@ -233,8 +231,8 @@ test("每轮调用先折叠成窄条，再逐层展开，并可一次全部收�
   expect(diff.open).toBe(false);
 
   fireEvent.click(screen.getByText("本段调用详情"));
-  fireEvent.click(screen.getByText("第 1 次模型交换"));
-  fireEvent.click(screen.getByText("Provider 返回推理（不等同隐藏思维链）"));
+  fireEvent.click(screen.getByText("工具调用 · 1 次"));
+  fireEvent.click(screen.getByText("模型推理"));
   fireEvent.click(screen.getByText("调用 setting_write_file"));
   fireEvent.click(diff.querySelector("summary")!);
   expect(
@@ -302,7 +300,7 @@ test("每份历史 diff 都可单独直接回滚", async () => {
   });
 
   fireEvent.click(screen.getByText("本段调用详情"));
-  fireEvent.click(screen.getByText("第 1 次模型交换"));
+  fireEvent.click(screen.getByText("工具调用 · 1 次"));
   fireEvent.click(screen.getByText("调用 setting_write_file"));
   fireEvent.click(
     document

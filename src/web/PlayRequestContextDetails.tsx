@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import type { V1Request } from "../protocol/v1.ts";
@@ -11,24 +12,36 @@ interface Props {
   chainId: string;
   eventId: number;
   label?: string;
+  children?: ReactNode;
 }
 
 export function PlayRequestContextDetails(props: Props): React.JSX.Element {
   return (
-    <ContextDetails
+    <RequestContextDetails
       key={`${props.worldId}:${props.chainId}:${props.eventId}`}
-      {...props}
+      label={props.label}
+      children={props.children}
+      load={() =>
+        props.load({
+          type: "play.timeline.context",
+          worldId: props.worldId,
+          chainId: props.chainId,
+          eventId: props.eventId,
+        })
+      }
     />
   );
 }
 
-function ContextDetails({
+export function RequestContextDetails({
   load,
-  worldId,
-  chainId,
-  eventId,
   label,
-}: Props): React.JSX.Element {
+  children,
+}: {
+  load: () => Promise<PlayRequestContext>;
+  label?: string | undefined;
+  children?: ReactNode;
+}): React.JSX.Element {
   const [context, setContext] = useState<PlayRequestContext | null>(null);
   const [pending, setPending] = useState(false);
   const expanded = useRef(false);
@@ -37,20 +50,16 @@ function ContextDetails({
     loadContext.current = load;
   }, [load]);
   const { target, syncFailed, syncError } = useReadTarget(
-    useCallback(
-      () =>
-        loadContext.current({
-          type: "play.timeline.context",
-          worldId,
-          chainId,
-          eventId,
-        }),
-      [worldId, chainId, eventId],
-    ),
+    useCallback(() => loadContext.current(), []),
     useCallback((value: PlayRequestContext) => setContext(value), []),
   );
   const read = async () => {
-    if (context !== null) return;
+    if (
+      pending ||
+      context?.status === "available" ||
+      context?.status === "incomplete"
+    )
+      return;
     setPending(true);
     await target.read();
     setPending(false);
@@ -64,7 +73,7 @@ function ContextDetails({
         expanded.current = open;
       }}
     >
-      <summary>{label ?? uiText("当时的上下文")}</summary>
+      <summary>{label ?? uiText("本次上下文")}</summary>
       {pending ? <p role="status">{uiText("正在加载…")}</p> : null}
       <SyncNotice
         failed={syncFailed}
@@ -72,16 +81,13 @@ function ContextDetails({
         onRead={() => void target.recover()}
       />
       {context?.status === "unavailable" ? (
-        <p>{uiText("当时的上下文不可用（旧记录缺少完整证据或记录已失效）")}</p>
+        <p>{uiText("本次上下文不可用")}</p>
       ) : null}
+      {children}
       {context !== null && context.status !== "unavailable" ? (
         <>
           {context.status === "incomplete" ? (
-            <p role="status">
-              {uiText(
-                "仅保留当时的提示和初始材料；无法确认完整对话边界及本轮提示。",
-              )}
-            </p>
+            <p role="status">{uiText("仅保留部分上下文")}</p>
           ) : null}
           <p>
             {uiText(

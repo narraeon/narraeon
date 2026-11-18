@@ -1,7 +1,9 @@
+import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import type { Gameplay } from "../protocol/gameplay.ts";
 import type {
   ContentTreeFile,
   V1Request,
+  V1AuthoringRequestPreview,
   V1SettingImprovementOverview,
   V1SettingImprovementView,
   V1SettingImprovementRollbackResult,
@@ -135,6 +137,11 @@ export interface AuthoringTarget {
     path: string,
     snapshot: AuthoringTargetSnapshot,
   ): Promise<V1SettingImprovementRollbackResult>;
+  callContext?(sessionId: string, callId: string): Promise<PlayRequestContext>;
+  requestPreview?(
+    sessionId: string,
+    requestId: string,
+  ): Promise<V1AuthoringRequestPreview | null>;
   preview(
     sessionId: string | null,
   ): Promise<V1SettingPromptPreview["compilation"]>;
@@ -319,6 +326,20 @@ export function contentPackageTarget(
         changeSetId,
         path,
       }),
+    callContext: (sessionId, callId) =>
+      request(client, {
+        type: "setting-improvement.call.context",
+        packageId: id,
+        sessionId,
+        callId,
+      }),
+    requestPreview: (sessionId, requestId) =>
+      request(client, {
+        type: "setting-improvement.request.preview",
+        packageId: id,
+        sessionId,
+        requestId,
+      }),
     preview: (sessionId) =>
       request(client, {
         type: "setting-improvement.preview",
@@ -494,6 +515,20 @@ export function worldRevisionTarget(
         epochId: activeEpoch(current).epochId,
         changeSetId,
         path,
+      }),
+    callContext: (sessionId, callId) =>
+      request(client, {
+        type: "world.revision.call.context",
+        worldId: id,
+        sessionId,
+        callId,
+      }),
+    requestPreview: (sessionId, requestId) =>
+      request(client, {
+        type: "world.revision.request.preview",
+        worldId: id,
+        sessionId,
+        requestId,
       }),
     preview: (sessionId) =>
       request(client, {

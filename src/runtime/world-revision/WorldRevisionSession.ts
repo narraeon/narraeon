@@ -1,4 +1,8 @@
 import {
+  authoringConversationTurns,
+  readAuthoringCallContext,
+} from "../authoring/AuthoringCallDetails.ts";
+import {
   canContinueAuthoringPartial,
   prepareAuthoringPartial,
 } from "../model/AssistantPrefill.ts";
@@ -15,6 +19,7 @@ import {
 } from "../authoring/AuthoringRetry.ts";
 import {
   authoringRequestPreviews,
+  authoringRequestIdentities,
   authoringActiveBinding,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
@@ -35,6 +40,7 @@ import {
   authoringExchange,
   recordAuthoringRetryPreview,
   ModelToolConversation,
+  type ModelToolConversationStreaming,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
@@ -700,6 +706,18 @@ export class WorldRevisionSession {
     );
   }
 
+  async readCallContext(worldId: string, sessionId: string, callId: string) {
+    const session = await this.#store.readSession(sessionId);
+    assertWorld(session, worldId);
+    return readAuthoringCallContext(session, callId);
+  }
+
+  async readRequestPreviews(worldId: string, sessionId: string) {
+    const session = await this.#store.readSession(sessionId);
+    assertWorld(session, worldId);
+    return authoringRequestPreviews(session);
+  }
+
   async preview(worldId: string, sessionId?: string) {
     const session =
       sessionId === undefined ? null : await this.#store.readSession(sessionId);
@@ -1261,13 +1279,13 @@ export class WorldRevisionSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
-      requestPreviews: authoringRequestPreviews(session),
+      requestPreviews: authoringRequestIdentities(session),
       sessionId: session.sessionId,
       worldId: session.worldId,
       epochId: session.epochId,
       runStatus: streaming === null ? session.runStatus : "running",
       messages: structuredClone(session.messages),
-      turns: conversationTurns(session),
+      turns: conversationTurns(session, streaming),
       usage: structuredClone(session.usage),
       progress: {
         exchange: session.exchange,
@@ -1416,63 +1434,13 @@ function assistantAt(
 
 function conversationTurns(
   session: StoredWorldRevisionSession,
+  streaming: ModelToolConversationStreaming | null = null,
 ): V1SettingConversationTurn[] {
-  const userMessages = session.messages.filter(({ role }) => role === "user");
-  const turns: V1SettingConversationTurn[] = [];
-  let userIndex = 0;
-  let exchange = 0;
-  let current: V1SettingConversationTurn | null = null;
-  let pending = new Map<
-    string,
-    V1SettingConversationTurn["exchanges"][number]["toolCalls"][number]
-  >();
-  for (const [itemIndex, item] of session.modelItems.entries()) {
-    if (item.kind === "user") {
-      const persisted = userMessages[userIndex++];
-      current = {
-        id: persisted?.id ?? `${session.sessionId}:turn:${itemIndex}`,
-        user:
-          persisted ??
-          ({
-            id: `${session.sessionId}:user:${itemIndex}`,
-            role: "user",
-            text: item.text,
-            createdAt: session.createdAt,
-          } as const),
-        exchanges: [],
-      };
-      turns.push(current);
-      pending = new Map();
-    } else if (item.kind === "assistant" && current !== null) {
-      exchange += 1;
-      const toolCalls = item.toolCalls.map((call) => ({
-        callId: call.id,
-        name: call.name,
-        arguments: structuredClone(call.arguments),
-        result: null,
-      }));
-      current.exchanges.push({
-        id: `${session.sessionId}:exchange:${itemIndex}`,
-        exchange,
-        text: item.text,
-        ...(item.reasoningContent === undefined
-          ? {}
-          : { reasoning: item.reasoningContent }),
-        toolCalls,
-      });
-      pending = new Map(toolCalls.map((call) => [call.callId, call] as const));
-    } else if (item.kind === "tool") {
-      const call = pending.get(item.toolCallId);
-      if (call?.result === null)
-        call.result = {
-          markdown: item.markdown,
-          isError: item.isError === true,
-          changes: structuredClone(item.changes),
-          changeSetId: item.changeSetId,
-        };
-    }
-  }
-  return turns;
+  return authoringConversationTurns(
+    session,
+    streaming,
+    (item) => item.changeSetId,
+  );
 }
 
 function historyItem(

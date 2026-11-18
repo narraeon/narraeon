@@ -622,6 +622,18 @@ export class AuthoringWorkspace {
       if (valid()) this.update({ applying: false });
     }
   }
+  callContext(sessionId: string, callId: string) {
+    return (
+      this.target.callContext?.(sessionId, callId) ??
+      Promise.resolve({ status: "unavailable" as const, messages: [] })
+    );
+  }
+  requestPreview(sessionId: string, requestId: string) {
+    return (
+      this.target.requestPreview?.(sessionId, requestId) ??
+      Promise.resolve(null)
+    );
+  }
   async preview() {
     const valid = this.current();
     try {

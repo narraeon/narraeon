@@ -598,6 +598,21 @@ export class V1Runtime {
           request.packageId,
           request.sessionId,
         );
+      case "setting-improvement.call.context":
+        return this.#settingImprovements.readCallContext(
+          request.packageId,
+          request.sessionId,
+          request.callId,
+        );
+      case "setting-improvement.request.preview":
+        return (
+          (
+            await this.#settingImprovements.readRequestPreviews(
+              request.packageId,
+              request.sessionId,
+            )
+          ).find(({ requestId }) => requestId === request.requestId) ?? null
+        );
       case "setting-improvement.read":
         return this.#settingImprovements.read(request.packageId);
       case "setting-improvement.status":
@@ -1010,6 +1025,21 @@ export class V1Runtime {
         );
       case "world.revision.preview":
         return this.#worldRevisions.preview(request.worldId, request.sessionId);
+      case "world.revision.call.context":
+        return this.#worldRevisions.readCallContext(
+          request.worldId,
+          request.sessionId,
+          request.callId,
+        );
+      case "world.revision.request.preview":
+        return (
+          (
+            await this.#worldRevisions.readRequestPreviews(
+              request.worldId,
+              request.sessionId,
+            )
+          ).find(({ requestId }) => requestId === request.requestId) ?? null
+        );
       case "world.revision.status":
         return this.#worldRevisionCall(() =>
           this.#worldRevisions.status(request.worldId, request.sessionId),

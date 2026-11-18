@@ -941,7 +941,8 @@ export class PlayCallChain {
         .map((event) => [event.id, event]),
     );
     view.events = view.events.map((event) =>
-      event.kind === "assistant" && event.status === "streaming"
+      (event.kind === "assistant" || event.kind === "followup") &&
+      event.status === "streaming"
         ? structuredClone(live.get(event.id)!)
         : event,
     );
@@ -2458,6 +2459,9 @@ export class PlayCallChain {
         responseKind,
         exchange: advance.exchange,
         attempt: advance.attempt,
+        ...(existing.usageRecorded === true
+          ? { usageRecorded: true as const }
+          : {}),
         ...(durable.reasoningContent === undefined
           ? existing.reasoning === undefined
             ? {}
@@ -2798,6 +2802,7 @@ export class PlayCallChain {
         responseKind: "pending",
         exchange: responseExchange,
         attempt,
+        usageRecorded: true,
       };
       session.events.push(event);
       await this.#persist(session);
@@ -3076,6 +3081,8 @@ export class PlayCallChain {
     // Without a new prompt run there is no distinct bounded encoding slot.
     const previewExchange =
       runReplies.length === 1 ? (run?.exchange ?? 1) : undefined;
+    let activeFollowup:
+      Extract<V1PlayCallChainEvent, { kind: "followup" }> | undefined;
     const observeFollowupDelta = (
       delta: Parameters<
         NonNullable<PlayFollowupObserver["onProviderDelta"]>
@@ -3088,17 +3095,37 @@ export class PlayCallChain {
             ? { textChars: delta.text.length }
             : { toolChars: delta.text.length }),
       });
-      this.#notifySnapshot(observer, session);
+      if (activeFollowup !== undefined) {
+        if (delta.kind === "text") activeFollowup.text += delta.text;
+        else if (delta.kind === "reasoning")
+          activeFollowup.reasoning = `${activeFollowup.reasoning ?? ""}${delta.text}`;
+        else
+          activeFollowup.toolFragment = `${activeFollowup.toolFragment ?? ""}${delta.text}`;
+        touch(session);
+        notifyAssistantDelta(observer, {
+          eventId: activeFollowup.id,
+          kind: delta.kind,
+          text: delta.text,
+          updatedAt: session.updatedAt,
+        });
+      }
     };
-    const record = (outcome: PlayFollowupOutcome): void => {
+    const record = async (outcome: PlayFollowupOutcome): Promise<void> => {
       this.#observeInvocation(session.chainId, "followup", {
         toolCalls: outcome.toolCalls.length,
       });
-      session.events.push({
-        id: session.nextEventId++,
+      const event = {
+        id: activeFollowup?.id ?? session.nextEventId++,
         kind: "followup",
         followupId: outcome.id,
         displayName: outcome.displayName,
+        replyEventId: reply.id,
+        status:
+          outcome.requestPreviewStatus === "cancelled"
+            ? "cancelled"
+            : outcome.failure !== undefined
+              ? "interrupted"
+              : "completed",
         text: outcome.text,
         ...(outcome.reasoning === undefined
           ? {}
@@ -3114,8 +3141,11 @@ export class PlayCallChain {
             }),
         toolCalls: structuredClone(outcome.toolCalls),
         ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
-      });
-      touch(session);
+      } satisfies Extract<V1PlayCallChainEvent, { kind: "followup" }>;
+      if (activeFollowup === undefined) session.events.push(event);
+      else session.events[event.id - 1] = event;
+      activeFollowup = undefined;
+      await this.#persist(session);
       this.#notifySnapshot(observer, session);
     };
     try {
@@ -3185,7 +3215,32 @@ export class PlayCallChain {
               preview,
             );
           },
-          onProviderDispatch: () => {
+          onProviderDispatch: async (id, name, request, prefix) => {
+            activeFollowup = {
+              id: session.nextEventId++,
+              kind: "followup",
+              followupId: id,
+              displayName: name,
+              replyEventId: reply.id,
+              status: "streaming",
+              text: "",
+              toolCalls: [],
+            };
+            session.events.push(activeFollowup);
+            await this.#persist(session);
+            try {
+              await this.#worlds.playTimeline.recordRequestContext(
+                session.worldId,
+                session.chainId,
+                activeFollowup.id,
+                request,
+                prefix,
+                1,
+                true,
+              );
+            } catch {
+              // Optional historical diagnostics cannot change model dispatch.
+            }
             this.#setInvocationAbortable(session.chainId, true);
             this.#observeInvocation(session.chainId, "followup", {
               dispatches: 1,
@@ -3299,6 +3354,16 @@ export class PlayCallChain {
           )
         : loaded;
     if (advance === null && session.status !== "running") return;
+    const tail = session.events.at(-1);
+    if (advance === null && tail?.kind === "followup") {
+      if (tail.status === "streaming") {
+        tail.status = "interrupted";
+        tail.failure = "The follow-up model request was interrupted.";
+      }
+      session.status = "ready";
+      await this.#persist(session);
+      return;
+    }
     // Authority already moved past the persisted parent head: the world cannot
     // be replayed onto that head, so the recovery requires a fresh context.
     const headMoved =
@@ -3828,19 +3893,18 @@ function projectActivityEvent(
   )
     return structuredClone(projectLegacyModelBindingFailure(event));
   if (event.kind === "assistant") {
-    const { reasoning, toolFragment, usage, ...summary } = event;
+    const { reasoning, toolFragment, ...summary } = event;
     void reasoning;
     void toolFragment;
-    void usage;
     return structuredClone(summary);
   }
   if (event.kind === "tool_call")
     return { ...structuredClone(event), arguments: null };
   if (event.kind === "tool_result")
     return { ...structuredClone(event), markdown: "" };
-  const { reasoning, usage, ...summary } = event;
+  const { reasoning, toolFragment, ...summary } = event;
   void reasoning;
-  void usage;
+  void toolFragment;
   return {
     ...structuredClone(summary),
     text: "",

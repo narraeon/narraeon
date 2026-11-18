@@ -1,5 +1,4 @@
-import { PlayRequestContextDetails } from "./PlayRequestContextDetails.tsx";
-import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
+import { PlayTurnCallDetails } from "./PlayTurnCallDetails.tsx";
 import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { useReadTarget } from "./useReadTarget.ts";
@@ -91,7 +90,6 @@ import {
   type FrontendArtifactDebugRecord,
 } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
-import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PlayContextUsage } from "./PlayContextUsage.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { ResolutionCard } from "./ResolutionCard.tsx";
@@ -1748,6 +1746,12 @@ export function WorldPage({
         onNavigationLockChange={setAuthoringLocked}
         key={worldId}
         onPreview={() => revisionWorkspace.preview()}
+        onCallContext={(sessionId, callId) =>
+          revisionWorkspace.callContext(sessionId, callId)
+        }
+        onRequestPreview={(sessionId, requestId) =>
+          revisionWorkspace.requestPreview(sessionId, requestId)
+        }
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}
@@ -2935,9 +2939,6 @@ function PlayTimeline({
     >
       {groups.map((group) => {
         if (group.kind === "turn") {
-          const traceEvents = group.items.filter(({ event }) =>
-            timelineEventHasTrace(event),
-          );
           return (
             <Fragment key={group.key}>
               {group.items.map((item) =>
@@ -2952,17 +2953,6 @@ function PlayTimeline({
                     chainId={item.chainId}
                     event={item.event}
                     requiresFreshContext={item.requiresFreshContext}
-                    liveAssistant={
-                      item.event.kind === "assistant" &&
-                      item.event.status === "streaming" &&
-                      liveChain?.chainId === item.chainId
-                        ? liveChain.events.find(
-                            (event) =>
-                              event.id === item.event.id &&
-                              event.kind === "assistant",
-                          )
-                        : undefined
-                    }
                     restartDisabled={restartDisabled}
                     freshContextDisabled={freshContextDisabled}
                     showTechnicalInfo={showTechnicalInfo}
@@ -2989,74 +2979,20 @@ function PlayTimeline({
                             )
                         : undefined
                     }
-                    presentation="story"
                     failureRecovery={
                       lastActiveItem === item ? failureRecovery : undefined
                     }
                   />
                 ) : null,
               )}
-              {!showTechnicalInfo || traceEvents.length === 0 ? null : (
-                <li className="world-timeline-trace">
-                  <details>
-                    <summary>
-                      <span>{uiText("本段调用详情")}</span>
-                      <small>
-                        {uiText("{count} 项记录", {
-                          count: traceEvents.length,
-                        })}
-                      </small>
-                    </summary>
-                    <ol
-                      className="world-timeline-trace-events"
-                      aria-label={uiText("本段模型调用详情")}
-                    >
-                      {traceEvents.map((item) => (
-                        <TimelineEvent
-                          key={`trace:${item.chainId}:${item.event.id}`}
-                          client={client}
-                          worldId={worldId}
-                          chainId={item.chainId}
-                          event={item.event}
-                          requiresFreshContext={item.requiresFreshContext}
-                          restartDisabled={restartDisabled}
-                          freshContextDisabled={freshContextDisabled}
-                          showTechnicalInfo={showTechnicalInfo}
-                          onRestartFrom={onRestartFrom}
-                          onEditPlayer={onEditPlayer}
-                          presentation="trace"
-                        />
-                      ))}
-                    </ol>
-                  </details>
-                </li>
-              )}
-              {!showTechnicalInfo
-                ? null
-                : group.items
-                    .filter(
-                      ({ event }) =>
-                        event.kind === "assistant" &&
-                        event.status !== "streaming",
-                    )
-                    .map((item, index) => (
-                      <li
-                        className="world-timeline-trace"
-                        key={`context:${item.chainId}:${item.event.id}`}
-                      >
-                        <PlayRequestContextDetails
-                          worldId={worldId}
-                          chainId={item.chainId}
-                          eventId={item.event.id}
-                          label={uiText("当时的上下文 · 第 {number} 次调用", {
-                            number: index + 1,
-                          })}
-                          load={(request) =>
-                            requestRuntime<PlayRequestContext>(client, request)
-                          }
-                        />
-                      </li>
-                    ))}
+              {showTechnicalInfo ? (
+                <PlayTurnCallDetails
+                  items={group.items}
+                  worldId={worldId}
+                  liveChain={liveChain}
+                  request={(request) => requestRuntime(client, request)}
+                />
+              ) : null}
             </Fragment>
           );
         }
@@ -3198,24 +3134,7 @@ function timelineEventBelongsInStory(
   );
 }
 
-function timelineEventHasTrace(event: V1PlayTimelineEventSummary): boolean {
-  if (
-    event.kind === "tool_call" ||
-    event.kind === "tool_result" ||
-    event.kind === "followup" ||
-    event.kind === "failure"
-  )
-    return true;
-  if (event.kind !== "assistant" || event.status === "streaming") return false;
-  return (
-    assistantResponseKind(event) !== "narrative" ||
-    event.usage !== undefined ||
-    event.detailsAvailable
-  );
-}
-
 function TimelineEvent({
-  liveAssistant,
   failureRecovery,
   client,
   worldId,
@@ -3229,14 +3148,12 @@ function TimelineEvent({
   onEditPlayer,
   onRegenerate,
   onRegenerateNarrative,
-  presentation,
 }: {
   client: WorldPageClient;
   worldId: string;
   chainId: string;
   event: V1PlayTimelineEventSummary;
   requiresFreshContext?: boolean | undefined;
-  liveAssistant?: V1PlayCallChainEvent | undefined;
   failureRecovery?: PlayFailureRecovery | undefined;
   restartDisabled: boolean;
   freshContextDisabled: boolean;
@@ -3250,8 +3167,7 @@ function TimelineEvent({
   ) => void;
   onRegenerate?: (() => void) | undefined;
   onRegenerateNarrative?: (() => void) | undefined;
-  presentation: "story" | "trace";
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
   const [detailPending, setDetailPending] = useState(false);
   const [editedText, setEditedText] = useState<string | null>(null);
@@ -3426,88 +3342,9 @@ function TimelineEvent({
     );
 
   if (event.kind === "assistant") {
-    const full = detail?.kind === "assistant" ? detail : null;
     const responseKind = assistantResponseKind(event);
     const responseClass =
       responseKind === "tool_step" ? "tool-step" : responseKind;
-    const diagnostics = (
-      <>
-        {event.usage === undefined ? null : (
-          <ModelUsageBreakdown usage={event.usage} compact />
-        )}
-        {!event.detailsAvailable ? null : event.status === "streaming" ? (
-          <small>{uiText("响应完成后可查看模型诊断详情")}</small>
-        ) : (
-          <details
-            onToggle={(change) =>
-              change.currentTarget.open && void loadDetail()
-            }
-          >
-            <summary>{uiText("查看模型诊断详情")}</summary>
-            {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-            <SyncNotice
-              failed={detailFailed}
-              reason={detailError}
-              onRead={() => void detailTarget.recover()}
-            />
-            {full?.reasoning === undefined ? null : (
-              <>
-                <p>
-                  <strong>
-                    {uiText("Provider 返回推理（不等同隐藏思维链）")}
-                  </strong>
-                </p>
-                <pre>{full.reasoning}</pre>
-              </>
-            )}
-            {full?.toolFragment === undefined ? null : (
-              <pre>{full.toolFragment}</pre>
-            )}
-            {full?.stopReason === undefined &&
-            full?.continuation === undefined ? null : (
-              <dl className="prompt-budget-breakdown">
-                {full.stopReason === undefined ? null : (
-                  <div>
-                    <dt>{uiText("完成原因")}</dt>
-                    <dd>{full.stopReason}</dd>
-                  </div>
-                )}
-                {full.continuation === undefined ? null : (
-                  <div>
-                    <dt>{uiText("原生续传载荷")}</dt>
-                    <dd>
-                      {full.continuation === "available"
-                        ? uiText("可用")
-                        : uiText("不可用")}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            )}
-            {full?.usage === undefined ? null : (
-              <ModelUsageBreakdown usage={full.usage} showProvenance />
-            )}
-          </details>
-        )}
-      </>
-    );
-    if (presentation === "trace" && responseKind === "narrative")
-      return (
-        <li className="call-chain-assistant-diagnostics">
-          <article>
-            <header>
-              <strong>{uiText("AI 响应诊断")}</strong>
-              <span>
-                {uiText("{status} · 第 {attempt} 次派发", {
-                  status: callChainAssistantStatusLabel(event.status),
-                  attempt: event.attempt,
-                })}
-              </span>
-            </header>
-            {diagnostics}
-          </article>
-        </li>
-      );
     return (
       <li
         className={`call-chain-assistant is-${event.status} is-${responseClass}`}
@@ -3584,7 +3421,7 @@ function TimelineEvent({
                     : uiText("（本次响应没有文本）")}
             </p>
           )}
-          {presentation === "story" && event.committedHead !== undefined ? (
+          {event.committedHead !== undefined ? (
             <ArtifactExtensionMount
               mount="story"
               reply={{ chainId, eventId: event.id }}
@@ -3599,86 +3436,18 @@ function TimelineEvent({
           responseKind === "narrative" ? (
             <small className="play-checkpoint-marker">{uiText("检查点")}</small>
           ) : null}
-          {presentation === "trace" ? (
-            diagnostics
-          ) : showTechnicalInfo &&
-            event.status === "streaming" &&
-            liveAssistant?.kind === "assistant" &&
-            liveAssistant.reasoning ? (
-            <details>
-              <summary>
-                {uiText("Provider 返回推理（不等同隐藏思维链）")}
-              </summary>
-              <pre>{liveAssistant.reasoning}</pre>
-            </details>
-          ) : null}
         </article>
       </li>
     );
   }
 
-  if (event.kind === "tool_call") {
-    const full = detail?.kind === "tool_call" ? detail : null;
-    return (
-      <li className="call-chain-tool">
-        <details
-          onToggle={(change) => change.currentTarget.open && void loadDetail()}
-        >
-          <summary>
-            <strong>{uiText("调用 {tool}", { tool: event.name })}</strong>
-            <span>
-              {event.replayed ? uiText("复用同 ID 结果") : event.callId}
-            </span>
-          </summary>
-          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          <SyncNotice
-            failed={detailFailed}
-            reason={detailError}
-            onRead={() => void detailTarget.recover()}
-          />
-          {full === null ? null : <pre>{safeJson(full.arguments)}</pre>}
-        </details>
-      </li>
-    );
-  }
-
-  if (
-    event.kind === "tool_result" &&
-    presentation === "story" &&
-    event.resolution !== undefined
-  )
-    return (
+  if (event.kind === "tool_call") return null;
+  if (event.kind === "tool_result")
+    return event.resolution === undefined ? null : (
       <li className="call-chain-resolution">
         <ResolutionCard receipt={event.resolution} />
       </li>
     );
-
-  if (event.kind === "tool_result") {
-    const full = detail?.kind === "tool_result" ? detail : null;
-    return (
-      <li
-        className={`call-chain-tool-result ${event.ok ? "is-ok" : "is-error"}`}
-      >
-        <details
-          onToggle={(change) => change.currentTarget.open && void loadDetail()}
-        >
-          <summary>
-            <strong>
-              {event.name} {uiText("返回")}
-            </strong>
-            <span>{event.ok ? uiText("成功") : uiText("拒绝／失败")}</span>
-          </summary>
-          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          <SyncNotice
-            failed={detailFailed}
-            reason={detailError}
-            onRead={() => void detailTarget.recover()}
-          />
-          {full === null ? null : <pre>{full.markdown}</pre>}
-        </details>
-      </li>
-    );
-  }
 
   if (event.kind === "followup") {
     const full = detail?.kind === "followup" ? detail : null;
@@ -3706,24 +3475,8 @@ function TimelineEvent({
             reason={detailError}
             onRead={() => void detailTarget.recover()}
           />
-          {full === null ? null : (
-            <>
-              <p>
-                {full.requestPreview?.status === "completed"
-                  ? uiText("请求编码：已收到完整响应")
-                  : full.requestPreview?.status === "cancelled"
-                    ? uiText("请求编码：派发后取消")
-                    : full.requestPreview?.status === "attempted"
-                      ? uiText("请求编码：已尝试派发，响应未确认")
-                      : uiText("请求编码不可用（未提供或已超出保留窗口）")}
-              </p>
-              <pre>{safeJson(full)}</pre>
-            </>
-          )}
+          {full?.failure === undefined ? null : <p>{full.failure}</p>}
         </details>
-        {!showTechnicalInfo || event.usage === undefined ? null : (
-          <ModelUsageBreakdown usage={event.usage} compact />
-        )}
       </li>
     );
   }
@@ -3740,15 +3493,6 @@ function TimelineEvent({
       </li>
     );
 
-  if (presentation === "trace")
-    return (
-      <li className="call-chain-failure-history">
-        <details>
-          <summary>{uiText("历史调用错误")}</summary>
-          <pre>{event.message}</pre>
-        </details>
-      </li>
-    );
   return (
     <li className="call-chain-failure" role="alert">
       <PlayFailureNotice
@@ -3821,14 +3565,6 @@ function assistantResponseKind(
     return "pending";
   if (event.text.trim().length === 0) return "empty";
   return event.committedHead === undefined ? "tool_step" : "narrative";
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return uiText("[参数无法序列化]");
-  }
 }
 
 function PlayerViewCard({
@@ -4150,6 +3886,11 @@ function summarizeTimelineEvent(
     followupId: event.followupId,
     displayName: event.displayName,
     toolCallCount: event.toolCalls.length,
+    hasReasoning: Boolean(event.reasoning),
+    ...(event.replyEventId === undefined
+      ? {}
+      : { replyEventId: event.replyEventId }),
+    ...(event.status === undefined ? {} : { status: event.status }),
     failed: event.failure !== undefined,
     ...(event.usage === undefined
       ? {}

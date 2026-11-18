@@ -164,7 +164,10 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     first.sessionId,
   );
   const compilation = stored.requests![0]!.bootstrap;
-  expect(first.requestPreviews![0]!.compilation).toEqual(compilation);
+  expect(
+    (await service().readRequestPreviews(worldId, first.sessionId))[0]!
+      .compilation,
+  ).toEqual(compilation);
   expect(
     host.previewRequest({
       bootstrap: compilation,
@@ -238,17 +241,21 @@ test("Google world revision keeps changes in its epoch and requires rereading af
     { result: { isError: false } },
   ]);
   expect(JSON.stringify(sent[2])).toContain("synthetic-signature-secret");
-  expect(JSON.stringify(next.requestPreviews)).not.toContain(
+  const googlePreviews = await service().readRequestPreviews(
+    worldId,
+    next.sessionId,
+  );
+  expect(JSON.stringify(googlePreviews)).not.toContain(
     "synthetic-signature-secret",
   );
-  expect(JSON.stringify(next.requestPreviews)).not.toContain(
+  expect(JSON.stringify(googlePreviews)).not.toContain(
     "synthetic-opaque-secret",
   );
-  expect(next.requestPreviews?.[1]?.wireRequest?.body).toMatchObject({
+  expect(googlePreviews[1]?.wireRequest?.body).toMatchObject({
     system_instruction: sent[2]?.system_instruction,
   });
   expect(
-    next.requestPreviews?.[1]?.wireRequest?.systemInstructionSources,
+    googlePreviews[1]?.wireRequest?.systemInstructionSources,
   ).toContainEqual({
     sources: [
       `runtime:world-revision-epoch:${(await workspace.active(worldId))!.epochId}:system-boundary`,
@@ -3976,7 +3983,10 @@ test("151 cold resume Google revision after published tools", async () => {
     requestId: "r151",
   });
   expect(next.runStatus).toBe("ready");
-  const previews = next.requestPreviews!;
+  const previews = await service(after.host).readRequestPreviews(
+    worldId,
+    next.sessionId,
+  );
   expect(previews).toHaveLength(2);
   expect(previews[0]!.wireRequest?.endpointPath).not.toEqual(
     previews[1]!.wireRequest?.endpointPath,
@@ -4049,5 +4059,17 @@ test("世界修订未结算正文可在重启后原样继续且不发布世界�
   expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
     sent[0]?.messages,
   );
+  const [initial, retry] = done.turns[0]!.exchanges;
+  expect(retry).toMatchObject({ status: "completed", retryOf: initial!.id });
+  const context = await createService().readCallContext(
+    worldId,
+    done.sessionId,
+    retry!.id,
+  );
+  expect(context.status).toBe("available");
+  expect(context.messages).toContainEqual({
+    role: "assistant · prefill",
+    text: "修订\n ",
+  });
   expect((await worlds.recoverEndpoint(worldId)).head).toBe(before);
 });

@@ -1,4 +1,8 @@
-import { modelHostInputText } from "../model/ModelHost.ts";
+import {
+  modelHostInputText,
+  worldRevisionSystemBoundaryText,
+  worldRevisionTransitionText,
+} from "../model/ModelHost.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PlayRequestContextMessage } from "../../protocol/playRequestContext.ts";
@@ -16,7 +20,10 @@ export interface PlayRequestContextEvidence {
   transcriptCount: number;
   transcriptDigest: string;
   bootstrapDigest: string;
+  logicalBootstrapDigest?: string;
+  followupPromptDigest?: string;
   toolsDigest: string;
+  assistantPrefill?: string;
   suffix: { kind: "runtime_notice"; notice: "turn_guide"; text: string }[];
 }
 
@@ -24,16 +31,27 @@ export function contextDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+export function logicalBootstrapDigest(bootstrap: PromptCompilation): string {
+  return contextDigest([
+    bootstrap.logicalMessages,
+    bootstrap.provider.preload?.markdown,
+  ]);
+}
+
 export function captureRequestContext(
   request: ModelHostExchange,
   transcript: ModelHostAppendItem[],
   attempt: number,
+  includeFollowupPrompt = false,
 ): PlayRequestContextEvidence | null {
   if (
     !isDeepStrictEqual(request.appended.slice(0, transcript.length), transcript)
   )
     return null;
   const suffix = request.appended.slice(transcript.length);
+  const followupPrompt = includeFollowupPrompt ? suffix.pop() : undefined;
+  if (includeFollowupPrompt && followupPrompt?.kind !== "prompt_delta")
+    return null;
   if (
     !suffix.every(
       (item) => item.kind === "runtime_notice" && item.notice === "turn_guide",
@@ -47,7 +65,14 @@ export function captureRequestContext(
     transcriptCount: transcript.length,
     transcriptDigest: contextDigest(transcript),
     bootstrapDigest: contextDigest(request.bootstrap),
+    logicalBootstrapDigest: logicalBootstrapDigest(request.bootstrap),
+    ...(followupPrompt?.kind === "prompt_delta"
+      ? { followupPromptDigest: contextDigest(followupPrompt.logicalMessages) }
+      : {}),
     toolsDigest: contextDigest(request.toolUniverse ?? request.tools),
+    ...(request.assistantPrefill === undefined
+      ? {}
+      : { assistantPrefill: request.assistantPrefill.text }),
     suffix: suffix as PlayRequestContextEvidence["suffix"],
   };
 }
@@ -67,7 +92,13 @@ export function validRequestContextEvidence(
     Number(item.transcriptCount) >= 0 &&
     typeof item.transcriptDigest === "string" &&
     typeof item.bootstrapDigest === "string" &&
+    (item.logicalBootstrapDigest === undefined ||
+      typeof item.logicalBootstrapDigest === "string") &&
     typeof item.toolsDigest === "string" &&
+    (item.followupPromptDigest === undefined ||
+      typeof item.followupPromptDigest === "string") &&
+    (item.assistantPrefill === undefined ||
+      typeof item.assistantPrefill === "string") &&
     Array.isArray(item.suffix) &&
     item.suffix.every(
       (suffix) =>
@@ -83,6 +114,8 @@ export function projectRequestContext(
   bootstrap: PromptCompilation,
   appended: ModelHostAppendItem[],
   tools = bootstrap.toolUniverse,
+  assistantPrefill?: string,
+  boundaries?: ModelHostExchange["worldRevisionBoundaries"],
 ): PlayRequestContextMessage[] {
   const messages: PlayRequestContextMessage[] = [];
   const appendPrompts = (prompts: PromptCompilation["logicalMessages"]) => {
@@ -110,6 +143,14 @@ export function projectRequestContext(
   appendPrompts(
     bootstrap.logicalMessages.filter(({ role }) => role !== "player_input"),
   );
+  const currentBoundary = boundaries?.entries.findLast(
+    ({ epochId }) => epochId === boundaries.currentEpochId,
+  );
+  if (currentBoundary !== undefined)
+    messages.push({
+      role: "system · world_revision_epoch",
+      text: worldRevisionSystemBoundaryText(currentBoundary),
+    });
   if (bootstrap.provider.preload !== undefined)
     messages.push({
       role: "tool · runtime_load_context",
@@ -118,7 +159,17 @@ export function projectRequestContext(
   appendPrompts(
     bootstrap.logicalMessages.filter(({ role }) => role === "player_input"),
   );
-  for (const item of appended) {
+  for (const [index, item] of appended.entries()) {
+    const boundary = boundaries?.entries.find(
+      ({ itemIndex }) => itemIndex === index,
+    );
+    if (item.kind === "prompt_delta" && boundary !== undefined) {
+      messages.push({
+        role: "user · world_revision_epoch",
+        text: worldRevisionTransitionText(boundary.markdown),
+      });
+      continue;
+    }
     switch (item.kind) {
       case "prompt_delta":
         appendPrompts(item.logicalMessages);
@@ -146,6 +197,8 @@ export function projectRequestContext(
         break;
     }
   }
+  if (assistantPrefill !== undefined)
+    messages.push({ role: "assistant · prefill", text: assistantPrefill });
   messages.push({ role: "tools", text: JSON.stringify(tools, null, 2) });
   return messages;
 }

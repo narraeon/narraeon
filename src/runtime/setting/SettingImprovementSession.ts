@@ -1,4 +1,8 @@
 import {
+  authoringConversationTurns,
+  readAuthoringCallContext,
+} from "../authoring/AuthoringCallDetails.ts";
+import {
   canContinueAuthoringPartial,
   prepareAuthoringPartial,
 } from "../model/AssistantPrefill.ts";
@@ -15,6 +19,7 @@ import {
 } from "../authoring/AuthoringRetry.ts";
 import {
   authoringRequestPreviews,
+  authoringRequestIdentities,
   authoringActiveBinding,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
@@ -56,6 +61,7 @@ import {
   authoringExchange,
   recordAuthoringRetryPreview,
   ModelToolConversation,
+  type ModelToolConversationStreaming,
   rememberAuthoringRequest,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
@@ -666,6 +672,18 @@ export class SettingImprovementSession {
     }
   }
 
+  async readCallContext(packageId: string, sessionId: string, callId: string) {
+    const session = await this.#store.read(sessionId);
+    assertPackage(session, packageId);
+    return readAuthoringCallContext(session, callId);
+  }
+
+  async readRequestPreviews(packageId: string, sessionId: string) {
+    const session = await this.#store.read(sessionId);
+    assertPackage(session, packageId);
+    return authoringRequestPreviews(session);
+  }
+
   async preview(packageId: string, sessionId?: string) {
     const session =
       sessionId === undefined ? null : await this.#store.read(sessionId);
@@ -1194,12 +1212,12 @@ export class SettingImprovementSession {
         ? this.#conversation.streaming(session.sessionId)
         : null;
     return {
-      requestPreviews: authoringRequestPreviews(session),
+      requestPreviews: authoringRequestIdentities(session),
       sessionId: session.sessionId,
       packageId: session.packageId,
       runStatus: streaming === null ? session.runStatus : "running",
       messages: structuredClone(session.messages),
-      turns: settingConversationTurns(session),
+      turns: settingConversationTurns(session, streaming),
       legacyDraft:
         session.legacyDraft === null
           ? null
@@ -1303,76 +1321,13 @@ function requiredRequestId(requestId: string): string {
 
 function settingConversationTurns(
   session: StoredSettingImprovementSession,
+  streaming: ModelToolConversationStreaming | null = null,
 ): V1SettingConversationTurn[] {
-  const userMessages = session.messages.filter(({ role }) => role === "user");
-  const turns: V1SettingConversationTurn[] = [];
-  let userIndex = 0;
-  let exchange = 0;
-  let current: V1SettingConversationTurn | null = null;
-  let pendingToolCalls = new Map<
-    string,
-    V1SettingConversationTurn["exchanges"][number]["toolCalls"][number]
-  >();
-
-  for (const [itemIndex, item] of session.modelItems.entries()) {
-    if (item.kind === "user") {
-      const persisted = userMessages[userIndex];
-      userIndex += 1;
-      current = {
-        id: persisted?.id ?? `${session.sessionId}:turn:${itemIndex}`,
-        user:
-          persisted === undefined
-            ? {
-                id: `${session.sessionId}:user:${itemIndex}`,
-                role: "user",
-                text: item.text,
-                createdAt: session.createdAt,
-              }
-            : structuredClone(persisted),
-        exchanges: [],
-      };
-      turns.push(current);
-      pendingToolCalls = new Map();
-      continue;
-    }
-    if (item.kind === "assistant") {
-      if (current === null) continue;
-      exchange += 1;
-      const toolCalls = item.toolCalls.map((call) => ({
-        callId: call.id,
-        name: call.name,
-        arguments: structuredClone(call.arguments),
-        result: null,
-      }));
-      current.exchanges.push({
-        id: `${session.sessionId}:exchange:${itemIndex}`,
-        exchange,
-        text: item.text,
-        ...(item.reasoningContent === undefined
-          ? {}
-          : { reasoning: item.reasoningContent }),
-        toolCalls,
-      });
-      pendingToolCalls = new Map(
-        toolCalls.map((call) => [call.callId, call] as const),
-      );
-      continue;
-    }
-    if (item.kind === "tool") {
-      const call = pendingToolCalls.get(item.toolCallId);
-      if (call?.result === null)
-        call.result = {
-          markdown: item.markdown,
-          isError: item.isError === true,
-          changes: structuredClone(item.changes),
-          changeSetId:
-            item.isError === true || item.changes.length === 0
-              ? null
-              : changeSetIdForItem(itemIndex),
-        };
-    }
-  }
-  return turns;
+  return authoringConversationTurns(session, streaming, (item, index) =>
+    item.isError === true || item.changes.length === 0
+      ? null
+      : changeSetIdForItem(index),
+  );
 }
 
 function changeSetIdForItem(itemIndex: number): string {

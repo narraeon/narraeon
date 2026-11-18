@@ -397,17 +397,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "不是下一次发送预览",
   );
   const repairedTurn = page.locator(".setting-conversation-turn").last();
-  const repairedTrace = repairedTurn.locator(".setting-turn-trace");
+  const repairedTrace = repairedTurn.locator(".model-call-details");
   await expect(repairedTrace).not.toHaveAttribute("open", "");
   await repairedTrace.locator(":scope > summary").click();
-  const repairedExchange = repairedTrace
-    .locator(".setting-conversation-trace")
-    .first();
-  await expect(repairedExchange).not.toHaveAttribute("open", "");
-  await repairedExchange.locator(":scope > summary").click();
-  const repairedReasoning = repairedExchange.locator(
-    ".setting-exchange-reasoning",
-  );
+  const repairedExchange = repairedTrace.locator(".model-call").first();
+  const repairedReasoning = repairedExchange
+    .getByText("模型推理", { exact: true })
+    .locator("xpath=ancestor::details[1]");
   await expect(repairedReasoning).not.toHaveAttribute("open", "");
   await repairedReasoning.locator("summary").click();
   await expect(repairedReasoning).toContainText(
@@ -417,12 +413,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .locator(".setting-exchange-tool")
     .filter({ hasText: "setting_read" });
   await expect(settingRead).toContainText("拒绝／失败");
+  await settingRead.locator("xpath=ancestor::details[1]/summary").click();
   await settingRead.locator("summary").click();
   await expect(settingRead).toContainText(damagedPath);
   const settingWrite = repairedTurn
     .locator(".setting-exchange-tool")
     .filter({ hasText: "setting_write_file" })
     .filter({ hasText: damagedPath });
+  const writeTools = settingWrite.locator("xpath=ancestor::details[1]");
+  if ((await writeTools.getAttribute("open")) === null)
+    await writeTools.locator(":scope > summary").click();
+  await expect(settingWrite).toContainText("已修改内容包");
   await settingWrite.locator(":scope > summary").click();
   const repairedDiff = settingWrite.locator(".setting-change-diff");
   await expect(repairedDiff).not.toHaveAttribute("open", "");
@@ -512,13 +513,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const freshRunProgress = page.locator(".setting-conversation-running");
   await expect(freshRunProgress).toContainText("AI 正在处理");
   await expect(freshRunProgress).toContainText(/已接收 \d+ 字/u);
-  const freshLiveTrace = freshRunProgress.locator(".setting-live-trace-group");
+  const freshLiveTrace = page
+    .locator(".setting-conversation-turn")
+    .last()
+    .locator(".model-call-details");
   await expect(freshLiveTrace).not.toHaveAttribute("open", "");
   await freshLiveTrace.locator(":scope > summary").click();
   const freshLiveReasoning = freshLiveTrace
-    .locator(".setting-live-trace")
-    .first();
-  await expect(freshLiveReasoning).not.toHaveAttribute("open", "");
+    .locator(".model-call")
+    .first()
+    .locator("details")
+    .filter({ has: page.getByText("模型推理", { exact: true }) });
   await freshLiveReasoning.locator("summary").click();
   await expect(freshLiveReasoning).toContainText(
     "Compare the requested experience",
@@ -555,8 +560,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.locator(".setting-conversation-assistant").last(),
   ).toContainText("pass the automatic review");
   const authoredTurn = page.locator(".setting-conversation-turn").last();
-  await authoredTurn.locator(".setting-turn-trace > summary").click();
-  await authoredTurn.locator(".setting-conversation-trace > summary").click();
+  await authoredTurn.locator(".model-call-details > summary").click();
   const acceptedChanges = page.locator(".setting-accepted-changes");
   await expect(
     acceptedChanges.filter({ hasText: "world/events/training.yaml" }),
@@ -639,12 +643,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   // While the first round is still streaming, the UI shows received characters
   // rather than inactivity. This number can only come from live server increments.
   await expect(runProgress).toContainText(/已接收 \d+ 字/u);
-  const frameLiveTrace = runProgress.locator(".setting-live-trace-group");
+  const frameLiveTrace = page
+    .locator(".setting-conversation-turn")
+    .last()
+    .locator(".model-call-details");
   await expect(frameLiveTrace).not.toHaveAttribute("open", "");
   await frameLiveTrace.locator(":scope > summary").click();
   const frameLiveReasoning = frameLiveTrace
-    .locator(".setting-live-trace")
-    .first();
+    .locator(".model-call")
+    .first()
+    .locator("details")
+    .filter({ has: page.getByText("模型推理", { exact: true }) });
   await frameLiveReasoning.locator("summary").click();
   await expect(frameLiveReasoning).toContainText("Inspect the frame");
   providerDelayMs = 0;
@@ -857,12 +866,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       orderedPlayRequest!.indexOf(orderedTokens[i - 1]!),
     );
   await callChain.getByText("本段调用详情", { exact: true }).click();
-  const toolStep = callChain.locator(".call-chain-assistant.is-tool-step");
-  await expect(toolStep.getByText("模型工具步骤")).toBeVisible();
+  const toolStep = callChain.locator(".model-call").first();
   await expect(
     toolStep.getByText("I will update the record before narrating the result."),
   ).not.toBeVisible();
-  await toolStep.getByText("查看工具步骤文本（未进入故事）").click();
+  await toolStep.getByText("工具调用 · 1 次").click();
   await expect(
     toolStep.getByText("I will update the record before narrating the result."),
   ).toBeVisible();
@@ -880,9 +888,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ),
   ).toHaveCount(0);
   const reasoning = callChain
-    .locator(".call-chain-assistant-diagnostics")
+    .getByText("模型推理", { exact: true })
+    .filter({ visible: true })
     .last()
-    .locator("details");
+    .locator("xpath=ancestor::details[1]");
   await expect(reasoning).not.toHaveAttribute("open", "");
   await reasoning.locator("summary").click();
   await expect(reasoning).toContainText(
@@ -896,11 +905,8 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByText("调用 world_patch")
     .locator("xpath=ancestor::details[1]");
   await expect(toolCall).not.toHaveAttribute("open", "");
-  const toolResult = callChain
-    .getByText("world_patch 返回")
-    .locator("xpath=ancestor::details[1]");
-  await toolResult.locator("summary").click();
-  await expect(toolResult).toContainText("@current-situation write succeeded");
+  await toolCall.locator("summary").click();
+  await expect(toolCall).toContainText("@current-situation write succeeded");
   const firstPlayRequest = providerRequest();
   expect(JSON.stringify(firstPlayRequest)).toContain(
     "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
@@ -931,9 +937,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "First verify the character's current location and the player's action.",
   );
   await expect(contextsAfterFresh).toContainText("调用 world_patch");
-  await expect(
-    contextsAfterFresh.locator(".call-chain-assistant-diagnostics"),
-  ).toHaveCount(2);
+  await expect(contextsAfterFresh.locator(".model-call")).toHaveCount(3);
   await expect(
     contextsAfterFresh.getByText("本段调用详情", { exact: true }),
   ).toHaveCount(2);
@@ -941,11 +945,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByText("本段调用详情", { exact: true })
     .last()
     .click();
-  const freshReasoning = contextsAfterFresh
-    .locator(".call-chain-assistant-diagnostics")
+  await contextsAfterFresh
+    .locator(".model-call")
     .last()
-    .locator("details");
-  await freshReasoning.locator("summary").click();
+    .getByText("模型推理", { exact: true })
+    .click();
   await expect(contextsAfterFresh).toContainText(
     "This is a fresh model context.",
   );
@@ -1035,8 +1039,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(playProgress).toContainText(
     "思考中（正在接收 Provider 返回推理）",
   );
-  await page
-    .getByText("Provider 返回推理（不等同隐藏思维链）", { exact: true })
+  await callChain.getByText("本段调用详情", { exact: true }).last().click();
+  await callChain
+    .locator(".model-call")
+    .last()
+    .getByText("模型推理", { exact: true })
     .click();
   await expect(
     page.getByText("The Provider has started returning explicit reasoning.", {
@@ -1152,16 +1159,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   expect(providerRequests.at(-1)).toContain("ORDERED_AUTHOR_RULE");
   expect(providerRequests.at(-1)).toContain("世界修订工具只修改持久独占");
   const worldRevisionTurn = page.locator(".setting-conversation-turn").last();
-  await worldRevisionTurn.locator(".setting-turn-trace > summary").click();
-  await worldRevisionTurn
-    .locator(".setting-conversation-trace")
-    .first()
-    .locator(":scope > summary")
-    .click();
+  await worldRevisionTurn.locator(".model-call-details > summary").click();
   const worldRevisionWrite = worldRevisionTurn
     .locator(".setting-exchange-tool")
     .filter({ hasText: "world_revision_write_file" })
     .filter({ hasText: "control/blocks/world.md" });
+  await worldRevisionWrite
+    .locator("xpath=ancestor::details[1]/summary")
+    .click();
+  await expect(worldRevisionWrite).toContainText("已修改修订工作树");
   await worldRevisionWrite.locator(":scope > summary").click();
   const worldRevisionDiff = worldRevisionWrite.locator(".setting-change-diff");
   await worldRevisionDiff.locator(":scope > summary").click();
@@ -1231,7 +1237,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     page.getByRole("heading", { name: "Dormitory World (fork)" }),
   ).toBeVisible();
   const derivedTimeline = page.getByLabel("故事时间线");
-  await expect(derivedTimeline).toContainText("查看模型诊断详情");
+  await expect(derivedTimeline).toContainText("模型推理");
   await expect(derivedTimeline).toContainText("调用 world_patch");
   await expect(derivedTimeline).toContainText(
     "Where should we meet beforehand?",

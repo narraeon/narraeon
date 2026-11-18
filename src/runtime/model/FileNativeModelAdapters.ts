@@ -1,4 +1,8 @@
-import { modelHostInputText } from "./ModelHost.ts";
+import {
+  modelHostInputText,
+  worldRevisionSystemBoundaryText,
+  worldRevisionTransitionText,
+} from "./ModelHost.ts";
 import {
   assertAssistantPrefill,
   assistantPrefillDelta,
@@ -1354,9 +1358,7 @@ function googleRequestBody(
     ({ epochId }) => epochId === boundaries.currentEpochId,
   );
   if (currentBoundary !== undefined)
-    system.push(
-      `# Runtime world-revision epoch boundary\n\nThe current epoch is ${currentBoundary.epochId}, based on ${currentBoundary.baseHead}. All prior search cursors and read authorizations are invalid. Re-read before writing, except for materials legitimately preloaded in the current revision.`,
-    );
+    system.push(worldRevisionSystemBoundaryText(currentBoundary));
   for (const [itemIndex, item] of request.appended.entries()) {
     if (item.kind === "assistant") {
       if (
@@ -1409,9 +1411,7 @@ function googleRequestBody(
           throw new Error("Invalid Runtime world-revision epoch boundary");
         input.push({
           type: "user_input",
-          content: text(
-            `# Runtime notice: world-revision epoch transition\n\n${boundary.markdown}`,
-          ),
+          content: text(worldRevisionTransitionText(boundary.markdown)),
         });
         continue;
       }

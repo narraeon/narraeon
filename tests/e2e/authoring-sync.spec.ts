@@ -627,6 +627,20 @@ for (const kind of ["setting", "revision"] as const) {
     ).toHaveCount(1);
     expect(writes).toBe(1);
     expect(providerCalls).toBe(1);
+
+    rejectModel = false;
+    await page.getByRole("button", { name: "重新发送", exact: true }).click();
+    await expect(
+      page.getByText("The authoring reply is visible.", { exact: true }),
+    ).toBeVisible();
+    const trace = page.locator(".model-call-details");
+    await trace.locator(":scope > summary").click();
+    await expect(trace.locator(".model-call")).toHaveCount(2);
+    await expect(trace.locator(".model-call").first()).toContainText("未完成");
+    await expect(trace.locator(".model-call").last()).toContainText(
+      "重试第 1 次调用",
+    );
+    expect(providerCalls).toBe(2);
   });
 
   for (const late of ["success", "failure"] as const)

@@ -889,6 +889,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         showWorkspaceBack={false}
         key={selected}
         onPreview={() => authoringWorkspace.preview()}
+        onCallContext={(sessionId, callId) =>
+          authoringWorkspace.callContext(sessionId, callId)
+        }
+        onRequestPreview={(sessionId, requestId) =>
+          authoringWorkspace.requestPreview(sessionId, requestId)
+        }
         packageName={
           selectedPackage?.title ?? selectedPackageDetail?.title ?? selected
         }
