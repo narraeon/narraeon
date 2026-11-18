@@ -2703,8 +2703,8 @@ test.each(["empty", "context-limit", "output-limit", "continuation"] as const)(
       message: "Inspect.",
       continuation: { kind: "fresh_context" },
     });
-    expect(result.canRetry).toBe(mode === "empty");
-    if (mode === "empty") {
+    expect(result.canRetry).toBe(mode !== "continuation");
+    if (mode !== "continuation") {
       const second = new ScriptedModelHost({
         binding: modelBinding,
         steps: [{ outcome: "response", text: "Finished.", toolCalls: [] }],
@@ -2826,13 +2826,35 @@ test("duplicate retry response no longer offers retry after its epoch is sealed"
   });
   expect(interrupted.canRetry).toBe(true);
   const epoch = (await workspace.active(worldId))!;
+  const path = "control/blocks/world.md";
+  await workspace.replace({
+    worldId,
+    epochId: epoch.epochId,
+    expectedRevision: epoch.revision,
+    files: replaceContents(epoch.files, path, (text) => text + "\n新位置\n"),
+  });
+  expect(await service.readSession(worldId, initial.sessionId)).toMatchObject({
+    canRetry: false,
+    freshContextReason: "files_changed",
+  });
+  await expect(
+    service.resume({
+      worldId,
+      sessionId: initial.sessionId,
+      requestId: "stale-files",
+    }),
+  ).rejects.toThrow(/files_changed/);
   await service.discard({ worldId, epochId: epoch.epochId });
   const duplicate = await service.resume({
     worldId,
     sessionId: initial.sessionId,
     requestId: "retry-sealed",
   });
-  expect(duplicate.canRetry).toBe(false);
+  expect(duplicate).toMatchObject({
+    canRetry: false,
+    canContinuePartial: false,
+    freshContextReason: "revision_closed",
+  });
 });
 
 test("interrupted world-revision request retries the frozen exchange without duplicating the message", async () => {

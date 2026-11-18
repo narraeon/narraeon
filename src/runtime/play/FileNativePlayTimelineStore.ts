@@ -1,4 +1,5 @@
 import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
+import { playFreshContextReason } from "./PlayFailure.ts";
 import { playAssistantPrefill } from "../model/AssistantPrefill.ts";
 import {
   captureRequestContext,
@@ -7,6 +8,7 @@ import {
   validRequestContextEvidence,
 } from "./PlayRequestContext.ts";
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
+import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
 import {
@@ -15,6 +17,8 @@ import {
 } from "./LegacyModelBindingFailure.ts";
 import {
   isPlayFailureKind,
+  isFreshContextReason,
+  type FreshContextReason,
   type PlayFailureKind,
 } from "../../protocol/playFailure.ts";
 import {
@@ -117,6 +121,7 @@ export interface PersistedPlayCallChainContext {
   nextEventId: number;
   exchange: number;
   lastRequest: ModelHostExchange | null;
+  freshContextReason?: FreshContextReason;
   lastRequestAttempt: number;
   lastFailure: string | null;
   lastFailureKind?: PlayFailureKind;
@@ -165,6 +170,7 @@ interface PersistedContextBase {
 
 interface PersistedContextState {
   canContinuePartial?: boolean;
+  freshContextReason?: FreshContextReason;
   schemaVersion: 3;
   chainId: string;
   parentHead: string;
@@ -223,7 +229,13 @@ interface TimelineCursor {
 export class FileNativePlayTimelineStore {
   readonly #worldsRoot: string;
 
-  constructor(dataRoot: string) {
+  readonly #currentHead: ((worldId: string) => Promise<string>) | undefined;
+
+  constructor(
+    dataRoot: string,
+    currentHead?: (worldId: string) => Promise<string>,
+  ) {
+    this.#currentHead = currentHead;
     this.#worldsRoot = join(resolve(dataRoot), "worlds-file-native");
   }
 
@@ -466,13 +478,17 @@ export class FileNativePlayTimelineStore {
       );
     }
 
+    const freshContextReason = playFreshContextReason(value);
     const state: PersistedContextState = {
       schemaVersion: 3,
       chainId: value.chainId,
       parentHead: value.parentHead,
       status: value.status,
-      canRetry: value.canRetry,
-      canContinuePartial: playAssistantPrefill(value) !== null,
+      canRetry: value.canRetry && !freshContextReason,
+      canContinuePartial:
+        freshContextReason === undefined &&
+        playAssistantPrefill(value) !== null,
+      ...(freshContextReason === undefined ? {} : { freshContextReason }),
       eventCount: value.events.length,
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
@@ -606,26 +622,39 @@ export class FileNativePlayTimelineStore {
         .digest("hex") !== stateValue.continuationDigest
     )
       throw new Error("Play context durable identity is inconsistent");
-    const lastRequest =
-      continuationValue.lastRequestDigest === null
-        ? null
-        : await readJson<ModelHostExchange>(
-            join(
-              root,
-              "requests",
-              `${continuationValue.lastRequestDigest}.json`,
-            ),
-          );
-    if (
-      lastRequest !== null &&
-      (!isRecord(lastRequest) ||
-        createHash("sha256")
-          .update(JSON.stringify(lastRequest))
-          .digest("hex") !== continuationValue.lastRequestDigest)
-    )
-      throw new Error(
-        "Frozen play request does not match its durable identity",
+    let lastRequest: ModelHostExchange | null = null;
+    if (continuationValue.lastRequestDigest !== null) {
+      const requestPath = join(
+        root,
+        "requests",
+        `${continuationValue.lastRequestDigest}.json`,
       );
+      try {
+        lastRequest = await readJson<ModelHostExchange>(requestPath);
+      } catch (error: unknown) {
+        if (
+          stateValue.status !== "interrupted" ||
+          !isNodeError(error) ||
+          error.code !== "ENOENT"
+        )
+          throw error;
+        // Retry the outer read when a concurrent writer has superseded this snapshot.
+        const latestState = await readJson<PersistedContextState>(
+          join(root, "state.json"),
+        );
+        if (latestState.continuationDigest !== stateValue.continuationDigest)
+          throw error;
+      }
+      if (
+        lastRequest !== null &&
+        (!isRecord(lastRequest) ||
+          contextDigest(lastRequest) !== continuationValue.lastRequestDigest)
+      ) {
+        throw new Error(
+          "Frozen play request does not match its durable identity",
+        );
+      }
+    }
     const value: PersistedPlayCallChain = {
       schemaVersion: 3,
       kind: "play_call_chain",
@@ -666,7 +695,10 @@ export class FileNativePlayTimelineStore {
         ? {}
         : { modelBinding: structuredClone(baseValue.modelBinding) }),
       status: stateValue.status,
-      canRetry: stateValue.canRetry,
+      canRetry: stateValue.canRetry && lastRequest !== null,
+      ...(stateValue.freshContextReason
+        ? { freshContextReason: stateValue.freshContextReason }
+        : {}),
       bootstrap: structuredClone(baseValue.bootstrap),
       tools: structuredClone(baseValue.tools),
       transcript,
@@ -1129,13 +1161,24 @@ export class FileNativePlayTimelineStore {
       head === null
         ? null
         : await this.#readContextMetadata(worldId, head.chainId);
+    let activeFreshContextReason = active?.state.freshContextReason;
+    if (
+      active?.state.status === "interrupted" &&
+      this.#currentHead &&
+      active.state.parentHead !== (await this.#currentHead(worldId))
+    )
+      activeFreshContextReason = "world_changed";
     return {
       worldId,
       generation,
       activeChainId: head?.chainId ?? null,
       activeStatus: active?.state.status ?? null,
-      activeCanRetry: active?.state.canRetry ?? false,
-      activeCanContinuePartial: active?.state.canContinuePartial ?? false,
+      activeCanRetry:
+        !activeFreshContextReason && (active?.state.canRetry ?? false),
+      activeCanContinuePartial:
+        !activeFreshContextReason &&
+        (active?.state.canContinuePartial ?? false),
+      ...(activeFreshContextReason ? { activeFreshContextReason } : {}),
       activeLastFailure: active?.state.lastFailure ?? null,
       ...(active?.state.lastFailureKind === undefined
         ? {}
@@ -1590,6 +1633,69 @@ export class FileNativePlayTimelineStore {
         break;
       }
     }
+    if (stateValue.status === "interrupted") {
+      const continuation = await readOptionalJson<unknown>(
+        join(root, "continuations", `${stateValue.continuationDigest}.json`),
+      );
+      if (continuation !== null) {
+        assertContextContinuation(continuation);
+        const hasRequest =
+          continuation.lastRequestDigest !== null &&
+          (await pathExists(
+            join(root, "requests", `${continuation.lastRequestDigest}.json`),
+          ));
+        if (!hasRequest) stateValue.freshContextReason = "snapshot_missing";
+        else if (
+          !stateValue.canRetry &&
+          !stateValue.freshContextReason &&
+          (stateValue.lastFailureKind === "context_limit" ||
+            stateValue.lastFailureKind === "output_limit") &&
+          !indexValue.importedFromArchive
+        ) {
+          // Previous releases blocked length failures. Only restore the ability to replay
+          // a matching dispatch checkpoint with an intact native prefix.
+          const request = await readOptionalJson<ModelHostExchange>(
+            join(root, "requests", `${continuation.lastRequestDigest}.json`),
+          );
+          const base = request?.modelConfig
+            ? null
+            : await readOptionalJson<PersistedContextBase>(
+                join(root, "base.json"),
+              );
+          const provider =
+            request?.modelConfig?.provider ?? base?.modelBinding?.provider;
+          const previous = await readOptionalJson<V1PlayCallChainEvent>(
+            join(root, "events", numbered(stateValue.eventCount - 1)),
+          );
+          stateValue.canRetry =
+            request !== null &&
+            provider !== undefined &&
+            contextDigest(request) === continuation.lastRequestDigest &&
+            Array.isArray(request.appended) &&
+            validAuthoringNativeContinuation(request.appended, provider) &&
+            previous?.kind === "assistant" &&
+            previous.status === "interrupted" &&
+            previous.attempt === stateValue.lastRequestAttempt &&
+            previous.exchange === stateValue.exchange;
+          if (!stateValue.canRetry)
+            stateValue.freshContextReason = "continuation_unavailable";
+        }
+        const reason =
+          stateValue.freshContextReason ??
+          playFreshContextReason({
+            ...stateValue,
+            ...(indexValue.importedFromArchive
+              ? { importedFromArchive: true }
+              : {}),
+            lastRequest: hasRequest ? true : null,
+          });
+        if (reason) {
+          stateValue.freshContextReason = reason;
+          stateValue.canRetry = false;
+          stateValue.canContinuePartial = false;
+        }
+      }
+    }
     return { root, index: indexValue, state: stateValue };
   }
 }
@@ -1791,6 +1897,8 @@ function assertContextState(
     !/^[a-f0-9]{64}$/u.test(value.continuationDigest) ||
     !validCount(value.lastRequestAttempt) ||
     (value.lastFailure !== null && typeof value.lastFailure !== "string") ||
+    (value.freshContextReason !== undefined &&
+      !isFreshContextReason(value.freshContextReason)) ||
     (value.lastFailureKind !== undefined &&
       !isPlayFailureKind(value.lastFailureKind)) ||
     typeof value.updatedAt !== "number"

@@ -629,7 +629,7 @@ test.each([
     body: "maximum context length exceeded; key-sentinel token-sentinel signature-sentinel",
     firstHop: false,
     kind: "context_limit",
-    canRetry: false,
+    canRetry: true,
   },
   {
     name: "rejected",
@@ -3125,14 +3125,14 @@ test.each([
     new ModelHostFailureError("request rejected", {
       details: { code: "context_length_exceeded" },
     }),
-    false,
+    true,
   ],
   [
     "output_limit",
     new ModelHostFailureError("response incomplete", {
       details: { code: "model_output_limit" },
     }),
-    false,
+    true,
   ],
   [
     "context_unavailable",
@@ -3145,7 +3145,7 @@ test.each([
     false,
   ],
   ["retryable", new ModelHostFailureError("rejected before generation"), true],
-  ["other", new Error("tool processing failed"), false],
+  ["retryable", new Error("transport failed"), true],
 ] as const)(
   "%s failure is persisted in context, event, summary and cold recovery",
   async (failureKind, failure, canRetry) => {
@@ -9196,7 +9196,7 @@ test("确定性 Provider 拒绝后只重放原样保存的请求", async () => {
   expect(requests[1]).toEqual(requests[0]);
 });
 
-test("Provider 明确报告上下文溢出时禁止重试并要求全新上下文", async () => {
+test("Provider 明确报告上下文溢出仍允许重发原请求", async () => {
   const { worlds, worldId } = await createWorld("play-chain-context-overflow");
   const requests: ModelHostExchange[] = [];
   const modelHost: ModelHost = {
@@ -9229,7 +9229,7 @@ test("Provider 明确报告上下文溢出时禁止重试并要求全新上下�
 
   expect(interrupted).toMatchObject({
     status: "interrupted",
-    canRetry: false,
+    canRetry: true,
     lastFailure: "Provider request failed: 400",
   });
   await expect(
@@ -9240,11 +9240,79 @@ test("Provider 明确报告上下文溢出时禁止重试并要求全新上下�
       playerText: "",
       modelHost,
     }),
-  ).rejects.toThrow(
-    "The current model context cannot continue; use a fresh context.",
-  );
-  expect(requests).toHaveLength(1);
+  ).resolves.toMatchObject({
+    canRetry: true,
+    lastFailureKind: "context_limit",
+  });
+  expect(requests).toHaveLength(2);
+  expect(requests[1]!.appended).toEqual(requests[0]!.appended);
 });
+
+test.each(["snapshot_missing", "world_changed"] as const)(
+  "interrupted play with %s offers only a new context, including after restart",
+  async (reason) => {
+    const { worlds, worldId, root } = await createWorld(`recovery-${reason}`);
+    const modelHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "failure", message: "temporary provider failure" }],
+    });
+    const interrupted = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "interrupted",
+      exchangeId: "send",
+      playerText: "Wait.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
+    expect(interrupted.canRetry).toBe(true);
+    if (reason === "snapshot_missing") {
+      const requests = join(
+        root,
+        "worlds-file-native",
+        worldId,
+        "runtime",
+        "play-contexts",
+        createHash("sha256").update(interrupted.chainId).digest("hex"),
+        "requests",
+      );
+      const snapshots = await readdir(requests);
+      expect(snapshots).toHaveLength(1);
+      await rm(join(requests, snapshots[0]!));
+    } else {
+      await worlds.commitCorrection({
+        worldId,
+        operationId: "newer-world",
+        parentHead: interrupted.parentHead,
+        stateChanges: [],
+        nextMaterials: [],
+      });
+    }
+    const restarted = new FileNativeWorldStore(root);
+    const chains = new PlayCallChain(restarted);
+    expect(await restarted.playTimeline.readPage(worldId, 40)).toMatchObject({
+      activeCanRetry: false,
+      activeCanContinuePartial: false,
+      activeFreshContextReason: reason,
+    });
+    expect(await chains.inspectWorld(worldId)).toMatchObject({
+      canRetry: false,
+      canContinuePartial: false,
+      freshContextReason: reason,
+    });
+    await expect(
+      chains.append({
+        worldId,
+        chainId: interrupted.chainId,
+        exchangeId: "invalid-replay",
+        playerText: "",
+        modelHost,
+      }),
+    ).rejects.toThrow();
+    expect(modelHost.requests).toHaveLength(1);
+  },
+);
 
 test("空输入追加会从完整逻辑 transcript 继续生成，并把 Provider 文本增量实时投影", async () => {
   const { worlds, worldId } = await createWorld("play-chain-empty-continue");
@@ -14432,7 +14500,7 @@ test("正文 token 截断继续发送只结算合并后的完整正文", async (
     modelHost: host,
   });
   expect(first).toMatchObject({
-    canRetry: false,
+    canRetry: true,
     canContinuePartial: true,
     lastFailureKind: "output_limit",
   });

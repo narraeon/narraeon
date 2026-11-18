@@ -1,11 +1,33 @@
-import type { PlayFailureKind } from "../../protocol/playFailure.ts";
+import type {
+  FreshContextReason,
+  PlayFailureKind,
+} from "../../protocol/playFailure.ts";
 import {
   ModelHostBindingMismatchError,
   ModelHostContinuationError,
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
-  modelHostFailureRequiresFreshContext,
+  isModelHostTokenLimitFailure,
 } from "../model/ModelHost.ts";
+
+export function playFreshContextReason(context: {
+  status: string;
+  canRetry: boolean;
+  lastFailureKind?: PlayFailureKind;
+  lastRequest: unknown;
+  freshContextReason?: FreshContextReason;
+  importedFromArchive?: boolean;
+}): FreshContextReason | undefined {
+  if (context.status !== "interrupted") return undefined;
+  if (context.freshContextReason) return context.freshContextReason;
+  if (context.importedFromArchive) return "continuation_unavailable";
+  if (context.lastRequest === null) return "snapshot_missing";
+  if (context.canRetry) return undefined;
+  if (context.lastFailureKind === "context_unavailable")
+    return "continuation_unavailable";
+  // An accepted response or player write that could not settle may have advanced Authority.
+  return "world_changed";
+}
 
 /** Classification does not grant permission to replay a request. */
 export function classifyPlayFailure(
@@ -26,7 +48,7 @@ export function classifyPlayFailure(
       error.details.code === "model_output_limit"
     )
       return "output_limit";
-    if (modelHostFailureRequiresFreshContext(error)) return "context_limit";
+    if (isModelHostTokenLimitFailure(error)) return "context_limit";
     return canRetry ? "retryable" : "provider_error";
   }
   return canRetry ? "retryable" : "other";

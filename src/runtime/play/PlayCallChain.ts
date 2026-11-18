@@ -88,6 +88,7 @@ import {
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
 } from "../model/ModelHost.ts";
+import { playFreshContextReason } from "./PlayFailure.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
 import {
@@ -924,9 +925,24 @@ export class PlayCallChain {
     return [...this.#worldChains.keys()];
   }
 
+  async #readActiveView(
+    session: PersistedPlayCallChain,
+  ): Promise<V1PlayCallChainView> {
+    const view = this.#projectActiveView(session);
+    if (
+      view.status === "interrupted" &&
+      view.parentHead !== (await this.#worlds.currentHead(session.worldId))
+    ) {
+      view.canRetry = false;
+      view.canContinuePartial = false;
+      view.freshContextReason = "world_changed";
+    }
+    return view;
+  }
+
   async inspectWorld(worldId: string): Promise<V1PlayCallChainView | null> {
     const session = await this.#worldSession(worldId);
-    return session === null ? null : this.#projectActiveView(session);
+    return session === null ? null : this.#readActiveView(session);
   }
 
   /** Browser observation never traverses old contexts. History and completed
@@ -934,7 +950,10 @@ export class PlayCallChain {
   async observeWorld(worldId: string): Promise<V1PlayCallChainView | null> {
     const session = await this.#worldSession(worldId);
     if (session === null) return null;
-    const view = this.#projectActiveView({ ...session, previousContexts: [] });
+    const view = await this.#readActiveView({
+      ...session,
+      previousContexts: [],
+    });
     const live = new Map(
       session.events
         .slice(-projectedEventTail)
@@ -3774,6 +3793,7 @@ function mergeChangedDocuments(
 function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
+  const freshContextReason = playFreshContextReason(context);
   const response = context.events.findLast(
     (event) => event.kind === "assistant" && event.status === "completed",
   );
@@ -3804,8 +3824,10 @@ function projectContext(
           },
         }),
     status: context.status,
-    canRetry: context.canRetry,
-    canContinuePartial: playAssistantPrefill(context) !== null,
+    canRetry: !freshContextReason && context.canRetry,
+    canContinuePartial:
+      !freshContextReason && playAssistantPrefill(context) !== null,
+    ...(freshContextReason === undefined ? {} : { freshContextReason }),
     events: context.events
       .slice(-projectedEventTail)
       .map((event) => projectActivityEvent(event)),

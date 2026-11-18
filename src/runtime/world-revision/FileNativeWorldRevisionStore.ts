@@ -123,6 +123,7 @@ export interface StoredWorldRevisionSession {
     filePolicy: "keep" | "revert";
   }[];
   partialResponse?: PartialAuthoringResponse;
+  settlementConflict?: true;
   retryDispatch?: {
     requestId: string;
     exchange: number;
@@ -707,6 +708,7 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
         "requests",
         "googleOutcomeUnknown",
         "partialResponse",
+        "settlementConflict",
         ...(value.schemaVersion === 3 || value.schemaVersion === 4
           ? ["retryDispatch", "editReceipts"]
           : []),
@@ -718,6 +720,8 @@ function validateSession(value: unknown): StoredWorldRevisionSession {
       value.schemaVersion !== 4) ||
     (value.editReceipts !== undefined &&
       !validEditReceipts(value.editReceipts)) ||
+    (value.settlementConflict !== undefined &&
+      value.settlementConflict !== true) ||
     (value.partialResponse !== undefined &&
       (!Array.isArray(value.modelItems) ||
         !validPartialAuthoringResponse(

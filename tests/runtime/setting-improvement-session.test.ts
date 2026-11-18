@@ -2182,7 +2182,7 @@ test.each([
       details: { code: "model_output_limit" },
     }),
   ],
-])("does not offer retry for %s failures", async (_label, error) => {
+])("uses saved request evidence for %s failures", async (label, error) => {
   const fixture = await createFixture([]);
   const host: ModelHost = {
     binding: () => binding,
@@ -2195,7 +2195,14 @@ test.each([
     "blocked",
     "Inspect.",
   );
-  expect(result).toMatchObject({ runStatus: "interrupted", canRetry: false });
+  const lengthLimit = label === "context limit" || label === "output limit";
+  expect(result).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: lengthLimit,
+  });
+  expect(result.freshContextReason).toBe(
+    lengthLimit ? undefined : "continuation_unavailable",
+  );
   expect(
     (
       await serviceFor(fixture.root, fixture.content, host).readSession(
@@ -2203,7 +2210,46 @@ test.each([
         result.sessionId,
       )
     ).canRetry,
-  ).toBe(false);
+  ).toBe(lengthLimit);
+});
+
+test("a changed package makes an interrupted request stale before a read or a direct retry", async () => {
+  const fixture = await createFixture([
+    { outcome: "failure", message: "connection reset" },
+  ]);
+  const interrupted = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "changed-files",
+    "Inspect.",
+  );
+  const current = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  await fixture.content.replaceCurrentTreeContentPackage(
+    fixture.packageId,
+    current.files.map((f) =>
+      f.path === "opening.md" ? { ...f, contents: "A different opening." } : f,
+    ),
+    { baseTreeRevision: current.treeRevision },
+  );
+  expect(
+    await fixture.session.readSession(fixture.packageId, interrupted.sessionId),
+  ).toMatchObject({
+    freshContextReason: "files_changed",
+    canRetry: false,
+    canContinuePartial: false,
+  });
+  for (const recovery of [undefined, "continue_partial"] as const) {
+    await expect(
+      fixture.session.resume({
+        packageId: fixture.packageId,
+        sessionId: interrupted.sessionId,
+        requestId: "retry-changed",
+        ...(recovery ? { recovery } : {}),
+      }),
+    ).rejects.toThrow(/files_changed/);
+  }
 });
 
 test("streamed fragments are not promoted to retry context", async () => {
@@ -3213,6 +3259,7 @@ test("完整工具响应若缺少原树结算意图，恢复会失败关闭而�
       await fixture.content.readCurrentTreeContentPackage(fixture.packageId)
     ).files.find(({ path }) => path === "opening.md")?.contents,
   ).toBe("Newer current-tree edit.\n");
+  expect(recovered.freshContextReason).toBe("files_changed");
   expect(recovered.turns.at(-1)?.exchanges[0]?.toolCalls[0]).toMatchObject({
     callId: "unconfirmed-write",
     result: {
@@ -5173,7 +5220,7 @@ test("设定完善 token 截断可累计继续，普通重发重新生成原请�
     "first",
     "Inspect.",
   );
-  expect(first).toMatchObject({ canRetry: false, canContinuePartial: true });
+  expect(first).toMatchObject({ canRetry: true, canContinuePartial: true });
   const second = await service.resume({
     packageId: fixture.packageId,
     sessionId: first.sessionId,

@@ -312,7 +312,9 @@ export class FileNativeWorldStore {
     this.#promptCompiler =
       options.promptCompiler ?? new FileNativePromptCompiler();
     this.operations = new FileNativeWorldOperationCoordinator(root);
-    this.playTimeline = new FileNativePlayTimelineStore(root);
+    this.playTimeline = new FileNativePlayTimelineStore(root, (worldId) =>
+      this.currentHead(worldId),
+    );
     this.playAdvances = new FileNativePlayAdvanceStore(root);
     this.#storageMigrator = new FileNativeWorldStorageMigrator(root);
   }

@@ -68,6 +68,7 @@ export interface ModelToolConversationState {
   completedRequestIds: string[];
   lastFailure: string | null;
   googleOutcomeUnknown?: boolean;
+  settlementConflict?: true;
   retryDispatch?: {
     requestId: string;
     exchange: number;
@@ -440,6 +441,7 @@ export function appendAuthoringUserMessage(
   requestId: string,
 ): void {
   const now = Date.now();
+  delete session.settlementConflict;
   session.messages.push({
     id: `message-${randomUUID()}`,
     role: "user",

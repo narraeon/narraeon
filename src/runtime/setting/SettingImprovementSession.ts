@@ -1,7 +1,4 @@
-import {
-  canContinueAuthoringPartial,
-  prepareAuthoringPartial,
-} from "../model/AssistantPrefill.ts";
+import { prepareAuthoringPartial } from "../model/AssistantPrefill.ts";
 import {
   completedAuthoringEdit,
   planAuthoringEdit,
@@ -9,9 +6,11 @@ import {
 } from "../authoring/AuthoringEditPlan.ts";
 import {
   assertCompatibleAuthoring,
+  authoringRecovery,
   canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
+  recoverLegacyLengthLimit,
 } from "../authoring/AuthoringRetry.ts";
 import {
   authoringRequestPreviews,
@@ -195,7 +194,7 @@ export class SettingImprovementSession {
       const session = await this.#store.findLatestByPackage(packageId);
       return session === null
         ? null
-        : this.#view(await this.#recoverIfNeeded(session));
+        : this.#readView(await this.#recoverIfNeeded(session));
     });
   }
 
@@ -220,7 +219,7 @@ export class SettingImprovementSession {
         summaries = summaries.sort(compareStoredSummaries);
       }
       return {
-        latest: latest === null ? null : this.#view(latest),
+        latest: latest === null ? null : await this.#readView(latest),
         history: summaries.map(settingImprovementHistoryItem),
       };
     });
@@ -277,7 +276,7 @@ export class SettingImprovementSession {
     return this.#mutate(async () => {
       const stored = await this.#store.read(sessionId);
       assertPackage(stored, packageId);
-      return this.#view(await this.#recoverIfNeeded(stored));
+      return this.#readView(await this.#recoverIfNeeded(stored));
     });
   }
 
@@ -426,7 +425,7 @@ export class SettingImprovementSession {
         selectedHost,
       );
     });
-    return prepared.run ?? this.#view(prepared.session);
+    return prepared.run ?? this.#readView(prepared.session);
   }
 
   async editMessage(input: {
@@ -570,7 +569,7 @@ export class SettingImprovementSession {
         lease.release();
       }
     });
-    return prepared.run ?? this.#view(prepared.session);
+    return prepared.run ?? this.#readView(prepared.session);
   }
 
   /** Continues a paused conversation with the frozen request it paused in. */
@@ -584,7 +583,16 @@ export class SettingImprovementSession {
     const prepared = await this.#mutate(async () => {
       const session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
-      return this.#startRequest(session, requestId, (next, _lease, host) => {
+      return this.#startRequest(session, requestId, (next, lease, host) => {
+        const recovery = authoringRecovery(
+          next,
+          false,
+          contentTreeFingerprint(lease.package.files),
+        );
+        if (recovery.freshContextReason)
+          throw new Error(
+            `The saved authoring request cannot be recovered (${recovery.freshContextReason}); use a new context.`,
+          );
         if (input.recovery === "continue_partial")
           prepareAuthoringPartial(next, host);
         else delete next.partialResponse;
@@ -599,7 +607,7 @@ export class SettingImprovementSession {
         } else resumePausedAuthoringConversation(next);
       });
     });
-    return prepared.run ?? this.#view(prepared.session);
+    return prepared.run ?? this.#readView(prepared.session);
   }
 
   async #startRequest(
@@ -758,7 +766,7 @@ export class SettingImprovementSession {
     const running = this.#conversation.cancel(sessionId);
     if (running !== null) return running;
     return this.#mutate(async () =>
-      this.#view(
+      this.#readView(
         await this.#recoverIfNeeded(await this.#store.read(sessionId)),
       ),
     );
@@ -990,6 +998,10 @@ export class SettingImprovementSession {
     }
     let expected = original;
     const session = structuredClone(original);
+    if (recoverLegacyLengthLimit(session)) {
+      if (await this.#store.saveIfUnchanged(expected, session)) return session;
+      return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
+    }
     const pendingAssistant = lastPendingAssistant(session);
     if (
       session.runStatus === "running" &&
@@ -1158,6 +1170,9 @@ export class SettingImprovementSession {
     assistantItemIndex: number,
     message: string,
   ): void {
+    session.settlementConflict = true;
+    delete session.retryDispatch;
+    delete session.partialResponse;
     const assistant = assistantAt(session, assistantItemIndex);
     for (const call of assistant.toolCalls)
       session.modelItems.push({
@@ -1188,7 +1203,20 @@ export class SettingImprovementSession {
     };
   }
 
-  #view(session: StoredSettingImprovementSession): SettingImprovementView {
+  async #readView(
+    session: StoredSettingImprovementSession,
+  ): Promise<SettingImprovementView> {
+    if (session.runStatus !== "interrupted") return this.#view(session);
+    const current = await this.#content.readCurrentTreeContentPackage(
+      session.packageId,
+    );
+    return this.#view(session, contentTreeFingerprint(current.files));
+  }
+
+  #view(
+    session: StoredSettingImprovementSession,
+    currentRevision?: string,
+  ): SettingImprovementView {
     const streaming =
       session.runStatus === "running"
         ? this.#conversation.streaming(session.sessionId)
@@ -1212,8 +1240,7 @@ export class SettingImprovementSession {
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
-      canRetry: canRetryAuthoringDispatch(session),
-      canContinuePartial: canContinueAuthoringPartial(session),
+      ...authoringRecovery(session, false, currentRevision),
     };
   }
 
@@ -1271,6 +1298,7 @@ function markInterruptedAfterRestart(
   delete session.partialResponse;
   const requestId = session.activeRequestId;
   session.runStatus =
+    !session.settlementConflict &&
     session.modelBinding.provider === "google_interactions" &&
     session.googleOutcomeUnknown === false &&
     session.retryDispatch === undefined

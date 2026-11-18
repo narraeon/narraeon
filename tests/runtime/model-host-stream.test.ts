@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import {
-  modelHostFailureRequiresFreshContext,
+  isModelHostTokenLimitFailure,
   ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
@@ -647,7 +647,7 @@ test("Responses truncation still reports output limit, and nested context errors
   const failure = await contextHost
     .exchange(exchange("openai_responses"))
     .catch((error: unknown) => error);
-  expect(modelHostFailureRequiresFreshContext(failure)).toBe(true);
+  expect(isModelHostTokenLimitFailure(failure)).toBe(true);
 });
 
 test("Anthropic Messages SSE 错误保留 Provider 类型、消息与请求 ID", async () => {
