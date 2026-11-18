@@ -87,3 +87,33 @@ test("an incomplete page keeps tool receipts without pairing call IDs across con
     eventId: 7,
   });
 });
+
+test("a failure before dispatch stays in the technical history without creating a call", () => {
+  const items = [
+    {
+      kind: "event",
+      chainId: "context",
+      current: true,
+      event: {
+        kind: "failure",
+        id: 3,
+        message: "The frozen request was unavailable.",
+      },
+    },
+  ] satisfies V1PlayTimelineItem[];
+  render(
+    createElement(PlayTurnCallDetails, {
+      items,
+      worldId: "world",
+      liveChain: null,
+      request: vi.fn(),
+    }),
+  );
+  const trace = screen.getByText("本段调用详情").closest("details")!;
+  expect(within(trace).getByText("仅保留部分调用记录")).toBeTruthy();
+  expect(within(trace).getByText("历史调用错误")).toBeTruthy();
+  expect(
+    within(trace).getByText("The frozen request was unavailable."),
+  ).toBeTruthy();
+  expect(within(trace).queryByRole("heading", { name: /次调用/u })).toBeNull();
+});
