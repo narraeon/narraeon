@@ -3954,19 +3954,21 @@ function projectActivityEvent(
     return structuredClone(projectLegacyModelBindingFailure(event));
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, ...summary } = event;
-    void reasoning;
     void toolFragment;
-    return structuredClone(summary);
+    return {
+      ...structuredClone(summary),
+      ...(reasoning ? { reasoningRecorded: true } : {}),
+    };
   }
   if (event.kind === "tool_call")
     return { ...structuredClone(event), arguments: null };
   if (event.kind === "tool_result")
     return { ...structuredClone(event), markdown: "" };
   const { reasoning, toolFragment, ...summary } = event;
-  void reasoning;
   void toolFragment;
   return {
     ...structuredClone(summary),
+    ...(reasoning ? { reasoningRecorded: true } : {}),
     text: "",
     toolCalls: event.toolCalls.map((call) => ({
       ...structuredClone(call),

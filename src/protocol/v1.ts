@@ -806,6 +806,8 @@ export type V1PlayCallChainEvent =
       exchange: number;
       attempt: number;
       usageRecorded?: true;
+      /** Lightweight projections retain the availability of the stored reasoning. */
+      reasoningRecorded?: true;
       reasoning?: string;
       toolFragment?: string;
       usage?: ModelUsage;
@@ -851,6 +853,7 @@ export type V1PlayCallChainEvent =
       replyEventId?: number;
       status?: "streaming" | "completed" | "interrupted" | "cancelled";
       text: string;
+      reasoningRecorded?: true;
       reasoning?: string;
       toolFragment?: string;
       usage?: ModelUsage;
