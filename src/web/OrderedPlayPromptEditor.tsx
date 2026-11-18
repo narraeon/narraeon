@@ -479,8 +479,8 @@ export function OrderedPlayPromptEditor({
                 <>
                   <p>
                     {t(
-                      "A tail line has no prefix text. It only contributes one line to the turn guide appended after the player input on every send.",
-                      "尾部行没有前部正文，只向每次发送追加在玩家输入之后的本轮提示贡献一行。",
+                      "A tail line contributes one line to the guide for each play request.",
+                      "尾部行为每次游玩请求的本轮提示贡献一行。",
                     )}
                   </p>
                   <label>
@@ -562,8 +562,8 @@ export function OrderedPlayPromptEditor({
           <h4>{t("Turn guide preview", "本轮提示预览")}</h4>
           <p>
             {t(
-              "Appended after the player input on every send and never kept in history. Lines follow the list order above; the header is fixed by Runtime.",
-              "每次发送追加在玩家输入之后，不进入历史。各行顺序与上方列表一致；抬头由 Runtime 固定。",
+              "The guide applies to the current request. Lines follow the order above. Provider mapping in Prompt Preview shows how they are sent.",
+              "本轮提示只用于当前请求，各行按上方列表顺序排列。在提示词预览的 Provider 映射中可以查看实际发送位置。",
             )}
           </p>
           <pre>{turnGuideHeader(locale)}</pre>

@@ -537,6 +537,7 @@ export class FileNativePromptCompiler {
       this.#locale,
       input.target,
       input.gameplay,
+      input.modelBinding.provider,
     );
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
     const ordered = withModelPrompt(
@@ -1496,6 +1497,7 @@ function settingImprovementPresetReference(
   locale: AppLocale,
   target: AuthoringConversationPromptInput["target"],
   gameplay: Gameplay,
+  provider: ProviderKind,
 ): string {
   const revision = target === "world-revision";
   const worldInstructionPlaceholder = {
@@ -1637,12 +1639,20 @@ function settingImprovementPresetReference(
     revision
       ? null
       : settingImprovementReferenceGroup(
-          locale === "zh-CN"
-            ? "本轮提示（每次发送的尾部）"
-            : "Turn guide (per-send suffix)",
-          locale === "zh-CN"
-            ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
-            : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
+          provider === "openai_responses"
+            ? locale === "zh-CN"
+              ? "本轮提示（游玩请求）"
+              : "Turn guide (play requests)"
+            : locale === "zh-CN"
+              ? "本轮提示（每次发送的尾部）"
+              : "Turn guide (per-send suffix)",
+          provider === "openai_responses"
+            ? locale === "zh-CN"
+              ? "每次游玩请求按编排顺序使用已启用块的尾部行，提醒模型本轮的写作要求。"
+              : "Each play request uses the enabled blocks’ turn-guide lines in their arranged order as reminders for writing that turn."
+            : locale === "zh-CN"
+              ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
+              : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
           turnGuideBlocks,
         ),
   ].filter((group) => group !== null);

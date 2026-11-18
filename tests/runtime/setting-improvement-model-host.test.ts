@@ -139,7 +139,11 @@ test.each([
       serialized.indexOf("保存时机与整理"),
     );
     expect(serialized.indexOf("保存时机与整理")).toBeLessThan(
-      serialized.indexOf("本轮提示（每次发送的尾部）"),
+      serialized.indexOf(
+        provider === "openai_responses"
+          ? "本轮提示（游玩请求）"
+          : "本轮提示（每次发送的尾部）",
+      ),
     );
     expect(serialized).toContain("play-preset:turn-guide");
     expect(serialized).not.toContain("UNLISTED-PRESET-BLOCK-MUST-NOT-LEAK");
