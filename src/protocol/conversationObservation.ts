@@ -54,9 +54,9 @@ export function conversationUpdate(
     for (const event of next.value.events) {
       const old = candidate.events.find((item) => item.id === event.id);
       if (
-        event.kind !== "assistant" ||
+        (event.kind !== "assistant" && event.kind !== "followup") ||
         event.status !== "streaming" ||
-        old?.kind !== "assistant"
+        (old?.kind !== "assistant" && old?.kind !== "followup")
       )
         continue;
       for (const field of ["text", "reasoning", "toolFragment"] as const) {
@@ -99,7 +99,10 @@ export function applyConversationUpdate(
   const value = structuredClone(previous.value);
   for (const delta of update.deltas) {
     const event = value.events.find((item) => item.id === delta.eventId);
-    if (event?.kind !== "assistant" || event.status !== "streaming")
+    if (
+      (event?.kind !== "assistant" && event?.kind !== "followup") ||
+      event.status !== "streaming"
+    )
       throw new Error("Conversation observation has an unknown live event");
     event[delta.field] = `${event[delta.field] ?? ""}${delta.text}`;
   }

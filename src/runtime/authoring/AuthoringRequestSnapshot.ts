@@ -8,6 +8,27 @@ import type {
   ModelHostWireRequest,
 } from "../model/ModelHost.ts";
 import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
+import {
+  validRequestContextEvidence,
+  type PlayRequestContextEvidence,
+} from "../play/PlayRequestContext.ts";
+import type { ModelHostExchange } from "../model/ModelHost.ts";
+import type { ModelUsage } from "../../protocol/modelUsage.ts";
+
+/** One Provider dispatch, with references into the frozen send and transcript. */
+export interface AuthoringCall {
+  id: string;
+  exchange: number;
+  requestAttempt: number;
+  retryOf?: string;
+  retryRequestId?: string;
+  status: "attempted" | "completed" | "interrupted" | "cancelled";
+  evidence?: PlayRequestContextEvidence;
+  boundaries?: ModelHostExchange["worldRevisionBoundaries"];
+  assistantItemIndex?: number;
+  usage?: ModelUsage | null;
+  failure?: string;
+}
 
 /**
  * Documents the Runtime preloaded into one send's bootstrap. They count as
@@ -28,6 +49,7 @@ export interface AuthoringRequestSnapshot {
   preload?: AuthoringPreloadRecord;
   wireRequest?: ModelHostWireRequest;
   modelBinding?: ModelHostBinding;
+  calls?: AuthoringCall[];
   retryAttempts?: {
     requestId: string;
     compilation: PromptCompilation;
@@ -92,9 +114,15 @@ export function validAuthoringRequests(
           "wireRequest",
           "retryAttempts",
           "modelBinding",
+          "calls",
         ].includes(key),
       ) ||
       (item.modelBinding !== undefined && !isBinding(item.modelBinding)) ||
+      (item.calls !== undefined &&
+        (!Array.isArray(item.calls) ||
+          !item.calls.every(validAuthoringCall) ||
+          new Set(item.calls.map(({ id }: AuthoringCall) => id)).size !==
+            item.calls.length)) ||
       (item.retryAttempts !== undefined &&
         (!Array.isArray(item.retryAttempts) ||
           !item.retryAttempts.every(
@@ -156,6 +184,71 @@ export function validAuthoringRequests(
     valid &&
     (session.activeRequestId === null ||
       lastRequestId === session.activeRequestId)
+  );
+}
+
+function validAuthoringCall(value: unknown): value is AuthoringCall {
+  if (typeof value !== "object" || value === null) return false;
+  const call = value as Partial<AuthoringCall>;
+  return (
+    typeof call.id === "string" &&
+    call.id.startsWith("call-") &&
+    Number.isSafeInteger(call.exchange) &&
+    Number(call.exchange) >= 1 &&
+    Number.isSafeInteger(call.requestAttempt) &&
+    Number(call.requestAttempt) >= 1 &&
+    (call.retryOf === undefined || typeof call.retryOf === "string") &&
+    (call.retryRequestId === undefined ||
+      typeof call.retryRequestId === "string") &&
+    (call.status === "attempted" ||
+      call.status === "completed" ||
+      call.status === "interrupted" ||
+      call.status === "cancelled") &&
+    (call.evidence === undefined ||
+      validRequestContextEvidence(call.evidence)) &&
+    (call.assistantItemIndex === undefined ||
+      (Number.isSafeInteger(call.assistantItemIndex) &&
+        Number(call.assistantItemIndex) >= 0)) &&
+    (call.failure === undefined || typeof call.failure === "string") &&
+    (call.boundaries === undefined ||
+      (typeof call.boundaries?.currentEpochId === "string" &&
+        Array.isArray(call.boundaries.entries) &&
+        call.boundaries.entries.every(
+          (entry) =>
+            entry !== null &&
+            Number.isSafeInteger(entry.itemIndex) &&
+            typeof entry.epochId === "string" &&
+            typeof entry.baseHead === "string" &&
+            typeof entry.markdown === "string",
+        ))) &&
+    (call.usage === undefined ||
+      call.usage === null ||
+      validCallUsage(call.usage))
+  );
+}
+
+function validCallUsage(usage: ModelUsage): boolean {
+  return (
+    typeof usage === "object" &&
+    usage?.provenance != null &&
+    (
+      [
+        "inputTokens",
+        "uncachedInputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "reasoningTokens",
+        "outputTokens",
+        "totalTokens",
+      ] as const
+    ).every(
+      (field) =>
+        (usage[field] === null ||
+          (Number.isSafeInteger(usage[field]) && Number(usage[field]) >= 0)) &&
+        ["provider", "unavailable", "derived_provider_fields"].includes(
+          usage.provenance[field],
+        ),
+    )
   );
 }
 
@@ -256,5 +349,24 @@ export function authoringRequestPreviews(session: {
         })),
       ],
     ),
+  ];
+}
+
+export function authoringRequestIdentities(session: {
+  creationRequestId: string;
+  requests?: AuthoringRequestSnapshot[];
+}) {
+  const requests = session.requests ?? [];
+  return [
+    ...(requests.length === 0 || requests[0]!.modelItemStart > 0
+      ? [{ requestId: session.creationRequestId, legacyBootstrap: true }]
+      : []),
+    ...requests.flatMap(({ requestId, retryAttempts }) => [
+      { requestId, legacyBootstrap: false },
+      ...(retryAttempts ?? []).map(({ requestId }) => ({
+        requestId,
+        legacyBootstrap: false,
+      })),
+    ]),
   ];
 }

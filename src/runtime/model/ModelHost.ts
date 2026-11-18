@@ -483,6 +483,17 @@ function scriptedProviderState(
   };
 }
 
+export function worldRevisionSystemBoundaryText(boundary: {
+  epochId: string;
+  baseHead: string;
+}): string {
+  return `# Runtime world-revision epoch boundary\n\nThe current epoch is ${boundary.epochId}, based on ${boundary.baseHead}. All prior search cursors and read authorizations are invalid. Re-read before writing, except for materials legitimately preloaded in the current revision.`;
+}
+
+export function worldRevisionTransitionText(markdown: string): string {
+  return `# Runtime notice: world-revision epoch transition\n\n${markdown}`;
+}
+
 /** Preserve released requests without a model-facing projection byte for byte. */
 export function modelHostInputText(
   item: Extract<

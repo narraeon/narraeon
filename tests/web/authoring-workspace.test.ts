@@ -41,33 +41,7 @@ test("world revision target keeps its native identity without package fields", a
 function preview(
   requestId: string,
 ): NonNullable<V1SettingImprovementView["requestPreviews"]>[number] {
-  return {
-    requestId,
-    compilation: {
-      logicalMessages: [],
-      provider: { messages: [] },
-      tools: [],
-      coverage: [],
-      cache: {
-        strategy: "provider_managed",
-        stablePrefixFingerprint: "test",
-        breakpoints: [],
-        estimatedCacheableBytes: 0,
-        firstDynamicByte: 0,
-      },
-      budget: {
-        estimator: "disabled",
-        messageTokens: 0,
-        toolTokens: 0,
-        outputReserveTokens: 0,
-        forcedTailReserveTokens: 0,
-        safetyMarginTokens: 0,
-        requiredTokens: 0,
-        contextWindowTokens: 1024,
-        status: "not_checked",
-      },
-    },
-  };
+  return { requestId };
 }
 
 function fixture(kind: "setting" | "revision") {

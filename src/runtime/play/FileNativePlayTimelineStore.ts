@@ -4,6 +4,8 @@ import { playAssistantPrefill } from "../model/AssistantPrefill.ts";
 import {
   captureRequestContext,
   contextDigest,
+  logicalBootstrapDigest,
+  continuationMessage,
   projectRequestContext,
   validRequestContextEvidence,
 } from "./PlayRequestContext.ts";
@@ -832,15 +834,16 @@ export class FileNativePlayTimelineStore {
   ): Promise<void> {
     const sourceRoot = this.#contextRoot(worldId, sourceChainId);
     for (const event of target.events) {
-      if (event.kind !== "assistant") continue;
+      if (event.kind !== "assistant" && event.kind !== "followup") continue;
       try {
         const evidence = await readOptionalJson<unknown>(
           join(sourceRoot, "request-contexts", numbered(event.id)),
         );
         if (
           validRequestContextEvidence(evidence) &&
-          evidence.exchange === event.exchange &&
-          evidence.attempt === event.attempt &&
+          (event.kind === "followup" ||
+            (evidence.exchange === event.exchange &&
+              evidence.attempt === event.attempt)) &&
           evidence.transcriptCount <= target.transcript.length &&
           contextDigest(
             target.transcript.slice(0, evidence.transcriptCount),
@@ -1198,8 +1201,14 @@ export class FileNativePlayTimelineStore {
     request: ModelHostExchange,
     transcript: ModelHostAppendItem[],
     attempt: number,
+    includeFollowupPrompt = false,
   ): Promise<void> {
-    const evidence = captureRequestContext(request, transcript, attempt);
+    const evidence = captureRequestContext(
+      request,
+      transcript,
+      attempt,
+      includeFollowupPrompt,
+    );
     if (evidence !== null)
       await publishImmutableJson(
         join(
@@ -1239,8 +1248,11 @@ export class FileNativePlayTimelineStore {
     assertIdentity(worldId, "World ID");
     assertIdentity(chainId, "Call-chain ID");
     if (!(await this.#contextIsReachable(worldId, chainId))) return unavailable;
-    const event = await this.readDetail(worldId, chainId, eventId);
-    if (event.kind !== "assistant") return unavailable;
+    const event = await this.readDetail(worldId, chainId, eventId).catch(
+      () => null,
+    );
+    if (event?.kind !== "assistant" && event?.kind !== "followup")
+      return unavailable;
     const context = (await this.readContext(worldId, chainId))?.value;
     if (context === undefined) return unavailable;
     const run =
@@ -1270,6 +1282,7 @@ export class FileNativePlayTimelineStore {
     if (!validRequestContextEvidence(evidence)) {
       const request = context.lastRequest;
       if (
+        event.kind === "assistant" &&
         request !== null &&
         request.exchange === event.exchange &&
         context.lastRequestAttempt === event.attempt
@@ -1280,30 +1293,66 @@ export class FileNativePlayTimelineStore {
             request.bootstrap,
             request.appended,
             request.toolUniverse ?? request.tools,
+            continuationMessage(request.assistantPrefill),
           ),
         });
       return finish(incomplete);
     }
     if (
-      evidence.exchange !== event.exchange ||
-      evidence.attempt !== event.attempt ||
+      (event.kind === "assistant" &&
+        (evidence.exchange !== event.exchange ||
+          evidence.attempt !== event.attempt)) ||
       evidence.transcriptCount > context.transcript.length
     )
       return finish(incomplete);
     const bootstrap = run.bootstrap;
     const prefix = context.transcript.slice(0, evidence.transcriptCount);
+    const followup =
+      event.kind === "followup"
+        ? run.followups?.find(({ id }) => id === event.followupId)
+        : undefined;
     if (
-      contextDigest(bootstrap) !== evidence.bootstrapDigest ||
-      contextDigest(bootstrap.toolUniverse) !== evidence.toolsDigest ||
+      event.kind === "followup" &&
+      (followup === undefined ||
+        contextDigest(followup.logicalMessages) !==
+          evidence.followupPromptDigest)
+    )
+      return finish(incomplete);
+    const tools =
+      followup !== undefined &&
+      !followup.allowedTools.every((name) =>
+        bootstrap.toolUniverse.some((tool) => tool.name === name),
+      )
+        ? followup.tools
+        : bootstrap.toolUniverse;
+    if (
+      (evidence.logicalBootstrapDigest === undefined
+        ? contextDigest(bootstrap) !== evidence.bootstrapDigest
+        : logicalBootstrapDigest(bootstrap) !==
+          evidence.logicalBootstrapDigest) ||
+      contextDigest(tools) !== evidence.toolsDigest ||
       contextDigest(prefix) !== evidence.transcriptDigest
     )
       return finish(incomplete);
     return finish({
       status: "available",
-      messages: projectRequestContext(bootstrap, [
-        ...prefix,
-        ...evidence.suffix,
-      ]),
+      messages: projectRequestContext(
+        bootstrap,
+        [
+          ...prefix,
+          ...evidence.suffix,
+          ...(followup === undefined
+            ? []
+            : [
+                {
+                  kind: "prompt_delta" as const,
+                  logicalMessages: followup.logicalMessages,
+                },
+              ]),
+        ],
+        tools,
+        evidence.continuation,
+      ),
     });
   }
 
@@ -1784,7 +1833,12 @@ function summarizeEvent(
       kind: "followup",
       followupId: event.followupId,
       displayName: event.displayName,
+      ...(event.replyEventId === undefined
+        ? {}
+        : { replyEventId: event.replyEventId }),
+      ...(event.status === undefined ? {} : { status: event.status }),
       toolCallCount: event.toolCalls.length,
+      hasReasoning: Boolean(event.reasoning),
       failed: event.failure !== undefined,
       ...(event.usage === undefined
         ? {}
@@ -2029,8 +2083,10 @@ function assertPlayEvent(
     if (
       typeof value.followupId !== "string" ||
       typeof value.displayName !== "string" ||
+      !validOptionalFollowupIdentity(value) ||
       typeof value.text !== "string" ||
       !validOptionalString(value.reasoning) ||
+      !validOptionalString(value.toolFragment) ||
       !validOptionalUsage(value.usage) ||
       (value.requestPreviewExchange !== undefined &&
         (!Number.isSafeInteger(value.requestPreviewExchange) ||
@@ -2123,12 +2179,30 @@ function assertTimelineEventSummary(
     value.kind !== "followup" ||
     typeof value.followupId !== "string" ||
     typeof value.displayName !== "string" ||
+    !validOptionalFollowupIdentity(value) ||
     !validCount(value.toolCallCount) ||
+    (value.hasReasoning !== undefined &&
+      typeof value.hasReasoning !== "boolean") ||
     typeof value.failed !== "boolean" ||
     !validOptionalUsage(value.usage) ||
     value.detailsAvailable !== true
   )
     throw new Error("Follow-up timeline summary has an invalid shape");
+}
+
+function validOptionalFollowupIdentity(
+  value: Record<string, unknown>,
+): boolean {
+  return (
+    (value.replyEventId === undefined ||
+      (Number.isSafeInteger(value.replyEventId) &&
+        Number(value.replyEventId) >= 1)) &&
+    (value.status === undefined ||
+      value.status === "streaming" ||
+      value.status === "completed" ||
+      value.status === "interrupted" ||
+      value.status === "cancelled")
+  );
 }
 
 function validAssistantEventCore(value: Record<string, unknown>): boolean {
@@ -2139,6 +2213,7 @@ function validAssistantEventCore(value: Record<string, unknown>): boolean {
         value.responseKind === "narrative" &&
         typeof value.committedHead === "string")) &&
     typeof value.text === "string" &&
+    (value.usageRecorded === undefined || value.usageRecorded === true) &&
     (value.status === "streaming" ||
       value.status === "completed" ||
       value.status === "interrupted") &&

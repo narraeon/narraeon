@@ -12,7 +12,11 @@ import {
   failAuthoringDispatch,
   type AuthoringDispatchPhase,
 } from "./AuthoringRetry.ts";
-import type { AuthoringRequestSnapshot } from "./AuthoringRequestSnapshot.ts";
+import type {
+  AuthoringCall,
+  AuthoringRequestSnapshot,
+} from "./AuthoringRequestSnapshot.ts";
+import { captureRequestContext } from "../play/PlayRequestContext.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -85,6 +89,7 @@ export interface ModelToolConversationState {
 }
 
 export interface ModelToolConversationStreaming {
+  callId?: string;
   reasoningChars: number;
   textChars: number;
   toolChars: number;
@@ -270,6 +275,7 @@ export class ModelToolConversation<
     let correcting = false;
     let phase: AuthoringDispatchPhase = "settling";
     let dispatchedRequest: ModelHostExchange | undefined;
+    let call: AuthoringCall | undefined;
     try {
       for (let round = 0; round < maximumExchangesPerMessage; round += 1) {
         let request = authoringExchange(
@@ -287,13 +293,13 @@ export class ModelToolConversation<
           request = prepareAuthoringDispatch(session, request);
         request = input.host.freezeRequest?.(request) ?? request;
         dispatchedRequest = request;
-        const retryAttempt = session.requests
-          ?.at(-1)
-          ?.retryAttempts?.find((item) => item.requestId === live.requestId);
-        if (retryAttempt !== undefined)
-          request.requestAttempt =
-            (session.requests?.at(-1)?.retryAttempts?.indexOf(retryAttempt) ??
-              0) + 2;
+        const snapshot = session.requests?.at(-1);
+        const retryIndex =
+          snapshot?.retryAttempts?.findIndex(
+            (item) => item.requestId === live.requestId,
+          ) ?? -1;
+        const attempt = retryIndex < 0 ? 1 : retryIndex + 2;
+        request.requestAttempt = attempt;
         session.exchange = Math.max(
           session.exchange,
           request.exchange ?? session.exchange + 1,
@@ -301,6 +307,35 @@ export class ModelToolConversation<
         if (session.modelBinding.provider === "google_interactions")
           session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
+        if (snapshot !== undefined) {
+          const previous = correcting
+            ? snapshot.calls?.at(-1)
+            : snapshot.calls?.findLast(
+                (item) => item.exchange === session.exchange,
+              );
+          const evidence = captureRequestContext(
+            request,
+            session.modelItems,
+            attempt,
+          );
+          call = {
+            id: `call-${randomUUID()}`,
+            exchange: session.exchange,
+            requestAttempt: attempt,
+            status: "attempted",
+            usage: null,
+            ...(previous === undefined ? {} : { retryOf: previous.id }),
+            ...(retryIndex < 0 ? {} : { retryRequestId: live.requestId }),
+            ...(evidence === null ? {} : { evidence }),
+            ...(request.worldRevisionBoundaries === undefined
+              ? {}
+              : {
+                  boundaries: structuredClone(request.worldRevisionBoundaries),
+                }),
+          };
+          (snapshot.calls ??= []).push(call);
+          live.streaming.callId = call.id;
+        }
         live.toolReceived = false;
         session.updatedAt = Date.now();
         phase = "preparing";
@@ -333,6 +368,7 @@ export class ModelToolConversation<
               input.changed?.(false);
             },
           });
+          if (call !== undefined) call.usage = response.usage ?? null;
           if (live.controller.signal.aborted)
             throw new ModelHostCancelledError(
               "The authoring request was cancelled",
@@ -347,6 +383,10 @@ export class ModelToolConversation<
             throw error;
           // Invalid output has no usable text prefix, even when its stream contained text.
           live.toolReceived = true;
+          if (call !== undefined) {
+            call.status = "interrupted";
+            call.failure = error.message;
+          }
           if (correcting) throw error;
           correcting = true;
           session.modelItems.push(error.notice());
@@ -369,6 +409,10 @@ export class ModelToolConversation<
         delete session.retryDispatch;
         delete session.partialResponse;
         phase = "settling";
+        if (call !== undefined) {
+          call.assistantItemIndex = session.modelItems.length;
+          call.status = "completed";
+        }
         session.modelItems.push({
           kind: "assistant",
           text: visibleText,
@@ -461,6 +505,14 @@ export class ModelToolConversation<
               ? error.message
               : (input.failure?.interrupted ??
                 "The authoring response was interrupted");
+      if (call !== undefined) {
+        call.status =
+          live.controller.signal.aborted ||
+          error instanceof ModelHostCancelledError
+            ? "cancelled"
+            : "interrupted";
+        call.failure = session.lastFailure;
+      }
       session.updatedAt = Date.now();
       await input.save(session);
       return input.view(session);

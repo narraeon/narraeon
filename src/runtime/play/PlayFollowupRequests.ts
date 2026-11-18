@@ -52,10 +52,15 @@ export interface PlayFollowupRun {
 export interface PlayFollowupObserver {
   onRequest?: (id: string, request: ModelHostExchange) => Promise<boolean>;
   onGoogleHop?: (id: string, evidence: GoogleHopEvidence) => Promise<void>;
-  onProviderDispatch?: () => void;
+  onProviderDispatch?: (
+    id: string,
+    name: string,
+    request: ModelHostExchange,
+    prefix: ModelHostAppendItem[],
+  ) => void | Promise<void>;
   onProviderDelta?: (delta: ModelHostDelta) => void;
   onProviderSettled?: () => void;
-  onOutcome?: (outcome: PlayFollowupOutcome) => void;
+  onOutcome?: (outcome: PlayFollowupOutcome) => void | Promise<void>;
 }
 
 export interface PlayFollowupInput {
@@ -143,11 +148,11 @@ export async function runPlayFollowupRequests(
     if (signalWasAborted(input.signal)) {
       failure ??= "The follow-up request was cancelled.";
       outcomes.push(outcome);
-      input.observer?.onOutcome?.(outcome);
+      await input.observer?.onOutcome?.(outcome);
       break;
     }
     outcomes.push(outcome);
-    input.observer?.onOutcome?.(outcome);
+    await input.observer?.onOutcome?.(outcome);
     if (outcome.failure === undefined) completed.push(followup.id);
     else failure ??= outcome.failure;
   }
@@ -241,7 +246,12 @@ async function runOne(
       }
       requestSignal?.throwIfAborted();
       outcome.requestPreviewStatus = "attempted";
-      input.observer?.onProviderDispatch?.();
+      await input.observer?.onProviderDispatch?.(
+        followup.id,
+        followup.displayName,
+        request,
+        prefix,
+      );
       response = await input.modelHost.exchange(request, {
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
         onGoogleHop: (evidence) =>
@@ -324,7 +334,7 @@ async function runOne(
   } catch (error: unknown) {
     if (
       outcome.requestPreviewStatus !== undefined &&
-      error instanceof ModelHostCancelledError
+      (requestSignal?.aborted || error instanceof ModelHostCancelledError)
     )
       outcome.requestPreviewStatus = "cancelled";
     outcome.failure =

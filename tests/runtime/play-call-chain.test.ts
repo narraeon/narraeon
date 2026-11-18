@@ -14536,6 +14536,17 @@ test("正文 token 截断继续发送只结算合并后的完整正文", async (
   expect(
     done.events.findLast((event) => event.kind === "assistant"),
   ).toMatchObject({ text: "  上半\n下半。", status: "completed" });
+  const event = done.events.findLast(({ kind }) => kind === "assistant")!;
+  const context = await worlds.playTimeline.readRequestContext(
+    worldId,
+    "prefill",
+    event.id,
+  );
+  expect(context.status).toBe("available");
+  expect(context.messages).toContainEqual({
+    role: "assistant · prefill",
+    text: "  上半\n",
+  });
   const history = (await worlds.recoverEndpoint(worldId)).history.map(
     ({ exactText }) => exactText,
   );

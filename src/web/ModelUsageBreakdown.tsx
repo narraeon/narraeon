@@ -65,6 +65,38 @@ export function ModelUsageBreakdown({
   );
 }
 
+export function ModelCallUsage({
+  usage,
+}: {
+  usage: ModelUsage | null | undefined;
+}) {
+  return (
+    <details className="technical-details">
+      <summary>
+        {uiText("调用量详情")}
+        {" · "}
+        {uiText("输入")} {formatUsageTokens(usage?.inputTokens ?? null)}
+        {" · "}
+        {uiText("输出")} {formatUsageTokens(usage?.outputTokens ?? null)}
+        {" tokens"}
+      </summary>
+      {usage === undefined ? <p>{uiText("未记录本次用量")}</p> : null}
+      {usage == null ? (
+        <dl className="model-usage" aria-label={uiText("Token 用量明细")}>
+          {usageFields.map(([field, label]) => (
+            <div key={field}>
+              <dt>{uiText(label)}</dt>
+              <dd>{uiText("未报告")}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <ModelUsageBreakdown usage={usage} showProvenance />
+      )}
+    </details>
+  );
+}
+
 function formatUsageTokens(value: number | null): string {
   return value === null
     ? uiText("未报告")

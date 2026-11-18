@@ -1,4 +1,9 @@
-import { modelHostInputText } from "../model/ModelHost.ts";
+import { continuationPrompt } from "../model/AssistantPrefill.ts";
+import {
+  modelHostInputText,
+  worldRevisionSystemBoundaryText,
+  worldRevisionTransitionText,
+} from "../model/ModelHost.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PlayRequestContextMessage } from "../../protocol/playRequestContext.ts";
@@ -8,6 +13,20 @@ import type {
 } from "../model/ModelHost.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 
+type ContinuationMessage = {
+  role: "assistant · prefill" | "user · continuation";
+  text: string;
+};
+
+export function continuationMessage(
+  partial: ModelHostExchange["assistantPrefill"],
+): ContinuationMessage | undefined {
+  if (!partial) return undefined;
+  return partial.mode === "prompt"
+    ? { role: "user · continuation", text: continuationPrompt(partial.text) }
+    : { role: "assistant · prefill", text: partial.text };
+}
+
 /** Small dispatch boundary; large immutable prompt and transcript stay shared. */
 export interface PlayRequestContextEvidence {
   version: 1;
@@ -16,7 +35,10 @@ export interface PlayRequestContextEvidence {
   transcriptCount: number;
   transcriptDigest: string;
   bootstrapDigest: string;
+  logicalBootstrapDigest?: string;
+  followupPromptDigest?: string;
   toolsDigest: string;
+  continuation?: ContinuationMessage;
   suffix: {
     kind: "runtime_notice";
     notice: "turn_guide" | "response_correction";
@@ -28,16 +50,27 @@ export function contextDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+export function logicalBootstrapDigest(bootstrap: PromptCompilation): string {
+  return contextDigest([
+    bootstrap.logicalMessages,
+    bootstrap.provider.preload?.markdown,
+  ]);
+}
+
 export function captureRequestContext(
   request: ModelHostExchange,
   transcript: ModelHostAppendItem[],
   attempt: number,
+  includeFollowupPrompt = false,
 ): PlayRequestContextEvidence | null {
   if (
     !isDeepStrictEqual(request.appended.slice(0, transcript.length), transcript)
   )
     return null;
   const suffix = request.appended.slice(transcript.length);
+  const followupPrompt = includeFollowupPrompt ? suffix.pop() : undefined;
+  if (includeFollowupPrompt && followupPrompt?.kind !== "prompt_delta")
+    return null;
   if (
     !suffix.every(
       (item) =>
@@ -53,7 +86,14 @@ export function captureRequestContext(
     transcriptCount: transcript.length,
     transcriptDigest: contextDigest(transcript),
     bootstrapDigest: contextDigest(request.bootstrap),
+    logicalBootstrapDigest: logicalBootstrapDigest(request.bootstrap),
+    ...(followupPrompt?.kind === "prompt_delta"
+      ? { followupPromptDigest: contextDigest(followupPrompt.logicalMessages) }
+      : {}),
     toolsDigest: contextDigest(request.toolUniverse ?? request.tools),
+    ...(request.assistantPrefill === undefined
+      ? {}
+      : { continuation: continuationMessage(request.assistantPrefill)! }),
     suffix: suffix as PlayRequestContextEvidence["suffix"],
   };
 }
@@ -73,7 +113,16 @@ export function validRequestContextEvidence(
     Number(item.transcriptCount) >= 0 &&
     typeof item.transcriptDigest === "string" &&
     typeof item.bootstrapDigest === "string" &&
+    (item.logicalBootstrapDigest === undefined ||
+      typeof item.logicalBootstrapDigest === "string") &&
     typeof item.toolsDigest === "string" &&
+    (item.followupPromptDigest === undefined ||
+      typeof item.followupPromptDigest === "string") &&
+    (item.continuation === undefined ||
+      (item.continuation !== null &&
+        (item.continuation.role === "user · continuation" ||
+          item.continuation.role === "assistant · prefill") &&
+        typeof item.continuation.text === "string")) &&
     Array.isArray(item.suffix) &&
     item.suffix.every(
       (suffix) =>
@@ -90,6 +139,8 @@ export function projectRequestContext(
   bootstrap: PromptCompilation,
   appended: ModelHostAppendItem[],
   tools = bootstrap.toolUniverse,
+  continuation?: ContinuationMessage,
+  boundaries?: ModelHostExchange["worldRevisionBoundaries"],
 ): PlayRequestContextMessage[] {
   const messages: PlayRequestContextMessage[] = [];
   const appendPrompts = (prompts: PromptCompilation["logicalMessages"]) => {
@@ -117,6 +168,14 @@ export function projectRequestContext(
   appendPrompts(
     bootstrap.logicalMessages.filter(({ role }) => role !== "player_input"),
   );
+  const currentBoundary = boundaries?.entries.findLast(
+    ({ epochId }) => epochId === boundaries.currentEpochId,
+  );
+  if (currentBoundary !== undefined)
+    messages.push({
+      role: "system · world_revision_epoch",
+      text: worldRevisionSystemBoundaryText(currentBoundary),
+    });
   if (bootstrap.provider.preload !== undefined)
     messages.push({
       role: "tool · runtime_load_context",
@@ -125,19 +184,36 @@ export function projectRequestContext(
   appendPrompts(
     bootstrap.logicalMessages.filter(({ role }) => role === "player_input"),
   );
-  for (const item of appended) {
+  for (const [index, item] of appended.entries()) {
+    const boundary = boundaries?.entries.find(
+      ({ itemIndex }) => itemIndex === index,
+    );
+    if (item.kind === "prompt_delta" && boundary !== undefined) {
+      messages.push({
+        role: "user · world_revision_epoch",
+        text: worldRevisionTransitionText(boundary.markdown),
+      });
+      continue;
+    }
     switch (item.kind) {
       case "prompt_delta":
         appendPrompts(item.logicalMessages);
         break;
-      case "assistant":
-        messages.push({ role: "assistant", text: item.text });
+      case "assistant": {
+        const prefix = item.providerState?.continuedPrefixLength ?? 0;
+        if (prefix > 0)
+          messages.push({
+            role: "user · continuation",
+            text: continuationPrompt(item.text.slice(0, prefix)),
+          });
+        messages.push({ role: "assistant", text: item.text.slice(prefix) });
         for (const call of item.toolCalls)
           messages.push({
             role: `assistant · ${call.name} · ${call.id}`,
             text: JSON.stringify(call.arguments, null, 2) ?? "",
           });
         break;
+      }
       case "tool":
         messages.push({
           role: `tool · ${item.toolCallId}`,
@@ -153,6 +229,7 @@ export function projectRequestContext(
         break;
     }
   }
+  if (continuation !== undefined) messages.push(continuation);
   messages.push({ role: "tools", text: JSON.stringify(tools, null, 2) });
   return messages;
 }

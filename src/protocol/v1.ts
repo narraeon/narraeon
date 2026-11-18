@@ -55,6 +55,30 @@ export interface V1Envelope {
 export type V1Request =
   | { type: "world.revision.preview"; worldId: string; sessionId?: string }
   | {
+      type: "setting-improvement.call.context";
+      packageId: string;
+      sessionId: string;
+      callId: string;
+    }
+  | {
+      type: "world.revision.call.context";
+      worldId: string;
+      sessionId: string;
+      callId: string;
+    }
+  | {
+      type: "setting-improvement.request.preview";
+      packageId: string;
+      sessionId: string;
+      requestId: string;
+    }
+  | {
+      type: "world.revision.request.preview";
+      worldId: string;
+      sessionId: string;
+      requestId: string;
+    }
+  | {
       type: "setting-improvement.preview";
       packageId: string;
       sessionId?: string;
@@ -436,6 +460,12 @@ export interface V1SettingConversationExchange {
   text: string;
   /** Exact Provider-returned reasoning only; never inferred chain of thought. */
   reasoning?: string;
+  status?: "streaming" | "completed" | "interrupted" | "cancelled";
+  retryOf?: string;
+  failure?: string;
+  toolFragment?: string;
+  /** Null means this dispatch received no usage; absent on older records. */
+  usage?: ModelUsage | null;
   toolCalls: V1SettingConversationToolCall[];
 }
 
@@ -594,9 +624,12 @@ export interface V1PlayContextReadingView {
   } | null;
 }
 
-export interface V1AuthoringRequestPreview {
+export interface V1AuthoringRequestIdentity {
   legacyBootstrap?: boolean;
   requestId: string;
+}
+
+export interface V1AuthoringRequestPreview extends V1AuthoringRequestIdentity {
   compilation: V1SettingPromptPreview["compilation"];
   wireRequest?: {
     provider: string;
@@ -613,7 +646,7 @@ export interface V1SettingImprovementView {
   freshContextReason?: FreshContextReason;
   canRetry?: boolean;
   canContinuePartial?: boolean;
-  requestPreviews?: V1AuthoringRequestPreview[];
+  requestPreviews?: V1AuthoringRequestIdentity[];
   sessionId: string;
   packageId: string;
   runStatus: "ready" | "running" | "paused" | "interrupted";
@@ -630,6 +663,7 @@ export interface V1SettingImprovementView {
     exchange: number;
     toolCalls: number;
     streaming: {
+      callId?: string;
       reasoningChars: number;
       textChars: number;
       toolChars: number;
@@ -691,7 +725,7 @@ export interface V1WorldRevisionView {
   freshContextReason?: FreshContextReason;
   canRetry?: boolean;
   canContinuePartial?: boolean;
-  requestPreviews?: V1AuthoringRequestPreview[];
+  requestPreviews?: V1AuthoringRequestIdentity[];
   sessionId: string;
   worldId: string;
   epochId: string;
@@ -771,6 +805,7 @@ export type V1PlayCallChainEvent =
       checkpoint?: true;
       exchange: number;
       attempt: number;
+      usageRecorded?: true;
       reasoning?: string;
       toolFragment?: string;
       usage?: ModelUsage;
@@ -813,8 +848,11 @@ export type V1PlayCallChainEvent =
       kind: "followup";
       followupId: string;
       displayName: string;
+      replyEventId?: number;
+      status?: "streaming" | "completed" | "interrupted" | "cancelled";
       text: string;
       reasoning?: string;
+      toolFragment?: string;
       usage?: ModelUsage;
       /** Small locator; the encoding itself follows the bounded diagnostic window. */
       requestPreviewExchange?: number;
@@ -869,7 +907,10 @@ export type V1PlayTimelineEventSummary =
       kind: "followup";
       followupId: string;
       displayName: string;
+      replyEventId?: number;
+      status?: "streaming" | "completed" | "interrupted" | "cancelled";
       toolCallCount: number;
+      hasReasoning?: boolean;
       failed: boolean;
       usage?: ModelUsage;
       detailsAvailable: true;
@@ -1059,6 +1100,16 @@ const requiredFields: Record<
   "content.export": { packageId: "string" },
   "setting-improvement.read": { packageId: "string" },
   "setting-improvement.preview": { packageId: "string" },
+  "setting-improvement.call.context": {
+    packageId: "string",
+    sessionId: "string",
+    callId: "string",
+  },
+  "setting-improvement.request.preview": {
+    packageId: "string",
+    sessionId: "string",
+    requestId: "string",
+  },
   "setting-improvement.status": { packageId: "string" },
   "setting-improvement.overview": { packageId: "string" },
   "setting-improvement.session.read": {
@@ -1153,6 +1204,16 @@ const requiredFields: Record<
   "world.revision.open": { worldId: "string" },
   "world.revision.overview": { worldId: "string" },
   "world.revision.preview": { worldId: "string" },
+  "world.revision.call.context": {
+    worldId: "string",
+    sessionId: "string",
+    callId: "string",
+  },
+  "world.revision.request.preview": {
+    worldId: "string",
+    sessionId: "string",
+    requestId: "string",
+  },
   "world.revision.status": { worldId: "string" },
   "world.revision.session.read": {
     worldId: "string",
@@ -1814,6 +1875,8 @@ const requestTypes = new Set([
   "content.export",
   "setting-improvement.read",
   "setting-improvement.preview",
+  "setting-improvement.call.context",
+  "setting-improvement.request.preview",
   "setting-improvement.status",
   "setting-improvement.overview",
   "setting-improvement.session.read",
@@ -1858,6 +1921,8 @@ const requestTypes = new Set([
   "world.revision.open",
   "world.revision.overview",
   "world.revision.preview",
+  "world.revision.call.context",
+  "world.revision.request.preview",
   "world.revision.status",
   "world.revision.session.read",
   "world.revision.session.delete",

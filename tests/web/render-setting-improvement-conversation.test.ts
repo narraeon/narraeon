@@ -72,10 +72,10 @@ test("对话按模型交换展示 Provider 推理、工具收据和已生效红�
     }),
   );
 
-  expect(html).toContain("Provider 返回推理（不等同隐藏思维链）");
+  expect(html).toContain("模型推理");
   expect(html).toContain("先检查开场白与当前情境");
   expect(html).toContain("setting_write_file");
-  expect(html).toContain("当时生效 · 1 个文件");
+  expect(html).toContain("已修改内容包 · 1 个文件");
   expect(html).toContain("当时已生效差异");
   expect(html).toContain("回滚这个文件");
   expect(html).toContain("unified-diff-remove");

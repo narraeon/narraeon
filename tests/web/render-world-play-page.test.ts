@@ -775,7 +775,7 @@ describe("世界游玩页面", () => {
     expect(within(story).queryByText("AI 响应")).toBeNull();
     expect(within(story).queryByText("全新上下文")).toBeNull();
     expect(within(story).queryByText("本段调用详情")).toBeNull();
-    expect(within(story).queryByText(/当时的上下文/)).toBeNull();
+    expect(within(story).queryByText("本次上下文")).toBeNull();
     expect(within(story).queryByText("本上下文已提交的世界变化")).toBeNull();
     expect(within(story).getByRole("separator").textContent).toBe("");
     expect(
@@ -794,7 +794,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(toggle);
     expect(within(story).getByText("AI 响应")).toBeTruthy();
     expect(within(story).getByText("全新上下文")).toBeTruthy();
-    expect(within(story).getAllByText("已完成 · 第 1 次派发")).toHaveLength(2);
+    expect(within(story).getAllByText("已完成 · 第 1 次派发")).toHaveLength(1);
     expect(within(story).getByText("本段调用详情")).toBeTruthy();
     expect(within(story).getByText("本上下文已提交的世界变化")).toBeTruthy();
     expect(within(story).getByText("default")).toBeTruthy();
@@ -820,8 +820,7 @@ describe("世界游玩页面", () => {
         ([request]) => request.type === "play.timeline.context",
       ),
     ).toHaveLength(0);
-    const contextSummary =
-      within(story).getByText("当时的上下文 · 第 1 次调用");
+    const contextSummary = within(story).getByText("本次上下文");
     const contextDetails = contextSummary.closest("details")!;
     expect(contextDetails.open).toBe(false);
     contextDetails.open = true;
@@ -840,7 +839,7 @@ describe("世界游玩页面", () => {
     });
     fireEvent.click(toggle);
     expect(within(story).queryByText("本段调用详情")).toBeNull();
-    expect(within(story).queryByText(/当时的上下文/)).toBeNull();
+    expect(within(story).queryByText("本次上下文")).toBeNull();
     expect(screen.getByTitle("panel")).toBeTruthy();
   });
 
@@ -922,9 +921,7 @@ describe("世界游玩页面", () => {
     await screen.findByText("Alex 正在推门");
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(screen.queryByText("接收中 · 第 1 次派发")).toBeNull();
-    expect(
-      screen.queryByText("Provider 返回推理（不等同隐藏思维链）"),
-    ).toBeNull();
+    expect(screen.queryByText("模型推理")).toBeNull();
     expect(screen.getByRole("button", { name: "取消生成" })).toBeTruthy();
   });
 
@@ -2282,14 +2279,10 @@ describe("世界游玩页面", () => {
       1,
     );
     expect(screen.getByText("调用 world_patch")).toBeTruthy();
-    expect(screen.getByText("world_patch 返回")).toBeTruthy();
     const trace = screen.getByText("本段调用详情").closest("details");
     expect(trace?.open).toBe(false);
     expect(trace?.contains(screen.getByText("调用 world_patch"))).toBe(true);
     expect(screen.getByText("调用 world_patch").closest("details")?.open).toBe(
-      false,
-    );
-    expect(screen.getByText("world_patch 返回").closest("details")?.open).toBe(
       false,
     );
     expect(screen.getByText("本上下文已提交的世界变化")).toBeTruthy();
@@ -2470,7 +2463,15 @@ describe("世界游玩页面", () => {
     expect(within(compact).getByText("240")).toBeTruthy();
     expect(within(compact).getByText("1,440")).toBeTruthy();
 
-    const details = screen.getByText("查看模型诊断详情").closest("details");
+    const usage = screen
+      .getByText(/调用量详情 · 输入 1,200 · 输出 240 tokens/u)
+      .closest("details")!;
+    expect(usage.open).toBe(false);
+    fireEvent.click(usage.querySelector("summary")!);
+    expect(within(usage).getAllByText("Provider 报告").length).toBeGreaterThan(
+      0,
+    );
+    const details = screen.getByText("模型推理").closest("details");
     expect(details).not.toBeNull();
     fireEvent.click(details!.querySelector("summary")!);
     await within(details!).findByText("暂时无法同步");
@@ -2482,11 +2483,9 @@ describe("世界游玩页面", () => {
     expect(detailReads).toBe(3);
     expect(
       await within(details!).findByText(
-        "缓存读取和缓存写入属于输入构成；推理 tokens 已包含在输出 tokens 中，不应重复相加。",
+        "First confirm that the doorway is clear.",
       ),
     ).toBeTruthy();
-    expect(within(details!).getAllByText("Provider 报告")).toHaveLength(6);
-    expect(within(details!).getByText("由 Provider 字段计算")).toBeTruthy();
   });
 
   test("再次全新上下文后仍按分隔符显示此前思维链和工具记录", async () => {
@@ -2555,7 +2554,7 @@ describe("世界游玩页面", () => {
         "Earlier-context reasoning that should remain visible.",
       ),
     ).toBeNull();
-    fireEvent.click(screen.getByText("查看模型诊断详情").closest("summary")!);
+    fireEvent.click(screen.getByText("模型推理").closest("summary")!);
     expect(
       await screen.findByText(
         "Earlier-context reasoning that should remain visible.",
@@ -2735,7 +2734,7 @@ describe("世界游玩页面", () => {
       ),
     ).toBeNull();
     expect(screen.queryByText("查看模型诊断详情")).toBeNull();
-    const reasoning = screen.getByText("Provider 返回推理（不等同隐藏思维链）");
+    const reasoning = screen.getByText("模型推理");
     expect(reasoning.closest("details")?.open).toBe(false);
     fireEvent.click(reasoning);
     expect(
@@ -3004,7 +3003,7 @@ describe("世界游玩页面", () => {
     );
     const recovered = screen.getByText("Recovered Provider reasoning.");
     expect(recovered.closest("details")?.open).toBe(false);
-    fireEvent.click(screen.getByText("Provider 返回推理（不等同隐藏思维链）"));
+    fireEvent.click(screen.getByText("模型推理"));
     expect(recovered.closest("details")?.open).toBe(true);
     fireEvent.click(within(progress).getByRole("button", { name: "取消生成" }));
     await waitFor(
@@ -3183,15 +3182,13 @@ describe("世界游玩页面", () => {
     });
     await screen.findByRole("heading", { name: "宿舍世界" });
     const timeline = screen.getByLabelText("模型调用链");
-    expect(within(timeline).getByText("模型工具步骤")).toBeTruthy();
     expect(
       within(timeline).getByText(
         "Alex checks the latch and pulls the door shut.",
       ),
     ).toBeTruthy();
     expect(within(timeline).getAllByText(intermediate)).toHaveLength(1);
-    const summary =
-      within(timeline).getByText("查看工具步骤文本（未进入故事）");
+    const summary = within(timeline).getByText("工具调用 · 1 次");
     const details = summary.closest("details");
     expect(details?.open).toBe(false);
     fireEvent.click(summary);
@@ -3282,13 +3279,13 @@ describe("世界游玩页面", () => {
     expect(card.closest(".world-timeline-trace")).toBeNull();
     expect(card.closest(".call-chain-resolution")).not.toBeNull();
 
-    const trace = timeline.querySelector(".world-timeline-trace-events");
+    const trace = timeline.querySelector(".model-call-list");
     expect(trace).not.toBeNull();
     expect(
-      within(trace as HTMLElement).getByText("world_patch 返回"),
+      within(trace as HTMLElement).getByText("调用 world_patch"),
     ).toBeTruthy();
     expect(
-      within(trace as HTMLElement).getByText("d20_check 返回"),
+      within(trace as HTMLElement).getByText("调用 d20_check"),
     ).toBeTruthy();
   });
 
@@ -5418,7 +5415,6 @@ test("世界修订 fresh 订阅不绑定旧 latest，命令完成不覆盖后来
           created.requestPreviews = [
             {
               requestId: request.requestId,
-              compilation: promptPreviewFixture().compilation,
             },
           ];
           finish = resolve;
