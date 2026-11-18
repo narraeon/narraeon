@@ -253,6 +253,64 @@ describe("提示词预览界面", () => {
     expect(screen.getByText("sha256:stable-prefix")).toBeTruthy();
   });
 
+  test("Responses 映射直接展示顶层 instructions、真实角色和原生 input 项", async () => {
+    const fixture = previewFixture();
+    fixture.compilation.provider.protocol = "openai_responses";
+    fixture.wireRequest = {
+      provider: "openai_responses",
+      method: "POST",
+      endpointPath: "/v1/responses",
+      headerNames: [],
+      body: {
+        instructions: "Only this turn.",
+        input: [
+          { role: "developer", content: "Settlement rules." },
+          {
+            type: "function_call_output",
+            call_id: "read",
+            output: "World facts.",
+          },
+          { role: "user", content: "I wait." },
+        ],
+      },
+    };
+    render(
+      createElement(PromptPreviewScreen, {
+        client: {
+          request<T = unknown>(): Promise<T> {
+            return Promise.resolve(fixture as T);
+          },
+        },
+        packages: [
+          {
+            localId: "package-dormitory",
+            title: "宿舍内容",
+            status: "usable",
+            gameplay: { mode: "interactive-fiction" },
+          },
+        ],
+        initialPackageId: "package-dormitory",
+        playPresets: presetLibrary(),
+        model: modelLibrary(),
+        onPackageSelect: vi.fn(),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
+    await screen.findByRole("heading", { name: "编译通过" });
+    fireEvent.click(screen.getByRole("button", { name: /Provider 映射/u }));
+    expect(screen.getByRole("heading", { name: "instructions" })).toBeTruthy();
+    expect(screen.getByText("Only this turn.")).toBeTruthy();
+    const input = screen
+      .getByRole("heading", { name: "input" })
+      .closest(".provider-message-list")!;
+    const items = within(input as HTMLElement).getAllByRole("listitem");
+    expect(
+      items.map((item) => item.querySelector("strong")?.textContent),
+    ).toEqual(["developer", "function_call_output", "user"]);
+    expect(items[0]!.textContent).toContain("Settlement rules.");
+    expect(items[1]!.textContent).toContain("World facts.");
+    expect(screen.queryByText("system", { exact: true })).toBeNull();
+  });
   test("本轮提示作为玩家输入后的尾部单独展示并标注每行来源", async () => {
     const fixture = previewFixture();
     const text =
@@ -316,7 +374,7 @@ describe("提示词预览界面", () => {
       "以第二人称“你”称呼玩家角色。preset:builtin/play.person-second",
       "宿舍里 Alex 不会先开口。world:control/frame.yaml#instructions[0]",
     ]);
-    expect(within(panel!).getByText("查看发送的完整本轮提示")).toBeTruthy();
+    expect(within(panel!).getByText("查看编译的完整本轮提示")).toBeTruthy();
     // The suffix is shown after the player input, not among the prefix messages.
     const initialAppend = screen
       .getByRole("heading", { name: "首条玩家追加" })

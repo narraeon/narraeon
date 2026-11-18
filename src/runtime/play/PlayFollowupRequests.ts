@@ -229,6 +229,9 @@ async function runOne(
           ...structuredClone(prefix),
           {
             kind: "prompt_delta",
+            ...(input.bootstrap.provider.protocol === "openai_responses"
+              ? { requestScoped: true as const }
+              : {}),
             logicalMessages: structuredClone(followup.logicalMessages),
           },
         ],

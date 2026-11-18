@@ -1350,7 +1350,17 @@ function validModelItemShape(
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "runtime_notice")
     return (
-      hasExactKeys(value, ["kind", "notice", "text"]) &&
+      hasExactKeys(
+        value,
+        ["kind", "notice", "text"],
+        ["responsesInstructions"],
+      ) &&
+      (value.responsesInstructions === undefined ||
+        (value.notice === "turn_guide" &&
+          isRecord(value.responsesInstructions) &&
+          hasExactKeys(value.responsesInstructions, ["fixed", "player"]) &&
+          typeof value.responsesInstructions.fixed === "string" &&
+          typeof value.responsesInstructions.player === "string")) &&
       (value.notice === "checkpoint_rounds" ||
         value.notice === "continuation" ||
         value.notice === "response_correction" ||

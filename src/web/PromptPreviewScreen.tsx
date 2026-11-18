@@ -117,7 +117,7 @@ export interface PromptPreviewData {
     method: "POST";
     endpointPath: string;
     headerNames: string[];
-    body: unknown;
+    body: Record<string, unknown>;
     systemInstructionSources?: { promptId?: string; sources: string[] }[];
   };
   playPreset?: {
@@ -568,6 +568,10 @@ function PromptPreviewResult({
 }): React.JSX.Element {
   const [section, setSection] = useState<ResultSection>("messages");
   const { compilation } = preview;
+  const responsesBody =
+    preview.wireRequest?.provider === "openai_responses"
+      ? preview.wireRequest.body
+      : undefined;
   const contextAdmissionDisabled =
     compilation.budget.estimator === "disabled" ||
     compilation.budget.status === "not_checked";
@@ -692,9 +696,11 @@ function PromptPreviewResult({
         <ResultButton
           active={section === "provider"}
           count={
-            compilation.provider.messages.length +
-            (preview.initialAppend === undefined ? 0 : 1) +
-            (preview.initialAppend?.afterPlayer === undefined ? 0 : 1)
+            Array.isArray(responsesBody?.input)
+              ? responsesBody.input.length
+              : compilation.provider.messages.length +
+                (preview.initialAppend === undefined ? 0 : 1) +
+                (preview.initialAppend?.afterPlayer === undefined ? 0 : 1)
           }
           label={uiText("Provider 映射")}
           onClick={() => setSection("provider")}
@@ -711,7 +717,10 @@ function PromptPreviewResult({
         <>
           <LogicalMessages messages={compilation.logicalMessages} />
           {preview.initialAppend === undefined ? null : (
-            <InitialPlayerAppend append={preview.initialAppend} />
+            <InitialPlayerAppend
+              append={preview.initialAppend}
+              showGuide={responsesBody === undefined}
+            />
           )}
           <TurnGuidePanel turnGuide={compilation.turnGuide} />
         </>
@@ -731,7 +740,9 @@ function PromptPreviewResult({
       {section === "provider" ? (
         <ProviderMapping
           provider={compilation.provider}
-          initialAppend={preview.initialAppend}
+          initialAppend={
+            responsesBody === undefined ? preview.initialAppend : undefined
+          }
           wireRequest={preview.wireRequest}
         />
       ) : null}
@@ -744,8 +755,10 @@ function PromptPreviewResult({
 
 function InitialPlayerAppend({
   append,
+  showGuide,
 }: {
   append: NonNullable<PromptPreviewData["initialAppend"]>;
+  showGuide: boolean;
 }): React.JSX.Element {
   return (
     <section
@@ -779,7 +792,7 @@ function InitialPlayerAppend({
             </header>
             <pre>{append.provider.content}</pre>
           </li>
-          {append.afterPlayer === undefined ? null : (
+          {!showGuide || append.afterPlayer === undefined ? null : (
             <li>
               <header>
                 <strong>{uiText("玩家输入后的本轮提示")}</strong>
@@ -924,12 +937,12 @@ function TurnGuidePanel({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">PER-SEND SUFFIX</p>
+          <p className="prompt-preview-kicker">TURN GUIDE</p>
           <h3 id="turn-guide-title">{uiText("本轮提示")}</h3>
         </div>
         <p>
           {uiText(
-            "每次发送追加在原生对话末尾，由已启用条目的尾部行按编排顺序拼成；它只属于本次请求，不进入历史、Authority 或回合计数。",
+            "各行按预设顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。",
           )}
         </p>
       </div>
@@ -942,7 +955,7 @@ function TurnGuidePanel({
         ))}
       </ol>
       <details className="prompt-preview-raw">
-        <summary>{uiText("查看发送的完整本轮提示")}</summary>
+        <summary>{uiText("查看编译的完整本轮提示")}</summary>
         <pre>{turnGuide.text}</pre>
       </details>
     </section>
@@ -1193,6 +1206,20 @@ function ProviderMapping({
   initialAppend: PromptPreviewData["initialAppend"];
   wireRequest: PromptPreviewData["wireRequest"];
 }): React.JSX.Element {
+  const responsesBody =
+    wireRequest?.provider === "openai_responses" ? wireRequest.body : undefined;
+  const messages = Array.isArray(responsesBody?.input)
+    ? (responsesBody.input as unknown[]).map((item) => ({
+        role:
+          typeof item === "object" && item !== null && "role" in item
+            ? String(item.role)
+            : contentBlockType(item),
+        content:
+          typeof item === "object" && item !== null && "content" in item
+            ? item.content
+            : item,
+      }))
+    : provider.messages;
   return (
     <section
       className="panel-card prompt-preview-detail"
@@ -1208,9 +1235,18 @@ function ProviderMapping({
           </h3>
         </div>
         <p>
-          {uiText("展示编译器交给当前 Adapter 的真实 system 块和消息顺序。")}
+          {responsesBody === undefined
+            ? uiText("展示编译器交给当前 Adapter 的真实 system 块和消息顺序。")
+            : uiText("按实际请求展示 instructions 与 input。")}
         </p>
       </div>
+
+      {typeof responsesBody?.instructions === "string" ? (
+        <div className="provider-system-blocks">
+          <h4>instructions</h4>
+          <pre>{responsesBody.instructions}</pre>
+        </div>
+      ) : null}
 
       {provider.system === undefined ? null : (
         <div className="provider-system-blocks">
@@ -1252,9 +1288,17 @@ function ProviderMapping({
 
       <div className="provider-message-list">
         <div className="prompt-preview-subsection-heading">
-          <h4>{uiText("消息角色与顺序")}</h4>
+          <h4>
+            {responsesBody === undefined ? uiText("消息角色与顺序") : "input"}
+          </h4>
           <span>
-            {provider.messages.length} {uiText("条 bootstrap")}
+            {responsesBody === undefined ? (
+              <>
+                {messages.length} {uiText("条 bootstrap")}
+              </>
+            ) : (
+              messages.length
+            )}
             {initialAppend === undefined ? "" : uiText(" + 1 条玩家追加")}
             {initialAppend?.beforePlayer === undefined
               ? ""
@@ -1265,7 +1309,7 @@ function ProviderMapping({
           </span>
         </div>
         <ol>
-          {provider.messages.map((message, index) => (
+          {messages.map((message, index) => (
             <li key={index}>
               <header>
                 <span>{String(index + 1).padStart(2, "0")}</span>
@@ -1313,10 +1357,12 @@ function ProviderMapping({
         )}
       </div>
 
-      <details className="prompt-preview-raw">
-        <summary>{uiText("查看 Provider 映射原始结构")}</summary>
-        <pre>{JSON.stringify(provider, null, 2)}</pre>
-      </details>
+      {responsesBody === undefined ? (
+        <details className="prompt-preview-raw">
+          <summary>{uiText("查看 Provider 映射原始结构")}</summary>
+          <pre>{JSON.stringify(provider, null, 2)}</pre>
+        </details>
+      ) : null}
       {wireRequest === undefined ? null : (
         <details className="prompt-preview-raw">
           <summary>{uiText("查看实际 HTTP 请求（凭据已省略）")}</summary>

@@ -3,6 +3,7 @@ import {
   renderHistoryMessage,
   renderHistoryInjectionNotice,
 } from "../history/HistoryRendering.ts";
+import { turnGuideText, turnNoteSource } from "../../shared/turn-guide.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
@@ -76,15 +77,28 @@ export function continuationNotice(
   };
 }
 
-/**
- * The per-send turn guide. It is request-level: appended after the current
- * transcript on every dispatch and never stored in the transcript, so the next
- * dispatch appends a fresh copy at the new end.
- */
+/** Freeze the guide with the request while keeping it outside the transcript. */
 export function turnGuideNotice(
-  text: string,
+  guide: NonNullable<PromptCompilation["turnGuide"]>,
+  protocol: PromptCompilation["provider"]["protocol"],
+  locale: AppLocale,
 ): Extract<ModelHostAppendItem, { kind: "runtime_notice" }> {
-  return { kind: "runtime_notice", notice: "turn_guide", text };
+  const notice = {
+    kind: "runtime_notice",
+    notice: "turn_guide",
+    text: guide.text,
+  } as const;
+  if (protocol !== "openai_responses") return notice;
+  const fixed = guide.lines.filter(({ source }) => source !== turnNoteSource);
+  const player = guide.lines.find(({ source }) => source === turnNoteSource);
+  return {
+    ...notice,
+    responsesInstructions: {
+      fixed:
+        fixed.length > 0 ? turnGuideText(locale, fixed, "conditional") : "",
+      player: player?.text ?? "",
+    },
+  };
 }
 
 export function toolStepNotice(

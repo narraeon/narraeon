@@ -5,6 +5,7 @@ import {
 import {
   playAssistantPrefill,
   continuePartialRequest,
+  retargetRequestForRetry,
 } from "../model/AssistantPrefill.ts";
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
 import {
@@ -95,7 +96,6 @@ import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapte
 import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
 import {
   FileNativePromptCompiler,
-  retargetFrozenCompilation,
   type FileNativePromptInput,
   type PlayPresetCompilation,
   type PromptCompilation,
@@ -616,16 +616,7 @@ export class PlayCallChain {
                 partial.text,
                 input.modelHost,
               )
-            : structuredClone(session.lastRequest);
-        if (partial === null) {
-          delete request.assistantPrefill;
-          delete request.modelConfig;
-          request.maxOutputTokens = input.modelHost.binding().maxOutputTokens;
-          request.bootstrap = retargetFrozenCompilation(
-            request.bootstrap,
-            input.modelHost.binding(),
-          );
-        }
+            : retargetRequestForRetry(session.lastRequest, input.modelHost);
         const currentRequest =
           input.modelHost.freezeRequest?.(request) ?? request;
         return this.#dispatch(
@@ -3605,25 +3596,34 @@ function createRequestWithMaxOutputTokens(
       item.kind === "player" ||
       (item.kind === "runtime_notice" && item.notice === "continuation"),
   );
-  const turnGuide = turnGuideWithTurnNote(
+  const { bootstrap, tools } = currentPlayPrompt(session);
+  const guideLocale =
     submission?.kind === "player"
       ? (submission.inputBoundary ?? locale)
-      : locale,
-    currentPlayPrompt(session).bootstrap.turnGuide,
+      : locale;
+  const turnGuide = turnGuideWithTurnNote(
+    guideLocale,
+    bootstrap.turnGuide,
     session.turnNote,
     submission?.kind === "player" && submission.inputBoundary !== undefined,
   );
   return {
-    bootstrap: structuredClone(currentPlayPrompt(session).bootstrap),
-    tools: structuredClone(currentPlayPrompt(session).tools),
-    toolUniverse: structuredClone(
-      currentPlayPrompt(session).bootstrap.toolUniverse,
-    ),
-    allowedTools: currentPlayPrompt(session).tools.map(({ name }) => name),
-    toolStrategy: currentPlayPrompt(session).bootstrap.toolStrategy,
+    bootstrap: structuredClone(bootstrap),
+    tools: structuredClone(tools),
+    toolUniverse: structuredClone(bootstrap.toolUniverse),
+    allowedTools: tools.map(({ name }) => name),
+    toolStrategy: bootstrap.toolStrategy,
     appended: structuredClone([
       ...appended,
-      ...(turnGuide === undefined ? [] : [turnGuideNotice(turnGuide.text)]),
+      ...(turnGuide === undefined
+        ? []
+        : [
+            turnGuideNotice(
+              turnGuide,
+              bootstrap.provider.protocol,
+              guideLocale,
+            ),
+          ]),
     ]),
     requestId: "play_call_chain",
     operationId: session.chainId,

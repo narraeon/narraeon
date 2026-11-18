@@ -57,6 +57,7 @@ import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 import {
   checkpointHistory,
   checkpointReplayBlocks,
+  turnGuideNotice,
   type NarrativeCheckpoint,
 } from "../play/PlayContinuity.ts";
 
@@ -1762,11 +1763,11 @@ function promptPreview(
               ? {}
               : {
                   afterPlayer: {
-                    logical: {
-                      kind: "runtime_notice",
-                      notice: "turn_guide",
-                      text: compilation.turnGuide.text,
-                    },
+                    logical: turnGuideNotice(
+                      compilation.turnGuide,
+                      compilation.provider.protocol,
+                      locale,
+                    ),
                     provider: {
                       role: "user",
                       content: compilation.turnGuide.text,

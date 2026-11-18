@@ -392,6 +392,22 @@ context:
       text: withNote.turnGuide!.text,
     });
 
+    const responsesPreview = compiler.preview(
+      {
+        ...input,
+        modelBinding: { ...input.modelBinding, provider: "openai_responses" },
+        turnNote: "Write the fight in short beats.",
+      },
+      binding,
+    );
+    expect(responsesPreview.initialAppend?.afterPlayer?.logical).toMatchObject({
+      text: withNote.turnGuide!.text,
+      responsesInstructions: {
+        fixed: turnGuideText("en", plain.turnGuide!.lines, "conditional"),
+        player:
+          "Player's request for this turn: Write the fight in short beats.",
+      },
+    });
     // With no preset or world line, the request alone still forms a suffix.
     const quiet = bindingFrom(
       filesWith("en", (items) =>

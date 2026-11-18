@@ -73,7 +73,7 @@ export function captureRequestContext(
     return null;
   if (
     !suffix.every(
-      (item) =>
+      (item): item is PlayRequestContextEvidence["suffix"][number] =>
         item.kind === "runtime_notice" &&
         (item.notice === "turn_guide" || item.notice === "response_correction"),
     )
@@ -94,7 +94,8 @@ export function captureRequestContext(
     ...(request.assistantPrefill === undefined
       ? {}
       : { continuation: continuationMessage(request.assistantPrefill)! }),
-    suffix: suffix as PlayRequestContextEvidence["suffix"],
+    // History displays the logical guide once, independent of its wire placement.
+    suffix: suffix.map(({ kind, notice, text }) => ({ kind, notice, text })),
   };
 }
 

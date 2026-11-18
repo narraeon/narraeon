@@ -1419,6 +1419,11 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   个: "total",
   "查看说明与 input schema": "View description and input schema",
   "Provider 映射 ·": "Provider mapping ·",
+  "按实际请求展示 instructions 与 input。":
+    "The instructions and input fields from the actual request.",
+  "各行按预设顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。":
+    "The lines follow preset order and apply only to this send. See Provider mapping for their positions in the request.",
+  查看编译的完整本轮提示: "Show the compiled turn guide",
   "展示编译器交给当前 Adapter 的真实 system 块和消息顺序。":
     "Shows the real system blocks and message order passed from the compiler to the current adapter.",
   消息角色与顺序: "Message roles and order",
@@ -1595,10 +1600,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   " + 1 条本轮提示": " + 1 turn guide",
   "与 1 条本轮提示": " and 1 turn guide",
   本轮提示: "Turn guide",
-  "每次发送追加在原生对话末尾，由已启用条目的尾部行按编排顺序拼成；它只属于本次请求，不进入历史、Authority 或回合计数。":
-    "Appended at the end of the native conversation on every send, assembled from the enabled entries' tail lines in arranged order. It belongs to this request only and never enters history, Authority or the round count.",
   本轮提示各行来源: "Turn guide line sources",
-  查看发送的完整本轮提示: "Show the complete turn guide as sent",
   本轮提示超出软上限: "Turn guide exceeds its soft limits",
   "单行建议不超过 120 字、总行数不超过 10；超出不阻止编译，但尾部正在接近前部规则的体量。":
     "Keep each line within 120 characters and the total within 10 lines. Exceeding them does not block compilation, but the suffix is approaching the size of the prefix rules.",

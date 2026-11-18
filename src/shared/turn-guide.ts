@@ -24,8 +24,12 @@ export function playerInputText(locale: AppLocale, text: string): string {
 /** Mechanical header points only to a new submission, never old input. */
 export function turnGuideHeader(
   locale: AppLocale,
-  hasPlayerInput = true,
+  hasPlayerInput: boolean | "conditional" = true,
 ): string {
+  if (hasPlayerInput === "conditional")
+    return locale === "zh-CN"
+      ? "[Runtime 本轮提示]\n如果本次提交了新的 <本轮玩家输入>，请回应其中的内容。撰写最终正文时遵循以下要求。"
+      : "[Runtime turn guide]\nIf this submission includes new <current_player_input>, respond to its content. Follow these requirements when writing the final prose.";
   return locale === "zh-CN"
     ? hasPlayerInput
       ? "[Runtime 本轮提示]\n请回应 <本轮玩家输入> 中的内容，撰写最终正文时遵循以下要求。"
@@ -75,7 +79,7 @@ export function turnGuideWithTurnNote(
 export function turnGuideText(
   locale: AppLocale,
   lines: readonly Pick<TurnGuideLine, "text">[],
-  hasPlayerInput = true,
+  hasPlayerInput: boolean | "conditional" = true,
 ): string {
   return [
     turnGuideHeader(locale, hasPlayerInput),

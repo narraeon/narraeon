@@ -12987,6 +12987,137 @@ test("玩家本轮要求只进入本轮派发的尾部：工具步骤与空输�
   expect(JSON.stringify(stored.events)).not.toContain(note);
 });
 
+test.each([false, true])(
+  "Responses 本轮指令开关 %s：工具步骤沿用本轮要求、更改和清除只影响新一轮",
+  async (responsesTurnInstructions) => {
+    const requests: {
+      input: { role?: string; type?: string; content?: string }[];
+      instructions: string;
+    }[] = [];
+    const host = new FileNativeModelHost(
+      {
+        provider: "openai_responses",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "test",
+        modelId: "aliased-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2000,
+        responsesTurnInstructions,
+      },
+      (_url, init) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected a JSON body");
+        requests.push(JSON.parse(init.body) as (typeof requests)[number]);
+        const output =
+          requests.length === 1
+            ? [
+                {
+                  type: "function_call",
+                  call_id: "list",
+                  name: "state_list",
+                  arguments: "{}",
+                },
+              ]
+            : [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "Alex waits." }],
+                },
+              ];
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: `r-${requests.length}`,
+              status: "completed",
+              output,
+            }),
+          ),
+        );
+      },
+    );
+    const { worlds, worldId } = await createWorld(
+      "responses-guide-flow",
+      undefined,
+      host.binding(),
+    );
+    const chains = new PlayCallChain(worlds);
+    const chainId = "responses-guide-flow";
+    const firstNote = "Focus on the footsteps.";
+    const secondNote = "Describe the weather.";
+    expect(
+      (
+        await chains.start({
+          worldId,
+          chainId,
+          exchangeId: "first",
+          playerText: "I enter.",
+          turnNote: firstNote,
+          hostBinding: hostBinding(),
+          playPreset: playPreset(),
+          modelBinding: host.binding(),
+          modelHost: host,
+        })
+      ).status,
+    ).toBe("ready");
+    expect(
+      (
+        await chains.append({
+          worldId,
+          chainId,
+          exchangeId: "second",
+          playerText: "I wait.",
+          turnNote: secondNote,
+          modelHost: host,
+        })
+      ).status,
+    ).toBe("ready");
+    expect(
+      (
+        await chains.append({
+          worldId,
+          chainId,
+          exchangeId: "third",
+          playerText: "I turn around.",
+          modelHost: host,
+        })
+      ).status,
+    ).toBe("ready");
+    expect(requests).toHaveLength(4);
+    const [first, toolStep, second, third] = requests;
+    expect(
+      toolStep!.input.some((item) => item.type === "function_call_output"),
+    ).toBe(true);
+    expect(toolStep!.instructions).toBe(first!.instructions);
+    for (const [index, request] of requests.slice(0, 3).entries()) {
+      const note = index < 2 ? firstNote : secondNote;
+      if (responsesTurnInstructions) {
+        expect(request.instructions).toContain(
+          `Player's request for this turn: ${note}`,
+        );
+        expect(JSON.stringify(request.input)).not.toContain(note);
+      } else {
+        expect(request.instructions).toBe(third!.instructions);
+        expect(request.input.at(-1)?.role).toBe("user");
+        expect(request.input.at(-1)?.content).toContain(
+          `Player's request for this turn: ${note}`,
+        );
+        expect(JSON.stringify(request.input.slice(0, -1))).not.toContain(note);
+      }
+    }
+    expect(JSON.stringify(second)).not.toContain(firstNote);
+    expect(third!.instructions).toContain("[Runtime turn guide]");
+    expect(third!.input.at(-1)?.role).toBe("user");
+    expect(third!.input.at(-1)?.content).toContain("I turn around.");
+    const transcript = (await worlds.playTimeline.readCurrent(worldId))!.value
+      .transcript;
+    for (const note of [firstNote, secondNote]) {
+      expect(JSON.stringify(third)).not.toContain(note);
+      expect(JSON.stringify(transcript)).not.toContain(note);
+    }
+  },
+);
+
 test("原样重试使用冻结请求中的玩家本轮要求，不读取当前输入框", async () => {
   const { worlds, worldId } = await createWorld("turn-note-retry");
   const modelHost = new ScriptedModelHost({
