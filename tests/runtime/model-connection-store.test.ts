@@ -988,62 +988,89 @@ test("内置提供商不能静默绑定到另一端点，自定义端点仍可�
   ).resolves.toMatchObject({ configured: true });
 });
 
-test("Prompt Preview 只采用 Runtime 当前配置，不信任浏览器提交的模型绑定", async () => {
-  const root = await temporaryRoot();
-  const runtime = new V1Runtime({
-    dataRoot: join(root, "data"),
-    configRoot: join(root, "config"),
-  });
-  await runtime.initialize();
-  await runtime.handle({
-    type: "model.save",
-    connection: {
-      name: "Runtime 当前",
-      presetId: "custom",
-      provider: "openai_responses",
-      baseUrl: "https://provider.invalid/v1",
-      apiKey: "provider-credential-not-in-preview-9f49",
-      modelId: "runtime-model",
-      contextWindowTokens: 64_000,
-      maxOutputTokens: 8_000,
-    },
-  });
-  const created = await runtime.handle({ type: "content.create" });
-  const packageId = (created.result as { localId: string }).localId;
-  const preview = await runtime.handle({
-    type: "prompt.preview",
-    packageId,
-    playerInput: "Check the binding.",
-    model: {
-      provider: "chat_completions",
-      modelId: "browser-forged-model",
-      contextWindowTokens: 9_999_999,
-      maxOutputTokens: 999_999,
-    },
-  });
-  expect(preview.result).toMatchObject({
-    diagnosticBinding: { modelId: "runtime-model" },
-    compilation: {
-      provider: { protocol: "openai_responses" },
-      budget: { contextWindowTokens: 64_000 },
-    },
-    wireRequest: {
-      provider: "openai_responses",
-      method: "POST",
-      endpointPath: "/v1/responses",
-      body: {
-        model: "runtime-model",
-        store: false,
-        include: ["reasoning.encrypted_content"],
-        stream: true,
+test.each([false, true])(
+  "Prompt Preview 使用已保存的 Responses 本轮提示开关 %s，忽略浏览器提供的绑定",
+  async (responsesTurnInstructions) => {
+    const root = await temporaryRoot();
+    const runtime = new V1Runtime({
+      dataRoot: join(root, "data"),
+      configRoot: join(root, "config"),
+    });
+    await runtime.initialize();
+    await runtime.handle({
+      type: "model.save",
+      connection: {
+        name: "Runtime 当前",
+        presetId: "custom",
+        provider: "openai_responses",
+        responsesTurnInstructions,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "provider-credential-not-in-preview-9f49",
+        modelId: "runtime-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 8_000,
       },
-    },
-  });
-  expect(JSON.stringify(preview.result)).not.toContain(
-    "provider-credential-not-in-preview-9f49",
-  );
-  expect(JSON.stringify(preview.result)).not.toContain("browser-forged-model");
-});
+    });
+    const created = await runtime.handle({ type: "content.create" });
+    const packageId = (created.result as { localId: string }).localId;
+    const preview = await runtime.handle({
+      type: "prompt.preview",
+      packageId,
+      playerInput: "Check the binding.",
+      turnNote: "Keep this scene brief.",
+      model: {
+        provider: "chat_completions",
+        modelId: "browser-forged-model",
+        contextWindowTokens: 9_999_999,
+        maxOutputTokens: 999_999,
+      },
+    });
+    expect(preview.result).toMatchObject({
+      diagnosticBinding: { modelId: "runtime-model" },
+      compilation: {
+        provider: { protocol: "openai_responses" },
+        budget: { contextWindowTokens: 64_000 },
+      },
+      wireRequest: {
+        provider: "openai_responses",
+        method: "POST",
+        endpointPath: "/v1/responses",
+        body: {
+          model: "runtime-model",
+          store: false,
+          include: ["reasoning.encrypted_content"],
+          stream: true,
+        },
+      },
+    });
+    const { body } = (
+      preview.result as {
+        wireRequest: {
+          body: {
+            instructions: string;
+            input: { role?: string; content?: string }[];
+          };
+        };
+      }
+    ).wireRequest;
+    expect(body.input[0]?.role).toBe("developer");
+    expect(body.instructions).toContain("[Runtime turn guide]");
+    const note = "Player's request for this turn: Keep this scene brief.";
+    if (responsesTurnInstructions) {
+      expect(body.instructions).toContain(note);
+      expect(JSON.stringify(body.input)).not.toContain(note);
+    } else {
+      expect(body.instructions).not.toContain(note);
+      expect(body.input.at(-1)).toEqual({ role: "user", content: note });
+    }
+    expect(JSON.stringify(preview.result)).not.toContain(
+      "provider-credential-not-in-preview-9f49",
+    );
+    expect(JSON.stringify(preview.result)).not.toContain(
+      "browser-forged-model",
+    );
+  },
+);
 
 async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "narraeon-model-connections-"));
