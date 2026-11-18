@@ -52,7 +52,7 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org/
 
       - name: Audit dependencies
-        run: npm audit --audit-level=high --registry=https://registry.npmjs.org/
+        run: npm run audit:release
 
       - name: Run static checks
         run: npm run check
@@ -202,3 +202,10 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=release-container
           cache-to: type=gha,mode=max,scope=release-container
+
+      - name: Pull and smoke-test the published image
+        env:
+          RELEASE_IMAGE: ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.package_version }}
+        run: |
+          docker pull "$RELEASE_IMAGE"
+          node scripts/smoke-container.mjs --image "$RELEASE_IMAGE"

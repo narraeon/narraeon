@@ -54,7 +54,7 @@ published artifact to its source commit and workflow run.
 
    ```bash
    npm ci --registry=https://registry.npmjs.org/
-   npm audit --audit-level=high --registry=https://registry.npmjs.org/
+   npm run audit:release
    npm run check
    npm run test:unit
    npm run test:release
@@ -64,6 +64,8 @@ published artifact to its source commit and workflow run.
    npm run test:container
    npm publish --dry-run --json
    ```
+
+   For 0.8.9 only, the audit gate accepts development dependencies affected by the picomatch advisory [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf). Production high findings, critical findings, and other high advisories block publication. Other versions use the standard npm high-severity gate.
 
 3. Commit and push the version change to `main`.
 4. Create and publish the matching GitHub Release. Mark it as a prerelease if
