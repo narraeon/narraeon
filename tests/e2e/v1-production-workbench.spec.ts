@@ -584,6 +584,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .locator(".setting-exchange-tool")
     .filter({ hasText: "setting_write_file" })
     .filter({ hasText: "control/blocks/world.md" });
+  await worldRuleWrite.locator("xpath=ancestor::details[1]/summary").click();
   await worldRuleWrite.locator(":scope > summary").click();
   const worldRuleDiff = worldRuleWrite.locator(".setting-change-diff");
   await worldRuleDiff.locator(":scope > summary").click();

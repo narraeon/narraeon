@@ -43,6 +43,7 @@ interface Call {
 function playCalls(items: readonly TimelineItem[]) {
   const calls: Call[] = [];
   const orphanTools = new Map<string, Call["tools"]>();
+  const orphanFailures: { chainId: string; event: Ending }[] = [];
   let main: Call | undefined;
   for (const { chainId, event } of items) {
     if (event.kind === "assistant" || event.kind === "followup") {
@@ -65,13 +66,13 @@ function playCalls(items: readonly TimelineItem[]) {
         if (pending !== undefined) pending.result = event;
         else tools.push({ result: event });
       }
-    } else if (
-      main?.chainId === chainId &&
-      (event.kind === "failure" || event.kind === "cancellation")
-    )
-      main.endings.push(event);
+    } else if (event.kind === "failure" || event.kind === "cancellation") {
+      if (main?.chainId === chainId) main.endings.push(event);
+      else if (event.kind === "failure")
+        orphanFailures.push({ chainId, event });
+    }
   }
-  return { calls, orphanTools };
+  return { calls, orphanTools, orphanFailures };
 }
 
 export function PlayTurnCallDetails({
@@ -85,8 +86,13 @@ export function PlayTurnCallDetails({
   liveChain: V1PlayCallChainView | null;
   request: (input: V1Request) => Promise<unknown>;
 }) {
-  const { calls, orphanTools } = playCalls(items);
-  if (calls.length === 0 && orphanTools.size === 0) return null;
+  const { calls, orphanTools, orphanFailures } = playCalls(items);
+  if (
+    calls.length === 0 &&
+    orphanTools.size === 0 &&
+    orphanFailures.length === 0
+  )
+    return null;
   return (
     <li className="world-timeline-trace">
       <ModelCallDetailsGroup count={calls.length === 0 ? null : calls.length}>
@@ -109,6 +115,12 @@ export function PlayTurnCallDetails({
               />
             ))}
           </ModelCallTools>
+        ))}
+        {orphanFailures.map(({ chainId, event }) => (
+          <details className="technical-details" key={`${chainId}:${event.id}`}>
+            <summary>{uiText("历史调用错误")}</summary>
+            <pre>{event.message}</pre>
+          </details>
         ))}
         {calls.map(({ chainId, event, tools, endings }, index) => {
           const ending = endings[0];
