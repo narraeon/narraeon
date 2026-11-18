@@ -22,7 +22,7 @@ import {
   type AppReadingPreferences,
 } from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
-import type { PlayFailureKind } from "./playFailure.ts";
+import type { FreshContextReason, PlayFailureKind } from "./playFailure.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 
 export interface ContentTreeFile {
@@ -610,6 +610,7 @@ export interface V1AuthoringRequestPreview {
 }
 
 export interface V1SettingImprovementView {
+  freshContextReason?: FreshContextReason;
   canRetry?: boolean;
   canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
@@ -687,6 +688,7 @@ export interface V1WorldRevisionSealedEpochView {
 }
 
 export interface V1WorldRevisionView {
+  freshContextReason?: FreshContextReason;
   canRetry?: boolean;
   canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestPreview[];
@@ -905,6 +907,7 @@ export interface V1PlayTimelinePage {
   activeInvocationExchangeId?: string | null;
   activeCanRetry: boolean;
   activeCanContinuePartial?: boolean;
+  activeFreshContextReason?: FreshContextReason | undefined;
   activeLastFailure: string | null;
   activeLastFailureKind?: PlayFailureKind | undefined;
   items: V1PlayTimelineItem[];
@@ -913,6 +916,7 @@ export interface V1PlayTimelinePage {
 
 /** One model context as projected into the durable player-visible timeline. */
 export interface V1PlayCallChainContextView {
+  freshContextReason?: FreshContextReason;
   requiresFreshContext?: true;
   chainId: string;
   baselineHead: string;

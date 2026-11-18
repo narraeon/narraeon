@@ -282,14 +282,14 @@ export function assertModelOutputComplete(stopReason: unknown): void {
     stopReason === "incomplete:max_output_tokens"
   ) {
     throw new ModelHostFailureError(
-      "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
+      "The model response reached the output token limit before completion. The request can be resent with a larger output budget.",
       { details: { code: "model_output_limit", stopReason } },
     );
   }
 }
 
-/** Replaying the frozen request cannot recover a context or output limit. */
-export function modelHostFailureRequiresFreshContext(error: unknown): boolean {
+/** Classify length-limit diagnostics independently from the ability to replay. */
+export function isModelHostTokenLimitFailure(error: unknown): boolean {
   if (!(error instanceof ModelHostFailureError)) return false;
   if (failureDetailStrings(error.details).includes("model_output_limit"))
     return true;

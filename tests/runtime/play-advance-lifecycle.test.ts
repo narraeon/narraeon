@@ -375,7 +375,7 @@ describe("play advance endings", () => {
 describe("error to ending mapping", () => {
   test.each([
     [
-      "a cancelled dispatch is not replayable",
+      "a cancelled dispatch can be replayed",
       new ModelHostCancelledError("cancelled by player"),
       { kind: "cancelled_after_dispatch", message: "cancelled by player" },
     ],
@@ -413,19 +413,19 @@ describe("error to ending mapping", () => {
       { kind: "failed", failureKind: "retryable", canRetry: true },
     ],
     [
-      "a provider output limit needs a fresh context",
+      "a provider output limit remains retryable",
       new ModelHostFailureError("output limit", {
         details: { code: "model_output_limit" },
       }),
-      { kind: "failed", failureKind: "output_limit", canRetry: false },
+      { kind: "failed", failureKind: "output_limit", canRetry: true },
     ],
     [
-      "an unexpected error is other and cannot retry",
+      "a plain dispatch failure can retry",
       new Error("boom"),
       {
         kind: "failed",
-        failureKind: "other",
-        canRetry: false,
+        failureKind: "retryable",
+        canRetry: true,
         message: "boom",
       },
     ],
@@ -440,8 +440,8 @@ describe("error to ending mapping", () => {
     expect(dispatchFailureEnding("boom", 7)).toMatchObject({
       kind: "failed",
       message: "The model request was interrupted.",
-      failureKind: "other",
-      canRetry: false,
+      failureKind: "retryable",
+      canRetry: true,
     });
   });
 

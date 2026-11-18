@@ -1401,6 +1401,7 @@ export class V1Runtime {
             activeCanContinuePartial: false,
             activeLastFailure: null,
             activeLastFailureKind: undefined,
+            activeFreshContextReason: undefined,
           }),
     };
   }

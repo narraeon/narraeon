@@ -15,7 +15,7 @@ import {
   ModelHostFailureError,
   ModelHostCancelledError,
   ModelHostOutcomeUnknownError,
-  modelHostFailureRequiresFreshContext,
+  isModelHostTokenLimitFailure,
   ScriptedModelHost,
   type ModelHostBinding,
   type ModelHostExchange,
@@ -604,7 +604,7 @@ test("Google 首跳上下文超限经完整适配器后要求新上下文且不�
     )
     .catch((failure: unknown) => failure);
   expect(error).toBeInstanceOf(ModelHostFailureError);
-  expect(modelHostFailureRequiresFreshContext(error)).toBe(true);
+  expect(isModelHostTokenLimitFailure(error)).toBe(true);
   expect(
     JSON.stringify({
       error: {
@@ -696,7 +696,7 @@ test.each([
     expect(error).toBeInstanceOf(
       unknown ? ModelHostOutcomeUnknownError : ModelHostFailureError,
     );
-    expect(modelHostFailureRequiresFreshContext(error)).toBe(false);
+    expect(isModelHostTokenLimitFailure(error)).toBe(false);
   },
 );
 
@@ -2226,26 +2226,26 @@ test("ScriptedModelHost 区分确定失败与结果未知", async () => {
 
 test("Provider 上下文溢出只由明确错误证据分类", () => {
   expect(
-    modelHostFailureRequiresFreshContext(
+    isModelHostTokenLimitFailure(
       new ModelHostFailureError("Provider request failed: 400", {
         details: { error: { code: "context_length_exceeded" } },
       }),
     ),
   ).toBe(true);
   expect(
-    modelHostFailureRequiresFreshContext(
+    isModelHostTokenLimitFailure(
       new ModelHostFailureError(
         "This model's maximum context length has been reached.",
       ),
     ),
   ).toBe(true);
   expect(
-    modelHostFailureRequiresFreshContext(
+    isModelHostTokenLimitFailure(
       new ModelHostFailureError("Provider 在生成前拒绝了请求。"),
     ),
   ).toBe(false);
   expect(
-    modelHostFailureRequiresFreshContext(
+    isModelHostTokenLimitFailure(
       new ModelHostOutcomeUnknownError("maximum context length"),
     ),
   ).toBe(false);
@@ -2392,7 +2392,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
+        "The model response reached the output token limit before completion. The request can be resent with a larger output budget.",
     });
   },
 );
@@ -2502,7 +2502,7 @@ test.each([
     ).rejects.toMatchObject({
       kind: "failed",
       message:
-        "The model response reached the output token limit before completion. Increase maxOutputTokens and start a fresh context; reasoning may also consume the output budget.",
+        "The model response reached the output token limit before completion. The request can be resent with a larger output budget.",
       details: { code: "model_output_limit" },
     });
   },
@@ -2519,7 +2519,7 @@ test("output limit requires a fresh context while other stop reasons stay unchan
       assertModelOutputComplete(reason);
       throw new Error("expected limit failure");
     } catch (error) {
-      expect(modelHostFailureRequiresFreshContext(error)).toBe(true);
+      expect(isModelHostTokenLimitFailure(error)).toBe(true);
     }
   }
   for (const reason of [

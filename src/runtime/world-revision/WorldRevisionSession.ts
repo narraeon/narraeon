@@ -1,7 +1,4 @@
-import {
-  canContinueAuthoringPartial,
-  prepareAuthoringPartial,
-} from "../model/AssistantPrefill.ts";
+import { prepareAuthoringPartial } from "../model/AssistantPrefill.ts";
 import {
   completedAuthoringEdit,
   planAuthoringEdit,
@@ -9,9 +6,11 @@ import {
 } from "../authoring/AuthoringEditPlan.ts";
 import {
   assertCompatibleAuthoring,
+  authoringRecovery,
   canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
+  recoverLegacyLengthLimit,
 } from "../authoring/AuthoringRetry.ts";
 import {
   authoringRequestPreviews,
@@ -225,10 +224,7 @@ export class WorldRevisionSession {
                 activeEpoch?.epochId === shownEpoch.epochId,
               ),
         sealedEpochs,
-        latest:
-          latest === null
-            ? null
-            : this.#view(latest, activeEpoch?.epochId ?? null),
+        latest: latest === null ? null : this.#view(latest, activeEpoch),
         history: sessions.map(historyItem),
       };
     });
@@ -289,10 +285,7 @@ export class WorldRevisionSession {
       const session = await this.#store.readSession(sessionId);
       assertWorld(session, worldId);
       const recovered = await this.#recoverIfNeeded(session);
-      return this.#view(
-        recovered,
-        (await this.#workspace.active(worldId))?.epochId ?? null,
-      );
+      return this.#view(recovered, await this.#workspace.active(worldId));
     });
   }
 
@@ -478,10 +471,7 @@ export class WorldRevisionSession {
     });
     return (
       prepared.run ??
-      this.#view(
-        prepared.session,
-        (await this.#workspace.active(input.worldId))?.epochId ?? null,
-      )
+      this.#view(prepared.session, await this.#workspace.active(input.worldId))
     );
   }
 
@@ -630,10 +620,7 @@ export class WorldRevisionSession {
     });
     return (
       prepared.run ??
-      this.#view(
-        prepared.session,
-        (await this.#workspace.active(input.worldId))?.epochId ?? null,
-      )
+      this.#view(prepared.session, await this.#workspace.active(input.worldId))
     );
   }
 
@@ -665,6 +652,11 @@ export class WorldRevisionSession {
         throw new WorldRevisionWorkspaceError(
           "The paused conversation belongs to a revision that is no longer active; send a new message instead",
         );
+      const recovery = authoringRecovery(session, false, epoch.revision);
+      if (recovery.freshContextReason)
+        throw new WorldRevisionWorkspaceError(
+          `The saved revision request cannot be recovered (${recovery.freshContextReason}); use a new context.`,
+        );
       const host = await this.#bindModelHost();
       assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
       if (input.recovery === "continue_partial")
@@ -693,10 +685,7 @@ export class WorldRevisionSession {
     });
     return (
       prepared.run ??
-      this.#view(
-        prepared.session,
-        (await this.#workspace.active(input.worldId))?.epochId ?? null,
-      )
+      this.#view(prepared.session, await this.#workspace.active(input.worldId))
     );
   }
 
@@ -799,11 +788,12 @@ export class WorldRevisionSession {
   async cancel(sessionId: string): Promise<V1WorldRevisionView> {
     const running = this.#conversation.cancel(sessionId);
     if (running !== null) return running;
-    return this.#mutate(async () =>
-      this.#view(
-        await this.#recoverIfNeeded(await this.#store.readSession(sessionId)),
-      ),
-    );
+    return this.#mutate(async () => {
+      const session = await this.#recoverIfNeeded(
+        await this.#store.readSession(sessionId),
+      );
+      return this.#view(session, await this.#workspace.active(session.worldId));
+    });
   }
 
   async #create(
@@ -1083,6 +1073,10 @@ export class WorldRevisionSession {
     if (this.#conversation.isRunning(session.sessionId)) return session;
     await this.#workspace.active(session.worldId);
     session = await this.#store.readSession(session.sessionId);
+    if (recoverLegacyLengthLimit(session)) {
+      await this.#store.saveSession(session);
+      return session;
+    }
     if (session.runStatus === "running") delete session.partialResponse;
     const lastItem = session.modelItems.at(-1);
     if (
@@ -1151,7 +1145,11 @@ export class WorldRevisionSession {
       const pending = session.pendingSettlement;
       if (pending.phase === "publication_prepared") {
         const active = await this.#workspace.active(session.worldId);
-        if (active?.epochId === pending.epochId) {
+        if (
+          active?.epochId === pending.epochId &&
+          (active.revision === pending.beforeRevision ||
+            active.revision === pending.afterRevision)
+        ) {
           await this.#workspace.publishAi({
             worldId: session.worldId,
             epochId: pending.epochId,
@@ -1167,7 +1165,9 @@ export class WorldRevisionSession {
             session,
             pending.assistantItemIndex,
             new Error(
-              "The revision epoch ended before tool publication recovered",
+              active?.epochId === pending.epochId
+                ? "The revision files changed before tool publication recovered"
+                : "The revision epoch ended before tool publication recovered",
             ),
           );
       } else
@@ -1188,6 +1188,7 @@ export class WorldRevisionSession {
     }
     if (
       session.runStatus === "running" &&
+      !session.settlementConflict &&
       session.retryDispatch === undefined &&
       session.pendingSettlement === null &&
       session.requests?.at(-1) !== undefined &&
@@ -1254,7 +1255,7 @@ export class WorldRevisionSession {
 
   #view(
     session: StoredWorldRevisionSession,
-    activeEpochId: string | null = session.epochId,
+    epoch?: Pick<StoredWorldRevisionEpoch, "epochId" | "revision"> | null,
   ): V1WorldRevisionView {
     const streaming =
       session.runStatus === "running"
@@ -1276,11 +1277,11 @@ export class WorldRevisionSession {
         updatedAt: session.updatedAt,
       },
       lastFailure: session.lastFailure,
-      canRetry:
-        activeEpochId === session.epochId && canRetryAuthoringDispatch(session),
-      canContinuePartial:
-        activeEpochId === session.epochId &&
-        canContinueAuthoringPartial(session),
+      ...authoringRecovery(
+        session,
+        epoch !== undefined && epoch?.epochId !== session.epochId,
+        epoch?.revision,
+      ),
     };
   }
 
@@ -1386,6 +1387,9 @@ function finalizeUnconfirmed(
   error: unknown,
 ): void {
   const assistant = assistantAt(session, assistantItemIndex);
+  session.settlementConflict = true;
+  delete session.retryDispatch;
+  delete session.partialResponse;
   const message = error instanceof Error ? error.message : "unknown failure";
   for (const call of assistant.toolCalls)
     session.modelItems.push({

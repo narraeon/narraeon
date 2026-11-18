@@ -69,6 +69,7 @@ export function planAuthoringEdit<Session extends EditableSession>(
   const next = structuredClone(session);
   next.editReceipts = [...(next.editReceipts ?? []), edit];
   delete next.retryDispatch;
+  delete next.settlementConflict;
   next.modelItems = prefix;
   next.messages = next.messages.slice(0, messageIndex);
   next.requests = (next.requests ?? []).filter(

@@ -40,7 +40,7 @@ import {
   ModelHostCancelledError,
   ModelHostContinuationError,
   ModelHostFailureError,
-  modelHostFailureRequiresFreshContext,
+  isModelHostTokenLimitFailure,
   ModelHostOutcomeUnknownError,
 } from "./ModelHost.ts";
 import {
@@ -1138,9 +1138,9 @@ async function capturedProviderOperation<Value extends object>(
     const reportedError =
       sanitizeGoogleErrors && !(error instanceof ModelResponseFormatError)
         ? error instanceof ModelHostFailureError
-          ? modelHostFailureRequiresFreshContext(error)
+          ? isModelHostTokenLimitFailure(error)
             ? new ModelHostFailureError(
-                "Google Interactions context limit exceeded; start a fresh context",
+                "Google Interactions context limit exceeded",
                 { details: { code: "context_length_exceeded" } },
               )
             : new ModelHostFailureError(
@@ -2353,13 +2353,10 @@ async function googleInitialRejection(response: Response): Promise<Error> {
     return new ModelHostOutcomeUnknownError(
       "Google Interactions request outcome could not be confirmed",
     );
-  return modelHostFailureRequiresFreshContext(
-    new ModelHostFailureError(evidence),
-  )
-    ? new ModelHostFailureError(
-        "Google Interactions context limit exceeded; start a fresh context",
-        { details: { code: "context_length_exceeded" } },
-      )
+  return isModelHostTokenLimitFailure(new ModelHostFailureError(evidence))
+    ? new ModelHostFailureError("Google Interactions context limit exceeded", {
+        details: { code: "context_length_exceeded" },
+      })
     : new ModelHostFailureError("Google Interactions request was rejected");
 }
 

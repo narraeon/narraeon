@@ -168,6 +168,7 @@ export interface StoredSettingImprovementSession {
   };
   /** Last dispatched model request, retained only while its outcome is unresolved. */
   partialResponse?: PartialAuthoringResponse;
+  settlementConflict?: true;
   retryDispatch?: {
     requestId: string;
     exchange: number;
@@ -991,6 +992,7 @@ function validateStoredSession(
         "googleIdentity",
         "retryDispatch",
         "partialResponse",
+        "settlementConflict",
         "pendingEdit",
         "editReceipts",
       ],
@@ -1048,6 +1050,8 @@ function validateStoredSession(
     typeof value.creationRequestId !== "string" ||
     !validPromptCompilation(value.bootstrap) ||
     !validModelBinding(value.modelBinding) ||
+    (value.settlementConflict !== undefined &&
+      value.settlementConflict !== true) ||
     (value.partialResponse !== undefined &&
       (!Array.isArray(value.modelItems) ||
         !validPartialAuthoringResponse(

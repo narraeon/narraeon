@@ -1,13 +1,14 @@
 import { dispatchRequiresFreshContext } from "../model/DispatchFailure.ts";
-import type { PlayFailureKind } from "../../protocol/playFailure.ts";
+import type {
+  FreshContextReason,
+  PlayFailureKind,
+} from "../../protocol/playFailure.ts";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainStatus,
 } from "../../protocol/v1.ts";
 import {
   ModelHostCancelledError,
-  ModelHostFailureError,
-  ModelHostOutcomeUnknownError,
   type ModelHostBinding,
   type ModelHostExchange,
 } from "../model/ModelHost.ts";
@@ -21,6 +22,7 @@ import { classifyPlayFailure } from "./PlayFailure.ts";
 export interface PlayAdvanceLedger {
   status: V1PlayCallChainStatus;
   canRetry: boolean;
+  freshContextReason?: FreshContextReason;
   lastRequest: ModelHostExchange | null;
   modelBinding?: ModelHostBinding | undefined;
   lastRequestAttempt: number;
@@ -64,6 +66,7 @@ export type PlayAdvanceEnding =
       kind: "failed";
       message: string;
       failureKind: PlayFailureKind;
+      freshContextReason?: FreshContextReason;
       canRetry: boolean;
       streamingEventId?: number | undefined;
     };
@@ -115,6 +118,7 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
   beginDispatch(session: Session, request: ModelHostExchange, attempt: number) {
     session.status = "running";
     session.canRetry = false;
+    delete session.freshContextReason;
     session.lastFailure = null;
     delete session.lastFailureKind;
     session.lastRequest = structuredClone(request);
@@ -196,6 +200,9 @@ export class PlayAdvanceLifecycle<Session extends PlayAdvanceLedger> {
             ? "retryable"
             : "other",
         canRetry,
+        ...(headMoved || playerPhase
+          ? { freshContextReason: "world_changed" as const }
+          : {}),
         streamingEventId: streaming?.id,
       },
       advance,
@@ -219,11 +226,7 @@ export function dispatchFailureEnding(
       canRetry: true,
       streamingEventId,
     };
-  const requiresFreshContext = dispatchRequiresFreshContext(error, false);
-  const canRetry =
-    !requiresFreshContext &&
-    (error instanceof ModelHostFailureError ||
-      error instanceof ModelHostOutcomeUnknownError);
+  const canRetry = !dispatchRequiresFreshContext(error);
   return {
     kind: "failed",
     message,
@@ -289,6 +292,7 @@ export function lastEndingCancelled(
 }
 
 function applyEnding(session: PlayAdvanceLedger, ending: PlayAdvanceEnding) {
+  delete session.freshContextReason;
   switch (ending.kind) {
     case "ready":
       if (ending.followupsCancelled === true)
@@ -347,6 +351,8 @@ function applyEnding(session: PlayAdvanceLedger, ending: PlayAdvanceEnding) {
       session.canRetry = ending.canRetry;
       session.lastFailure = ending.message;
       session.lastFailureKind = ending.failureKind;
+      if (ending.freshContextReason)
+        session.freshContextReason = ending.freshContextReason;
       session.events.push({
         id: session.nextEventId++,
         kind: "failure",
