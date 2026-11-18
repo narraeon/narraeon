@@ -89,7 +89,6 @@ import type {
 import {
   equalModelHostBinding,
   ModelHostCancelledError,
-  ModelHostFailureError,
 } from "../model/ModelHost.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
