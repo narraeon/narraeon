@@ -90,7 +90,7 @@ export interface ModelToolConversationStreaming {
 }
 
 interface LiveRun<View> {
-  nonTextReceived: boolean;
+  toolReceived: boolean;
   requestId: string;
   controller: AbortController;
   promise: Promise<View>;
@@ -164,12 +164,17 @@ export function recordAuthoringRetryPreview(
 ): void {
   const snapshot = session.requests?.at(-1);
   if (snapshot === undefined) return;
-  const request = authoringExchange(
-    session,
-    snapshot.requestId,
-    boundaries,
-    host.binding(),
-  );
+  const partial = session.partialResponse?.request;
+  const request =
+    partial?.assistantPrefill !== undefined
+      ? structuredClone(partial)
+      : authoringExchange(
+          session,
+          snapshot.requestId,
+          boundaries,
+          host.binding(),
+        );
+  if (boundaries !== undefined) request.worldRevisionBoundaries = boundaries;
   if (session.retryDispatch !== undefined)
     request.exchange = session.retryDispatch.exchange;
   request.requestAttempt = (snapshot.retryAttempts?.length ?? 0) + 2;
@@ -232,7 +237,7 @@ export class ModelToolConversation<
       controller: new AbortController(),
       promise: Promise.resolve(undefined as View),
       streaming: emptyStreaming(),
-      nonTextReceived: false,
+      toolReceived: false,
     };
     live.promise = this.#execute(input, live).finally(() => {
       if (this.#runs.get(input.session.sessionId) === live)
@@ -268,6 +273,8 @@ export class ModelToolConversation<
         );
         if (session.partialResponse?.request.assistantPrefill !== undefined) {
           request = structuredClone(session.partialResponse.request);
+          if (input.worldRevisionBoundaries !== undefined)
+            request.worldRevisionBoundaries = input.worldRevisionBoundaries;
         }
         if (input.retrySupported)
           request = prepareAuthoringDispatch(session, request);
@@ -287,7 +294,7 @@ export class ModelToolConversation<
         if (session.modelBinding.provider === "google_interactions")
           session.googleOutcomeUnknown = true;
         live.streaming = emptyStreaming();
-        live.nonTextReceived = false;
+        live.toolReceived = false;
         session.updatedAt = Date.now();
         phase = "preparing";
         await input.save(session);
@@ -312,7 +319,7 @@ export class ModelToolConversation<
             return input.recordGoogleHop?.(requestId, hop);
           },
           onDelta: (delta) => {
-            if (delta.kind !== "text") live.nonTextReceived = true;
+            if (delta.kind === "tool") live.toolReceived = true;
             recordDelta(live, delta);
             input.changed?.(false);
           },
@@ -395,7 +402,7 @@ export class ModelToolConversation<
       if (
         phase === "dispatched" &&
         dispatchedRequest !== undefined &&
-        !live.nonTextReceived &&
+        !live.toolReceived &&
         prefillFor(dispatchedRequest, partialText) !== null
       ) {
         session.partialResponse = {
@@ -404,6 +411,8 @@ export class ModelToolConversation<
           modelItemCount: session.modelItems.length,
         };
         delete session.partialResponse.request.assistantPrefill;
+        // Google revision boundaries are revalidated against the active epoch on resume.
+        delete session.partialResponse.request.worldRevisionBoundaries;
       }
       failAuthoringDispatch(session, error, phase);
       if (

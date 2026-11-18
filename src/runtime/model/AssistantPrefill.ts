@@ -1,4 +1,5 @@
 import type { V1PlayCallChainEvent } from "../../protocol/v1.ts";
+import { retargetFrozenCompilation } from "../prompt/FileNativePromptCompiler.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
   validPromptCompilation,
@@ -47,13 +48,13 @@ export function prefillFor(
   text: string,
 ): AssistantPrefill | null {
   const mode = assistantPrefillMode(request.modelConfig);
-  if (mode === "disabled" || text.length === 0) return null;
+  if (!request.modelConfig || text.length === 0) return null;
   // Anthropic rejects a final assistant message ending in whitespace. Do not alter it.
   if (
-    request.modelConfig?.provider === "anthropic_messages" &&
-    /\s$/u.test(text)
+    mode === "disabled" ||
+    (request.modelConfig.provider === "anthropic_messages" && /\s$/u.test(text))
   )
-    return null;
+    return { text, mode: "prompt" };
   return { text, mode };
 }
 
@@ -67,6 +68,11 @@ export function assertAssistantPrefill(request: ModelHostExchange): void {
     );
 }
 
+/** The instruction exists only on the wire, never as a player or author turn. */
+export function continuationPrompt(text: string): string {
+  return `Runtime: The previous response was interrupted. Continue the following response exactly where it ended. Return only the subsequent text, without repeating the prefix or adding a preamble.\n\n${text}`;
+}
+
 export function prefillMessage(
   request: ModelHostExchange,
   anthropic = false,
@@ -74,6 +80,8 @@ export function prefillMessage(
   assertAssistantPrefill(request);
   const prefix = request.assistantPrefill;
   if (prefix === undefined) return [];
+  if (prefix.mode === "prompt")
+    return [{ role: "user", content: continuationPrompt(prefix.text) }];
   return [
     {
       role: "assistant",
@@ -99,8 +107,14 @@ export function completeAssistantPrefill(
       "The provider did not return the exact assistant prefix required by this connection's prefill mode.",
     );
   const combined = prefix.mode === "mistral_prefix" ? text : prefix.text + text;
+  if (combined === prefix.text && (response.toolCalls?.length ?? 0) === 0)
+    throw new Error("The model returned an empty continuation.");
   const state = structuredClone(response.providerState);
-  if (state?.protocol === "chat_completions") {
+  if (prefix.mode === "prompt" && state !== undefined) {
+    // Reproduce the Runtime instruction on later turns so signed native output
+    // (including Google thought steps) is replayed byte-for-byte as received.
+    state.continuedPrefixLength = prefix.text.length;
+  } else if (state?.protocol === "chat_completions") {
     if (
       typeof state.assistantMessage !== "object" ||
       state.assistantMessage === null
@@ -184,23 +198,29 @@ export function assistantPrefillDelta(
   };
 }
 
-export function assertCurrentPrefillConnection(
-  request: ModelHostExchange,
+export function continuePartialRequest(
+  original: ModelHostExchange,
+  text: string,
   host: ModelHost,
-): void {
-  const fresh = structuredClone(request);
-  delete fresh.modelConfig;
-  delete fresh.assistantPrefill;
-  const current = host.freezeRequest?.(fresh)?.modelConfig;
-  if (
-    !current ||
-    current.provider !== request.modelConfig?.provider ||
-    current.modelId !== request.modelConfig.modelId ||
-    assistantPrefillMode(current) !== assistantPrefillMode(request.modelConfig)
-  )
+): ModelHostExchange {
+  const binding = host.binding();
+  if (binding.provider !== original.modelConfig?.provider)
     throw new Error(
-      "The selected connection is incompatible with this saved assistant prefix; resend or select the original compatible connection.",
+      "The selected connection uses an incompatible continuation protocol.",
     );
+  const request = structuredClone(original);
+  delete request.modelConfig;
+  delete request.assistantPrefill;
+  request.maxOutputTokens = binding.maxOutputTokens;
+  request.bootstrap = retargetFrozenCompilation(request.bootstrap, binding);
+  const current = host.freezeRequest?.(request) ?? request;
+  const prefix = prefillFor(current, text);
+  if (prefix === null)
+    throw new Error(
+      "The current connection cannot encode the saved response prefix.",
+    );
+  current.assistantPrefill = prefix;
+  return current;
 }
 
 export function playAssistantPrefill(context: {
@@ -223,7 +243,6 @@ export function playAssistantPrefill(context: {
     last.responseKind !== "pending" ||
     last.exchange !== context.lastRequest.exchange ||
     last.attempt !== context.lastRequestAttempt ||
-    last.reasoning !== undefined ||
     last.toolFragment !== undefined
   )
     return null;
@@ -322,8 +341,7 @@ export function prepareAuthoringPartial(
       "This interrupted response has no supported text prefix to continue.",
     );
   const partial = session.partialResponse!;
-  assertCurrentPrefillConnection(partial.request, host);
-  partial.request.assistantPrefill = prefillFor(partial.request, partial.text)!;
+  partial.request = continuePartialRequest(partial.request, partial.text, host);
 }
 
 function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
@@ -347,9 +365,12 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
         "assistantPrefillMode",
       ].includes(key),
     ) &&
-    ["chat_completions", "anthropic_messages", "openai_responses"].includes(
-      String(c.provider),
-    ) &&
+    [
+      "chat_completions",
+      "anthropic_messages",
+      "openai_responses",
+      "google_interactions",
+    ].includes(String(c.provider)) &&
     typeof c.modelId === "string" &&
     ["standard", "cliproxyapi"].includes(String(c.dialect)) &&
     [
@@ -379,8 +400,14 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
       typeof c.cacheSuffixBreakpoint === "boolean") &&
     (c.supportsAllowedTools === undefined ||
       typeof c.supportsAllowedTools === "boolean") &&
-    ["assistant", "prefix", "mistral_prefix", "partial"].includes(
-      String(c.assistantPrefillMode),
-    )
+    (c.assistantPrefillMode === undefined ||
+      (typeof c.assistantPrefillMode === "string" &&
+        [
+          "disabled",
+          "assistant",
+          "prefix",
+          "mistral_prefix",
+          "partial",
+        ].includes(c.assistantPrefillMode)))
   );
 }

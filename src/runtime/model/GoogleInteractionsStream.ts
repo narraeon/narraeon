@@ -108,6 +108,19 @@ export async function aggregateGoogleInteractions(
         typeof value.step.type !== "string"
       )
         invalid();
+      if (value.step.type === "function_call")
+        onDelta?.({ kind: "tool", text: "" });
+      if (
+        value.step.type === "model_output" &&
+        Array.isArray(value.step.content)
+      )
+        for (const part of value.step.content)
+          if (
+            record(part) &&
+            part.type === "text" &&
+            typeof part.text === "string"
+          )
+            onDelta?.({ kind: "text", text: part.text });
       steps.set(index, {
         step: structuredClone(value.step),
         stopped: false,

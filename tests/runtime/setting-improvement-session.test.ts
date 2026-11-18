@@ -1,3 +1,4 @@
+import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { canRetryAuthoringDispatch } from "../../src/runtime/authoring/AuthoringRetry.ts";
 import { authoringTargetContract } from "./support/authoring-target-contract.ts";
 import { parseDocument } from "yaml";
@@ -5448,5 +5449,69 @@ test("compact text references never reinterpret opaque Provider content or liter
   await writeFile(path, JSON.stringify(raw));
   await expect(store.read(first.sessionId)).rejects.toThrow(
     /snapshot reference type/,
+  );
+});
+
+test("Google 设定完善将中断正文和内部指令发送给模型并原样重放后缀签名", async () => {
+  const root = await temporaryRoot("google-setting-continuation-");
+  const content = new ContentWorkspace(root, { locale: () => "en" });
+  const { localId } = await content.createCurrentTreeContentPackage();
+  const prefix = "前半🙂\n ";
+  const suffix = "后半";
+  const before = googleAuthoringHost([googleText(prefix).slice(0, 2)]);
+  const interrupted = await sendFresh(
+    serviceFor(root, content, before.host),
+    localId,
+    "first",
+    "Explain.",
+  );
+  expect(interrupted.canContinuePartial).toBe(true);
+  const after = googleAuthoringHost(
+    [googleSignedText(suffix), googleText("Next.")],
+    undefined,
+    { modelId: "second-model" },
+  );
+  const resume = await serviceFor(root, content, after.host).resume({
+    sessionId: interrupted.sessionId,
+    packageId: localId,
+    requestId: "resume",
+    recovery: "continue_partial",
+  });
+  expect(resume.messages.map((message) => message.text)).toEqual([
+    "Explain.",
+    prefix + suffix,
+  ]);
+  const wire = after.sent[0]!.input as unknown[];
+  const instruction = {
+    type: "user_input",
+    content: [{ type: "text", text: continuationPrompt(prefix) }],
+  };
+  expect(wire.at(-1)).toMatchObject(instruction);
+  expect(wire.slice(0, -1)).toEqual(before.sent[0]!.input);
+  expect(resume.requestPreviews!.at(-1)?.wireRequest?.body).toMatchObject({
+    input: wire,
+  });
+  const next = await serviceFor(root, content, after.host).send({
+    packageId: localId,
+    requestId: "next",
+    message: "Next?",
+    continuation: {
+      kind: "continue_context",
+      sessionId: interrupted.sessionId,
+    },
+  });
+  expect(next.runStatus).toBe("ready");
+  expect(after.sent[1]!.input).toEqual(
+    expect.arrayContaining([
+      instruction,
+      {
+        type: "model_output",
+        content: [{ type: "text", text: suffix }],
+      },
+      expect.objectContaining({
+        type: "thought",
+        signature: "synthetic-signature-secret",
+      }),
+    ]),
   );
 });

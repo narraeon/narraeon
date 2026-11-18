@@ -976,7 +976,7 @@ function validModelItem(value: unknown): boolean {
       typeof value.text === "string" &&
       (value.reasoningContent === undefined ||
         typeof value.reasoningContent === "string") &&
-      validProviderState(value.providerState) &&
+      validProviderState(value.providerState, value.text) &&
       Array.isArray(value.toolCalls) &&
       value.toolCalls.every(validModelToolCall)
     );
@@ -1012,8 +1012,17 @@ function validModelToolCall(value: unknown): boolean {
   );
 }
 
-function validProviderState(value: unknown): boolean {
-  if (!isRecord(value)) return false;
+function validProviderState(state: unknown, text: string): boolean {
+  if (!isRecord(state)) return false;
+  const { continuedPrefixLength, ...value } = state;
+  if (
+    continuedPrefixLength !== undefined &&
+    (typeof continuedPrefixLength !== "number" ||
+      !Number.isSafeInteger(continuedPrefixLength) ||
+      continuedPrefixLength <= 0 ||
+      continuedPrefixLength > text.length)
+  )
+    return false;
   if (value.protocol === "google_interactions")
     return (
       hasExactKeys(value, ["protocol", "steps"]) &&

@@ -547,7 +547,7 @@ export async function aggregateResponsesModelStream(
           if (text.startsWith(observedText)) {
             const suffix = text.slice(observedText.length);
             if (suffix !== "") onDelta?.({ kind: "text", text: suffix });
-          } else onDelta?.({ kind: "reasoning", text: "" });
+          } else onDelta?.({ kind: "tool", text: "" }); // Conflicting terminal text cannot supply a reliable prefix.
         }
         const details = payload.response.incomplete_details;
         if (isRecord(details)) assertModelOutputComplete(details.reason);
