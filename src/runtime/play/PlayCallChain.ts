@@ -2907,6 +2907,7 @@ export class PlayCallChain {
           throw new ModelHostCancelledError(
             "The player cancelled the dispatched model request; its response was not committed.",
           );
+        if (response.usage !== undefined) event.usage = response.usage;
         validateModelToolCalls(
           response,
           modelHost.binding().provider !== "google_interactions",

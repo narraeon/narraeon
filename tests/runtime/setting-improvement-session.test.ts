@@ -5615,7 +5615,12 @@ test("Google 设定完善将中断正文和内部指令发送给模型并原样�
   };
   expect(wire.at(-1)).toMatchObject(instruction);
   expect(wire.slice(0, -1)).toEqual(before.sent[0]!.input);
-  expect(resume.requestPreviews!.at(-1)?.wireRequest?.body).toMatchObject({
+  const previews = await serviceFor(
+    root,
+    content,
+    after.host,
+  ).readRequestPreviews(localId, resume.sessionId);
+  expect(previews.at(-1)?.wireRequest?.body).toMatchObject({
     input: wire,
   });
   const next = await serviceFor(root, content, after.host).send({
