@@ -68,6 +68,8 @@ import {
  * Explicit current-player boundaries and shortened turn-guide headers (#179)
  * change fresh chain/preview and authoring digests; preset-free bootstrap input
  * also receives the boundary. Frozen requests are not recompiled.
+ * Responses source-aware turn guides (#198) change the ordered append preview
+ * in both locales. The remaining 74 compilation digests stay unchanged.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -317,7 +319,7 @@ const expectedDigests: Record<string, string> = {
   "preview/en/ordered-default/chat_completions/bootstrap":
     "ce746112daa832cde22c1909a8b2c2cce24946d77f13f6f1b2bb320fd025aa2a",
   "preview/en/ordered-default/openai_responses/append":
-    "43e06dcf7ec7c2a92ade8b6ef96f3bd1077350b8d94fac681c07c36ab3914bd4",
+    "7b45c291eceed5cb225d00eb70e63ee56a71633806e88bd86da5eb10d43007ac",
   "preview/en/ordered-default/openai_responses/bootstrap":
     "de6d4858dc65a66560de9f01c22238f22b5fc12634a1643bb6c52e8f2db2f961",
   "preview/zh-CN/legacy-v1/anthropic_messages/append":
@@ -341,7 +343,7 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/chat_completions/bootstrap":
     "2cf2d4787adf1673d9eed8f93fb6d5adbea57885194eee8fee2e47e4e2afa584",
   "preview/zh-CN/ordered-default/openai_responses/append":
-    "4a5470a298b7cf1ecea4f177240d748b1f7110233f4d1adbc14e20c461cd44b7",
+    "d5047990bb64919bb7f1e5a374ac17eed8e56fc3c9154def52d60b792539de48",
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "c5a9efa1fd9a8c1ea36caf036cb2a26d277054553fc6683db32bc0adad03d5e4",
   "revision/en":
