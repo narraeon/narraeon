@@ -41,7 +41,11 @@ const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
 const maxStoredConnections = 64;
 
-interface StoredModelConnection extends FileNativeModelConnection {
+interface StoredModelConnection extends Omit<
+  FileNativeModelConnection,
+  "modelPrompt"
+> {
+  modelPrompt: string;
   id: string;
   name: string;
   presetId: ModelProviderPresetId;
@@ -395,6 +399,7 @@ function normalizeSaveInput(
     baseUrl,
     apiKey,
     modelId,
+    modelPrompt: validateModelPrompt(input.modelPrompt, existing?.modelPrompt),
     reasoningEffort,
     reasoningSummary,
     thinkingMode,
@@ -489,6 +494,7 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     baseUrl,
     apiKey,
     modelId,
+    modelPrompt: validateModelPrompt(value.modelPrompt),
     reasoningEffort,
     reasoningSummary,
     thinkingMode,
@@ -514,6 +520,7 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     dialect: connection.dialect,
     baseUrl: connection.baseUrl,
     modelId: connection.modelId,
+    modelPrompt: connection.modelPrompt,
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
@@ -535,6 +542,14 @@ function toBinding(
     baseUrl: connection.baseUrl,
     apiKey: connection.apiKey,
     modelId: connection.modelId,
+    ...(connection.modelPrompt.trim() === ""
+      ? {}
+      : {
+          modelPrompt: {
+            connectionName: connection.name,
+            markdown: connection.modelPrompt,
+          },
+        }),
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
@@ -544,6 +559,13 @@ function toBinding(
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
   });
+}
+
+function validateModelPrompt(value: unknown, fallback = ""): string {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string")
+    throw new Error("Model prompt must be a string");
+  return value;
 }
 
 function validateSupportsAllowedTools(value: unknown): boolean {

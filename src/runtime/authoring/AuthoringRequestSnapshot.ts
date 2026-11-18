@@ -4,6 +4,7 @@ import {
 } from "../play/FileNativePlayPresetStore.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 import type {
+  ModelConnectionPrompt,
   ModelHostBinding,
   ModelHostWireRequest,
 } from "../model/ModelHost.ts";
@@ -49,6 +50,8 @@ export interface AuthoringRequestSnapshot {
   preload?: AuthoringPreloadRecord;
   wireRequest?: ModelHostWireRequest;
   modelBinding?: ModelHostBinding;
+  /** Frozen input to the play preview used for preloading and write checks. */
+  modelPrompt?: ModelConnectionPrompt;
   calls?: AuthoringCall[];
   retryAttempts?: {
     requestId: string;
@@ -103,6 +106,7 @@ export function validAuthoringRequests(
     if (
       (!session.extended &&
         (item.modelBinding !== undefined ||
+          item.modelPrompt !== undefined ||
           item.retryAttempts !== undefined)) ||
       !Object.keys(item).every((key) =>
         [
@@ -114,10 +118,20 @@ export function validAuthoringRequests(
           "wireRequest",
           "retryAttempts",
           "modelBinding",
+          "modelPrompt",
           "calls",
         ].includes(key),
       ) ||
       (item.modelBinding !== undefined && !isBinding(item.modelBinding)) ||
+      (item.modelPrompt !== undefined &&
+        !(
+          typeof item.modelPrompt === "object" &&
+          item.modelPrompt !== null &&
+          "connectionName" in item.modelPrompt &&
+          typeof item.modelPrompt.connectionName === "string" &&
+          "markdown" in item.modelPrompt &&
+          typeof item.modelPrompt.markdown === "string"
+        )) ||
       (item.calls !== undefined &&
         (!Array.isArray(item.calls) ||
           !item.calls.every(validAuthoringCall) ||

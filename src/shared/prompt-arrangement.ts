@@ -1,5 +1,6 @@
 import {
   defaultEnabledBuiltin,
+  modelPromptBuiltin,
   type BuiltinPlayPrompt,
   type OrderedPlayPrompt,
   type PromptMessageRole,
@@ -63,6 +64,36 @@ function reserveBuiltinPromptId(
   while (used.has(id)) id = `builtin-${builtin}-${++suffix}`;
   used.add(id);
   return id;
+}
+
+/** Released ordered lists may predate the dynamic slot. Insert it without moving old entries. */
+export function withModelPrompt(
+  entries: OrderedPlayPrompt[],
+  surface: "play" | "author",
+): OrderedPlayPrompt[] {
+  const { id: builtin } = modelPromptBuiltin(surface, "en");
+  if (
+    entries.some(
+      (entry) => entry.kind === "builtin" && entry.builtin === builtin,
+    )
+  )
+    return entries;
+  const afterMechanics =
+    entries.findIndex(
+      (entry) =>
+        entry.kind === "builtin" && entry.builtin === surface + ".mechanics",
+    ) + 1;
+  const id = reserveBuiltinPromptId(
+    builtin,
+    builtin,
+    new Set(entries.map((entry) => entry.id)),
+  );
+  return entries.toSpliced(afterMechanics, 0, {
+    id,
+    kind: "builtin",
+    builtin,
+    enabled: true,
+  });
 }
 
 /** Expand retired identities in place; an explicit successor always wins. */

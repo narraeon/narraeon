@@ -220,10 +220,7 @@ type PlayCallChainRevisionInput = PlayCallChainRevisionBaseInput &
     | { continuation: "continue_context" }
     | {
         continuation: "fresh_context";
-        freshContext: Pick<
-          PlayCallChainStartInput,
-          "hostBinding" | "playPreset" | "modelBinding"
-        >;
+        freshContext: PlayerRevisionFreshContext;
       }
   );
 
@@ -245,7 +242,7 @@ interface PreparedFreshPlayerRevision {
 type PlayerRevisionFreshContext = Pick<
   PlayCallChainStartInput,
   "hostBinding" | "playPreset" | "modelBinding"
->;
+> & { modelPrompt?: FileNativePromptInput["modelPrompt"] };
 
 /**
  * The durable record of an edit in progress, written before the first world
@@ -433,6 +430,7 @@ export class PlayCallChain {
       hostBinding: input.hostBinding,
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
+      modelPrompt: input.modelHost.modelPrompt?.(),
       playerText: input.playerText,
     });
     const now = Date.now();
@@ -512,6 +510,7 @@ export class PlayCallChain {
       hostBinding: FileNativePromptInput["hostBinding"];
       playPreset: PlayPresetBinding;
       modelBinding: ModelHostBinding;
+      modelPrompt?: FileNativePromptInput["modelPrompt"];
       playerText: string;
     },
   ): Promise<FreshContextCompilation> {
@@ -544,6 +543,7 @@ export class PlayCallChain {
         playerInputPlacement: "append",
         playerInput: input.playerText,
         modelBinding: structuredClone(input.modelBinding),
+        modelPrompt: input.modelPrompt,
       },
       input.playPreset,
     );
@@ -724,6 +724,7 @@ export class PlayCallChain {
         playerInputPlacement: "append",
         playerInput: input.playerText,
         modelBinding: input.modelHost.binding(),
+        modelPrompt: input.modelHost.modelPrompt?.(),
       },
       playPreset,
     );
@@ -1991,6 +1992,7 @@ export class PlayCallChain {
       hostBinding: freshContext.hostBinding,
       playPreset: freshContext.playPreset,
       modelBinding: freshContext.modelBinding,
+      modelPrompt: freshContext.modelPrompt,
       playerText: replacementText,
     });
     return {

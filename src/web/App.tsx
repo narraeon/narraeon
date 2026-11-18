@@ -1143,6 +1143,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             key={presetPageVersion}
             client={client}
             initialLibrary={workspace.playPresets}
+            modelConnection={activeModel}
+            onEditModelConnection={() => navigate("model")}
             initialSelectedId={selectedPresetId}
             onSelectionChange={(presetId) => {
               if (

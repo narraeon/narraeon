@@ -396,7 +396,9 @@ context:
     const quiet = bindingFrom(
       filesWith("en", (items) =>
         items.map((entry) =>
-          entry.kind === "builtin" ? { ...entry, turnGuide: "" } : entry,
+          entry.kind === "builtin" && entry.builtin !== "play.model-prompt"
+            ? { ...entry, turnGuide: "" }
+            : entry,
         ),
       ),
     );
@@ -435,7 +437,9 @@ context:
     const binding = bindingFrom(
       filesWith("en", (items) =>
         items.map((entry) =>
-          entry.kind === "builtin" ? { ...entry, turnGuide: "" } : entry,
+          entry.kind === "builtin" && entry.builtin !== "play.model-prompt"
+            ? { ...entry, turnGuide: "" }
+            : entry,
         ),
       ),
     );
@@ -590,6 +594,7 @@ describe("restructure migration", () => {
     const list = playList(migrated);
     expect(list.map(({ id }) => id)).toEqual([
       "play.mechanics",
+      "play.model-prompt",
       "play.prose",
       "play.scene",
       "play.person-second",
@@ -658,8 +663,9 @@ describe("restructure migration", () => {
       ({ id }) => id,
     );
     expect(ids.filter((entry) => entry === "play.prose")).toHaveLength(1);
-    expect(ids.slice(0, 3)).toEqual([
+    expect(ids.slice(0, 4)).toEqual([
       "play.mechanics",
+      "play.model-prompt",
       "play.prose",
       "play.scene",
     ]);
@@ -744,8 +750,9 @@ describe("restructure migration", () => {
     const ids = playList(bound.files).map(({ id }) => id);
     for (const retired of retiredPlayBuiltins)
       expect(ids).not.toContain(retired);
-    expect(ids.slice(0, 3)).toEqual([
+    expect(ids.slice(0, 4)).toEqual([
       "play.mechanics",
+      "play.model-prompt",
       "play.prose",
       "play.scene",
     ]);

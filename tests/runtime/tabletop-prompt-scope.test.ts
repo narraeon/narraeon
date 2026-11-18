@@ -106,6 +106,7 @@ describe("tabletop builtins and defaults", () => {
     }
     expect(builtinAuthorPrompts("en").map(({ id }) => id)).toEqual([
       "author.mechanics",
+      "author.model-prompt",
       "author.guidance",
       "author.tabletop",
       "author.target",

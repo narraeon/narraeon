@@ -381,6 +381,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
         dialect: "cliproxyapi",
         baseUrl: "http://127.0.0.1:8317/v1",
         modelId: "claude-sonnet",
+        modelPrompt: "",
         reasoningEffort: "high",
         reasoningSummary: "none",
         thinkingMode: "enabled",

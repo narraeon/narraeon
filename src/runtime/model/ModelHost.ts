@@ -224,7 +224,14 @@ export interface ModelHostWireRequest {
   googleHops?: GoogleHopEvidence[];
 }
 
+/** The bound connection's local text for compiling a new prompt. */
+export interface ModelConnectionPrompt {
+  readonly connectionName: string;
+  readonly markdown: string;
+}
+
 export interface ModelHost {
+  modelPrompt?(): ModelConnectionPrompt | undefined;
   freezeRequest?(request: ModelHostExchange): ModelHostExchange;
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;

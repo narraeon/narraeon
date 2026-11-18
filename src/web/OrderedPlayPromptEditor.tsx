@@ -1,3 +1,4 @@
+import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import {
   builtinAuthorPrompts,
@@ -33,6 +34,8 @@ export function OrderedPlayPromptEditor({
   promptPreview,
   detail,
   onSelectPrompt,
+  modelConnection,
+  onEditModelConnection,
 }: {
   entries: OrderedPlayPrompt[];
   mergeConsecutiveMessages?: boolean;
@@ -44,6 +47,9 @@ export function OrderedPlayPromptEditor({
   promptPreview?: ReactNode;
   detail?: ReactNode;
   onSelectPrompt?: () => void;
+  modelConnection?:
+    Pick<ModelConnectionView, "name" | "modelPrompt"> | undefined;
+  onEditModelConnection?: (() => void) | undefined;
 }) {
   const [selectedId, setSelectedId] = useState(entries[0]?.id);
   const [dragged, setDragged] = useState<string>();
@@ -60,6 +66,7 @@ export function OrderedPlayPromptEditor({
       ? catalog.find((item) => item.id === entry.builtin)
       : undefined;
   const builtin = builtinOf(selected);
+  const isModelPrompt = builtin?.dynamic === "model-prompt";
   const name = (entry: OrderedPlayPrompt) =>
     entry.kind === "world"
       ? t("Complete world prompt", "完整内容包提示")
@@ -357,24 +364,25 @@ export function OrderedPlayPromptEditor({
                     {t("Enabled", "启用")}
                   </label>
                 )}
-                {(selected.kind === "user" || selected.kind === "builtin") && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      add(
-                        selected.kind === "user"
-                          ? selected.body
-                          : builtin!.body,
-                        `${name(selected)} ${t("copy", "副本")}`,
-                        selected.messageRole ?? "system",
-                        orderedPromptScope(selected, catalog),
-                        orderedPromptTurnGuide(selected, catalog),
-                      )
-                    }
-                  >
-                    {t("Clone prompt", "克隆提示词")}
-                  </button>
-                )}
+                {!isModelPrompt &&
+                  (selected.kind === "user" || selected.kind === "builtin") && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        add(
+                          selected.kind === "user"
+                            ? selected.body
+                            : builtin!.body,
+                          `${name(selected)} ${t("copy", "副本")}`,
+                          selected.messageRole ?? "system",
+                          orderedPromptScope(selected, catalog),
+                          orderedPromptTurnGuide(selected, catalog),
+                        )
+                      }
+                    >
+                      {t("Clone prompt", "克隆提示词")}
+                    </button>
+                  )}
                 {(selected.kind === "user" || selected.kind === "tail") && (
                   <button
                     type="button"
@@ -396,7 +404,7 @@ export function OrderedPlayPromptEditor({
                     <select
                       aria-label={t("Message role", "发送角色")}
                       value={selected.messageRole ?? "system"}
-                      disabled={selected.kind === "builtin"}
+                      disabled={selected.kind === "builtin" && !isModelPrompt}
                       onChange={(event) => {
                         if (isPromptMessageRole(event.target.value))
                           update({
@@ -429,7 +437,27 @@ export function OrderedPlayPromptEditor({
                   </label>
                 )}
               </div>
-              {selected.kind === "world" ? (
+              {isModelPrompt ? (
+                <>
+                  <p>
+                    {modelConnection?.name ??
+                      t("No active model connection", "未启用模型连接")}
+                  </p>
+                  <label>
+                    {t("Prompt text", "提示词正文")}
+                    <textarea
+                      rows={8}
+                      readOnly
+                      value={modelConnection?.modelPrompt ?? ""}
+                    />
+                  </label>
+                  {onEditModelConnection && (
+                    <button type="button" onClick={onEditModelConnection}>
+                      {t("Edit model connection", "编辑模型连接")}
+                    </button>
+                  )}
+                </>
+              ) : selected.kind === "world" ? (
                 <>
                   <h4>{name(selected)}</h4>
                   <p>

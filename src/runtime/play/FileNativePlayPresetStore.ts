@@ -35,6 +35,7 @@ import {
 } from "../../shared/ordered-play-prompts.ts";
 import {
   customizePromptArrangement,
+  withModelPrompt,
   retiredBuiltinReplacements,
 } from "../../shared/prompt-arrangement.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -1293,19 +1294,22 @@ export function toPlayPresetStructuredEditor(
     name: definition.name,
     mergeConsecutiveMessages: definition.mergeConsecutiveMessages ?? true,
     authorPrompts: structuredClone(
-      definition.authorPrompts ?? legacyAuthorPrompts(definition),
+      definition.authorPrompts === undefined
+        ? legacyAuthorPrompts(definition)
+        : withModelPrompt(definition.authorPrompts, "author"),
     ),
     playPrompts: structuredClone(
-      definition.playPrompts ??
-        migrateLegacyPlayPrompts(
-          definition.files,
-          definition.narrativePrompts,
-          [
-            definition.settingImprovementPrompt?.path ??
-              defaultSettingImprovementPromptPath,
-            ...definition.followups.map((followup) => followup.prompt.path),
-          ],
-        ),
+      definition.playPrompts === undefined
+        ? migrateLegacyPlayPrompts(
+            definition.files,
+            definition.narrativePrompts,
+            [
+              definition.settingImprovementPrompt?.path ??
+                defaultSettingImprovementPromptPath,
+              ...definition.followups.map((followup) => followup.prompt.path),
+            ],
+          )
+        : withModelPrompt(definition.playPrompts, "play"),
     ),
     ...(definition.playPrompts
       ? {}
@@ -3519,7 +3523,7 @@ export function legacyAuthorPrompts(
   const path = definition.settingImprovementPrompt?.path;
   if (path !== undefined)
     entries.splice(
-      1,
+      entries.findIndex(({ id }) => id === "author.guidance"),
       1,
       {
         id: "author.guidance",

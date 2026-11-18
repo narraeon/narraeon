@@ -46,8 +46,29 @@ test("v0.7.10 current and draft convert once without changing historical revisio
   const preset = (await store.list()).presets.find(
     (p) => p.id === fixture.presetId,
   )!;
-  expect(preset.structure).toEqual(fixture.currentStructure);
-  expect(preset.draft?.structure).toEqual(fixture.draftStructure);
+  for (const [actual, released] of [
+    [preset.structure!, fixture.currentStructure],
+    [preset.draft!.structure!, fixture.draftStructure],
+  ] as const) {
+    const expected = structuredClone(released);
+    for (const [key, surface] of [
+      ["playPrompts", "play"],
+      ["authorPrompts", "author"],
+    ] as const) {
+      const prompts = expected[key]!;
+      const mechanics = prompts.findIndex(
+        ({ id }) => id === surface + ".mechanics",
+      );
+      const modelPrompt = surface + ".model-prompt";
+      prompts.splice(mechanics + 1, 0, {
+        id: modelPrompt,
+        kind: "builtin",
+        builtin: modelPrompt,
+        enabled: true,
+      });
+    }
+    expect(actual).toEqual(expected);
+  }
   expect(parseDocument(preset.files["preset.yaml"]!).get("format")).toBe(
     "narraeon.play-preset/v3",
   );

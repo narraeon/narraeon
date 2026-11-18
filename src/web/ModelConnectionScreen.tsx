@@ -29,6 +29,7 @@ interface ConnectionForm {
   baseUrl: string;
   apiKey: string;
   modelId: string;
+  modelPrompt: string;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
@@ -49,6 +50,7 @@ function emptyConnectionForm(): ConnectionForm {
     baseUrl: "",
     apiKey: "",
     modelId: "",
+    modelPrompt: "",
     reasoningEffort: "provider_default",
     reasoningSummary: "provider_default",
     thinkingMode: "provider_default",
@@ -222,6 +224,7 @@ export function ModelConnectionScreen({
             baseUrl: form.baseUrl,
             ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
             modelId: form.modelId,
+            modelPrompt: form.modelPrompt,
             reasoningEffort: form.reasoningEffort,
             reasoningSummary: form.reasoningSummary,
             thinkingMode: form.thinkingMode,
@@ -815,6 +818,16 @@ export function ModelConnectionScreen({
             </div>
           )}
 
+          <div>
+            <label htmlFor="model-prompt">{uiText("模型提示词（可选）")}</label>
+            <textarea
+              id="model-prompt"
+              rows={5}
+              value={form.modelPrompt}
+              onChange={(event) => change({ modelPrompt: event.target.value })}
+            />
+          </div>
+
           <div className="two-column-fields">
             <label>
               {uiText("真实 context window")}
@@ -1035,6 +1048,7 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     baseUrl: connection.baseUrl,
     apiKey: "",
     modelId: connection.modelId,
+    modelPrompt: connection.modelPrompt ?? "",
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,

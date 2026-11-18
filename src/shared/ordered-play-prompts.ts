@@ -72,11 +72,26 @@ export interface BuiltinPlayPrompt {
   /** Explicit app default; omitted catalogs use their category/group convention. */
   defaultEnabled?: boolean;
   category: PromptCategory;
+  dynamic?: "model-prompt";
   group?: PromptGroup;
   /** The default line this block contributes to the per-send turn guide. */
   turnGuide?: string;
   /** Tabletop-scoped builtins are skipped for interactive fiction. */
   gameplay?: PromptGameplayScope;
+}
+
+export function modelPromptBuiltin(
+  surface: "play" | "author",
+  locale: AppLocale,
+): BuiltinPlayPrompt {
+  return {
+    id: surface + ".model-prompt",
+    name: locale === "zh-CN" ? "模型提示词" : "Model prompt",
+    body: "",
+    required: false,
+    category: "policy",
+    dynamic: "model-prompt",
+  };
 }
 
 /** Soft limits for the turn guide; exceeding them warns without rejecting. */
@@ -208,6 +223,7 @@ Responses containing tool calls are intermediate steps; their text has not yet b
 ${historyUseGuidance(locale)}`,
     },
     // Exclusive choice groups: the first member of each ships enabled.
+    modelPromptBuiltin("play", locale),
     block("person-second", {
       category: "choice",
       group: "person",

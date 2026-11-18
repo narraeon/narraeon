@@ -87,8 +87,9 @@ describe("narrative-person blocks", () => {
       );
       const ids = builtinPlayPrompts(locale).map(({ id }) => id);
       const mechanics = ids.indexOf("play.mechanics");
-      expect(ids.slice(mechanics, mechanics + 4)).toEqual([
+      expect(ids.slice(mechanics, mechanics + 5)).toEqual([
         "play.mechanics",
+        "play.model-prompt",
         "play.person-second",
         "play.person-first",
         "play.person-third",
@@ -104,15 +105,19 @@ describe("narrative-person blocks", () => {
     expect(enabled["play.person-third"]).toBe(false);
   });
 
-  test("a stored preset without the blocks gains all three right after the mechanics block", () => {
+  test("a stored preset without the blocks gains all three after the model prompt", () => {
     const files = releasedFiles();
     const migrated = playList(upgradeOrderedPromptFormat(files));
     const before = playList(files);
     expect(
       migrated.filter(({ id }) => before.some((old) => old.id === id)),
     ).toEqual(before);
-    const mechanics = migrated.findIndex(({ id }) => id === "play.mechanics");
-    expect(migrated.slice(mechanics + 1, mechanics + 4)).toEqual(personEntries);
+    const modelPrompt = migrated.findIndex(
+      ({ id }) => id === "play.model-prompt",
+    );
+    expect(migrated.slice(modelPrompt + 1, modelPrompt + 4)).toEqual(
+      personEntries,
+    );
   });
 
   test("a swapped choice is kept, and without the mechanics block they precede the continuation group", () => {

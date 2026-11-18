@@ -45,6 +45,7 @@ import {
 } from "../authoring/ModelToolConversation.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
+  ModelConnectionPrompt,
   ModelHost,
   ModelHostBinding,
   ModelHostExchange,
@@ -116,6 +117,7 @@ interface ActiveTransaction {
 
 interface WorldRevisionPreviewInput {
   snapshot: WorldDocumentStore;
+  modelPrompt?: ModelConnectionPrompt | undefined;
   modelBinding: ModelHostBinding;
   playPreset: PlayPresetBinding;
   binding: FileNativePlayBinding;
@@ -432,10 +434,8 @@ export class WorldRevisionSession {
         retargetSession(session, epoch, this.#locale());
         await this.#store.saveSession(session);
       }
-      const { playPreset, bootstrap, preload } = await this.#compileCurrent(
-        input.worldId,
-        host.binding(),
-      );
+      const { playPreset, bootstrap, preload, modelPrompt } =
+        await this.#compileCurrent(input.worldId, host);
       session.schemaVersion = 4;
       delete session.retryDispatch;
       session.requests ??= [];
@@ -445,6 +445,7 @@ export class WorldRevisionSession {
         modelItemStart: session.modelItems.length,
         bootstrap,
         playPreset: structuredClone(playPreset),
+        ...(modelPrompt === undefined ? {} : { modelPrompt }),
         ...(preload === null
           ? {}
           : { preload: structuredClone(preload.record) }),
@@ -562,11 +563,8 @@ export class WorldRevisionSession {
         files: afterFiles,
         revision: contentTreeFingerprint(afterFiles),
       };
-      const { playPreset, bootstrap, preload } = await this.#compileCurrent(
-        input.worldId,
-        host.binding(),
-        candidate,
-      );
+      const { playPreset, bootstrap, preload, modelPrompt } =
+        await this.#compileCurrent(input.worldId, host, candidate);
       next.schemaVersion = 4;
       if (
         session.epochId !== epoch.epochId ||
@@ -588,6 +586,7 @@ export class WorldRevisionSession {
         modelItemStart: next.modelItems.length,
         bootstrap,
         playPreset: structuredClone(playPreset),
+        ...(modelPrompt === undefined ? {} : { modelPrompt }),
         ...(preload === null
           ? {}
           : { preload: structuredClone(preload.record) }),
@@ -714,15 +713,17 @@ export class WorldRevisionSession {
     const host = await this.#bindModelHost();
     if (session !== null)
       assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-    const { bootstrap } = await this.#compileCurrent(worldId, host.binding());
+    const { bootstrap } = await this.#compileCurrent(worldId, host);
     return bootstrap;
   }
 
   async #compileCurrent(
     worldId: string,
-    modelBinding: ModelHostBinding,
+    host: ModelHost,
     overrideEpoch?: StoredWorldRevisionEpoch,
   ) {
+    const modelBinding = host.binding();
+    const modelPrompt = host.modelPrompt?.();
     const epoch = overrideEpoch ?? (await this.#workspace.active(worldId));
     const worlds = await this.#worlds.listWorlds();
     const playPreset = await this.#bindPlayPreset();
@@ -731,7 +732,13 @@ export class WorldRevisionSession {
     const preload =
       epoch === null
         ? null
-        : await this.#preload(epoch, modelBinding, playPreset, locale);
+        : await this.#preload(
+            epoch,
+            modelBinding,
+            playPreset,
+            locale,
+            modelPrompt,
+          );
     const bootstrap = this.#compiler.compileWorldRevision({
       ...(epoch === null
         ? {}
@@ -742,12 +749,13 @@ export class WorldRevisionSession {
       runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
-      modelBinding: modelBinding,
+      modelBinding,
+      modelPrompt,
       tools: worldRevisionToolDefinitions(locale, gameplay),
       ...(preload === null ? {} : { preload: preload.blocks }),
     });
 
-    return { bootstrap, playPreset, preload };
+    return { bootstrap, playPreset, preload, modelPrompt };
   }
 
   /**
@@ -759,6 +767,7 @@ export class WorldRevisionSession {
     modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding,
     locale: AppLocale,
+    modelPrompt: ModelConnectionPrompt | undefined,
   ): Promise<AuthoringPreload> {
     const [binding, maintenance] = await Promise.all([
       this.#worlds.bindWorldRevision({
@@ -777,6 +786,7 @@ export class WorldRevisionSession {
       const preview = this.#preview({
         snapshot,
         modelBinding,
+        modelPrompt,
         playPreset,
         binding,
         epoch,
@@ -1024,6 +1034,7 @@ export class WorldRevisionSession {
       epoch.worldId,
       epoch.baseHead,
     );
+    const request = session.requests?.at(-1);
     return new WorldRevisionAuthoringTransaction({
       baseFiles: epoch.files,
       immutableBaseFiles: epoch.baseFiles,
@@ -1038,8 +1049,8 @@ export class WorldRevisionSession {
         this.#preview({
           snapshot,
           modelBinding,
-          playPreset:
-            session.requests?.at(-1)?.playPreset ?? session.playPreset,
+          playPreset: request?.playPreset ?? session.playPreset,
+          modelPrompt: request?.modelPrompt,
           binding,
           epoch,
           maintenance,
@@ -1069,6 +1080,7 @@ export class WorldRevisionSession {
       this.#preview({
         snapshot,
         modelBinding: host.binding(),
+        modelPrompt: host.modelPrompt?.(),
         playPreset,
         binding,
         epoch,

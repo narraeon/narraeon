@@ -1,3 +1,4 @@
+import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import {
@@ -299,6 +300,8 @@ export function PlayPresetScreen({
   initialSelectedId,
   onSelectionChange,
   renderPromptPreview,
+  modelConnection,
+  onEditModelConnection,
 }: {
   client: PlayPresetClient;
   initialLibrary: PlayPresetScreenLibrary;
@@ -307,6 +310,8 @@ export function PlayPresetScreen({
   onDirtyChange: (dirty: boolean) => void;
   initialSelectedId?: string;
   onSelectionChange?: (presetId: string) => void;
+  modelConnection?: ModelConnectionView | undefined;
+  onEditModelConnection?: () => void;
   renderPromptPreview?: (target: {
     presetId: string;
     revision: string;
@@ -1151,6 +1156,8 @@ export function PlayPresetScreen({
                   structure={draft.structure}
                   files={draft.files}
                   authoring={workspaceView === "setting_improvement"}
+                  modelConnection={modelConnection}
+                  onEditModelConnection={onEditModelConnection}
                   onChange={updateStructure}
                   onWrite={updateFileAtPath}
                   onResourceEdit={updateResources}

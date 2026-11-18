@@ -291,6 +291,7 @@ export interface ModelConnectionView {
   dialect: ModelProviderDialect;
   baseUrl: string;
   modelId: string;
+  modelPrompt?: string;
   reasoningEffort: ModelReasoningEffort;
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
@@ -323,6 +324,7 @@ export interface SaveModelConnectionInput {
   baseUrl: string;
   apiKey?: string;
   modelId: string;
+  modelPrompt?: string;
   reasoningEffort?: ModelReasoningEffort;
   reasoningSummary?: ModelReasoningSummary;
   thinkingMode?: ModelThinkingMode;

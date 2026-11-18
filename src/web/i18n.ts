@@ -883,6 +883,7 @@ const englishMessages: Record<string, string> = {
   "编辑已有配置时，API Key 留空会把本机保存的现有凭据用于当前协议和端点；填写新值会覆盖它。":
     "When editing an existing configuration, leaving API Key blank reuses the credential saved on this device for the current protocol and endpoint. Enter a new value to replace it.",
   "模型 ID": "Model ID",
+  "模型提示词（可选）": "Model prompt (optional)",
   "正在拉取…": "Fetching…",
   已拉取的模型: "Fetched models",
   选择模型: "Select a model",

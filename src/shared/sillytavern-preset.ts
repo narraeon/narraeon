@@ -460,7 +460,7 @@ export function convertSillyTavernPreset(
     fail("selection", "invalid selection");
   const catalog = builtinPlayPrompts(options.locale);
   const entries: OrderedPlayPrompt[] = catalog
-    .filter((item) => item.required)
+    .filter((item) => item.required || item.dynamic === "model-prompt")
     .map((item) => ({
       id: item.id,
       kind: "builtin",
@@ -519,7 +519,7 @@ export function convertSillyTavernPreset(
   entries.push({ id: "world", kind: "world" });
   entries.push(
     ...catalog
-      .filter((item) => !item.required)
+      .filter((item) => !item.required && item.dynamic !== "model-prompt")
       .map((item): OrderedPlayPrompt => ({
         id: item.id,
         kind: "builtin",

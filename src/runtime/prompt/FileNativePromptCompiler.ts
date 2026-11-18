@@ -35,11 +35,15 @@ import {
   type TurnGuideLine,
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
+import { withModelPrompt } from "../../shared/prompt-arrangement.ts";
 import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
 import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 export { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
-import type { ModelHostAppendItem } from "../model/ModelHost.ts";
+import type {
+  ModelConnectionPrompt,
+  ModelHostAppendItem,
+} from "../model/ModelHost.ts";
 import type {
   WorldDocumentMaintenance,
   WorldPromptMaintenance,
@@ -112,6 +116,7 @@ export type FileNativeWorldDocumentSnapshot = Pick<
 >;
 
 export interface FileNativePromptInput {
+  modelPrompt?: ModelConnectionPrompt | undefined;
   /** Reuse material bytes actually supplied to this context; never reselect them on append. */
   frozenWorldContext?: PromptCompilation;
   extensionControls?: WorldExtensionsView;
@@ -222,6 +227,7 @@ export interface SettingImprovementPromptInput {
   authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
+  modelPrompt?: ModelConnectionPrompt | undefined;
   tools: PromptCompilation["tools"];
   /** Runtime-derived material read in full at this send, after every author prompt. */
   preload?: readonly { source: string; markdown: string }[];
@@ -236,6 +242,7 @@ export interface WorldRevisionPromptInput {
   authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
+  modelPrompt?: ModelConnectionPrompt | undefined;
   tools: PromptCompilation["tools"];
   /** Runtime-derived material read in full at this send, after every author prompt. */
   preload?: readonly { source: string; markdown: string }[];
@@ -252,6 +259,7 @@ interface AuthoringConversationPromptInput {
   authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
+  modelPrompt?: ModelConnectionPrompt | undefined;
   tools: PromptCompilation["tools"];
   /** Runtime-derived material read in full at this send, after every author prompt. */
   preload?: readonly { source: string; markdown: string }[];
@@ -485,6 +493,7 @@ export class FileNativePromptCompiler {
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
+      modelPrompt: input.modelPrompt,
       tools: input.tools,
       ...(input.preload === undefined ? {} : { preload: input.preload }),
     });
@@ -512,6 +521,7 @@ export class FileNativePromptCompiler {
       authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
+      modelPrompt: input.modelPrompt,
       tools: input.tools,
       ...(input.preload === undefined ? {} : { preload: input.preload }),
     });
@@ -528,9 +538,11 @@ export class FileNativePromptCompiler {
       input.gameplay,
     );
     const logicalMessages: PromptCompilation["logicalMessages"] = [];
-    const ordered =
+    const ordered = withModelPrompt(
       input.playPreset.definition.authorPrompts ??
-      legacyAuthorPrompts(input.playPreset.definition);
+        legacyAuthorPrompts(input.playPreset.definition),
+      "author",
+    );
 
     const catalog = builtinAuthorPrompts(this.#locale, input.target);
 
@@ -544,8 +556,14 @@ export class FileNativePromptCompiler {
         entry.kind === "builtin"
           ? catalog.find((item) => item.id === entry.builtin)!
           : undefined;
+      const modelBlock =
+        builtin?.dynamic === "model-prompt"
+          ? modelPromptBlock(input.modelPrompt)
+          : undefined;
+      if (builtin?.dynamic === "model-prompt" && modelBlock === undefined)
+        continue;
       let blocks = [
-        {
+        modelBlock ?? {
           source: `play-preset:author/${entry.id}`,
           markdown: entry.kind === "user" ? entry.body : builtin!.body,
         },
@@ -1022,8 +1040,9 @@ export class FileNativePromptCompiler {
     const playCatalog = builtinPlayPrompts(this.#locale);
     const gameplay = playGameplay(effective.world.documentSnapshot);
     const turnGuideLines: TurnGuideLine[] = [];
-    for (const entry of parseOrderedPlayPrompts(
-      binding.definition.playPrompts,
+    for (const entry of withModelPrompt(
+      parseOrderedPlayPrompts(binding.definition.playPrompts, playCatalog),
+      "play",
     )) {
       // A scoped entry is absent from the request, not an empty message.
       if (!promptScopeApplies(orderedPromptScope(entry, playCatalog), gameplay))
@@ -1061,10 +1080,13 @@ export class FileNativePromptCompiler {
       } else if (entry.enabled) {
         const builtin =
           entry.kind === "builtin"
-            ? builtinPlayPrompts(this.#locale).find(
-                (item) => item.id === entry.builtin,
-              )!
+            ? playCatalog.find((item) => item.id === entry.builtin)!
             : undefined;
+        if (builtin?.dynamic === "model-prompt") {
+          const block = modelPromptBlock(effective.modelPrompt);
+          if (block !== undefined) append("author_instruction", [block]);
+          continue;
+        }
         append(builtin?.required ? "runtime_system" : "author_instruction", [
           {
             source:
@@ -1252,6 +1274,7 @@ export class FileNativePromptCompiler {
       ...input,
       world: { ...input.world, replayHistory: true },
     });
+    const modelBlock = modelPromptBlock(input.modelPrompt);
     const logicalMessages = base.logicalMessages.map((message) => {
       if (message.role !== "runtime_system") return message;
       const blocks = message.blocks.filter(
@@ -1261,6 +1284,7 @@ export class FileNativePromptCompiler {
         source: "runtime:play-shell",
         markdown: runtimeContracts[this.#locale].shell,
       });
+      if (modelBlock !== undefined) blocks.push(modelBlock);
       return { role: message.role, blocks, markdown: joinBlocks(blocks) };
     });
     const provider = mapProvider(
@@ -1523,7 +1547,7 @@ function settingImprovementPresetReference(
           const builtin = builtinPlayPrompts(locale).find(
             (item) => item.id === entry.builtin,
           )!;
-          return builtin.required
+          return builtin.required || builtin.dynamic === "model-prompt"
             ? []
             : [
                 {
@@ -3506,10 +3530,19 @@ function readMarkdown(
   return value.trim();
 }
 
+function modelPromptBlock(prompt: ModelConnectionPrompt | undefined) {
+  if (prompt === undefined || prompt.markdown.trim() === "") return undefined;
+  return {
+    source: `model-connection:${prompt.connectionName}`,
+    markdown: prompt.markdown,
+  };
+}
+
 function joinBlocks(blocks: { source: string; markdown: string }[]): string {
   return blocks
     .map(({ source, markdown }) =>
-      source.startsWith("runtime:checkpoint-history:")
+      source.startsWith("runtime:checkpoint-history:") ||
+      source.startsWith("model-connection:")
         ? markdown
         : markdown.trim(),
     )

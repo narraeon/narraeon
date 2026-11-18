@@ -4,6 +4,7 @@ import {
   customizePromptArrangement,
   resolvePromptArrangement,
   retiredBuiltinReplacements,
+  withModelPrompt,
 } from "../../shared/prompt-arrangement.ts";
 import { createHash } from "node:crypto";
 import { isMap, parseDocument } from "yaml";
@@ -30,7 +31,10 @@ export function parseOrderedPlayPrompts(
       "Invalid ordered play prompts: unique identities, current builtins, enabled mechanics and one world placeholder are required",
     );
   };
-  if (!Array.isArray(value) || value.length > 256) return fail();
+  // The dynamic slot must not use up a place in a full released list.
+  const maxEntries =
+    256 + Number(catalog.some((item) => item.dynamic === "model-prompt"));
+  if (!Array.isArray(value) || value.length > maxEntries) return fail();
   const ids = new Set<string>();
   const builtins = new Set<string>();
   let worlds = 0;
@@ -153,6 +157,7 @@ export function parseOrderedPlayPrompts(
       builtins.has(builtin.id) ||
       typeof item.enabled !== "boolean" ||
       !validTurnGuide ||
+      (builtin.dynamic === "model-prompt" && item.turnGuide !== undefined) ||
       (builtin.required &&
         (!item.enabled ||
           (item.messageRole !== undefined && item.messageRole !== "system")))
@@ -552,7 +557,7 @@ export function migrateLegacyPlayPrompts(
     ),
     0,
     ...builtinPlayPrompts("en")
-      .filter((item) => !listed.has(item.id))
+      .filter((item) => !listed.has(item.id) && item.dynamic !== "model-prompt")
       .map((item) => ({
         id: item.id,
         kind: "builtin" as const,
@@ -560,5 +565,5 @@ export function migrateLegacyPlayPrompts(
         enabled: false,
       })),
   );
-  return entries;
+  return withModelPrompt(entries, "play");
 }

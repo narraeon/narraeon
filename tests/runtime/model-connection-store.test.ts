@@ -56,14 +56,14 @@ test("预填充能力须显式开启，保存、复制和重载保持选择，�
   );
   const path = join(root, "model-connections-v1.json");
   const legacy = JSON.parse(await readFile(path, "utf8")) as {
-    connections: { assistantPrefillMode?: string }[];
+    connections: { assistantPrefillMode?: string; modelPrompt?: string }[];
   };
   delete legacy.connections[0]!.assistantPrefillMode;
+  delete legacy.connections[0]!.modelPrompt;
   await writeFile(path, JSON.stringify(legacy));
   expect(
-    (await new ModelConnectionStore(root).view()).connections[0]
-      ?.assistantPrefillMode,
-  ).toBe("disabled");
+    (await new ModelConnectionStore(root).view()).connections[0],
+  ).toMatchObject({ assistantPrefillMode: "disabled", modelPrompt: "" });
 });
 
 test("预填充能力拒绝不匹配的协议和未知模式，损坏配置不静默启用", async () => {

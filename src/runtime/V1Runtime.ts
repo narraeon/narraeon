@@ -175,7 +175,7 @@ export class V1Runtime {
       bindModelHost: () => this.#modelHost(),
       bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
       bindPlayPreset: () => this.#playPresets.freeze(),
-      preview: (snapshot, modelBinding, playPreset) =>
+      preview: (snapshot, modelBinding, playPreset, modelPrompt) =>
         this.#compiler.preview(
           {
             endpoint: { id: "setting-authoring", commit: "current-tree" },
@@ -197,6 +197,7 @@ export class V1Runtime {
                 ? "检查内容包当前树。"
                 : "Inspect the content package current tree.",
             modelBinding,
+            modelPrompt,
           },
           playPreset,
         ),
@@ -220,6 +221,7 @@ export class V1Runtime {
       preview: ({
         snapshot,
         modelBinding,
+        modelPrompt,
         playPreset,
         binding,
         epoch,
@@ -254,6 +256,7 @@ export class V1Runtime {
                 ? "检查世界修订工作树。"
                 : "Inspect the world-revision worktree.",
             modelBinding,
+            modelPrompt,
           },
           playPreset,
         ),
@@ -804,6 +807,7 @@ export class V1Runtime {
               ? {}
               : { turnNote: request.turnNote }),
             modelBinding: modelHost.binding(),
+            modelPrompt: modelHost.modelPrompt(),
           },
           playPreset,
         );
@@ -1152,6 +1156,7 @@ export class V1Runtime {
                     hostBinding: binding!.hostBinding,
                     playPreset: binding!.playPreset,
                     modelBinding: binding!.modelBinding,
+                    modelPrompt: binding!.modelHost.modelPrompt(),
                   },
                 } as const);
           if (request.sendAfterRevision === true && binding !== null)
@@ -1211,7 +1216,7 @@ export class V1Runtime {
               ? {}
               : { turnNote: request.turnNote }),
             modelHost: await this.#modelHost(),
-            resolvePrompt: () => this.#continuousBinding(),
+            resolvePrompt: () => this.#playPromptBinding(),
             ...(playCallChainObserver === undefined
               ? {}
               : { observer: playCallChainObserver }),
@@ -1319,6 +1324,7 @@ export class V1Runtime {
             playerInputPlacement: "append",
             playerInput: "",
             modelBinding,
+            modelPrompt: modelHost.modelPrompt(),
           },
           playPreset,
         );
@@ -1382,12 +1388,17 @@ export class V1Runtime {
       case "correction.replace":
         return this.#corrections.replaceDocument(request);
       case "correction.preview": {
-        const { hostBinding, modelBinding, playPreset } =
+        const { hostBinding, modelBinding, playPreset, modelHost } =
           await this.#continuousBinding();
         return this.#corrections.preview({
           candidateId: request.candidateId,
           expectedVersion: request.expectedVersion,
-          prompt: { hostBinding, modelBinding, playPreset },
+          prompt: {
+            hostBinding,
+            modelBinding,
+            playPreset,
+            modelPrompt: modelHost.modelPrompt(),
+          },
         });
       }
       case "correction.apply": {
@@ -1740,20 +1751,24 @@ export class V1Runtime {
     };
   }
 
+  async #playPromptBinding() {
+    const playPreset = await this.#playPresets.freeze();
+    return { hostBinding: presetHostBinding(playPreset), playPreset };
+  }
+
   async #continuousBinding(): Promise<{
     modelHost: FileNativeModelHost;
     hostBinding: { hostPresetId: string; files: Record<string, string> };
     playPreset: PlayPresetBinding;
     modelBinding: ModelHostBinding;
   }> {
-    const [modelHost, playPreset] = await Promise.all([
+    const [modelHost, prompt] = await Promise.all([
       this.#modelHost(),
-      this.#playPresets.freeze(),
+      this.#playPromptBinding(),
     ]);
     return {
       modelHost,
-      hostBinding: presetHostBinding(playPreset),
-      playPreset,
+      ...prompt,
       modelBinding: modelHost.binding(),
     };
   }

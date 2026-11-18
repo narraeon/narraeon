@@ -42,6 +42,7 @@ import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import type { CurrentTreeContentPackageOperationLease } from "../content/CurrentTreeContentLibrary.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
+  ModelConnectionPrompt,
   ModelHost,
   ModelHostBinding,
   ModelHostToolCall,
@@ -143,6 +144,7 @@ export class SettingImprovementSession {
     snapshot: WorldDocumentStore,
     modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding | undefined,
+    modelPrompt?: ModelConnectionPrompt,
   ) => PromptPreview;
   readonly #conversation: ModelToolConversation<
     StoredSettingImprovementSession,
@@ -164,6 +166,7 @@ export class SettingImprovementSession {
       snapshot: WorldDocumentStore,
       modelBinding: ModelHostBinding,
       playPreset: PlayPresetBinding | undefined,
+      modelPrompt?: ModelConnectionPrompt,
     ) => PromptPreview;
   }) {
     this.#changed =
@@ -404,10 +407,8 @@ export class SettingImprovementSession {
             throw new Error(
               "Resume the paused authoring request before sending another message",
             );
-          const { playPreset, bootstrap, preload } = await this.#compilePackage(
-            lease.package,
-            host.binding(),
-          );
+          const { playPreset, bootstrap, preload, modelPrompt } =
+            await this.#compilePackage(lease.package, host);
           next.schemaVersion = 6;
           next.requests ??= [];
           next.requests.push({
@@ -416,6 +417,7 @@ export class SettingImprovementSession {
             modelItemStart: next.modelItems.length,
             bootstrap,
             playPreset: structuredClone(playPreset),
+            ...(modelPrompt === undefined ? {} : { modelPrompt }),
             preload: structuredClone(preload.record),
           });
           next.authorization = authoringPreloadAuthorization(
@@ -522,14 +524,15 @@ export class SettingImprovementSession {
               [...new Set(newIssues.map(({ path }) => path))].sort(),
             );
         }
-        const { playPreset, bootstrap, preload } = await this.#compilePackage(
-          {
-            ...lease.package,
-            files: afterFiles,
-            gameplay: readGameplay(afterFiles),
-          },
-          host.binding(),
-        );
+        const { playPreset, bootstrap, preload, modelPrompt } =
+          await this.#compilePackage(
+            {
+              ...lease.package,
+              files: afterFiles,
+              gameplay: readGameplay(afterFiles),
+            },
+            host,
+          );
         next.schemaVersion = 6;
         delete next.pendingEdit;
         next.requests.push({
@@ -538,6 +541,7 @@ export class SettingImprovementSession {
           modelItemStart: itemIndex,
           bootstrap,
           playPreset: structuredClone(playPreset),
+          ...(modelPrompt === undefined ? {} : { modelPrompt }),
           preload: structuredClone(preload.record),
         });
         next.authorization = authoringPreloadAuthorization(
@@ -699,22 +703,20 @@ export class SettingImprovementSession {
     const host = await this.#bindModelHost();
     if (session !== null)
       assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-    const { bootstrap } = await this.#compileCurrent(packageId, host.binding());
-    return bootstrap;
-  }
-
-  async #compileCurrent(packageId: string, modelBinding: ModelHostBinding) {
     const package_ =
       await this.#content.readCurrentTreeContentPackage(packageId);
-    return this.#compilePackage(package_, modelBinding);
+    const { bootstrap } = await this.#compilePackage(package_, host);
+    return bootstrap;
   }
 
   async #compilePackage(
     package_: Awaited<
       ReturnType<ContentWorkspace["readCurrentTreeContentPackage"]>
     >,
-    modelBinding: ModelHostBinding,
+    host: ModelHost,
   ) {
+    const modelBinding = host.binding();
+    const modelPrompt = host.modelPrompt?.();
     const playPreset = await this.#bindPlayPreset();
     const locale = this.#locale();
     const preload = this.#preload(
@@ -722,6 +724,7 @@ export class SettingImprovementSession {
       modelBinding,
       playPreset,
       locale,
+      modelPrompt,
     );
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
@@ -732,12 +735,13 @@ export class SettingImprovementSession {
       ),
       authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
-      modelBinding: modelBinding,
+      modelBinding,
+      modelPrompt,
       tools: settingImprovementToolDefinitions(locale, package_.gameplay),
       preload: preload.blocks,
     });
 
-    return { bootstrap, playPreset, preload };
+    return { bootstrap, playPreset, preload, modelPrompt };
   }
 
   /**
@@ -749,6 +753,7 @@ export class SettingImprovementSession {
     modelBinding: ModelHostBinding,
     playPreset: PlayPresetBinding,
     locale: AppLocale,
+    modelPrompt: ModelConnectionPrompt | undefined,
   ): AuthoringPreload {
     const revision = contentTreeFingerprint(files);
     const snapshot = WorldDocumentStore.open({
@@ -758,7 +763,12 @@ export class SettingImprovementSession {
     let injected: { shortRef: string; slot: string }[] = [];
     let injectedUnavailable: string | undefined;
     try {
-      const preview = this.#preview(snapshot, modelBinding, playPreset);
+      const preview = this.#preview(
+        snapshot,
+        modelBinding,
+        playPreset,
+        modelPrompt,
+      );
       injected = preview.compilation.coverage.flatMap(
         ({ slot, status, readAuthorization }) =>
           status === "resolved" && readAuthorization !== undefined
@@ -965,6 +975,7 @@ export class SettingImprovementSession {
     revision: string,
     modelBinding: ModelHostBinding = authoringActiveBinding(session),
   ): SettingAuthoringTransaction {
+    const request = session.requests?.at(-1);
     return new SettingAuthoringTransaction({
       baseFiles: files,
       locale: session.locale,
@@ -976,7 +987,8 @@ export class SettingImprovementSession {
         this.#preview(
           snapshot,
           modelBinding,
-          session.requests?.at(-1)?.playPreset ?? session.playPreset,
+          request?.playPreset ?? session.playPreset,
+          request?.modelPrompt,
         ),
     });
   }

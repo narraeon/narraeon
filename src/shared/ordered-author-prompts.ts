@@ -6,6 +6,7 @@ import {
 import { tabletopAuthorBody } from "./tabletop-guidance.ts";
 import {
   defaultEnabledBuiltin,
+  modelPromptBuiltin,
   type BuiltinPlayPrompt,
   type OrderedPlayPrompt,
 } from "./ordered-play-prompts.ts";
@@ -26,6 +27,7 @@ export function builtinAuthorPrompts(
       category: "mechanics",
       body: authoringMechanics(locale, "setting"),
     },
+    modelPromptBuiltin("author", locale),
     {
       id: "author.guidance",
       name: zh ? "创作建议" : "Authoring guidance",

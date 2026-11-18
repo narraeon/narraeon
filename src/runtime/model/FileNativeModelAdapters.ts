@@ -26,6 +26,7 @@ import {
 } from "../../protocol/modelConnections.ts";
 
 import type {
+  ModelConnectionPrompt,
   ModelHost,
   ModelHostAppendItem,
   ModelHostBinding,
@@ -85,6 +86,7 @@ export interface FileNativeModelConnection {
   baseUrl: string;
   apiKey: string;
   modelId: string;
+  modelPrompt?: ModelConnectionPrompt;
   reasoningEffort?: ModelReasoningEffort;
   reasoningSummary?: ModelReasoningSummary;
   thinkingMode?: ModelThinkingMode;
@@ -102,6 +104,7 @@ export interface FileNativeModelConnection {
 
 interface ResolvedFileNativeModelConnection extends Omit<
   FileNativeModelConnection,
+  | "modelPrompt"
   | "dialect"
   | "reasoningEffort"
   | "reasoningSummary"
@@ -125,7 +128,7 @@ const explicitCacheBreakpointLimit = 4;
 const providerContinuationCodecVersion = 1;
 
 function resolveConnection(
-  connection: FileNativeModelConnection,
+  connection: Omit<FileNativeModelConnection, "modelPrompt">,
 ): ResolvedFileNativeModelConnection {
   const resolved = structuredClone({
     ...connection,
@@ -166,18 +169,24 @@ function modelCacheStrategy(
 }
 
 export class FileNativeModelHost implements ModelHost {
+  readonly #modelPrompt: ModelConnectionPrompt | undefined;
   readonly #connection: ResolvedFileNativeModelConnection;
   readonly #fetch: typeof fetch;
   readonly #failureLog: AiFailureRecorder | undefined;
 
   constructor(
-    connection: FileNativeModelConnection,
+    { modelPrompt, ...connection }: FileNativeModelConnection,
     fetchImplementation: typeof fetch = fetch,
     failureLog?: AiFailureRecorder,
   ) {
+    this.#modelPrompt = structuredClone(modelPrompt);
     this.#connection = resolveConnection(connection);
     this.#fetch = fetchImplementation;
     this.#failureLog = failureLog;
+  }
+
+  modelPrompt(): ModelConnectionPrompt | undefined {
+    return this.#modelPrompt;
   }
 
   binding(): ModelHostBinding {

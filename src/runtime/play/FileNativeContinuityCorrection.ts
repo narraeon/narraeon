@@ -260,7 +260,10 @@ export class FileNativeContinuityCorrection {
     candidateId: string;
     expectedVersion: number;
     nextMaterials: MaterialSelection[];
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding">;
+    prompt: Pick<
+      FileNativePromptInput,
+      "hostBinding" | "modelBinding" | "modelPrompt"
+    >;
   }): { version: number } {
     const candidate = this.#atVersion(input.candidateId, input.expectedVersion);
     if (candidate.mode !== "materials")
@@ -276,7 +279,10 @@ export class FileNativeContinuityCorrection {
   preview(input: {
     candidateId: string;
     expectedVersion: number;
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
+    prompt: Pick<
+      FileNativePromptInput,
+      "hostBinding" | "modelBinding" | "modelPrompt"
+    > & {
       playPreset?: PlayPresetBinding;
     };
   }): {
@@ -368,7 +374,10 @@ export class FileNativeContinuityCorrection {
 
   #compile(
     candidate: Candidate,
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
+    prompt: Pick<
+      FileNativePromptInput,
+      "hostBinding" | "modelBinding" | "modelPrompt"
+    > & {
       playPreset?: PlayPresetBinding;
     },
     materials: MaterialSelection[],
@@ -395,6 +404,7 @@ export class FileNativeContinuityCorrection {
         playerInputPlacement: "append",
         playerInput: "",
         modelBinding: prompt.modelBinding,
+        modelPrompt: prompt.modelPrompt,
       },
       prompt.playPreset,
     );

@@ -1,3 +1,4 @@
+import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import {
   newPresetArtifact,
@@ -32,6 +33,8 @@ export function PresetWorkbenchEditor({
   onResourceEdit,
   preview,
   promptPreview,
+  modelConnection,
+  onEditModelConnection,
 }: {
   structure: PlayPresetStructuredEditor;
   files: Record<string, string>;
@@ -42,6 +45,8 @@ export function PresetWorkbenchEditor({
   onWrite: (path: string, body: string) => void;
   onResourceEdit: (edit: PresetResourceEdit) => void;
   promptPreview?: ReactNode;
+  modelConnection?: ModelConnectionView | undefined;
+  onEditModelConnection?: (() => void) | undefined;
   preview: (requestId?: string, output?: string) => ReactNode;
 }) {
   const [requestedSelection, setSelection] = useState<{
@@ -699,6 +704,8 @@ export function PresetWorkbenchEditor({
         (authoring ? structure.authorPrompts : structure.playPrompts) ?? []
       }
       authoring={authoring}
+      modelConnection={modelConnection}
+      onEditModelConnection={onEditModelConnection}
       onChange={(entries) =>
         onChange((s) => ({
           ...s,
