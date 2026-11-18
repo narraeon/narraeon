@@ -1,5 +1,5 @@
 import type { PlayFailureKind } from "../protocol/playFailure.ts";
-import { getWebLocale, uiText } from "./i18n.ts";
+import { uiText } from "./i18n.ts";
 
 export const failureText: Record<
   PlayFailureKind,
@@ -47,10 +47,7 @@ export function playFailureDescription(
   canRetry: boolean,
   canContinuePartial = false,
 ): string {
-  if (!canRetry && canContinuePartial)
-    return getWebLocale() === "en"
-      ? "Use Continue response to resume from the saved partial reply."
-      : "可以点击“继续发送”，从已保存的部分回复接着生成。";
+  if (canContinuePartial) return uiText("可以从已保存的部分回复接着生成。");
   if (!canRetry && kind === "retryable")
     return uiText(failureText.other.description);
   return uiText(

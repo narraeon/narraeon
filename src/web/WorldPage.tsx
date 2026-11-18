@@ -11,6 +11,7 @@ import {
 } from "./PlaySubmission.ts";
 import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
+import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
 import {
   PlayFailureNotice,
   type PlayFailureRecovery,
@@ -930,11 +931,6 @@ export function WorldPage({
     lastActiveEvent.event.kind === "failure"
       ? lastActiveEvent.event.failureKind
       : undefined);
-  const activeCanContinuePartial =
-    playCallChain?.canContinuePartial ??
-    playTimeline?.activeCanContinuePartial ??
-    false;
-  const activeCanRetry = reportedCanRetry;
   const failureWasSuperseded =
     supersededFailure?.worldId === worldId &&
     supersededFailure.chainId === activeChainId &&
@@ -963,12 +959,28 @@ export function WorldPage({
       ? revisionOverview.epoch
       : (world?.worldRevision ?? null);
   const worldRevisionLocked = activeRevisionEpoch?.locked === true;
+  const reportedFreshContextReason =
+    playCallChain !== null
+      ? playCallChain.freshContextReason
+      : playTimeline?.activeFreshContextReason;
   const activeChainStale =
+    reportedFreshContextReason === "world_changed" ||
     forceFreshContext ||
     world?.archiveNeedsFreshContext === true ||
     (world !== null &&
       playCallChain !== null &&
       playCallChain.parentHead !== world.head);
+  const freshContextReason = activeChainStale
+    ? world?.archiveNeedsFreshContext
+      ? "imported_world"
+      : "world_changed"
+    : reportedFreshContextReason;
+  const activeCanContinuePartial =
+    freshContextReason === undefined &&
+    (playCallChain?.canContinuePartial ??
+      playTimeline?.activeCanContinuePartial ??
+      false);
+  const activeCanRetry = freshContextReason === undefined && reportedCanRetry;
   const playProgressActive = playProgress !== null;
   const hasPlayerText = playerText.trim().length > 0;
   const playIdle =
@@ -976,7 +988,7 @@ export function WorldPage({
   const canStartFresh = hasPlayerText && playIdle;
   const canAppend =
     playIdle &&
-    !activeChainStale &&
+    freshContextReason === undefined &&
     (activeChainId === null
       ? hasPlayerText
       : activeStatus === "ready" || (!hasPlayerText && activeCanRetry));
@@ -1019,7 +1031,7 @@ export function WorldPage({
     if (
       fresh
         ? !hasSubmittedText
-        : activeChainStale ||
+        : freshContextReason !== undefined ||
           (activeStatus !== "ready" &&
             (hasSubmittedText ||
               !(recovery === "continue_partial"
@@ -1052,7 +1064,9 @@ export function WorldPage({
         : hasSubmittedText
           ? uiText("正在把玩家输入追加到现有上下文…")
           : activeStatus === "interrupted"
-            ? uiText("正在原样发送上次未完成的模型请求…")
+            ? recovery === "continue_partial"
+              ? uiText("正在续写上次未完成的回复…")
+              : uiText("正在原样发送上次未完成的模型请求…")
             : uiText("正在沿现有上下文继续生成…"),
     });
     try {
@@ -1601,7 +1615,7 @@ export function WorldPage({
               : continued.canContinuePartial
                 ? getWebLocale() === "en"
                   ? "Edit saved. Continue the interrupted response."
-                  : "修改已保存，可以继续发送中断的回复。"
+                  : "修改已保存，可以续写中断的回复。"
                 : uiText("修改已保存，但模型请求失败。")
             : regenerate
               ? uiText("已重新生成；原回复已离开当前时间线")
@@ -1696,9 +1710,16 @@ export function WorldPage({
     }
   }
 
+  function openFreshComposer(): void {
+    setManualFreshContext(true);
+    composerTextareaRef.current?.focus();
+  }
+
   const failureRecovery: PlayFailureRecovery = {
-    canRetry: activeCanRetry && !activeChainStale,
-    canContinuePartial: activeCanContinuePartial && !activeChainStale,
+    freshContextReason,
+    onFreshContext: openFreshComposer,
+    canRetry: activeCanRetry,
+    canContinuePartial: activeCanContinuePartial,
     onContinuePartial: () =>
       void submitPlayChain("append", "", "continue_partial"),
     playDisabled: !modelConfigured || !playIdle,
@@ -2191,48 +2212,38 @@ export function WorldPage({
                 />
               </div>
             )}
-            {(!activeCanRetry && !activeCanContinuePartial) ||
+            {(!freshContextReason &&
+              !activeCanRetry &&
+              !activeCanContinuePartial) ||
+            !playIdle ||
             activeFailureVisible ||
             visiblePlayFailure !== null ||
-            failureWasSuperseded ? null : (
+            (failureWasSuperseded && activeStatus === "interrupted") ? null : (
               <div className="play-retry-note" role="status">
-                <p>
-                  {uiText(
-                    "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。",
-                  )}
-                </p>
-                {activeCanRetry && !activeChainStale ? (
-                  <button
-                    type="button"
-                    disabled={failureRecovery.playDisabled}
-                    onClick={failureRecovery.onRetry}
-                  >
-                    {uiText("重新发送")}
-                  </button>
-                ) : null}
+                {freshContextReason === undefined && (
+                  <p>
+                    {playFailureDescription(
+                      activeFailureKind,
+                      activeCanRetry,
+                      activeCanContinuePartial,
+                    )}
+                  </p>
+                )}
+                <ModelRecoveryActions
+                  disabled={failureRecovery.playDisabled}
+                  freshContextReason={freshContextReason}
+                  onFreshContext={openFreshComposer}
+                  onContinue={
+                    activeCanContinuePartial
+                      ? failureRecovery.onContinuePartial
+                      : undefined
+                  }
+                  onResend={
+                    activeCanRetry ? failureRecovery.onRetry : undefined
+                  }
+                />
               </div>
             )}
-            {activeCanContinuePartial &&
-            !activeFailureVisible &&
-            visiblePlayFailure === null &&
-            !failureWasSuperseded ? (
-              <button
-                type="button"
-                disabled={failureRecovery.playDisabled}
-                onClick={failureRecovery.onContinuePartial}
-              >
-                {uiText("继续发送")}
-              </button>
-            ) : null}
-            {activeChainStale && playIdle ? (
-              <div className="world-fresh-context-note" role="note">
-                {world?.archiveNeedsFreshContext
-                  ? uiText("世界从备份导入；下一次行动会从新上下文开始")
-                  : uiText(
-                      "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
-                    )}
-              </div>
-            ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
                 <span>{uiText("下一条消息将开启全新上下文")}</span>
@@ -2290,10 +2301,7 @@ export function WorldPage({
                 pending === "play-fresh"
               }
               freshContextDisabled={!playIdle || !modelConfigured}
-              onUseFreshContext={() => {
-                setManualFreshContext(true);
-                composerTextareaRef.current?.focus();
-              }}
+              onUseFreshContext={openFreshComposer}
             />
             {turnNoteOpen ? (
               <div className="world-turn-note">
@@ -4062,6 +4070,7 @@ function applyPlayTimelineFrame(
         activeStatus: chain.status,
         activeCanRetry: chain.canRetry,
         activeCanContinuePartial: chain.canContinuePartial ?? false,
+        activeFreshContextReason: chain.freshContextReason,
         activeLastFailure: chain.lastFailure,
         activeLastFailureKind: chain.lastFailureKind,
         items,
@@ -4202,6 +4211,7 @@ function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
     activeStatus: chain.status,
     activeCanRetry: chain.canRetry,
     activeCanContinuePartial: chain.canContinuePartial ?? false,
+    activeFreshContextReason: chain.freshContextReason,
     activeLastFailure: chain.lastFailure,
     activeLastFailureKind: chain.lastFailureKind,
     items: [

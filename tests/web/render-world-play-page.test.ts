@@ -61,6 +61,40 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("missing saved request opens a new input without resending or issuing an action", async () => {
+    const chain = {
+      ...interruptedChainView(),
+      freshContextReason: "snapshot_missing" as const,
+      canRetry: false,
+    };
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read") return Promise.resolve(worldView(chain));
+      if (input.type === "artifacts.debug") return Promise.resolve([]);
+      return Promise.reject(new Error(input.type));
+    });
+    renderWorld({ request });
+    const button = await screen.findByRole("button", { name: "用新上下文" });
+    expect(
+      screen.getByText("缺少这次请求的历史记录，无法还原原请求。"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "续写" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
+    fireEvent.click(button);
+    const input = screen.getByLabelText<HTMLTextAreaElement>("你的行动");
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("");
+    expect(
+      screen.getByRole("button", { name: "从全新上下文发送行动" }),
+    ).toBeTruthy();
+    expect(
+      request.mock.calls.some(
+        ([command]) =>
+          command.type === "play.chain.start" ||
+          command.type === "play.chain.append",
+      ),
+    ).toBe(false);
+  });
+
   test("continue response submits the partial recovery action even when resend is unavailable", async () => {
     const chain = {
       ...interruptedChainView(),
@@ -82,7 +116,7 @@ describe("世界游玩页面", () => {
     });
     renderWorld({ request });
     const button = await screen.findByRole<HTMLButtonElement>("button", {
-      name: "继续发送",
+      name: "续写",
     });
     expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
     fireEvent.click(button);
@@ -574,9 +608,7 @@ describe("世界游玩页面", () => {
         await screen.findByRole("button", { name: "打开世界：宿舍世界" }),
       );
       await screen.findByText("需要先配置模型连接才能游玩。");
-      expect(
-        screen.queryByRole("button", { name: "从全新上下文继续" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "用新上下文" })).toBeNull();
       if (failureKind === "retryable") {
         const retry = screen.getByRole<HTMLButtonElement>("button", {
           name: "重新发送",
@@ -699,9 +731,7 @@ describe("世界游玩页面", () => {
         playerText: "",
       });
       expect(composer.value).toBe("下一次行动的草稿");
-      expect(
-        screen.queryByRole("button", { name: "从全新上下文继续" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "用新上下文" })).toBeNull();
       expect(
         client.request.mock.calls.filter(
           ([request]) =>
@@ -4211,7 +4241,7 @@ describe("世界游玩页面", () => {
         ).toBeNull();
       } else if (scenario === "rejected")
         await screen.findByText("This event is stale.");
-      else await screen.findByText("修改已保存，可以继续发送中断的回复。");
+      else await screen.findByText("修改已保存，可以续写中断的回复。");
       expect(
         screen.queryByRole("button", { name: "用全新上下文重新生成" }),
       ).toBeNull();

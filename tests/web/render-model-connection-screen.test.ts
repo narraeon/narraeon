@@ -126,7 +126,7 @@ test("预填充高级设置显式保存并在重开后保留，切换协议清�
   };
   const view = render(createElement(ModelConnectionScreen, props));
   fireEvent.click(screen.getByText("高级选项"));
-  const select = screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送");
+  const select = screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式");
   expect(select.value).toBe("disabled");
   fireEvent.change(select, { target: { value: "mistral_prefix" } });
   expect(
@@ -146,13 +146,13 @@ test("预填充高级设置显式保存并在重开后保留，切换协议清�
   );
   fireEvent.click(screen.getByText("高级选项"));
   expect(
-    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+    screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式").value,
   ).toBe("mistral_prefix");
   fireEvent.change(screen.getByLabelText("协议适配器"), {
     target: { value: "anthropic_messages" },
   });
   expect(
-    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+    screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式").value,
   ).toBe("disabled");
   expect(
     screen.queryByRole("option", { name: "prefix: true（DeepSeek）" }),
@@ -161,7 +161,7 @@ test("预填充高级设置显式保存并在重开后保留，切换协议清�
     target: { value: "openai_responses" },
   });
   expect(
-    screen.getByLabelText<HTMLSelectElement>("中断回复的继续发送").value,
+    screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式").value,
   ).toBe("disabled");
   expect(
     screen.getByRole("option", { name: "partial: true（火山方舟）" }),

@@ -35,7 +35,7 @@ test.each(["zh-CN", "en"] as const)(
     expect(view.container.querySelector("p")?.textContent).toContain(
       locale === "en" ? "saved partial reply" : "从已保存的部分回复接着生成",
     );
-    const name = locale === "en" ? "Continue response" : "继续发送";
+    const name = locale === "en" ? "Continue response" : "续写";
     expect(
       screen.queryByRole("button", {
         name: locale === "en" ? "Resend request" : "重新发送",
@@ -58,6 +58,42 @@ test.each(["zh-CN", "en"] as const)(
       }),
     );
     expect(screen.queryByRole("button", { name })).toBeNull();
+  },
+);
+
+test.each(["zh-CN", "en"] as const)(
+  "%s: invalidated context offers only the new composer",
+  (locale) => {
+    setWebLocale(locale);
+    const onFreshContext = vi.fn();
+    const onRetry = vi.fn();
+    const onContinuePartial = vi.fn();
+    render(
+      createElement(PlayFailureNotice, {
+        message: "stale",
+        failureKind: "provider_error",
+        canRetry: true,
+        recovery: {
+          freshContextReason: "files_changed",
+          canRetry: true,
+          canContinuePartial: true,
+          onRetry,
+          onContinuePartial,
+          onFreshContext,
+          onConfigureModel: vi.fn(),
+          playDisabled: false,
+          configureDisabled: false,
+        },
+      }),
+    );
+    const button = screen.getByRole("button", {
+      name: locale === "en" ? "Use new context" : "用新上下文",
+    });
+    expect(screen.getAllByRole("button")).toEqual([button]);
+    fireEvent.click(button);
+    expect(onFreshContext).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(onContinuePartial).not.toHaveBeenCalled();
   },
 );
 
@@ -108,7 +144,7 @@ for (const locale of ["zh-CN", "en"] as const)
       }
       expect(
         screen.queryByRole("button", {
-          name: english ? "Continue with a fresh context" : "从全新上下文继续",
+          name: english ? "Use new context" : "用新上下文",
         }),
       ).toBeNull();
       const configure = screen.queryByRole("button", {
