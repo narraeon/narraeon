@@ -3857,13 +3857,14 @@ function summarizeTimelineEvent(
     return structuredClone(event);
   if (event.kind === "assistant") {
     const { reasoning, toolFragment, ...summary } = event;
+    const hasReasoning = event.reasoningRecorded === true || Boolean(reasoning);
     return {
       ...summary,
-      hasReasoning: reasoning !== undefined && reasoning.length > 0,
+      hasReasoning,
       hasToolFragment: toolFragment !== undefined && toolFragment.length > 0,
       hasUsage: event.usage !== undefined,
       detailsAvailable:
-        (reasoning !== undefined && reasoning.length > 0) ||
+        hasReasoning ||
         (toolFragment !== undefined && toolFragment.length > 0) ||
         event.usage !== undefined ||
         event.stopReason !== undefined ||
@@ -3886,7 +3887,7 @@ function summarizeTimelineEvent(
     followupId: event.followupId,
     displayName: event.displayName,
     toolCallCount: event.toolCalls.length,
-    hasReasoning: Boolean(event.reasoning),
+    hasReasoning: event.reasoningRecorded === true || Boolean(event.reasoning),
     ...(event.replyEventId === undefined
       ? {}
       : { replyEventId: event.replyEventId }),

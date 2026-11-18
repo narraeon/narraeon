@@ -621,6 +621,7 @@ test("historical dispatch contexts keep exact transcript boundaries, suffixes an
       if (sent.length === 1)
         return Promise.resolve({
           text: "Tool-step text",
+          reasoningContent: "The response returned reasoning to Runtime.",
           toolCalls: [
             {
               id: "read-first",
@@ -673,6 +674,8 @@ test("historical dispatch contexts keep exact transcript boundaries, suffixes an
   });
   const responses = first.events.filter((event) => event.kind === "assistant");
   expect(responses).toHaveLength(2);
+  expect(responses[0]).toMatchObject({ reasoningRecorded: true });
+  expect(responses[0]).not.toHaveProperty("reasoning");
   await chains.append({
     worldId,
     chainId: first.chainId,
