@@ -7,6 +7,7 @@ import {
   assistantPrefillDelta,
   assistantPrefillMode,
   completeAssistantPrefill,
+  continuationPrompt,
   playAssistantPrefill,
   prefillFor,
 } from "../../src/runtime/model/AssistantPrefill.ts";
@@ -78,10 +79,13 @@ const modes = [
   ["openai_responses", "assistant"],
   ["openai_responses", "partial"],
   ["anthropic_messages", "assistant"],
+  ["anthropic_messages", "disabled"],
+  ["chat_completions", "disabled"],
+  ["openai_responses", "disabled"],
 ] as const;
 
 test.each(modes)(
-  "%s %s 预览与派发只追加精确 assistant 前缀，结算和原生历史只保留一份全文",
+  "%s %s 预览、派发、结算与下次请求保留正确的续写前缀",
   async (provider, mode) => {
     // Anthropic does not accept trailing whitespace; never silently trim it.
     const prefix =
@@ -172,25 +176,49 @@ test.each(modes)(
     expect(Array.isArray(previous)).toBe(true);
     expect(actual).toEqual([
       ...(previous as unknown[]),
-      {
-        role: "assistant",
-        content:
-          provider === "anthropic_messages"
-            ? [{ type: "text", text: prefix }]
-            : prefix,
-        ...(mode === "prefix" || mode === "mistral_prefix"
-          ? { prefix: true }
-          : {}),
-        ...(mode === "partial" ? { partial: true } : {}),
-      },
+      mode === "disabled"
+        ? { role: "user", content: continuationPrompt(prefix) }
+        : {
+            role: "assistant",
+            content:
+              provider === "anthropic_messages"
+                ? [{ type: "text", text: prefix }]
+                : prefix,
+            ...(mode === "prefix" || mode === "mistral_prefix"
+              ? { prefix: true }
+              : {}),
+            ...(mode === "partial" ? { partial: true } : {}),
+          },
     ]);
     const completed = await host.exchange(continued);
     expect(dispatched).toEqual(preview);
     expect(original).toEqual(originalCopy);
     expect(completed.text).toBe(prefix + suffix);
-    expect(JSON.stringify(completed.providerState)).toContain(
-      JSON.stringify(prefix + suffix).slice(1, -1),
-    );
+    if (mode === "disabled") {
+      expect(completed.providerState?.continuedPrefixLength).toBe(
+        prefix.length,
+      );
+      const next = host.previewRequest({
+        ...original,
+        appended: [
+          ...original.appended,
+          {
+            kind: "assistant",
+            text: completed.text!,
+            toolCalls: [],
+            providerState: completed.providerState!,
+          },
+          { kind: "user", text: "next" },
+        ],
+      }).body;
+      expect(JSON.stringify(next)).toContain(
+        JSON.stringify(continuationPrompt(prefix)),
+      );
+      expect(JSON.stringify(next)).toContain(JSON.stringify(suffix));
+    } else
+      expect(JSON.stringify(completed.providerState)).toContain(
+        JSON.stringify(prefix + suffix).slice(1, -1),
+      );
     expect(JSON.stringify(completed.providerState)).toContain("keep");
     expect(JSON.stringify(completed.providerState)).not.toContain(
       JSON.stringify(prefix + prefix).slice(1, -1),
@@ -246,7 +274,10 @@ test("Anthropic 仅已知旧模型且显式关闭 Thinking 可继续，尾随空
     mode: "assistant",
     text: "正文",
   });
-  expect(prefillFor(request, "正文\n")).toBeNull();
+  expect(prefillFor(request, "正文\n")).toEqual({
+    mode: "prompt",
+    text: "正文\n",
+  });
   for (const modelId of [
     "claude-sonnet-4-6",
     "claude-opus-5",
@@ -285,7 +316,7 @@ test("普通协议兼容性不自动授权预填充，Google 及错误 Responses
   ).toBe("disabled");
 });
 
-test("即使没有工具参数文本，已收到工具起始或推理也不能继续正文", () => {
+test("工具开始后禁止续写，独立的推理文字不进入可见前缀", () => {
   const request = requestFor(new FileNativeModelHost(connection()));
   const context = {
     status: "interrupted",
@@ -316,9 +347,9 @@ test("即使没有工具参数文本，已收到工具起始或推理也不能�
   expect(
     playAssistantPrefill({
       ...context,
-      events: [{ ...context.events[0]!, reasoning: "" }],
+      events: [{ ...context.events[0]!, reasoning: "thought" }],
     }),
-  ).toBeNull();
+  ).toEqual({ mode: "prefix", text: exactPrefix });
   expect(
     playAssistantPrefill({
       ...context,
@@ -541,4 +572,19 @@ test.each([
     host.exchange(requestFor(host), { onDelta: (delta) => deltas.push(delta) }),
   ).rejects.toMatchObject({ details: { code: "model_output_limit" } });
   expect(deltas).toEqual([{ kind: "text", text: exactPrefix }]);
+});
+
+test("没有新正文或完整工具调用的续写不能把旧前缀结算", () => {
+  const request = requestFor(
+    new FileNativeModelHost(connection("chat_completions", "disabled")),
+  );
+  request.assistantPrefill = prefillFor(request, exactPrefix)!;
+  expect(() =>
+    completeAssistantPrefill(request, {
+      providerState: {
+        protocol: "chat_completions",
+        assistantMessage: { role: "assistant", content: "" },
+      },
+    }),
+  ).toThrow(/empty continuation/u);
 });

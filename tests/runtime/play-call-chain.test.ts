@@ -1,3 +1,4 @@
+import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
@@ -14310,15 +14311,18 @@ test("151 play cold resumes after settled Google tools", async () => {
   );
 });
 
-test.each(["retry", "continue"])(
+test.each(["retry", "continue", "prompt"])(
   "继续发送逐字保留正文并在重启和再次中断后累计；%s恢复",
   async (recovery) => {
     const { prefillHost } = await import("./support/prefill-host.ts");
-    const { host, sent } = prefillHost([
-      { text: " \n半🙂" },
-      { text: "\n续 " },
-      { text: "重写。", finish: "stop" },
-    ]);
+    const { host, sent } = prefillHost(
+      [
+        { text: " \n半🙂", extra: { reasoning_content: "私有推理" } },
+        { text: "\n续 " },
+        { text: "重写。", finish: "stop" },
+      ],
+      recovery === "prompt" ? "disabled" : "assistant",
+    );
     const { worlds, worldId, root } = await createWorld(
       "prefill-repeat",
       undefined,
@@ -14360,8 +14364,9 @@ test.each(["retry", "continue"])(
       second.events.findLast((event) => event.kind === "assistant"),
     ).toMatchObject({ text: " \n半🙂\n续 " });
     expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
-      role: "assistant",
-      content: " \n半🙂",
+      role: recovery === "prompt" ? "user" : "assistant",
+      content:
+        recovery === "prompt" ? continuationPrompt(" \n半🙂") : " \n半🙂",
     });
     expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
       sent[0]?.messages,
@@ -14375,7 +14380,7 @@ test.each(["retry", "continue"])(
       chainId: "prefill",
       exchangeId: "retry",
       playerText: "",
-      ...(recovery === "continue"
+      ...(recovery !== "retry"
         ? { recovery: "continue_partial" as const }
         : {}),
       modelHost: host,
@@ -14385,8 +14390,11 @@ test.each(["retry", "continue"])(
       expect(sent[2]?.messages).toEqual(sent[0]?.messages);
     else
       expect((sent[2]?.messages as unknown[]).at(-1)).toEqual({
-        role: "assistant",
-        content: " \n半🙂\n续 ",
+        role: recovery === "prompt" ? "user" : "assistant",
+        content:
+          recovery === "prompt"
+            ? continuationPrompt(" \n半🙂\n续 ")
+            : " \n半🙂\n续 ",
       });
     const history = (await worlds.recoverEndpoint(worldId)).history.map(
       ({ exactText }) => exactText,
@@ -14402,7 +14410,10 @@ test.each(["retry", "continue"])(
       kind: "assistant",
       providerState: {
         assistantMessage: {
-          content: recovery === "retry" ? "重写。" : " \n半🙂\n续 重写。",
+          content:
+            recovery === "retry" || recovery === "prompt"
+              ? "重写。"
+              : " \n半🙂\n续 重写。",
         },
       },
     });
@@ -14465,7 +14476,6 @@ test("正文 token 截断继续发送只结算合并后的完整正文", async (
 
 test.each([
   { text: "" },
-  { text: "正文", extra: { reasoning_content: "思考" } },
   {
     text: "正文",
     extra: {

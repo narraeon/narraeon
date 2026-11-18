@@ -4,6 +4,7 @@ import {
   assertAssistantPrefill,
   assistantPrefillDelta,
   completeAssistantPrefill,
+  continuationPrompt,
   prefillMessage,
 } from "./AssistantPrefill.ts";
 import { createHash } from "node:crypto";
@@ -1379,6 +1380,8 @@ function googleRequestBody(
         )
           calls.set(step.id, step.name);
       }
+      for (const message of continuationInput(item))
+        input.push({ type: "user_input", content: text(message.content) });
       input.push(
         ...(redactContinuation
           ? item.providerState.steps.map(() => ({
@@ -1434,6 +1437,11 @@ function googleRequestBody(
         content: text(modelHostInputText(item)),
       });
   }
+  if (request.assistantPrefill?.mode === "prompt")
+    input.push({
+      type: "user_input",
+      content: text(continuationPrompt(request.assistantPrefill.text)),
+    });
   const tools = providerToolDefinitions(request);
   const allowedTools = providerAllowedTools(request);
   let toolChoice: unknown;
@@ -2005,6 +2013,19 @@ function chatAppend(
   );
 }
 
+/** Replay the instruction that preceded the untouched native suffix. */
+function continuationInput(
+  item: Extract<ModelHostAppendItem, { kind: "assistant" }>,
+) {
+  const length = item.providerState?.continuedPrefixLength;
+  if (length === undefined) return [];
+  if (!Number.isSafeInteger(length) || length <= 0 || length > item.text.length)
+    throw continuationError("Invalid saved partial response");
+  return [
+    { role: "user", content: continuationPrompt(item.text.slice(0, length)) },
+  ];
+}
+
 function chatItems(items: readonly ModelHostAppendItem[]): unknown[] {
   return items.flatMap((item): unknown[] => {
     if (
@@ -2026,7 +2047,7 @@ function chatItems(items: readonly ModelHostAppendItem[]): unknown[] {
     if (item.providerState?.protocol === "chat_completions") {
       const message = item.providerState.assistantMessage;
       if (validChatAssistantMessage(message))
-        return [cloneProviderValue(message)];
+        return [...continuationInput(item), cloneProviderValue(message)];
     }
     throw continuationError("Chat Completions");
   });
@@ -2079,7 +2100,7 @@ function anthropicItems(items: readonly ModelHostAppendItem[]): unknown[] {
       item.providerState?.protocol === "anthropic_messages" &&
       validAnthropicContent(item.providerState.content)
     ) {
-      messages.push({
+      messages.push(...continuationInput(item), {
         role: "assistant",
         content: cloneProviderValue(item.providerState.content),
       });
@@ -2125,7 +2146,10 @@ function responsesItems(items: readonly ModelHostAppendItem[]): unknown[] {
       item.providerState?.protocol === "openai_responses" &&
       validResponsesOutput(item.providerState.output)
     )
-      return cloneResponseOutput(item.providerState.output);
+      return [
+        ...continuationInput(item),
+        ...cloneResponseOutput(item.providerState.output),
+      ];
     throw continuationError("OpenAI Responses");
   });
 }

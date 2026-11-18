@@ -4,7 +4,7 @@ import {
 } from "../model/ModelResponseCorrection.ts";
 import {
   playAssistantPrefill,
-  assertCurrentPrefillConnection,
+  continuePartialRequest,
 } from "../model/AssistantPrefill.ts";
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
 import {
@@ -609,12 +609,16 @@ export class PlayCallChain {
           throw new PlayCallChainError(
             "The current model context cannot continue; use a fresh context.",
           );
-        const request = structuredClone(session.lastRequest);
-        delete request.assistantPrefill;
-        if (partial !== null) {
-          assertCurrentPrefillConnection(request, input.modelHost);
-          request.assistantPrefill = partial;
-        } else {
+        const request =
+          partial !== null
+            ? continuePartialRequest(
+                session.lastRequest,
+                partial.text,
+                input.modelHost,
+              )
+            : structuredClone(session.lastRequest);
+        if (partial === null) {
+          delete request.assistantPrefill;
           delete request.modelConfig;
           request.maxOutputTokens = input.modelHost.binding().maxOutputTokens;
           request.bootstrap = retargetFrozenCompilation(
