@@ -120,15 +120,18 @@ test("a committed sample with a lost receipt appears once without navigating to 
   page,
   runtimeUrl,
 }) => {
-  await runtime(page, runtimeUrl, {
-    type: "preferences.save",
-    locale: "zh-CN",
-  });
-  await runtime(page, runtimeUrl, {
-    type: "content.create-sample",
-    locale: "zh-CN",
-  });
+  const sample = await runtime<{ localId: string; title: string }>(
+    page,
+    runtimeUrl,
+    { type: "content.create-sample", locale: "zh-CN" },
+  );
   const before = await workspace(page, runtimeUrl);
+  const existingCopies = before.contentPackages.filter(
+    ({ title }) => title === sample.title,
+  );
+  expect(existingCopies.map(({ localId }) => localId)).toContain(
+    sample.localId,
+  );
   let writes = 0;
   let readbacks = 0;
   await page.route("**/api/runtime/v1", async (route) => {
@@ -155,10 +158,8 @@ test("a committed sample with a lost receipt appears once without navigating to 
   const after = await workspace(page, runtimeUrl);
   expect(after.contentPackages).toHaveLength(before.contentPackages.length + 1);
   expect(
-    after.contentPackages.filter(
-      ({ title }) => title === before.contentPackages.at(-1)?.title,
-    ).length,
-  ).toBeGreaterThanOrEqual(2);
+    after.contentPackages.filter(({ title }) => title === sample.title),
+  ).toHaveLength(existingCopies.length + 1);
 });
 
 test("a transient first-load failure recovers the bookmarked page automatically", async ({
