@@ -617,12 +617,10 @@ export class PlayCallChain {
                 input.modelHost,
               )
             : retargetRequestForRetry(session.lastRequest, input.modelHost);
-        const currentRequest =
-          input.modelHost.freezeRequest?.(request) ?? request;
         return this.#dispatch(
           session,
           input.modelHost,
-          currentRequest,
+          request,
           session.lastRequestAttempt + 1,
           signal,
           input.observer,
