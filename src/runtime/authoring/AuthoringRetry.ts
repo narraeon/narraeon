@@ -140,14 +140,15 @@ export function authoringRecovery(
     (session.runStatus === "interrupted" || session.runStatus === "paused")
   )
     return unavailable("revision_closed");
-  if (session.runStatus !== "interrupted")
+  // A publication intent is reconciled before another dispatch. Its presence
+  // alone does not establish that the files changed.
+  if (session.runStatus !== "interrupted" || session.pendingSettlement !== null)
     return { canRetry: false, canContinuePartial: false };
   const savedRevision =
     session.authorization?.revision ??
     session.requests?.at(-1)?.preload?.revision;
   if (
     session.settlementConflict ||
-    session.pendingSettlement !== null ||
     (currentRevision !== undefined &&
       savedRevision !== undefined &&
       currentRevision !== savedRevision)

@@ -2203,6 +2203,13 @@ test.each([
   expect(result.freshContextReason).toBe(
     lengthLimit ? undefined : "continuation_unavailable",
   );
+  if (label === "context limit") {
+    // Releases which treated input limits as terminal still retained this checkpoint.
+    const store = new FileNativeSettingImprovementStore(fixture.root);
+    const previous = await store.read(result.sessionId);
+    previous.retryDispatch!.state = "blocked";
+    await store.save(previous);
+  }
   expect(
     (
       await serviceFor(fixture.root, fixture.content, host).readSession(
