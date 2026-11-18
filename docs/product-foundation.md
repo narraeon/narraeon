@@ -233,7 +233,7 @@ Runtime 不按剩余 token 从新到旧填充历史。全新 bootstrap 完整补
 
 新请求在模型侧以明确开闭标记包裹完整玩家原文，中文使用 `<本轮玩家输入>`，英文使用 `<current_player_input>`；标记不进入已提交历史或玩家界面。运行时本轮提示保留 `[Runtime 本轮提示]`／`[Runtime turn guide]` 抬头，有新输入时明确要求回应标记中的内容，再遵循最终正文要求；工具续步仍指向同一次玩家提交。无新输入续写使用通用正文要求，不指向旧玩家输入。中英文预览、实际 Provider 请求和请求上下文诊断使用同一投影；历史快照及工具读取仍提供完整原文。新请求不附加距最近检查点的完成回合数提示。冻结的旧请求和旧原生对话保留当时提示，不补标记或改写其字节。
 
-每次派发都在当前 transcript 之后追加**本轮提示**：一段由启用条目的尾部行按编排顺序拼成、带 Runtime 固定抬头的短提示，以 `runtime_notice`（种类 `turn_guide`，user 角色）编码。它是请求级后缀，不写入 transcript，不进入 Authority、历史或回合计数；玩家回合、工具结算提示之后与空输入续写提示之后的每次派发各追加一条，上一次的不出现在下一次请求的 transcript 中。它随冻结请求保存，原样重试沿用保存的请求；恢复的旧会话从下一次正常发送起追加。内容来自当前运行快照的编译结果：内置块的默认行或条目级覆盖、用户块与独立尾部条目的行、世界 frame 在世界占位处声明的行；玩家在输入区填写的一行「本轮临时要求」作为来源 `player:turn` 接在末尾，只属于本次派发，不进入运行快照或冻结 bootstrap，发送结算后清空；没有任何行时整条后缀不追加。设定完善、世界修订与后置请求不加本轮提示。
+游玩主链每次派发都按本轮需要生成**本轮提示**。启用条目的尾部行按编排顺序拼成带 Runtime 抬头的 `turn_guide`。它随本轮的玩家提交、工具续步和空输入续写发送，只属于当前请求，不写入 transcript、Authority、历史或回合计数。它随冻结请求保存，原样重试沿用保存的请求；恢复的旧会话从下一次正常发送起追加。内容来自当前运行快照的编译结果：内置块的默认行或条目级覆盖、用户块与独立尾部条目的行、世界 frame 在世界占位处声明的行；玩家在输入区填写的一行「本轮临时要求」作为来源 `player:turn` 接在末尾，只属于本次派发，不进入运行快照或冻结 bootstrap，发送结算后清空；没有任何行时整条后缀不追加。设定完善、世界修订与后置请求不加本轮提示。
 
 上一段最终主持正文已经提交后，空输入继续生成会在原生对话末尾追加独立的 Runtime 续写提示，明确本次没有新的玩家原文、旧正文已展示并提交为历史，本次响应接在其后，不重新提交旧正文。回复提交不说明世界内活动已经结束。该提示不进入玩家消息、世界历史或回合计数，随冻结请求持久化和恢复；继续尚未回答的玩家节点或原样重试不会新增这条提示。
 
@@ -271,6 +271,8 @@ Runtime 在每次模型派发前保存完整请求，所属上下文只保留最
 
 Google Interactions 支持从端点拉取模型列表或手工输入模型 ID，可选标准或 CLIProxyAPI 方言，支持显式推理强度、摘要与兼容预算；目前没有具体模型或协议版本通过真实四入口验收。文本 bootstrap 的前置 System 合并为 `system_instruction`，普通编排的中途 System 明确拒绝；仅可信的当前世界修订 epoch 边界可以提升为 System，历史位置保留 Runtime 通知（[ADR-0038](adr/0038-world-revision-uses-one-locked-worktree.md)）。后置提示以带来源标记的追加用户输入编码，使用冻结主链和声明工具。`requires_continuation` 使用冻结输入在同一逻辑 exchange 内有界续接，所有跳完成后才结算；异常仍安全停止。Google usage 只保留已知数值字段与缺失值，不把未报告计为零，逐跳计量按 Provider 报告聚合。
 
+OpenAI Responses 保留预设编排顺序，把「工具与响应结算（必选）」等 System 正文编码为 `input` 里的 `developer` 消息。显式 User／Assistant 收到各自的角色。预加载的世界材料使用原生工具调用与结果，后续玩家行动、作者消息、原生模型输出及工具结果按原顺序进入 `input`。游玩预设和世界 frame 的固定本轮提示进入顶层 `instructions`。连接高级选项中的 GPT‑6.2 开关默认关闭，此时玩家本轮临时要求作为 `input` 最后一条有来源标注的 user 消息；开启后它与固定本轮提示一同进入 `instructions`。两种模式都只在存在相应内容时发送。后置请求共享主链的已结算历史，每个请求自己的任务与产物规则在默认模式进入末尾 developer 消息，开启 GPT‑6.2 模式后进入该请求的 `instructions`。设定完善和世界修订的用户任务与对话保留在 `input`。模型名或代理别名不决定开关设置。[OpenAI GPT‑6.2 指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.2-astra)
+
 Effort、Thinking 模式和返回 thinking 内容是三项独立意图。OpenAI Responses 使用 `reasoning.effort` 与 `reasoning.summary`；Chat Completions 只在协议／方言确实定义的扩展上发送对应字段；这两种 OpenAI-shaped 协议都没有独立 `thinking` 请求字段，因此界面必须诚实固定为 `Provider 默认`，不能假造一项配置。Anthropic effort 只写入 `output_config.effort`；Thinking 则按用户选择省略、写入 `adaptive`、写入带 `budget_tokens` 的 `enabled`，或写入 `disabled`，手动预算至少为 1024 且必须小于最大输出；`thinking.display` 独立控制 summarized／omitted 返回内容。Provider 返回的 thinking block 无论是否显示摘要都原样保留以供续传。不受目标模型支持的组合或等级由 Provider 明确拒绝，Runtime 不猜测模型能力或静默换档。
 
 ## 跑团判定
@@ -289,7 +291,7 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立意图。OpenAI 
 
 世界页输入区显示当前调用链最近一次完整 AI 响应的实报输入量占冻结模型窗口的比例；未报告输入量、旧记录没有冻结窗口或新上下文尚无完整响应时显示“—”，并说明原因，不使用估算或累计 usage。非零但不足 1% 时显示“<1%”；下一次发送已确定开启全新上下文时显示“—”，不沿用旧上下文占用。占用达到 85% 时建议下一条使用全新上下文，快捷按钮只准备下一次发送，玩家仍可继续追加。开启全新上下文后旧提示消失。占用信息只用于界面，不进入模型请求、上下文准入或检查点选择。
 
-提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 在这些真实稳定块上编码显式 cache breakpoint；CLIProxyAPI 方言的 Chat Completions／Responses 使用代理明确支持的 `cache_control` 扩展。请求带有请求级后缀（本轮提示）时，这两种显式断点编码另在后缀之前的最后一个 transcript 内容块上加一个对话尾部断点，使下一次派发能复用已发送的对话；断点总数超过 Anthropic 上限 4 时报错。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组，使等价前缀可复用 Provider 缓存；CLIProxyAPI 中该字段还承担 session affinity／重放隔离职责，因此改为按冻结模型会话生成稳定散列：同一会话各轮不变，不同调用链绝不共享。两种路径都不把原始内部身份写入 wire。没有等价显式块的标准协议只报告 provider-managed 策略。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 input、uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance；游玩时间线和设定完善进度都直接显示全部七项，未报告字段显示为未报告而不是零。缓存 read／write 是 input 的构成，reasoning 已包含在 output 中，界面不能重复相加。改变 Thinking 或 Effort 会改变 Provider prompt/cache key 的语义并使旧缓存边界失效；缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
+提示词编译把稳定机械块、主持块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。Anthropic Messages 及 CLIProxyAPI 的 Chat Completions 方言在稳定部分编码显式缓存标记；Responses 经 CLIProxyAPI 转 Claude 时，可在连接高级选项中单独开启 `cache_control`，缺省关闭，Codex 路由请保持关闭。带临时尾部提示时，显式断点路径还可在它前面标记最近的 transcript 内容，断点总数超过四个时报错。标准 Responses 的 `prompt_cache_key` 按稳定前缀分组。CLIProxyAPI 按冻结模型会话生成稳定散列，同一会话各轮不变，不同调用链隔离。两种路径都不把原始内部身份写入 wire。`prompt_cache_key` 用于路由，具体可复用长度及命中量以 Provider 报告为准。Runtime 不能把字节估计伪装成 token 命中，而要持久投影 Provider 实际报告的 input、uncached input、cache read、cache write、reasoning、output 与 total usage，并分别保留 provider／派生／不可用 provenance；游玩时间线和设定完善进度都直接显示全部七项，未报告字段显示为未报告而不是零。缓存 read／write 是 input 的构成，reasoning 已包含在 output 中，界面不能重复相加。改变 Thinking 或 Effort 会改变 Provider prompt/cache key 的语义并使旧缓存边界失效；缓存 miss 只影响成本和延迟，不能改变请求语义或恢复能力。
 
 Prompt Preview 必须调用真实编译器，并展示：
 
@@ -419,7 +421,7 @@ v0.1.x（V1）与 v0.2.0（V2）世界存储已不再迁移：由 v0.2.0 及更�
 
 每次正常发送使用该次实际连接，在真实 Prompt Preview 中保留正文、来源和顺序。工具往返、后置请求、原样重试和历史查看沿用当次冻结的正文。设定完善与世界修订的写后游玩检查也使用当次连接。作者的「未来游玩参考」跳过游玩编排中的模型提示词，避免同一正文在作者请求内重复。
 
-列表中每个内置块标注类别（必选／选项／政策／文风），选项组内启用一项即关闭同组其余项。有固定正文的提示块下方有单行“本轮尾部提示”：内置块显示默认行，可逐条覆盖或清空而不必克隆整块，用户块自由填写；新增的独立尾部条目只有尾部行、没有前部正文，与其他条目一起排序和启停。编辑器底部固定一块“本轮提示预览”，实时拼出当前启用集合的尾部全文，每行标来源，世界占位处标明世界 frame 的尾部行位置；抬头由 Runtime 固定显示且不可编辑，发送角色不暴露。单行 120 字、总数 10 行为软上限，超出时预览和 Prompt Preview 诊断给出警告，不拒绝保存或编译。世界 frame 的 `instructions` 项可带 `turnGuide` 或只含 `turnGuide`，在世界控制编辑器中逐项填写，随内容包创建世界时复制，设定完善与世界修订可修改。Prompt Preview 把本轮提示作为请求末尾的一条消息显示并逐行标注来源（`preset:builtin/<id>`、`preset:prompt/<id>`、`world:control/frame.yaml#instructions[i]`、`player:turn`）；历史请求显示冻结的那份尾部。游玩输入区另有单行「本轮临时要求」，文案只说明它只对这一轮生效、不进入故事，Runtime 只校验单行与长度上限，不判断内容。旁边直接显示「在此收尾」快捷项，点击展开并填写「这段就在这里收尾，保存后续需要的信息，并登记检查点。」；已有手写内容以空格分隔追加，重复点击不重复添加。填写后可编辑或清除，玩家仍需正常发送；快捷项不发送请求、调用工具或切换上下文，不新增持久偏好。要求仍通过本轮提示的 `player:turn` 进入请求快照与 Prompt Preview，成功结算后清空，中断或取消后保留，合法重试沿用冻结请求；运行中、世界修订锁定或未配置模型时与输入区一起禁用。
+列表中每个内置块标注类别（必选／选项／政策／文风），选项组内启用一项即关闭同组其余项。有固定正文的提示块下方有单行“本轮尾部提示”：内置块显示默认行，可逐条覆盖或清空而不必克隆整块，用户块自由填写；新增的独立尾部条目只有尾部行、没有前部正文，与其他条目一起排序和启停。编辑器底部固定一块“本轮提示预览”，实时拼出当前启用集合的尾部全文，每行标来源，世界占位处标明世界 frame 的尾部行位置；抬头由 Runtime 固定显示且不可编辑，发送角色不暴露。单行 120 字、总数 10 行为软上限，超出时预览和 Prompt Preview 诊断给出警告，不拒绝保存或编译。世界 frame 的 `instructions` 项可带 `turnGuide` 或只含 `turnGuide`，在世界控制编辑器中逐项填写，随内容包创建世界时复制，设定完善与世界修订可修改。Prompt Preview 按行列出本轮提示的来源，实际请求显示所选协议及连接的编码位置（`preset:builtin/<id>`、`preset:prompt/<id>`、`world:control/frame.yaml#instructions[i]`、`player:turn`）；历史请求显示冻结的那份尾部。游玩输入区另有单行「本轮临时要求」，文案只说明它只对这一轮生效、不进入故事，Runtime 只校验单行与长度上限，不判断内容。旁边直接显示「在此收尾」快捷项，点击展开并填写「这段就在这里收尾，保存后续需要的信息，并登记检查点。」；已有手写内容以空格分隔追加，重复点击不重复添加。填写后可编辑或清除，玩家仍需正常发送；快捷项不发送请求、调用工具或切换上下文，不新增持久偏好。要求仍通过本轮提示的 `player:turn` 进入请求快照与 Prompt Preview，成功结算后清空，中断或取消后保留，合法重试沿用冻结请求；运行中、世界修订锁定或未配置模型时与输入区一起禁用。
 
 游玩和作者编排的每条提示提供 System／User／Assistant 发送角色，缺省 System；必选工具与结算等机械说明固定 System。预设级“合并相邻同角色消息”共用于两套编排，新预设默认关闭，旧预设缺少该字段时保留合并行为。未合并时每条启用且非空的提示生成一条消息，世界占位的角色应用于指令，初始材料另由工具结果承载；合并只连接相邻同角色正文，不重排，不跨入真实对话或玩家输入。角色不改变逻辑职责、来源或材料写入资格。保存并应用后下一次正常发送采用新配置，工具循环和原样重试保留冻结请求。当前 Anthropic 适配器要求 System 项位于 User／Assistant 之前，不支持的排列明确报错。
 

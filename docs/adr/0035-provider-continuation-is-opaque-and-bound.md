@@ -24,4 +24,4 @@ Authority 结算只查看完整投影是否含工具调用，不改写续传载�
 
 工具结果是 Runtime 事实，不属于 Provider 续传载荷。encoder 按目标协议生成对应结果项；其中 Anthropic 要求同一轮并行调用的全部 `tool_result` blocks 位于紧随 assistant 的同一个 `user` message，并对失败结果携带 `is_error`。这层协议分组不能反过来改变 Runtime 中逐调用的工具记录、执行顺序或 Authority 边界。
 
-这个决定增加了按协议维护 codec 与持久格式的成本，但让请求、Provider 返回推理、工具调用、叙事边界和缓存 usage 都有单一诚实来源：请求由生产 encoder 生成，续传由原生载荷生成，界面由解析投影生成，Authority 只由成功结算的玩家原文、工具步骤产生的世界变化和终态无工具叙事生成。Anthropic 原生块和 CLIProxyAPI 明示的 `cache_control` 扩展可以标记真实稳定前缀；标准协议没有等价能力时保持 provider-managed，任何估算都只报告字节而不冒充 Provider token 命中。CLIProxyAPI 还把 `prompt_cache_key` 当成执行会话身份，所以 Runtime 为每条冻结模型调用链生成不泄露原始 ID 的稳定散列，既保留同链 affinity，也阻止不同会话共享代理重放状态。
+这个决定增加了按协议维护 codec 与持久格式的成本，但让请求、Provider 返回推理、工具调用、叙事边界和缓存 usage 都有单一诚实来源：请求由生产 encoder 生成，续传由原生载荷生成，界面由解析投影生成，Authority 只由成功结算的玩家原文、工具步骤产生的世界变化和终态无工具叙事生成。Anthropic 原生块和 CLIProxyAPI 的 `cache_control` 扩展可以标记真实稳定前缀；Responses 连接使用该代理扩展时须显式开启转 Claude 选项；标准协议没有等价能力时保持 provider-managed，任何估算都只报告字节而不冒充 Provider token 命中。CLIProxyAPI 还把 `prompt_cache_key` 当成执行会话身份，所以 Runtime 为每条冻结模型调用链生成不泄露原始 ID 的稳定散列，既保留同链 affinity，也阻止不同会话共享代理重放状态。
