@@ -2954,6 +2954,7 @@ export class PlayCallChain {
             request = {
               ...request,
               appended: [...request.appended, error.notice()],
+              requestAttempt: attempt + 1,
             };
             correcting = true;
             attempt += 1;

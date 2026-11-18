@@ -823,7 +823,7 @@ export class FileNativeModelHost implements ModelHost {
           throw unknownProviderResponse("Chat Completions");
         if (!validChatAssistantMessage(message))
           throw new ModelResponseFormatError(
-            "Return a valid Chat Completions assistant response. Each tool call needs an ID, a name and valid arguments.",
+            "Return an assistant message with string or null content and reasoning_content. Each tool call needs an ID, a function name and JSON arguments encoded as a string.",
           );
         capture?.setReasoning(message.reasoning_content ?? undefined);
         return {
@@ -1156,7 +1156,8 @@ async function capturedProviderOperation<Value extends object>(
         kind:
           exchange.response === undefined
             ? "provider_transport"
-            : reportedError instanceof ModelHostFailureError
+            : reportedError instanceof ModelHostFailureError &&
+                !(reportedError instanceof ModelResponseFormatError)
               ? "provider_rejection"
               : "provider_response_format",
         message:

@@ -1,3 +1,4 @@
+import { ModelResponseFormatError } from "../../src/runtime/model/ModelResponseCorrection.ts";
 import { expect, test, vi } from "vitest";
 
 import { fictionGameplay } from "../../src/protocol/gameplay.ts";
@@ -1167,7 +1168,7 @@ test.each([
   { field: "content", value: {} },
   { field: "reasoning_content", value: 42 },
 ] as const)(
-  "Chat 200 响应的 $field 不是 string|null 时在 Adapter 边界分类为 outcome unknown",
+  "Chat 200 响应的 $field 类型无效时把格式错误交回模型纠正",
   async ({ field, value }) => {
     const input = createMinimalFileNativePreviewInput({
       provider: "chat_completions",
@@ -1213,7 +1214,7 @@ test.each([
         appended: [],
         maxOutputTokens: 2_000,
       }),
-    ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+    ).rejects.toBeInstanceOf(ModelResponseFormatError);
   },
 );
 
