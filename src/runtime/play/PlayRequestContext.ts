@@ -13,10 +13,10 @@ import type {
 } from "../model/ModelHost.ts";
 import type { PromptCompilation } from "../prompt/FileNativePromptCompiler.ts";
 
-type ContinuationMessage = {
+interface ContinuationMessage {
   role: "assistant · prefill" | "user · continuation";
   text: string;
-};
+}
 
 export function continuationMessage(
   partial: ModelHostExchange["assistantPrefill"],
