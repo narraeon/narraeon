@@ -1838,8 +1838,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Edit saved; continuing from a fresh context…",
   "修改已保存；模型请求中断，可以重新发送已保存的请求。":
     "The edit was saved, but the model request was interrupted. You can resend the saved request.",
-  "修改已保存，但模型请求失败；请使用全新上下文继续。":
-    "The edit was saved, but the model request failed. Continue with a new context.",
+  "修改已保存，但模型请求失败。":
+    "Your edit was saved. The model request failed.",
   "修改已保存在当前世界，并已从修改稿继续。":
     "The edit was saved in the current world and play continued from it.",
   "修改已保存在当前世界，并已作为全新上下文继续。":
@@ -1949,10 +1949,10 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Narrative generation was interrupted; you can retry the saved request.",
   "可以使用当前选中的兼容连接，从本地最后已结算的步骤重新发送，不会重复提交玩家原文。":
     "Retry from the last locally settled step using the currently selected compatible connection, without submitting the player message again.",
-  "模型请求已发出，但结果未知；请查看详情，或从全新上下文继续。":
-    "The model request was sent, but its outcome is unknown. Check the details or start a fresh context.",
-  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token 后重试；推理也可能占用输出额度。":
-    "The response reached its output limit. Increase the maximum output tokens in model settings before retrying; reasoning may also use output tokens.",
+  "模型请求已发出，但结果未知。请查看技术详情。":
+    "The model request was sent, but its outcome is unknown. View the technical details.",
+  "模型回复达到输出上限，尚未完成。可以在模型配置中调高最大输出 Token。推理也可能占用输出额度。":
+    "The response reached its output limit before completion. You can increase the maximum output tokens in model settings. Reasoning may also use output tokens.",
   "正在重新生成…": "Regenerating…",
   "已重新生成；原回复已离开当前时间线":
     "Regenerated; the original reply is no longer on the current timeline",
@@ -2645,25 +2645,21 @@ Object.assign(englishMessages, dynamicEnglishMessages);
 
 Object.assign(englishMessages, {
   模型请求结果未知: "Model request outcome unknown",
-  "模型请求已发出，但结果未知。旧请求不能重发；为避免重复生成，请从全新上下文继续。":
-    "The model request was dispatched, but its outcome is unknown. The previous request cannot be resent. Continue with a fresh context to avoid duplicate generation.",
   模型上下文已达上限: "Model context limit reached",
-  "当前上下文超过了模型的输入上限。旧请求不能重发，请从全新上下文继续。":
-    "The current context exceeds the model input limit. The previous request cannot be resent. Continue with a fresh context.",
+  "当前上下文超过了模型的输入上限。旧请求不能重发。":
+    "The current context exceeds the model input limit. The previous request cannot be resent.",
   模型输出已达上限: "Model output limit reached",
-  "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token，保存后从全新上下文继续；原样重发仍使用旧配置。推理也可能占用输出额度。":
-    "The model response reached the output limit before completion. Increase the maximum output tokens in the model configuration, save, then continue with a fresh context; resending the saved request still uses the old settings. Reasoning may also consume the output budget.",
   模型上下文无法继续: "Model context unavailable",
-  "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。":
-    "Continuation data is missing or unavailable. The previous request cannot be resent. Continue with a fresh context.",
+  "当前上下文的续传信息缺失或不可用。旧请求不能重发。":
+    "Continuation data is missing or unavailable. The previous request cannot be resent.",
   模型请求可以重新发送: "Model request can be resent",
   "模型拒绝了请求，或请求尚未发出。可以重新发送已保存的请求，不会重复提交玩家原文。":
     "The model rejected the request, or it was not dispatched. You can resend the saved request without submitting the player text again.",
   模型连接发生错误: "Model connection error",
-  "模型服务未能完成请求。请检查模型连接；也可以从全新上下文继续。":
-    "The model service could not complete the request. Check the model connection, or continue with a fresh context.",
-  "处理这次请求时发生错误。旧请求不能重发；请查看技术详情，也可以从全新上下文继续。":
-    "An error occurred while processing this request. The previous request cannot be resent. View the technical details, or continue with a fresh context.",
+  "模型服务未能完成请求。请检查模型连接。":
+    "The model service could not complete the request. Check the model connection.",
+  "处理这次请求时发生错误。旧请求不能重发。请查看技术详情。":
+    "An error occurred while processing this request. The previous request cannot be resent. View the technical details.",
   "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。":
     "You can resend the saved request without submitting the player text again; it uses the original frozen settings.",
   重新发送: "Resend request",
@@ -2687,7 +2683,6 @@ Object.assign(englishMessages, {
     "The Kimi / Qwen model and thinking mode must support partial. Continuation is unavailable without response text or when reasoning fragments are present.",
   "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。":
     "Volcano Engine Ark Responses requires a model that supports partial. Standard OpenAI Responses does not support it.",
-  从全新上下文继续: "Continue with a fresh context",
   调整最大输出: "Adjust maximum output",
   检查模型连接: "Check model connection",
   技术详情: "Technical details",

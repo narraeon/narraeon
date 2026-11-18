@@ -339,9 +339,7 @@ describe("世界游玩页面", () => {
       }
     }
     expect(screen.queryByText("调用链中断")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "从全新上下文继续" }),
-    ).toBeNull();
+    expect(screen.queryByRole("alert", { name: "模型调用失败" })).toBeNull();
     expect(
       request.mock.calls.filter(([call]) => call.type === "play.chain.append"),
     ).toHaveLength(1);
@@ -576,10 +574,9 @@ describe("世界游玩页面", () => {
         await screen.findByRole("button", { name: "打开世界：宿舍世界" }),
       );
       await screen.findByText("需要先配置模型连接才能游玩。");
-      const fresh = screen.getByRole<HTMLButtonElement>("button", {
-        name: "从全新上下文继续",
-      });
-      expect(fresh.disabled).toBe(true);
+      expect(
+        screen.queryByRole("button", { name: "从全新上下文继续" }),
+      ).toBeNull();
       if (failureKind === "retryable") {
         const retry = screen.getByRole<HTMLButtonElement>("button", {
           name: "重新发送",
@@ -702,29 +699,16 @@ describe("世界游玩页面", () => {
         playerText: "",
       });
       expect(composer.value).toBe("下一次行动的草稿");
-      await waitFor(() =>
-        expect(
-          screen.getByRole<HTMLButtonElement>("button", {
-            name: "从全新上下文继续",
-          }).disabled,
-        ).toBe(false),
-      );
-      const sendsBefore = client.request.mock.calls.filter(
-        ([request]) =>
-          request.type === "play.chain.append" ||
-          request.type === "play.chain.start",
-      ).length;
-      fireEvent.click(screen.getByRole("button", { name: "从全新上下文继续" }));
-      expect(document.activeElement).toBe(composer);
-      expect(screen.getByText("下一条消息将开启全新上下文")).toBeTruthy();
-      expect(composer.value).toBe("下一次行动的草稿");
+      expect(
+        screen.queryByRole("button", { name: "从全新上下文继续" }),
+      ).toBeNull();
       expect(
         client.request.mock.calls.filter(
           ([request]) =>
             request.type === "play.chain.append" ||
             request.type === "play.chain.start",
         ),
-      ).toHaveLength(sendsBefore);
+      ).toHaveLength(1);
       expect(
         client.request.mock.calls.some(
           ([request]) => request.type === "play.timeline.detail",
@@ -3093,9 +3077,7 @@ describe("世界游玩页面", () => {
     expect(alert.querySelector("p")?.textContent).toContain("旧请求不能重发");
     expect(alert.querySelector("details")?.open).toBe(false);
     expect(within(alert).getByText(failure)).toBeTruthy();
-    expect(
-      within(alert).getByRole("button", { name: "从全新上下文继续" }),
-    ).toBeTruthy();
+    expect(within(alert).queryByRole("button")).toBeNull();
     expect(
       screen.queryByRole("status", { name: "本次模型调用进度" }),
     ).toBeNull();
@@ -4513,7 +4495,7 @@ describe("世界游玩页面", () => {
     {
       status: "interrupted" as const,
       canRetry: false,
-      feedback: "修改已保存，但模型请求失败；请使用全新上下文继续。",
+      feedback: "修改已保存，但模型请求失败。",
     },
   ])(
     "重新生成沿原上下文使用玩家原文并保留恢复反馈：$status/$canRetry",

@@ -12,22 +12,20 @@ export const failureText: Record<
   },
   outcome_unknown: {
     title: "模型请求结果未知",
-    description: "模型请求已发出，但结果未知；请查看详情，或从全新上下文继续。",
+    description: "模型请求已发出，但结果未知。请查看技术详情。",
   },
   context_limit: {
     title: "模型上下文已达上限",
-    description:
-      "当前上下文超过了模型的输入上限。旧请求不能重发，请从全新上下文继续。",
+    description: "当前上下文超过了模型的输入上限。旧请求不能重发。",
   },
   output_limit: {
     title: "模型输出已达上限",
     description:
-      "模型回复达到输出上限，尚未完成。请在模型配置中调高最大输出 Token 后重试；推理也可能占用输出额度。",
+      "模型回复达到输出上限，尚未完成。可以在模型配置中调高最大输出 Token。推理也可能占用输出额度。",
   },
   context_unavailable: {
     title: "模型上下文无法继续",
-    description:
-      "当前上下文的续传信息缺失或不可用。旧请求不能重发，请从全新上下文继续。",
+    description: "当前上下文的续传信息缺失或不可用。旧请求不能重发。",
   },
   retryable: {
     title: "模型请求可以重新发送",
@@ -36,13 +34,11 @@ export const failureText: Record<
   },
   provider_error: {
     title: "模型连接发生错误",
-    description:
-      "模型服务未能完成请求。请检查模型连接；也可以从全新上下文继续。",
+    description: "模型服务未能完成请求。请检查模型连接。",
   },
   other: {
     title: "调用链中断",
-    description:
-      "处理这次请求时发生错误。旧请求不能重发；请查看技术详情，也可以从全新上下文继续。",
+    description: "处理这次请求时发生错误。旧请求不能重发。请查看技术详情。",
   },
 };
 

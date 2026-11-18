@@ -339,7 +339,12 @@ for (const locale of ["zh-CN", "en"] as const)
       name: english ? "Continue with a fresh context" : "从全新上下文继续",
       exact: true,
     });
-    await recoveryExpect(fresh).toBeEnabled();
+    const limitTitle = page.getByText(
+      english ? "Model context limit reached" : "模型上下文已达上限",
+      { exact: true },
+    );
+    await recoveryExpect(limitTitle).toBeVisible();
+    await recoveryExpect(fresh).toHaveCount(0);
     await recoveryExpect(resend).toHaveCount(0);
     const blocked = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
@@ -350,16 +355,16 @@ for (const locale of ["zh-CN", "en"] as const)
       lastFailureKind: "context_limit",
     });
     await reopenWorld();
-    await recoveryExpect(fresh).toBeEnabled();
-    await fresh.click();
-    await recoveryExpect(input).toBeFocused();
+    await recoveryExpect(limitTitle).toBeVisible();
+    await recoveryExpect(fresh).toHaveCount(0);
     await input.fill("I continue from the current world.");
     steps.push({ kind: "text", text: "The corridor opens into a garden." });
     await page
+      .getByLabel(english ? "Choose submission mode" : "选择提交方式")
+      .click();
+    await page
       .getByRole("button", {
-        name: english
-          ? "Send action from a fresh context"
-          : "从全新上下文发送行动",
+        name: english ? "Fresh context" : "全新上下文",
         exact: true,
       })
       .click();

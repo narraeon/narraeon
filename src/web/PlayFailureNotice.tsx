@@ -9,7 +9,6 @@ export interface PlayFailureRecovery {
   playDisabled: boolean;
   configureDisabled: boolean;
   onRetry: () => void;
-  onFreshContext: () => void;
   onConfigureModel: () => void;
 }
 
@@ -26,6 +25,7 @@ export function PlayFailureNotice({
 }): React.JSX.Element {
   const kind = failureKind ?? (canRetry ? "retryable" : "other");
   const canResend = canRetry && (recovery?.canRetry ?? true);
+  const canConfigure = kind === "provider_error" || kind === "output_limit";
   const text = failureText[kind === "retryable" && !canResend ? "other" : kind];
   return (
     <>
@@ -33,7 +33,8 @@ export function PlayFailureNotice({
       <p>
         {playFailureDescription(kind, canResend, recovery?.canContinuePartial)}
       </p>
-      {recovery === undefined ? null : (
+      {recovery === undefined ||
+      !(canResend || recovery.canContinuePartial || canConfigure) ? null : (
         <div className="play-failure-actions">
           {canResend ? (
             <button
@@ -53,14 +54,7 @@ export function PlayFailureNotice({
               {uiText("继续发送")}
             </button>
           ) : null}
-          <button
-            type="button"
-            disabled={recovery.playDisabled}
-            onClick={recovery.onFreshContext}
-          >
-            {uiText("从全新上下文继续")}
-          </button>
-          {kind === "provider_error" || kind === "output_limit" ? (
+          {canConfigure ? (
             <button
               type="button"
               disabled={recovery.configureDisabled}

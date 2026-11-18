@@ -23,7 +23,6 @@ test.each(["zh-CN", "en"] as const)(
       configureDisabled: false,
       onRetry: vi.fn(),
       onContinuePartial,
-      onFreshContext: vi.fn(),
       onConfigureModel: vi.fn(),
     };
     const props = {
@@ -80,23 +79,16 @@ for (const locale of ["zh-CN", "en"] as const)
       const english = locale === "en";
       const message = "Private adapter diagnostic: dispatch failed.";
       const onRetry = vi.fn();
-      const onFreshContext = vi.fn();
       const onConfigureModel = vi.fn();
-      render(
-        createElement(PlayFailureNotice, {
-          failureKind,
-          canRetry: true,
-          message,
-          recovery: {
-            canRetry: true,
-            playDisabled: false,
-            configureDisabled: false,
-            onRetry,
-            onFreshContext,
-            onConfigureModel,
-          },
-        }),
-      );
+      const recovery = {
+        canRetry: true,
+        playDisabled: false,
+        configureDisabled: false,
+        onRetry,
+        onConfigureModel,
+      };
+      const props = { failureKind, canRetry: true, message, recovery };
+      const view = render(createElement(PlayFailureNotice, props));
       expect(screen.getByText(titles[index]![english ? 1 : 0]!)).toBeDefined();
       const description = document.querySelector("p")!.textContent;
       expect(description).not.toContain(message);
@@ -114,12 +106,11 @@ for (const locale of ["zh-CN", "en"] as const)
         fireEvent.click(retry);
         expect(onRetry).toHaveBeenCalledOnce();
       }
-      fireEvent.click(
-        screen.getByRole("button", {
+      expect(
+        screen.queryByRole("button", {
           name: english ? "Continue with a fresh context" : "从全新上下文继续",
         }),
-      );
-      expect(onFreshContext).toHaveBeenCalledOnce();
+      ).toBeNull();
       const configure = screen.queryByRole("button", {
         name: english
           ? /Check model connection|Adjust maximum output/u
@@ -132,6 +123,17 @@ for (const locale of ["zh-CN", "en"] as const)
         fireEvent.click(configure);
         expect(onConfigureModel).toHaveBeenCalledOnce();
       }
+      view.rerender(
+        createElement(PlayFailureNotice, { ...props, canRetry: false }),
+      );
+      expect(document.querySelector("p")?.textContent).not.toMatch(
+        /全新上下文|fresh context/iu,
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: english ? "Resend request" : "重新发送",
+        }),
+      ).toBeNull();
     });
 
 test.each([true, false])(
@@ -147,7 +149,6 @@ test.each([true, false])(
           playDisabled: false,
           configureDisabled: false,
           onRetry: vi.fn(),
-          onFreshContext: vi.fn(),
           onConfigureModel: vi.fn(),
         },
       }),
@@ -180,7 +181,6 @@ test("historical failures and missing replay permission do not offer resend", ()
         playDisabled: false,
         configureDisabled: false,
         onRetry: vi.fn(),
-        onFreshContext: vi.fn(),
         onConfigureModel: vi.fn(),
       },
     }),

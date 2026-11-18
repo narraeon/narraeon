@@ -129,10 +129,7 @@ test("a committed action survives a lost response without a second write", async
   ).toBeVisible();
   await expect(input).toHaveValue("");
   await expect(
-    page.getByRole("button", {
-      name: "Continue with a fresh context",
-      exact: true,
-    }),
+    page.locator(".call-chain-failure, .play-call-failure"),
   ).toHaveCount(0);
   await expect(
     page.getByText("Temporarily unable to sync", { exact: true }),
@@ -182,10 +179,7 @@ test("a terminal observation failure offers a read and reconnect while generatio
     page.getByRole("button", { name: "Cancel generation", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", {
-      name: "Continue with a fresh context",
-      exact: true,
-    }),
+    page.locator(".call-chain-failure, .play-call-failure"),
   ).toHaveCount(0);
   finish(heldResponse!);
   heldResponse = null;

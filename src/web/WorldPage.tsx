@@ -1602,7 +1602,7 @@ export function WorldPage({
                 ? getWebLocale() === "en"
                   ? "Edit saved. Continue the interrupted response."
                   : "修改已保存，可以继续发送中断的回复。"
-                : uiText("修改已保存，但模型请求失败；请使用全新上下文继续。")
+                : uiText("修改已保存，但模型请求失败。")
             : regenerate
               ? uiText("已重新生成；原回复已离开当前时间线")
               : continuation === "fresh_context"
@@ -1705,10 +1705,6 @@ export function WorldPage({
     configureDisabled:
       !playIdle || revisionDirty || controlDirty || authoringLocked,
     onRetry: () => void submitPlayChain("append", ""),
-    onFreshContext: () => {
-      setManualFreshContext(true);
-      composerTextareaRef.current?.focus();
-    },
     onConfigureModel,
   };
 
