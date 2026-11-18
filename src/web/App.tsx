@@ -102,6 +102,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigationLocked, setChildNavigationLocked] = useState(false);
   const [playPresetDraftDirty, setPlayPresetDraftDirty] = useState(false);
+  const [pendingModelAction, setPendingModelAction] = useState<string | null>(
+    null,
+  );
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
   const [promptPreviewPlayPreset, setPromptPreviewPlayPreset] = useState<{
     presetId: string;
@@ -293,6 +296,25 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     workspaceReceiptVersion.current++;
     workspaceTarget.accept({ complete: false });
     setWorkspace((current) => (current === null ? null : update(current)));
+  }
+
+  async function quickSelectModel(connectionId: string): Promise<boolean> {
+    if (pendingModelAction !== null || modelDraftDirty) return false;
+    setPendingModelAction("quick-select");
+    try {
+      const model = await client.request<ModelConnectionLibraryView>({
+        type: "model.select",
+        connectionId,
+      });
+      updateWorkspace((current) => ({ ...current, model }));
+      return true;
+    } catch (error: unknown) {
+      const recovered = await workspaceTarget.recover();
+      if (recovered?.model.activeConnectionId === connectionId) return true;
+      throw error;
+    } finally {
+      setPendingModelAction(null);
+    }
   }
 
   function acceptPackage({
@@ -1002,7 +1024,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         locale={workspace.preferences.locale}
         localeSaving={localeSaving}
         navigationLocked={navigationLocked}
-        activeModelName={activeModel?.name ?? null}
+        model={workspace.model}
+        modelBusy={pendingModelAction !== null || modelDraftDirty}
+        onSelectModel={quickSelectModel}
         onNavigate={navigate}
         onLocaleChange={(locale) => void saveLocale(locale)}
       />
@@ -1194,6 +1218,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             }
             onNotice={setNotice}
             onDirtyChange={setModelDraftDirty}
+            pendingState={[pendingModelAction, setPendingModelAction]}
           />
         )}
         {screen === "create" && (

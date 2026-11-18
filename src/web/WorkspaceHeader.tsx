@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { ModelConnectionSwitcher } from "./ModelConnectionSwitcher.tsx";
+import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
 import type { AppLocale } from "../protocol/appPreferences.ts";
 import {
   canExportAndroidLogs,
@@ -23,7 +25,9 @@ export function WorkspaceHeader({
   locale,
   localeSaving,
   navigationLocked,
-  activeModelName,
+  model,
+  modelBusy,
+  onSelectModel,
   onNavigate,
   onLocaleChange,
 }: {
@@ -31,10 +35,15 @@ export function WorkspaceHeader({
   locale: AppLocale;
   localeSaving: boolean;
   navigationLocked: boolean;
-  activeModelName: string | null;
+  model: ModelConnectionLibraryView;
+  modelBusy: boolean;
+  onSelectModel: (id: string) => Promise<boolean>;
   onNavigate: (screen: WorkspaceScreen) => void;
   onLocaleChange: (locale: AppLocale) => void;
 }): React.JSX.Element {
+  const activeModelName =
+    model.connections.find(({ id }) => id === model.activeConnectionId)?.name ??
+    null;
   const [menuOpen, setMenuOpen] = useState(false);
   useAndroidBack(menuOpen, () => setMenuOpen(false));
   function navigate(next: WorkspaceScreen): void {
@@ -104,24 +113,37 @@ export function WorkspaceHeader({
             <option value="zh-CN">{uiText("简体中文")}</option>
           </select>
         </label>
-        <button
-          type="button"
-          className="workspace-model-button"
-          aria-label={uiText("模型连接")}
-          aria-current={screen === "model" ? "page" : undefined}
-          title={activeModelName ?? uiText("尚未配置")}
-          disabled={navigationLocked}
-          onClick={() => navigate("model")}
-        >
-          <span
-            className={`workspace-model-dot ${activeModelName === null ? "needs-attention" : "is-ready"}`}
-            aria-hidden="true"
-          />
-          <span className="workspace-model-label">
-            {uiText("模型连接")}
-            {activeModelName !== null && <strong>{activeModelName}</strong>}
-          </span>
-        </button>
+        <div className="workspace-model-control">
+          <button
+            type="button"
+            className="workspace-model-button"
+            aria-label={uiText("模型连接")}
+            aria-current={screen === "model" ? "page" : undefined}
+            title={activeModelName ?? uiText("尚未配置")}
+            disabled={navigationLocked}
+            onClick={() => navigate("model")}
+          >
+            <span
+              className={`workspace-model-dot ${activeModelName === null ? "needs-attention" : "is-ready"}`}
+              aria-hidden="true"
+            />
+            <span className="workspace-model-label">
+              {uiText("模型连接")}
+              {activeModelName !== null && <strong>{activeModelName}</strong>}
+            </span>
+          </button>
+          {model.connections.some(
+            ({ id }) => id !== model.activeConnectionId,
+          ) && (
+            <ModelConnectionSwitcher
+              key={screen}
+              model={model}
+              busy={modelBusy}
+              onOpen={() => setMenuOpen(false)}
+              onSelect={onSelectModel}
+            />
+          )}
+        </div>
         <button
           id="workspace-menu-toggle"
           type="button"

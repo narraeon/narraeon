@@ -14,6 +14,7 @@ import type { V1Request } from "../../src/protocol/v1.ts";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 import type { ObserveConversation } from "../../src/web/ConversationObserver.ts";
 import { App } from "../../src/web/App.tsx";
+import { handleAndroidBack } from "../../src/web/androidBridge.ts";
 import { CreateWorldScreen } from "../../src/web/CreateWorldScreen.tsx";
 import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
 import type { PlayPresetScreenPreset } from "../../src/web/PlayPresetScreen.tsx";
@@ -498,6 +499,84 @@ test("较晚的内容读取不能覆盖更新的浏览器地址", async () => {
     screen.queryByRole("heading", { name: "当前创作 · AI 设定完善" }),
   ).toBeNull();
 });
+
+test.each(["receipt", "lost receipt", "rejection"])(
+  "页头快速切换保留当前页面和输入，并按服务端实际结果更新（%s）",
+  async (outcome) => {
+    window.history.replaceState(null, "", "#/preview");
+    const { client, request } = fixture();
+    const original = request.getMockImplementation()!;
+    const initial = (await original({ type: "workspace.read" })) as {
+      model: ModelConnectionLibraryView;
+    };
+    const first = initial.model.connections[0]!;
+    let model = {
+      ...initial.model,
+      connections: [first, { ...first, id: "other", name: "同模型备用" }],
+    };
+    const select = Promise.withResolvers<void>();
+    let reject = outcome === "rejection";
+    request.mockImplementation(async (input) => {
+      if (input.type === "workspace.read") return { ...initial, model };
+      if (input.type === "model.select") {
+        await select.promise;
+        if (reject) throw new Error("切换失败");
+        model = { ...model, activeConnectionId: input.connectionId };
+        if (outcome === "lost receipt") throw new Error("回执丢失");
+        return model;
+      }
+      return original(input);
+    });
+    render(createElement(App, { client }));
+    const draft = await screen.findByRole("textbox", { name: "预览玩家输入" });
+    fireEvent.change(draft, { target: { value: "保留这段输入" } });
+    const toggle = screen.getByRole("button", { name: "快速切换模型连接" });
+    const edit = screen.getByRole("button", { name: "模型连接" });
+    fireEvent.click(toggle);
+    const selected = screen.getByRole("menuitemradio", { checked: true });
+    expect(selected.textContent).toContain(first.name);
+    expect(selected.textContent).toContain(first.modelId);
+    expect(document.activeElement).toBe(selected);
+    fireEvent.keyDown(selected, { key: "ArrowDown" });
+    const other = screen.getByRole("menuitemradio", { checked: false });
+    expect(document.activeElement).toBe(other);
+    fireEvent.keyDown(other, { key: "Escape" });
+    expect(document.activeElement).toBe(toggle);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(toggle);
+    fireEvent.pointerDown(draft);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(toggle);
+    act(() => {
+      expect(handleAndroidBack()).toBe(true);
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(toggle);
+    const option = screen.getByRole("menuitemradio", { checked: false });
+    fireEvent.click(option);
+    fireEvent.click(option);
+    expect(edit.textContent).toContain(first.name);
+    await act(async () => {
+      select.resolve();
+      await select.promise;
+    });
+    expect(
+      request.mock.calls.filter(([r]) => r.type === "model.select"),
+    ).toHaveLength(1);
+    if (reject) {
+      expect(screen.getByRole("alert").textContent).toContain("切换失败");
+      expect(edit.textContent).toContain(first.name);
+      reject = false;
+      fireEvent.click(screen.getByRole("menuitemradio", { checked: false }));
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    expect(edit.textContent).toContain("同模型备用");
+    expect(draft).toHaveProperty("value", "保留这段输入");
+    expect(window.location.hash).toBe("#/preview");
+    expect(screen.queryByRole("menu")).toBeNull();
+  },
+);
 
 test.each(["model", "preset"])(
   "模型切换与预设删除提示可以各自关闭（先关闭 %s）",

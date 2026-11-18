@@ -73,12 +73,14 @@ export function ModelConnectionScreen({
   onLibraryChange,
   onNotice,
   onDirtyChange,
+  pendingState,
 }: {
   client: RuntimeClient;
   library: ModelConnectionLibraryView;
   onLibraryChange: (library: ModelConnectionLibraryView) => void;
   onNotice: (notice: string) => void;
   onDirtyChange: (dirty: boolean) => void;
+  pendingState?: [string | null, (next: string | null) => void];
 }): React.JSX.Element {
   const initiallyActive = library.connections.find(
     ({ id }) => id === library.activeConnectionId,
@@ -89,7 +91,8 @@ export function ModelConnectionScreen({
       : formFor(initiallyActive),
   );
   const [models, setModels] = useState<string[]>([]);
-  const [pending, setPending] = useState<string | null>(null);
+  const localPending = useState<string | null>(null);
+  const [pending, setPending] = pendingState ?? localPending;
   const [dirty, setDirty] = useState(false);
   const editing = useRef({ dirty, form, onLibraryChange });
   useEffect(() => {

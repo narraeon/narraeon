@@ -140,6 +140,7 @@ const englishMessages: Record<string, string> = {
   创建世界的内容包: "Content package for the new world",
   "内容包需要修复后才能创建世界。":
     "Repair this content package before creating a world.",
+  快速切换模型连接: "Quick switch model connection",
   配置模型连接: "Configure model connection",
   "正在创建世界…": "Creating world\u2026",
   "新世界独立保存，之后的游玩不会修改源内容包。":
