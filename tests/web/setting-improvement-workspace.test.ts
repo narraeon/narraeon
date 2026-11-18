@@ -155,7 +155,7 @@ test.each(["content-package", "world-revision"] as const)(
     const onResume = vi.fn(() => Promise.resolve());
     renderPanel(undefined, { target, continuable: true, onResume });
     expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "继续发送" }));
+    fireEvent.click(screen.getByRole("button", { name: "续写" }));
     await waitFor(() =>
       expect(onResume).toHaveBeenCalledWith("continue_partial"),
     );
@@ -167,11 +167,43 @@ test.each(["content-package", "world-revision"] as const)(
       unsaved: true,
     });
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "继续发送" })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>("button", { name: "续写" }).disabled,
     ).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "继续发送" }));
+    fireEvent.click(screen.getByRole("button", { name: "续写" }));
     expect(onResume).toHaveBeenCalledTimes(1);
+  },
+);
+
+test.each([
+  [
+    "content-package",
+    "files_changed",
+    "相关文件已经改变，无法从上次保存的位置恢复。",
+  ],
+  ["world-revision", "revision_closed", "这次世界修订已应用或放弃。"],
+] as const)(
+  "%s opens a new composer when its context has expired",
+  (target, reason, explanation) => {
+    const onSend = vi.fn(() => Promise.resolve());
+    const onResume = vi.fn(() => Promise.resolve());
+    const onFreshContext = vi.fn();
+    renderPanel(undefined, {
+      target,
+      freshContextReason: reason,
+      onFreshContext,
+      onSend,
+      onResume,
+    });
+    expect(screen.getByText(explanation)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "续写" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "用新上下文" }));
+    const input = screen.getByLabelText<HTMLTextAreaElement>("继续这段对话");
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("");
+    expect(onFreshContext).toHaveBeenCalledOnce();
+    expect(onResume).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   },
 );
 
@@ -179,9 +211,11 @@ test.each(["content-package", "world-revision"] as const)(
   "%s 损坏历史不可选择并说明原因",
   (target) => {
     const onSelectSession = vi.fn(() => Promise.resolve());
+    const onFreshContext = vi.fn();
     renderPanel(undefined, {
       target,
       onSelectSession,
+      onFreshContext,
       history: [
         {
           sessionId: "setting-test",
@@ -210,6 +244,8 @@ test.each(["content-package", "world-revision"] as const)(
     expect(button.textContent).not.toContain("当前所选");
     fireEvent.click(button);
     expect(onSelectSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "用新上下文" }));
+    expect(onFreshContext).toHaveBeenCalledOnce();
   },
 );
 
@@ -331,6 +367,8 @@ function renderPanel(
     history?: V1SettingImprovementHistoryItem[];
     onSelectSession?: (sessionId: string) => Promise<void>;
     retryable?: boolean;
+    freshContextReason?: "files_changed" | "revision_closed";
+    onFreshContext?: () => void;
     continuable?: boolean;
     unsaved?: boolean;
     onResume?: (recovery?: "continue_partial") => Promise<void>;
@@ -358,6 +396,9 @@ function renderPanel(
         sessionId: "setting-test",
         runStatus:
           options.retryable || options.continuable ? "interrupted" : "ready",
+        ...(options.freshContextReason && {
+          freshContextReason: options.freshContextReason,
+        }),
         canRetry: options.retryable ?? false,
         canContinuePartial: options.continuable ?? false,
         messages: [],
@@ -456,7 +497,7 @@ function renderPanel(
         : { onEditMessage: options.onEditMessage }),
       onCancel: () => Promise.resolve(),
       onResume: options.onResume ?? (() => Promise.resolve()),
-      onFreshContext: () => undefined,
+      onFreshContext: options.onFreshContext ?? (() => undefined),
       onSelectSession: options.onSelectSession ?? (() => Promise.resolve()),
       onDeleteSession,
       onRollbackFile:

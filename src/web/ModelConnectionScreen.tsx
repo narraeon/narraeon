@@ -648,7 +648,7 @@ export function ModelConnectionScreen({
               ) : null}
               <>
                 <label htmlFor="model-assistant-prefill">
-                  {uiText("中断回复的继续发送")}
+                  {uiText("中断回复的续写方式")}
                 </label>
                 <select
                   id="model-assistant-prefill"
@@ -660,7 +660,7 @@ export function ModelConnectionScreen({
                     })
                   }
                 >
-                  <option value="disabled">{uiText("关闭")}</option>
+                  <option value="disabled">{uiText("通用续写指令")}</option>
                   <option value="assistant">
                     {uiText("普通 assistant 预填充")}
                   </option>
@@ -685,7 +685,7 @@ export function ModelConnectionScreen({
                 </select>
                 <p className="field-note">
                   {uiText(
-                    "仅在服务和模型明确支持时开启。中断回复的已收正文会原样作为末尾 assistant 消息继续；推理或工具调用中断仍需重新发送。",
+                    "默认随原请求发送已收到的正文，并要求模型只返回后文。服务和模型支持原生预填充时，可以选择对应的格式。",
                   )}
                 </p>
                 {form.assistantPrefillMode === "assistant" && (
@@ -712,7 +712,7 @@ export function ModelConnectionScreen({
                     {uiText(
                       form.provider === "openai_responses"
                         ? "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。"
-                        : "Kimi / 千问的模型与思考模式须支持 partial；没有可续写正文或包含推理片段时不可继续。",
+                        : "Kimi / 千问的模型与思考模式须支持 partial。",
                     )}
                   </p>
                 )}

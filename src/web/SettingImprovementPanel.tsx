@@ -4,6 +4,7 @@ import {
 } from "./AuthoringTarget.ts";
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { createClientId } from "./ClientId.ts";
+import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
 import {
@@ -140,7 +141,8 @@ export function SettingImprovementPanel({
   revisionActions,
 }: SettingImprovementPanelProps): React.JSX.Element {
   const [message, setMessage] = useState("");
-  const { ref: messageTextareaRef } = useAutosizeTextarea(message);
+  const { ref: attachMessageTextarea, textareaRef: messageTextareaRef } =
+    useAutosizeTextarea(message);
   const [editing, setEditing] = useState<{
     sessionId: string;
     messageId: string;
@@ -203,6 +205,7 @@ export function SettingImprovementPanel({
   const startingFresh = view === null;
   const continuingHistory =
     view !== null &&
+    view.freshContextReason === undefined &&
     latestSessionId !== null &&
     view.sessionId !== latestSessionId;
   const disabled =
@@ -228,6 +231,13 @@ export function SettingImprovementPanel({
   ) {
     setUnconfirmedDraft(null);
     if (message === unconfirmedDraft.text) setMessage("");
+  }
+  function openFreshComposer(): void {
+    if (unconfirmedDraft?.text === message) setMessage("");
+    setUnconfirmedDraft(null);
+    setLeftRailOpen(false);
+    onFreshContext();
+    messageTextareaRef.current?.focus();
   }
   const sendText = useCallback(
     async (text: string): Promise<void> => {
@@ -310,9 +320,12 @@ export function SettingImprovementPanel({
     void sendText(initialMessage);
   }, [initialMessage, disabled, onInitialMessageStarted, sendText]);
 
-  const composer = useConversationComposer(
-    !disabled && message.trim().length > 0,
-    () => sendText(message),
+  const canSendMessage =
+    !disabled &&
+    view?.freshContextReason === undefined &&
+    message.trim().length > 0;
+  const composer = useConversationComposer(canSendMessage, () =>
+    sendText(message),
   );
 
   const openFileRail = (mode: FileRailMode): void => {
@@ -775,42 +788,52 @@ export function SettingImprovementPanel({
               {view?.legacyDraft !== null && view?.legacyDraft !== undefined ? (
                 <LegacyDraftHistory legacy={view.legacyDraft} />
               ) : null}
-              {view?.lastFailure !== null && view?.lastFailure !== undefined ? (
+              {view &&
+              (view.lastFailure ||
+                view.freshContextReason ||
+                view.canContinuePartial) ? (
                 <div
                   className={
-                    view.canRetry
-                      ? "setting-conversation-paused"
-                      : "setting-conversation-failure"
+                    view.freshContextReason || !view.canRetry
+                      ? "setting-conversation-failure"
+                      : "setting-conversation-paused"
                   }
-                  role={view.canRetry ? "status" : "alert"}
+                  role={
+                    view.freshContextReason || !view.canRetry
+                      ? "alert"
+                      : "status"
+                  }
                 >
-                  <strong>{uiText("上一次操作未完成")}</strong>
-                  <details>
-                    <summary>{uiText("查看详情")}</summary>
-                    <p>{view.lastFailure}</p>
-                  </details>
-                  <p>{uiText("完整对话和已经结算的当前树改动都已保留。")}</p>
-                  {view.canRetry && !running ? (
-                    <button
-                      type="button"
+                  {view.lastFailure && (
+                    <>
+                      <strong>{uiText("上一次操作未完成")}</strong>
+                      <details>
+                        <summary>{uiText("查看详情")}</summary>
+                        <p>{view.lastFailure}</p>
+                      </details>
+                      <p>
+                        {uiText("完整对话和已经结算的当前树改动都已保留。")}
+                      </p>
+                    </>
+                  )}
+                  {!running && (
+                    <ModelRecoveryActions
                       disabled={disabled}
-                      onClick={() => void resume()}
-                    >
-                      {uiText("重新发送")}
-                    </button>
-                  ) : null}
+                      freshContextReason={view.freshContextReason}
+                      onFreshContext={openFreshComposer}
+                      onContinue={
+                        view.canContinuePartial
+                          ? () => void resume("continue_partial")
+                          : undefined
+                      }
+                      onResend={view.canRetry ? () => void resume() : undefined}
+                    />
+                  )}
                 </div>
               ) : null}
-              {view?.canContinuePartial && !running ? (
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => void resume("continue_partial")}
-                >
-                  {uiText("继续发送")}
-                </button>
-              ) : null}
-              {view?.runStatus === "paused" && !running ? (
+              {view?.runStatus === "paused" &&
+              !view.freshContextReason &&
+              !running ? (
                 <div className="setting-conversation-paused" role="status">
                   <strong>
                     {uiText("已暂停：模型调用次数达到单条消息上限")}
@@ -849,7 +872,7 @@ export function SettingImprovementPanel({
           </label>
           <div className="setting-conversation-composer-row">
             <textarea
-              ref={messageTextareaRef}
+              ref={attachMessageTextarea}
               id="setting-conversation-input"
               rows={2}
               value={message}
@@ -874,7 +897,7 @@ export function SettingImprovementPanel({
             ) : (
               <button
                 type="button"
-                disabled={disabled || message.trim().length === 0}
+                disabled={!canSendMessage}
                 onClick={() => void composer.submit()}
               >
                 {uiText("发送")}
@@ -953,6 +976,7 @@ export function SettingImprovementPanel({
                 setLeftRailOpen(false);
               }}
               onDeleteSession={deleteSession}
+              onFreshContext={openFreshComposer}
             />
           </div>
         </aside>
@@ -1042,6 +1066,7 @@ function SettingConversationHistory({
   latestSessionId,
   selectedSessionId,
   loading,
+  onFreshContext,
   deletingSessionId,
   onSelectSession,
   onDeleteSession,
@@ -1051,6 +1076,7 @@ function SettingConversationHistory({
   latestSessionId: string | null;
   selectedSessionId: string | null;
   loading: boolean;
+  onFreshContext: () => void;
   deletingSessionId: string | null;
   onSelectSession: (sessionId: string) => Promise<void>;
   onDeleteSession: (item: V1SettingImprovementHistoryItem) => Promise<void>;
@@ -1149,6 +1175,16 @@ function SettingConversationHistory({
                 >
                   {deleting ? "…" : uiText("删除")}
                 </button>
+                {item.unavailableReason && (
+                  <button
+                    type="button"
+                    className="setting-history-fresh"
+                    disabled={loading || deleting}
+                    onClick={onFreshContext}
+                  >
+                    {uiText("用新上下文")}
+                  </button>
+                )}
               </li>
             );
           })}

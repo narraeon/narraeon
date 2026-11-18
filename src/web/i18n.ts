@@ -2663,24 +2663,36 @@ Object.assign(englishMessages, {
   "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。":
     "You can resend the saved request without submitting the player text again; it uses the original frozen settings.",
   重新发送: "Resend request",
-  继续发送: "Continue response",
-  中断回复的继续发送: "Continue interrupted responses",
+  "正在续写上次未完成的回复…": "Continuing the interrupted response…",
+  通用续写指令: "Continuation instruction",
+  续写: "Continue response",
+  用新上下文: "Use new context",
+  "可以从已保存的部分回复接着生成。": "Continue from the saved partial reply.",
+  "缺少这次请求的历史记录，无法还原原请求。":
+    "The saved request is missing and cannot be restored.",
+  "原上下文的模型续传记录缺失或已损坏。":
+    "The model continuation record is missing or damaged.",
+  "相关文件已经改变，无法从上次保存的位置恢复。":
+    "The affected files have changed since the last saved step.",
+  "这次世界修订已应用或放弃。":
+    "This world revision has been applied or discarded.",
+  中断回复的续写方式: "Interrupted response continuation",
   "普通 assistant 预填充": "Plain assistant prefill",
   "prefix: true（DeepSeek）": "prefix: true (DeepSeek)",
   "prefix: true（Mistral，响应包含前缀）":
     "prefix: true (Mistral, response includes prefix)",
   "partial: true（Kimi / 千问）": "partial: true (Kimi / Qwen)",
   "partial: true（火山方舟）": "partial: true (Volcano Engine Ark)",
-  "仅在服务和模型明确支持时开启。中断回复的已收正文会原样作为末尾 assistant 消息继续；推理或工具调用中断仍需重新发送。":
-    "Enable only when the service and model support it. Received response text is sent unchanged as the final assistant message; interruptions in reasoning or tool calls still require resending.",
+  "默认随原请求发送已收到的正文，并要求模型只返回后文。服务和模型支持原生预填充时，可以选择对应的格式。":
+    "By default, the original request includes the saved response text and asks the model for the remaining text. Choose a native prefill format if the service and model support it.",
   "普通预填充依赖具体端点；标准 OpenAI 不支持，OpenRouter 等兼容端点须确认模型支持。Anthropic 仅限受支持的旧模型，并须关闭 Thinking；Claude 4.6 及后续模型不支持。":
     "Plain prefill depends on the endpoint. Standard OpenAI does not support it; compatible endpoints such as OpenRouter require a supported model. Anthropic requires a supported older model with Thinking disabled; Claude 4.6 and later do not support it.",
   "DeepSeek 前缀补全须使用支持此能力的 /beta 端点；响应按新增正文拼接。":
     "DeepSeek prefix completion requires a /beta endpoint that supports it. The returned text is appended to the prefix.",
   "Mistral 返回包含已发前缀的完整正文，不重复拼接。":
     "Mistral returns the full text including the sent prefix, which is not appended twice.",
-  "Kimi / 千问的模型与思考模式须支持 partial；没有可续写正文或包含推理片段时不可继续。":
-    "The Kimi / Qwen model and thinking mode must support partial. Continuation is unavailable without response text or when reasoning fragments are present.",
+  "Kimi / 千问的模型与思考模式须支持 partial。":
+    "The Kimi / Qwen model and thinking mode must support partial.",
   "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。":
     "Volcano Engine Ark Responses requires a model that supports partial. Standard OpenAI Responses does not support it.",
   调整最大输出: "Adjust maximum output",

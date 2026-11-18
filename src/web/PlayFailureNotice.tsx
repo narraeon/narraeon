@@ -1,9 +1,15 @@
+import {
+  ModelRecoveryActions,
+  type ComposerFreshContextReason,
+} from "./ModelRecoveryActions.tsx";
 import type { PlayFailureKind } from "../protocol/playFailure.ts";
 import { uiText } from "./i18n.ts";
 import { failureText, playFailureDescription } from "./PlayFailureText.ts";
 
 export interface PlayFailureRecovery {
   canRetry: boolean;
+  freshContextReason?: ComposerFreshContextReason | undefined;
+  onFreshContext?: () => void;
   canContinuePartial?: boolean;
   onContinuePartial?: () => void;
   playDisabled: boolean;
@@ -30,30 +36,25 @@ export function PlayFailureNotice({
   return (
     <>
       <strong>{uiText(text.title)}</strong>
-      <p>
-        {playFailureDescription(kind, canResend, recovery?.canContinuePartial)}
-      </p>
-      {recovery === undefined ||
-      !(canResend || recovery.canContinuePartial || canConfigure) ? null : (
-        <div className="play-failure-actions">
-          {canResend ? (
-            <button
-              type="button"
-              disabled={recovery.playDisabled}
-              onClick={recovery.onRetry}
-            >
-              {uiText("重新发送")}
-            </button>
-          ) : null}
-          {recovery.canContinuePartial ? (
-            <button
-              type="button"
-              disabled={recovery.playDisabled}
-              onClick={recovery.onContinuePartial}
-            >
-              {uiText("继续发送")}
-            </button>
-          ) : null}
+      {recovery?.freshContextReason === undefined && (
+        <p>
+          {playFailureDescription(
+            kind,
+            canResend,
+            recovery?.canContinuePartial,
+          )}
+        </p>
+      )}
+      {recovery && (
+        <ModelRecoveryActions
+          disabled={recovery.playDisabled}
+          freshContextReason={recovery.freshContextReason}
+          onFreshContext={recovery.onFreshContext}
+          onResend={canResend ? recovery.onRetry : undefined}
+          onContinue={
+            recovery.canContinuePartial ? recovery.onContinuePartial : undefined
+          }
+        >
           {canConfigure ? (
             <button
               type="button"
@@ -65,7 +66,7 @@ export function PlayFailureNotice({
               )}
             </button>
           ) : null}
-        </div>
+        </ModelRecoveryActions>
       )}
       <details>
         <summary>{uiText("技术详情")}</summary>

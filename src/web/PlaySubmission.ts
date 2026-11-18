@@ -16,6 +16,7 @@ type PlayState = Pick<
   | "lastFailureKind"
   | "canRetry"
   | "canContinuePartial"
+  | "freshContextReason"
   | "lastCancelled"
 >;
 
@@ -40,6 +41,9 @@ function observedState(page: V1PlayTimelinePage): PlayState | null {
     ...(page.activeLastFailureKind === undefined
       ? {}
       : { lastFailureKind: page.activeLastFailureKind }),
+    ...(page.activeFreshContextReason === undefined
+      ? {}
+      : { freshContextReason: page.activeFreshContextReason }),
     canRetry: page.activeCanRetry,
     canContinuePartial: page.activeCanContinuePartial ?? false,
     ...(lastItem?.kind === "event" && lastItem.event.kind === "cancellation"

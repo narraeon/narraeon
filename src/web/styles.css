@@ -7998,6 +7998,10 @@ summary:focus-visible {
   border-radius: 3px;
 }
 
+.setting-overlay-rail .setting-history-fresh {
+  grid-column: 1 / -1;
+}
+
 .setting-overlay-rail .setting-history-delete {
   display: grid;
   width: auto;

@@ -336,7 +336,7 @@ for (const locale of ["zh-CN", "en"] as const)
       })
       .click();
     const fresh = page.getByRole("button", {
-      name: english ? "Continue with a fresh context" : "从全新上下文继续",
+      name: english ? "Use new context" : "用新上下文",
       exact: true,
     });
     const limitTitle = page.getByText(
@@ -345,18 +345,25 @@ for (const locale of ["zh-CN", "en"] as const)
     );
     await recoveryExpect(limitTitle).toBeVisible();
     await recoveryExpect(fresh).toHaveCount(0);
-    await recoveryExpect(resend).toHaveCount(0);
+    await recoveryExpect(resend).toBeEnabled();
     const blocked = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
       worldId: created.world.worldId,
     });
     expect(blocked).toMatchObject({
-      canRetry: false,
+      canRetry: true,
       lastFailureKind: "context_limit",
     });
     await reopenWorld();
     await recoveryExpect(limitTitle).toBeVisible();
     await recoveryExpect(fresh).toHaveCount(0);
+    const originalRequest = providerRequests.at(-1);
+    steps.push({ kind: "text", text: "A lantern lights the corridor." });
+    await resend.click();
+    await recoveryExpect(
+      page.getByText("A lantern lights the corridor.", { exact: true }),
+    ).toBeVisible();
+    expect(providerRequests.at(-1)).toBe(originalRequest);
     await input.fill("I continue from the current world.");
     steps.push({ kind: "text", text: "The corridor opens into a garden." });
     await page
