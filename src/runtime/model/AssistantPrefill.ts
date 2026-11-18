@@ -198,22 +198,30 @@ export function assistantPrefillDelta(
   };
 }
 
+/** An explicit resend uses the selected connection while retaining the saved conversation. */
+export function retargetRequestForRetry(
+  original: ModelHostExchange,
+  host: ModelHost,
+): ModelHostExchange {
+  const binding = host.binding();
+  const request = structuredClone(original);
+  delete request.modelConfig;
+  delete request.assistantPrefill;
+  request.maxOutputTokens = binding.maxOutputTokens;
+  request.bootstrap = retargetFrozenCompilation(original.bootstrap, binding);
+  return host.freezeRequest?.(request) ?? request;
+}
+
 export function continuePartialRequest(
   original: ModelHostExchange,
   text: string,
   host: ModelHost,
 ): ModelHostExchange {
-  const binding = host.binding();
-  if (binding.provider !== original.modelConfig?.provider)
+  if (host.binding().provider !== original.modelConfig?.provider)
     throw new Error(
       "The selected connection uses an incompatible continuation protocol.",
     );
-  const request = structuredClone(original);
-  delete request.modelConfig;
-  delete request.assistantPrefill;
-  request.maxOutputTokens = binding.maxOutputTokens;
-  request.bootstrap = retargetFrozenCompilation(request.bootstrap, binding);
-  const current = host.freezeRequest?.(request) ?? request;
+  const current = retargetRequestForRetry(original, host);
   const prefix = prefillFor(current, text);
   if (prefix === null)
     throw new Error(
@@ -361,6 +369,8 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
         "contextWindowTokens",
         "maxOutputTokens",
         "cacheSuffixBreakpoint",
+        "responsesTurnInstructions",
+        "responsesCacheControl",
         "supportsAllowedTools",
         "assistantPrefillMode",
       ].includes(key),
@@ -396,6 +406,14 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
     Number(c.contextWindowTokens) > 0 &&
     Number.isSafeInteger(c.maxOutputTokens) &&
     Number(c.maxOutputTokens) > 0 &&
+    (c.responsesTurnInstructions === undefined ||
+      (c.provider === "openai_responses" &&
+        typeof c.responsesTurnInstructions === "boolean")) &&
+    (c.responsesCacheControl === undefined ||
+      (c.provider === "openai_responses" &&
+        c.dialect === "cliproxyapi" &&
+        typeof c.responsesTurnInstructions === "boolean" &&
+        typeof c.responsesCacheControl === "boolean")) &&
     (c.cacheSuffixBreakpoint === undefined ||
       typeof c.cacheSuffixBreakpoint === "boolean") &&
     (c.supportsAllowedTools === undefined ||

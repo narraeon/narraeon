@@ -1,3 +1,4 @@
+import { retargetRequestForRetry } from "../../src/runtime/model/AssistantPrefill.ts";
 import { playerInputText } from "../../src/shared/turn-guide.ts";
 import { projectRequestContext } from "../../src/runtime/play/PlayRequestContext.ts";
 import { expect, test, vi } from "vitest";
@@ -24,6 +25,7 @@ import {
 import {
   createMinimalFileNativePreviewInput,
   FileNativePromptCompiler,
+  renderPromptDeltaMessage,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 
 const binding: ModelHostBinding = {
@@ -1969,7 +1971,14 @@ test.each([
       method: "POST",
       body: expected,
     });
-    if (dialect === "cliproxyapi" && provider !== "anthropic_messages") {
+    if (dialect === "cliproxyapi" && provider === "openai_responses") {
+      expect(preview.body).toHaveProperty(
+        "prompt_cache_key",
+        expect.any(String),
+      );
+      expect(JSON.stringify(preview.body)).not.toContain("cache_control");
+    }
+    if (dialect === "cliproxyapi" && provider === "chat_completions") {
       const body = preview.body as {
         messages?: unknown[];
         input?: unknown[];
@@ -2702,6 +2711,9 @@ test.each([
       dialect: "cliproxyapi",
       baseUrl: "https://provider.invalid/v1",
       apiKey: "must-not-appear",
+      ...(provider === "openai_responses"
+        ? { responsesCacheControl: true }
+        : {}),
       modelId: "cliproxy-tail",
       reasoningEffort: "provider_default",
       reasoningSummary: "provider_default",
@@ -2899,3 +2911,268 @@ test.each([
     expect(JSON.stringify(legacyWire.body)).not.toContain("<本轮玩家输入>");
   },
 );
+
+test.each(["standard", "cliproxyapi"] as const)(
+  "%s Responses projects a request-local guide without changing conversation history",
+  async (dialect) => {
+    const connection = {
+      provider: "openai_responses" as const,
+      dialect,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "aliased-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    };
+    const fixed = "本轮固定指导\n使用第二人称。";
+    const player = "玩家本轮要求：不要跳过开门。";
+    const guide = (fixed: string, player: string) => ({
+      ...turnGuideSuffix,
+      text: [fixed, player].filter(Boolean).join("\n"),
+      responsesInstructions: { fixed, player },
+    });
+    const output = [
+      { type: "reasoning", id: "r", encrypted_content: "opaque" },
+      { type: "function_call", call_id: "load", name: "read", arguments: "{}" },
+    ];
+    for (const active of [false, true]) {
+      let sent: unknown;
+      const host = new FileNativeModelHost(
+        { ...connection, responsesTurnInstructions: active },
+        (_url, init) => {
+          if (typeof init?.body !== "string")
+            throw new Error("Expected a JSON request body");
+          sent = JSON.parse(init.body) as unknown;
+          return Promise.resolve(
+            Response.json({
+              id: "r",
+              status: "completed",
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "ok" }],
+                },
+              ],
+            }),
+          );
+        },
+      );
+      const request = exchangeFor(
+        connection.provider,
+        connection.modelId,
+        host.binding().cacheStrategy,
+      );
+      request.operationId = "play";
+      request.appended.push(
+        {
+          kind: "assistant",
+          text: "",
+          toolCalls: [],
+          providerState: { protocol: "openai_responses", output },
+        },
+        { kind: "tool", toolCallId: "load", markdown: "material" },
+      );
+      const prefix = (host.previewRequest(request).body as { input: unknown[] })
+        .input;
+      expect(prefix[0]).toMatchObject({ role: "developer" });
+      expect(prefix.slice(-3)).toEqual([
+        ...output,
+        { type: "function_call_output", call_id: "load", output: "material" },
+      ]);
+      for (const [rule, note] of [
+        [fixed, player],
+        [fixed, "玩家本轮要求：换一条。"],
+        [fixed, ""],
+        ["", player],
+        ["", ""],
+      ] as const) {
+        const current = guide(rule, note);
+        const frozen = host.freezeRequest({
+          ...request,
+          appended: [...request.appended, ...(current.text ? [current] : [])],
+        });
+        const wire = host.previewRequest(frozen).body as {
+          input: unknown[];
+          instructions?: string;
+        };
+        expect(wire.instructions).toBe(
+          (active ? current.text : rule) || undefined,
+        );
+        expect(wire.input).toEqual(
+          !active && note
+            ? [...prefix, { role: "user", content: note }]
+            : prefix,
+        );
+        expect(JSON.stringify(wire)).not.toContain("cache_control");
+        await host.exchange(frozen);
+        expect(sent).toEqual(wire);
+      }
+      const corrected = host.previewRequest({
+        ...request,
+        appended: [
+          ...request.appended,
+          guide(fixed, player),
+          {
+            kind: "runtime_notice",
+            notice: "response_correction",
+            text: "Please correct the malformed response.",
+          },
+        ],
+      }).body as { input: unknown[]; instructions: string };
+      expect(corrected.instructions).toBe(
+        active ? guide(fixed, player).text : fixed,
+      );
+      expect(corrected.input.at(-1)).toEqual({
+        role: "user",
+        content: "Please correct the malformed response.",
+      });
+    }
+  },
+);
+
+test("Responses scopes a followup task to its dispatch and keeps world revision boundaries in sequence", () => {
+  const connection = {
+    provider: "openai_responses" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "alias",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  };
+  const epoch = {
+    role: "runtime_system" as const,
+    markdown: "Older revision boundary",
+    blocks: [
+      {
+        source: "runtime:world-revision-epoch:old",
+        markdown: "Older revision boundary",
+      },
+    ],
+  };
+  const task = {
+    role: "author_instruction" as const,
+    markdown: "Summarize this chapter.",
+    blocks: [
+      { source: "followup:summary", markdown: "Summarize this chapter." },
+    ],
+  };
+  for (const active of [false, true]) {
+    const host = new FileNativeModelHost({
+      ...connection,
+      responsesTurnInstructions: active,
+    });
+    const request = exchangeFor(
+      connection.provider,
+      connection.modelId,
+      host.binding().cacheStrategy,
+    );
+    request.appended = [
+      { kind: "prompt_delta", logicalMessages: [epoch] },
+      { kind: "user", text: "New edit" },
+    ];
+    const revision = host.previewAuthoringRequest(request).body as {
+      input: unknown[];
+    };
+    expect(revision).not.toHaveProperty("instructions");
+    expect(revision.input.slice(-2)).toEqual([
+      { role: "developer", content: epoch.markdown },
+      { role: "user", content: "New edit" },
+    ]);
+    const followup = host.previewRequest({
+      ...request,
+      appended: [
+        ...request.appended,
+        { kind: "prompt_delta", requestScoped: true, logicalMessages: [task] },
+      ],
+    }).body as { instructions?: string; input: unknown[] };
+    if (active) {
+      expect(followup.input).toEqual(revision.input);
+      expect(followup.instructions).toContain(task.markdown);
+    } else {
+      expect(followup).not.toHaveProperty("instructions");
+      expect(followup.input).toEqual([
+        ...revision.input,
+        {
+          role: "developer",
+          content: renderPromptDeltaMessage(task.role, task.markdown),
+        },
+      ]);
+    }
+  }
+});
+
+test("Responses replays the historical CLIProxyAPI encoder and records independent capabilities on new requests", () => {
+  const connection = {
+    provider: "openai_responses" as const,
+    dialect: "cliproxyapi" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "alias",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 2_048,
+  };
+  const host = new FileNativeModelHost(connection);
+  const enabled = new FileNativeModelHost({
+    ...connection,
+    responsesTurnInstructions: true,
+    responsesCacheControl: true,
+  });
+  expect(host.binding().cacheStrategy).toBe("provider_managed");
+  expect(enabled.binding().cacheStrategy).toBe("explicit_cliproxyapi_message");
+  const initial = transcriptWithTurnGuide(
+    connection.provider,
+    connection.modelId,
+    enabled.binding().cacheStrategy,
+  );
+  const frozen = enabled.freezeRequest(initial);
+  expect(frozen.modelConfig).toMatchObject({
+    responsesTurnInstructions: true,
+    responsesCacheControl: true,
+  });
+  expect(host.previewRequest(frozen)).toEqual(enabled.previewRequest(frozen));
+  const historical = structuredClone(frozen);
+  delete historical.modelConfig!.responsesTurnInstructions;
+  delete historical.modelConfig!.responsesCacheControl;
+  const prior = host.previewRequest(historical).body as { input: unknown[] };
+  expect(prior).not.toHaveProperty("instructions");
+  expect(prior.input[0]).toMatchObject({
+    role: "system",
+    cache_control: { type: "ephemeral" },
+  });
+  expect(prior.input.slice(-2)).toEqual([
+    { role: "user", content: "Second", cache_control: { type: "ephemeral" } },
+    { role: "user", content: turnGuideSuffix.text },
+  ]);
+  const resent = retargetRequestForRetry(historical, host);
+  const repaired = host.previewRequest(resent).body as { input: unknown[] };
+  expect(repaired.input[0]).toMatchObject({ role: "developer" });
+  expect(repaired.input.at(-1)).toEqual({
+    role: "user",
+    content: turnGuideSuffix.text,
+  });
+  expect(repaired).not.toHaveProperty("instructions");
+  expect(JSON.stringify(repaired)).not.toContain("cache_control");
+  const oldGuideOnModern = enabled.previewRequest(
+    retargetRequestForRetry(historical, enabled),
+  ).body as { input: unknown[] };
+  expect(oldGuideOnModern).not.toHaveProperty("instructions");
+  expect(oldGuideOnModern.input.at(-1)).toEqual({
+    role: "user",
+    content: turnGuideSuffix.text,
+  });
+  const next = retargetRequestForRetry(frozen, host);
+  expect(next.modelConfig).toMatchObject({
+    responsesTurnInstructions: false,
+    responsesCacheControl: false,
+  });
+  expect(JSON.stringify(host.previewRequest(next).body)).not.toContain(
+    "cache_control",
+  );
+  expect(host.binding().protocolConfigFingerprint).not.toEqual(
+    new FileNativeModelHost({
+      ...connection,
+      responsesTurnInstructions: true,
+    }).binding().protocolConfigFingerprint,
+  );
+});

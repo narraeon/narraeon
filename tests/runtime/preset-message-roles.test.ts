@@ -97,6 +97,9 @@ function wire(
   const host = new FileNativeModelHost({
     provider,
     dialect,
+    ...(provider === "openai_responses" && dialect === "cliproxyapi"
+      ? { responsesCacheControl: true }
+      : {}),
     modelId: "test",
     baseUrl: "https://provider.invalid/v1",
     apiKey: "test",
@@ -171,8 +174,12 @@ test.each([
       role("user"),
       role("user"),
     ];
-    if (provider !== "anthropic_messages")
-      expected.unshift(role("system"), role("system"));
+    if (provider !== "anthropic_messages") {
+      const rules = role(
+        provider === "openai_responses" ? "developer" : "system",
+      );
+      expected.unshift(rules, rules);
+    }
     const preload: unknown[] =
       provider === "openai_responses"
         ? [

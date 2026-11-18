@@ -1,5 +1,6 @@
 import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
+  equalModelHostBinding,
   modelHostInputText,
   worldRevisionSystemBoundaryText,
   worldRevisionTransitionText,
@@ -18,6 +19,8 @@ import { dirname } from "node:path";
 import {
   hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
+  responsesConnectionCapabilities,
+  type ResponsesConnectionCapabilities,
   type ModelProviderDialect,
   type ModelReasoningEffort,
   type ModelReasoningSummary,
@@ -80,7 +83,7 @@ import {
   type AiFailureRecorder,
 } from "./AiFailureLog.ts";
 
-export interface FileNativeModelConnection {
+export interface FileNativeModelConnection extends ResponsesConnectionCapabilities {
   provider: FileNativePromptInput["modelBinding"]["provider"];
   dialect?: ModelProviderDialect;
   baseUrl: string;
@@ -128,10 +131,22 @@ const explicitCacheBreakpointLimit = 4;
 const providerContinuationCodecVersion = 1;
 
 function resolveConnection(
-  connection: Omit<FileNativeModelConnection, "modelPrompt">,
+  {
+    responsesTurnInstructions,
+    responsesCacheControl,
+    ...connection
+  }: Omit<FileNativeModelConnection, "modelPrompt">,
+  legacyResponses = false,
 ): ResolvedFileNativeModelConnection {
   const resolved = structuredClone({
     ...connection,
+    ...(legacyResponses
+      ? {}
+      : responsesConnectionCapabilities(
+          connection.provider,
+          connection.dialect ?? "standard",
+          { responsesTurnInstructions, responsesCacheControl },
+        )),
     dialect: connection.dialect ?? "standard",
     reasoningEffort: connection.reasoningEffort ?? "provider_default",
     reasoningSummary: connection.reasoningSummary ?? "provider_default",
@@ -162,7 +177,10 @@ function modelCacheStrategy(
     return "explicit_anthropic_blocks";
   if (
     connection.dialect === "cliproxyapi" &&
-    connection.provider !== "google_interactions"
+    (connection.provider === "chat_completions" ||
+      (connection.provider === "openai_responses" &&
+        (connection.responsesTurnInstructions === undefined ||
+          connection.responsesCacheControl === true)))
   )
     return "explicit_cliproxyapi_message";
   return "provider_managed";
@@ -178,9 +196,10 @@ export class FileNativeModelHost implements ModelHost {
     { modelPrompt, ...connection }: FileNativeModelConnection,
     fetchImplementation: typeof fetch = fetch,
     failureLog?: AiFailureRecorder,
+    legacyResponses = false,
   ) {
     this.#modelPrompt = structuredClone(modelPrompt);
-    this.#connection = resolveConnection(connection);
+    this.#connection = resolveConnection(connection, legacyResponses);
     this.#fetch = fetchImplementation;
     this.#failureLog = failureLog;
   }
@@ -225,12 +244,31 @@ export class FileNativeModelHost implements ModelHost {
             reasoningSummary: this.#connection.reasoningSummary,
             thinkingMode: this.#connection.thinkingMode,
             thinkingBudgetTokens: this.#connection.thinkingBudgetTokens,
+            ...(this.#connection.responsesTurnInstructions === undefined
+              ? {}
+              : {
+                  responsesTurnInstructions:
+                    this.#connection.responsesTurnInstructions,
+                }),
             cachePolicy: modelCacheStrategy(this.#connection),
             providerContinuationCodecVersion,
           }),
         )
         .digest("hex"),
     };
+  }
+
+  /** Existing operations can refer to a binding fingerprint frozen before Responses capabilities existed. */
+  matchesBinding(binding: ModelHostBinding): boolean {
+    if (equalModelHostBinding(this.binding(), binding)) return true;
+    if (this.#connection.provider !== "openai_responses") return false;
+    const legacy = new FileNativeModelHost(
+      this.#connection,
+      this.#fetch,
+      this.#failureLog,
+      true,
+    );
+    return equalModelHostBinding(legacy.binding(), binding);
   }
 
   freezeRequest(request: ModelHostExchange): ModelHostExchange {
@@ -268,6 +306,8 @@ export class FileNativeModelHost implements ModelHost {
       },
       this.#fetch,
       this.#failureLog,
+      request.modelConfig.provider === "openai_responses" &&
+        request.modelConfig.responsesTurnInstructions === undefined,
     );
   }
 
@@ -1562,7 +1602,8 @@ function anthropicRequestBody(
 }
 
 interface ResponsesRequestBodyInput {
-  connection: FileNativeModelConnection;
+  connection: ResolvedFileNativeModelConnection;
+  instructions?: string;
   input: unknown[];
   tools: { name: string; description: string; parameters: object }[];
   allowedTools?: string[];
@@ -1576,11 +1617,13 @@ function responsesRequestInput(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): ResponsesRequestBodyInput {
+  const { instructions, items } = responsesAppend(connection, request);
   return {
+    ...(instructions.length === 0 ? {} : { instructions }),
     connection,
     input: [
       ...responsesBootstrapMessages(connection, request),
-      ...responsesAppend(connection, request),
+      ...items,
       ...prefillMessage(request),
     ],
     tools: providerToolDefinitions(request).map((tool) => ({
@@ -1617,7 +1660,10 @@ function responsesRequestBody(
         : "auto";
   return checkedCacheBreakpoints({
     model: input.connection.modelId,
-    ...responsesReasoningRequest(resolveConnection(input.connection)),
+    ...responsesReasoningRequest(input.connection),
+    ...(input.instructions === undefined
+      ? {}
+      : { instructions: input.instructions }),
     input: input.input,
     ...(input.tools.length === 0
       ? input.hasFrozenToolPolicy === true && allowedTools.length === 0
@@ -1746,9 +1792,15 @@ function responsesBootstrapMessages(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): unknown[] {
+  const explicitCache =
+    modelCacheStrategy(connection) === "explicit_cliproxyapi_message";
   const messages: unknown[] = request.bootstrap.provider.messages.map(
     (message) =>
-      responsesBootstrapMessage(message, connection.dialect === "cliproxyapi"),
+      responsesBootstrapMessage(
+        message,
+        explicitCache,
+        connection.responsesTurnInstructions !== undefined,
+      ),
   );
   const prefixEnd = bootstrapPrefixEnd(request);
   // Legacy material arrays already mark their stable blocks, and may also contain
@@ -1757,9 +1809,7 @@ function responsesBootstrapMessages(
     .slice(0, prefixEnd)
     .findLastIndex((message) => typeof message.content === "string");
   const prefix = messages.map((message, index) =>
-    connection.dialect === "cliproxyapi" &&
-    index === cacheMessageIndex &&
-    isRecord(message)
+    explicitCache && index === cacheMessageIndex && isRecord(message)
       ? { ...message, cache_control: { type: "ephemeral" } }
       : message,
   );
@@ -2125,25 +2175,90 @@ function anthropicItems(items: readonly ModelHostAppendItem[]): unknown[] {
 function responsesAppend(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
-): unknown[] {
-  return appendWithSuffixBreakpoint(
-    connection,
-    request,
-    responsesItems,
-    markLastMessage,
-  );
+): { instructions: string; items: unknown[] } {
+  if (connection.responsesTurnInstructions === undefined)
+    return {
+      instructions: "",
+      items: appendWithSuffixBreakpoint(
+        connection,
+        request,
+        (items) => responsesItems(items, false),
+        markLastMessage,
+      ),
+    };
+
+  // Only dispatch-local items may move out of the conversation. A correction can
+  // follow a guide after a malformed output, and a followup carries its own task.
+  const index =
+    request.appended.findLastIndex(
+      (item) =>
+        !(
+          isRequestSuffix(item) ||
+          (item.kind === "prompt_delta" && item.requestScoped === true) ||
+          (item.kind === "runtime_notice" &&
+            item.notice === "response_correction")
+        ),
+    ) + 1;
+  const transcript = responsesItems(request.appended.slice(0, index), true);
+  const suffix = request.appended.slice(index);
+  const instructions: string[] = [];
+  const items =
+    transcript.length > 0 &&
+    suffix.length > 0 &&
+    connection.cacheSuffixBreakpoint &&
+    modelCacheStrategy(connection) === "explicit_cliproxyapi_message"
+      ? markLastMessage(transcript)
+      : transcript;
+  for (const item of suffix) {
+    if (item.kind === "runtime_notice" && item.notice === "turn_guide") {
+      if (
+        connection.responsesTurnInstructions &&
+        item.responsesInstructions !== undefined
+      ) {
+        if (item.text) instructions.push(item.text);
+      } else {
+        const fixed = item.responsesInstructions?.fixed;
+        if (fixed) instructions.push(fixed);
+        // Unsplittable guide text retains its original user role.
+        const player = item.responsesInstructions?.player ?? item.text;
+        if (player) items.push({ role: "user", content: player });
+      }
+    } else if (
+      item.kind === "prompt_delta" &&
+      connection.responsesTurnInstructions
+    ) {
+      for (const message of item.logicalMessages) {
+        const projected = responsesDeltaMessage(message);
+        if (
+          message.role === "author_instruction" &&
+          projected.role === "developer"
+        )
+          instructions.push(projected.content);
+        else items.push(projected);
+      }
+    } else {
+      items.push(...responsesItems([item], true));
+    }
+  }
+  return { instructions: instructions.join("\n\n"), items };
 }
 
-function responsesItems(items: readonly ModelHostAppendItem[]): unknown[] {
-  return items.flatMap((item) => {
+function responsesItems(
+  items: readonly ModelHostAppendItem[],
+  projectRoles: boolean,
+): unknown[] {
+  return items.flatMap((item): unknown[] => {
     if (
       item.kind === "player" ||
       item.kind === "user" ||
       item.kind === "runtime_notice"
     )
       return [{ role: "user", content: modelHostInputText(item) }];
-    if (item.kind === "prompt_delta")
-      return promptDeltaProviderMessages(item.logicalMessages);
+    if (item.kind === "prompt_delta") {
+      if (!projectRoles)
+        return promptDeltaProviderMessages(item.logicalMessages);
+      return item.logicalMessages.map(responsesDeltaMessage);
+    }
     if (item.kind === "tool")
       return [
         {
@@ -2162,6 +2277,21 @@ function responsesItems(items: readonly ModelHostAppendItem[]): unknown[] {
       ];
     throw continuationError("OpenAI Responses");
   });
+}
+
+function responsesDeltaMessage(
+  message: PromptCompilation["logicalMessages"][number],
+) {
+  return {
+    role:
+      message.messageRole === "user" || message.messageRole === "assistant"
+        ? message.messageRole
+        : "developer",
+    content:
+      message.role === "runtime_system"
+        ? message.markdown
+        : renderPromptDeltaMessage(message.role, message.markdown),
+  };
 }
 
 function promptDeltaProviderMessages(
@@ -2437,10 +2567,12 @@ async function providerError(response: Response): Promise<Error> {
 
 function responsesBootstrapMessage(
   message: PromptCompilation["provider"]["messages"][number],
-  preserveCacheControl = false,
+  preserveCacheControl: boolean,
+  projectRoles: boolean,
 ) {
   return {
-    role: message.role,
+    role:
+      projectRoles && message.role === "system" ? "developer" : message.role,
     content:
       preserveCacheControl && Array.isArray(message.content)
         ? message.content.flatMap((item) => {

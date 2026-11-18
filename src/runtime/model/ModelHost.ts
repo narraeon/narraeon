@@ -75,9 +75,13 @@ export type ModelHostAppendItem =
         | "turn_guide"
         | "response_correction";
       text: string;
+      /** Source-separated projections for the current Responses turn guide. */
+      responsesInstructions?: { fixed: string; player: string };
     }
   | {
       kind: "prompt_delta";
+      /** A followup task for this dispatch only, outside conversation history. */
+      requestScoped?: true;
       logicalMessages: PromptCompilation["logicalMessages"];
     }
   | {
@@ -119,6 +123,9 @@ export interface ModelHostRequestConfig {
   maxOutputTokens: number;
   /** Absent in requests frozen before the transcript breakpoint existed. */
   cacheSuffixBreakpoint?: boolean;
+  /** Absent from historical Responses snapshots with the original wire encoding. */
+  responsesTurnInstructions?: boolean;
+  responsesCacheControl?: boolean;
   /** Absent in older snapshots; use the selected connection setting. */
   supportsAllowedTools?: boolean;
   assistantPrefillMode?: ModelAssistantPrefillMode;
