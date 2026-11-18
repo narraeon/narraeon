@@ -188,6 +188,8 @@ test.each([
     string,
     unknown
   >;
+  const instructionRole =
+    provider === "openai_responses" ? "developer" : "system";
   const systemEntries =
     provider === "anthropic_messages"
       ? (body.system as unknown[])
@@ -195,7 +197,7 @@ test.each([
           (provider === "openai_responses" ? body.input : body.messages) as {
             role?: string;
           }[]
-        ).filter(({ role }) => role === "system");
+        ).filter(({ role }) => role === instructionRole);
   expect(JSON.stringify(systemEntries[0])).toContain("Legacy isolated draft");
   expect(JSON.stringify(systemEntries.at(-1))).toContain(
     "Runtime system contract replaces",
