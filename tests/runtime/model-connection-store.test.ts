@@ -120,6 +120,103 @@ test("预填充能力拒绝不匹配的协议和未知模式，损坏配置不�
   );
 });
 
+test("Responses 两种能力独立保存，复制和绑定保留选择，旧连接默认关闭", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Proxy route",
+    presetId: "custom" as const,
+    provider: "openai_responses" as const,
+    dialect: "cliproxyapi" as const,
+    baseUrl: "https://proxy.invalid/v1",
+    apiKey: "secret",
+    modelId: "alias",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+  };
+  const initial = await store.save(input);
+  const connectionId = initial.activeConnectionId!;
+  const defaults = {
+    responsesTurnInstructions: false,
+    responsesCacheControl: false,
+  };
+  expect(initial.connections[0]).toMatchObject(defaults);
+  for (const flags of [
+    { responsesTurnInstructions: true, responsesCacheControl: false },
+    { responsesTurnInstructions: false, responsesCacheControl: true },
+  ]) {
+    await store.save({ ...input, connectionId, ...flags });
+    const reopened = new ModelConnectionStore(root);
+    expect((await reopened.view()).connections[0]).toMatchObject(flags);
+    expect(await reopened.bind()).toMatchObject(flags);
+  }
+  const enabled = {
+    responsesTurnInstructions: true,
+    responsesCacheControl: true,
+  };
+  await store.save({ ...input, connectionId, responsesTurnInstructions: true });
+  const copied = await store.copy(connectionId, "Copy");
+  expect(
+    copied.library.connections.find(
+      ({ id }) => id === copied.copiedConnectionId,
+    ),
+  ).toMatchObject(enabled);
+  await store.save({ ...input, connectionId, dialect: "standard" });
+  expect(await store.bind()).toMatchObject({ responsesTurnInstructions: true });
+  expect(await store.bind()).not.toHaveProperty("responsesCacheControl");
+  await store.save({ ...input, connectionId, provider: "chat_completions" });
+  expect(await store.bind()).not.toHaveProperty("responsesTurnInstructions");
+  const switchedBack = await store.save({ ...input, connectionId });
+  expect(switchedBack.connections[0]).toMatchObject(defaults);
+
+  const path = join(root, "model-connections-v1.json");
+  const document = JSON.parse(await readFile(path, "utf8")) as {
+    connections: {
+      responsesTurnInstructions?: boolean;
+      responsesCacheControl?: boolean;
+    }[];
+  };
+  delete document.connections[0]!.responsesTurnInstructions;
+  delete document.connections[0]!.responsesCacheControl;
+  await writeFile(path, JSON.stringify(document));
+  expect(await new ModelConnectionStore(root).bind()).toMatchObject(defaults);
+});
+
+test("Responses 拒绝与协议或方言不匹配的能力及损坏的能力配置", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Responses",
+    presetId: "custom" as const,
+    provider: "openai_responses" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "secret",
+    modelId: "alias",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+  };
+  await expect(
+    store.save({ ...input, responsesCacheControl: true }),
+  ).rejects.toThrow("CLIProxyAPI");
+  await expect(
+    store.save({
+      ...input,
+      provider: "anthropic_messages",
+      responsesTurnInstructions: true,
+    }),
+  ).rejects.toThrow("Responses protocol");
+  await store.save(input);
+  const path = join(root, "model-connections-v1.json");
+  const document = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { responsesTurnInstructions: unknown }[];
+  };
+  document.connections[0]!.responsesTurnInstructions = "false";
+  await writeFile(path, JSON.stringify(document));
+  await expect(new ModelConnectionStore(root).view()).rejects.toThrow(
+    "must be booleans",
+  );
+});
+
 test("Responses 工具子集能力按连接保存，旧连接默认开启", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

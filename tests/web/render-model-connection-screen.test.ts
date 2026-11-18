@@ -230,6 +230,72 @@ test("Responses 高级选项可编辑保存并用英文显示已保存的值", a
   ).toBe("true");
 });
 
+test("GPT-6.2 本轮提示和转 Claude 缓存各自显式启用，随连接限定范围", async () => {
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    provider: "openai_responses",
+    dialect: "standard",
+  };
+  const request = vi.fn((input: V1Request) => {
+    if (input.type !== "model.save") return Promise.resolve(library);
+    return Promise.resolve({
+      ...library,
+      connections: [{ ...library.connections[0]!, ...input.connection }],
+    });
+  });
+  const onLibraryChange = vi.fn();
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange,
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  fireEvent.click(screen.getByText("高级选项"));
+  const turnLabel = "GPT-6.2 本轮提示";
+  const cacheLabel = "CLIProxyAPI 转 Claude 的显式缓存标记";
+  const turn = screen.getByLabelText<HTMLSelectElement>(turnLabel);
+  expect(turn.value).toBe("false");
+  expect(screen.queryByLabelText(cacheLabel)).toBeNull();
+  fireEvent.change(turn, { target: { value: "true" } });
+  const dialect = screen.getByLabelText("端点方言");
+  fireEvent.change(dialect, { target: { value: "cliproxyapi" } });
+  const cache = screen.getByLabelText<HTMLSelectElement>(cacheLabel);
+  expect(cache.value).toBe("false");
+  fireEvent.change(cache, { target: { value: "true" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
+  await waitFor(() => expect(onLibraryChange).toHaveBeenCalledTimes(1));
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "model.save",
+    connection: {
+      responsesTurnInstructions: true,
+      responsesCacheControl: true,
+    },
+  });
+  expect(screen.getByLabelText<HTMLSelectElement>(turnLabel).value).toBe(
+    "true",
+  );
+  expect(screen.getByLabelText<HTMLSelectElement>(cacheLabel).value).toBe(
+    "true",
+  );
+  fireEvent.change(dialect, { target: { value: "standard" } });
+  fireEvent.change(dialect, { target: { value: "cliproxyapi" } });
+  expect(screen.getByLabelText<HTMLSelectElement>(cacheLabel).value).toBe(
+    "false",
+  );
+  const provider = screen.getByLabelText("协议适配器");
+  fireEvent.change(provider, { target: { value: "chat_completions" } });
+  expect(screen.queryByLabelText(turnLabel)).toBeNull();
+  expect(screen.queryByLabelText(cacheLabel)).toBeNull();
+  fireEvent.change(provider, { target: { value: "openai_responses" } });
+  expect(screen.getByLabelText<HTMLSelectElement>(turnLabel).value).toBe(
+    "false",
+  );
+});
+
 test("Google 连接允许使用已保存凭据拉取模型并保留手填输入", () => {
   setWebLocale("en");
   const library = modelLibrary();

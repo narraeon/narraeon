@@ -162,6 +162,17 @@ const englishMessages: Record<string, string> = {
   当前配置与编译边界: "Current configuration and compilation boundaries",
   参数说明: "Parameter details",
   高级选项: "Advanced options",
+  "GPT-6.2 本轮提示": "GPT-6.2 turn guidance",
+  "玩家本轮临时要求放在 input 末尾（默认）":
+    "Append player guidance to input (default)",
+  "玩家本轮临时要求放入 instructions":
+    "Include player guidance in instructions",
+  "预设和世界的固定本轮提示始终放入 instructions。使用 GPT-6.2 时，可将玩家的本轮临时要求一起放入其中。":
+    "Fixed turn guidance from the preset and world goes in instructions. On GPT-6.2, you can include the player’s guidance for this turn there too.",
+  "CLIProxyAPI 转 Claude 的显式缓存标记":
+    "Explicit cache markers for Claude via CLIProxyAPI",
+  "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。":
+    "Enable only when this route converts Responses to Anthropic Messages with cache_control support. Leave this off for Codex.",
   "支持工具子集选择（allowed_tools）":
     "Supports tool subset selection (allowed_tools)",
   创建世界: "Create world",

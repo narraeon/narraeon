@@ -14,6 +14,8 @@ import {
   hasCLIProxyThinkingSuffix,
   modelReasoningPolicyIssue,
   modelProviderPresets,
+  responsesConnectionCapabilities,
+  type ResponsesConnectionCapabilities,
   type CopyModelConnectionResult,
   type ListProviderModelsInput,
   type ModelConnectionLibraryView,
@@ -32,7 +34,6 @@ import {
   type FileNativeModelConnection,
 } from "./FileNativeModelAdapters.ts";
 import {
-  equalModelHostBinding,
   ModelHostBindingMismatchError,
   type ModelHostBinding,
 } from "./ModelHost.ts";
@@ -41,10 +42,10 @@ const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
 const maxStoredConnections = 64;
 
-interface StoredModelConnection extends Omit<
-  FileNativeModelConnection,
-  "modelPrompt"
-> {
+interface StoredModelConnection
+  extends
+    Omit<FileNativeModelConnection, "modelPrompt">,
+    ResponsesConnectionCapabilities {
   modelPrompt: string;
   id: string;
   name: string;
@@ -189,12 +190,7 @@ export class ModelConnectionStore {
     const document = await this.#readDocument();
     for (const connection of document.connections) {
       const candidate = toBinding(connection);
-      if (
-        equalModelHostBinding(
-          new FileNativeModelHost(candidate).binding(),
-          binding,
-        )
-      )
+      if (new FileNativeModelHost(candidate).matchesBinding(binding))
         return candidate;
     }
     throw new ModelHostBindingMismatchError(
@@ -404,6 +400,7 @@ function normalizeSaveInput(
     reasoningSummary,
     thinkingMode,
     thinkingBudgetTokens,
+    ...responsesConnectionCapabilities(provider, dialect, input, existing),
     supportsAllowedTools: validateSupportsAllowedTools(
       input.supportsAllowedTools ?? existing?.supportsAllowedTools,
     ),
@@ -499,6 +496,7 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     reasoningSummary,
     thinkingMode,
     thinkingBudgetTokens,
+    ...responsesConnectionCapabilities(provider, dialect, value),
     supportsAllowedTools: validateSupportsAllowedTools(
       value.supportsAllowedTools,
     ),
@@ -525,6 +523,11 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
+    ...responsesConnectionCapabilities(
+      connection.provider,
+      connection.dialect,
+      connection,
+    ),
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,
     contextWindowTokens: connection.contextWindowTokens,
@@ -554,6 +557,11 @@ function toBinding(
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
     thinkingBudgetTokens: connection.thinkingBudgetTokens,
+    ...responsesConnectionCapabilities(
+      connection.provider,
+      connection.dialect,
+      connection,
+    ),
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,
     contextWindowTokens: connection.contextWindowTokens,

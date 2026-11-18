@@ -6,6 +6,7 @@ import { SyncNotice } from "./SyncNotice.tsx";
 import {
   hasCLIProxyThinkingSuffix,
   isGoogleThinkingLevel,
+  responsesConnectionCapabilities,
   googleThinkingLevels,
   type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
@@ -34,6 +35,8 @@ interface ConnectionForm {
   reasoningSummary: ModelReasoningSummary;
   thinkingMode: ModelThinkingMode;
   thinkingBudgetTokens: string;
+  responsesTurnInstructions: boolean;
+  responsesCacheControl: boolean;
   supportsAllowedTools: boolean;
   assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: string;
@@ -55,6 +58,8 @@ function emptyConnectionForm(): ConnectionForm {
     reasoningSummary: "provider_default",
     thinkingMode: "provider_default",
     thinkingBudgetTokens: "",
+    responsesTurnInstructions: false,
+    responsesCacheControl: false,
     supportsAllowedTools: true,
     assistantPrefillMode: "disabled",
     contextWindowTokens: "128000",
@@ -153,7 +158,17 @@ export function ModelConnectionScreen({
     next: Partial<ConnectionForm>,
     invalidateModels = false,
   ): void {
-    setForm((current) => ({ ...current, ...next }));
+    setForm((current) => {
+      const updated = { ...current, ...next };
+      if (updated.provider !== "openai_responses")
+        updated.responsesTurnInstructions = false;
+      if (
+        updated.provider !== "openai_responses" ||
+        updated.dialect !== "cliproxyapi"
+      )
+        updated.responsesCacheControl = false;
+      return updated;
+    });
     setDirty(true);
     if (invalidateModels) setModels([]);
   }
@@ -228,6 +243,11 @@ export function ModelConnectionScreen({
             reasoningEffort: form.reasoningEffort,
             reasoningSummary: form.reasoningSummary,
             thinkingMode: form.thinkingMode,
+            ...responsesConnectionCapabilities(
+              form.provider,
+              form.dialect,
+              form,
+            ),
             supportsAllowedTools: form.supportsAllowedTools,
             assistantPrefillMode: form.assistantPrefillMode,
             thinkingBudgetTokens:
@@ -632,6 +652,56 @@ export function ModelConnectionScreen({
               <summary>{uiText("高级选项")}</summary>
               {form.provider === "openai_responses" ? (
                 <>
+                  <label htmlFor="model-responses-turn-instructions">
+                    {uiText("GPT-6.2 本轮提示")}
+                  </label>
+                  <select
+                    id="model-responses-turn-instructions"
+                    value={String(form.responsesTurnInstructions)}
+                    onChange={(event) =>
+                      change({
+                        responsesTurnInstructions:
+                          event.target.value === "true",
+                      })
+                    }
+                  >
+                    <option value="false">
+                      {uiText("玩家本轮临时要求放在 input 末尾（默认）")}
+                    </option>
+                    <option value="true">
+                      {uiText("玩家本轮临时要求放入 instructions")}
+                    </option>
+                  </select>
+                  <p className="field-note">
+                    {uiText(
+                      "预设和世界的固定本轮提示始终放入 instructions。使用 GPT-6.2 时，可将玩家的本轮临时要求一起放入其中。",
+                    )}
+                  </p>
+                  {form.dialect === "cliproxyapi" && (
+                    <>
+                      <label htmlFor="model-responses-cache-control">
+                        {uiText("CLIProxyAPI 转 Claude 的显式缓存标记")}
+                      </label>
+                      <select
+                        id="model-responses-cache-control"
+                        value={String(form.responsesCacheControl)}
+                        onChange={(event) =>
+                          change({
+                            responsesCacheControl:
+                              event.target.value === "true",
+                          })
+                        }
+                      >
+                        <option value="false">{uiText("否")}</option>
+                        <option value="true">{uiText("是")}</option>
+                      </select>
+                      <p className="field-note">
+                        {uiText(
+                          "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。",
+                        )}
+                      </p>
+                    </>
+                  )}
                   <label htmlFor="model-allowed-tools">
                     {uiText("支持工具子集选择（allowed_tools）")}
                   </label>
@@ -1052,6 +1122,8 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     reasoningEffort: connection.reasoningEffort,
     reasoningSummary: connection.reasoningSummary,
     thinkingMode: connection.thinkingMode,
+    responsesTurnInstructions: connection.responsesTurnInstructions ?? false,
+    responsesCacheControl: connection.responsesCacheControl ?? false,
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,
     thinkingBudgetTokens:

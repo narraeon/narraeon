@@ -283,7 +283,47 @@ export const modelProviderPresets = [
 
 export type ModelProviderPresetId = (typeof modelProviderPresets)[number]["id"];
 
-export interface ModelConnectionView {
+export interface ResponsesConnectionCapabilities {
+  /** Route the player's turn-specific guidance through GPT-6.2 instructions. */
+  responsesTurnInstructions?: boolean;
+  /** Enable message-level cache_control for a CLIProxyAPI route to Claude. */
+  responsesCacheControl?: boolean;
+}
+
+export function responsesConnectionCapabilities(
+  provider: ModelProviderKind,
+  dialect: ModelProviderDialect,
+  input: {
+    responsesTurnInstructions?: unknown;
+    responsesCacheControl?: unknown;
+  },
+  previous?: ResponsesConnectionCapabilities,
+): ResponsesConnectionCapabilities {
+  const responses = provider === "openai_responses";
+  const proxy = responses && dialect === "cliproxyapi";
+  const {
+    responsesTurnInstructions = responses &&
+      previous?.responsesTurnInstructions === true,
+    responsesCacheControl = proxy && previous?.responsesCacheControl === true,
+  } = input;
+  if (
+    typeof responsesTurnInstructions !== "boolean" ||
+    typeof responsesCacheControl !== "boolean"
+  )
+    throw new Error("Responses connection capabilities must be booleans");
+  if (responsesTurnInstructions && !responses)
+    throw new Error("Turn instructions require the Responses protocol");
+  if (responsesCacheControl && !proxy)
+    throw new Error(
+      "Responses cache_control requires the CLIProxyAPI Responses dialect",
+    );
+  return {
+    ...(responses ? { responsesTurnInstructions } : {}),
+    ...(proxy ? { responsesCacheControl } : {}),
+  };
+}
+
+export interface ModelConnectionView extends ResponsesConnectionCapabilities {
   id: string;
   name: string;
   presetId: ModelProviderPresetId;
@@ -315,7 +355,7 @@ export interface CopyModelConnectionResult {
   copiedConnectionId: string;
 }
 
-export interface SaveModelConnectionInput {
+export interface SaveModelConnectionInput extends ResponsesConnectionCapabilities {
   connectionId?: string;
   name: string;
   presetId: ModelProviderPresetId;
