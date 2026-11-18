@@ -551,13 +551,16 @@ test.each(["model", "preset"])(
     });
     render(createElement(App, { client }));
     await screen.findByRole("heading", { name: "世界工作区" });
-    fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+    const modelButton = screen.getByRole("button", { name: "模型连接" });
+    expect(within(modelButton).getByText("本地主持")).toBeTruthy();
+    fireEvent.click(modelButton);
     fireEvent.click(screen.getByRole("button", { name: "切换到此配置" }));
     const messages = {
       model: "已切换当前模型配置；Runtime 不会自动故障转移。",
       preset: "玩法预设已删除；删空后会自动重建默认预设。",
     };
     await screen.findByText(messages.model);
+    expect(within(modelButton).getByText("另一配置")).toBeTruthy();
     fireEvent.click(
       within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
         "button",

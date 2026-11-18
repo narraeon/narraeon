@@ -117,7 +117,10 @@ export function WorkspaceHeader({
             className={`workspace-model-dot ${activeModelName === null ? "needs-attention" : "is-ready"}`}
             aria-hidden="true"
           />
-          {uiText("模型连接")}
+          <span className="workspace-model-label">
+            {uiText("模型连接")}
+            {activeModelName !== null && <strong>{activeModelName}</strong>}
+          </span>
         </button>
         <button
           id="workspace-menu-toggle"

@@ -50,6 +50,7 @@
   border-bottom-color: #cfbea0;
 }
 .workspace-header-actions {
+  min-width: 0;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -68,12 +69,26 @@
   color-scheme: dark;
 }
 .workspace-header .workspace-model-button {
+  min-width: 0;
+  max-width: 16rem;
   display: flex;
   align-items: center;
   gap: 7px;
   white-space: nowrap;
 }
+.workspace-model-label {
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+}
+.workspace-model-label strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .workspace-model-dot {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
