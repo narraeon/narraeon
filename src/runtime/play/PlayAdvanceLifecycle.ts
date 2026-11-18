@@ -41,7 +41,8 @@ export type PlayAdvanceEnding =
   /** Settled, with a frozen request the player continues without replaying a result. */
   | {
       kind: "resumable";
-      reason: "player_committed" | "tool_step_settled";
+      reason: "player_committed" | "tool_step_settled" | "response_correction";
+      attempt?: number;
       request: ModelHostExchange;
     }
   /** Cancelled before a Provider dispatch: the frozen request can be resumed (ADR-0030). */
@@ -303,13 +304,15 @@ function applyEnding(session: PlayAdvanceLedger, ending: PlayAdvanceEnding) {
       return;
     case "resumable":
       session.lastRequest = structuredClone(ending.request);
-      session.lastRequestAttempt = 0;
+      session.lastRequestAttempt = ending.attempt ?? 0;
       session.status = "interrupted";
       session.canRetry = true;
       session.lastFailure =
         ending.reason === "player_committed"
           ? messages.playerCommitted
-          : messages.toolStepSettled;
+          : ending.reason === "response_correction"
+            ? "The previous response was invalid. Its correction can be resent."
+            : messages.toolStepSettled;
       session.lastFailureKind = "retryable";
       return;
     case "cancelled_before_dispatch":

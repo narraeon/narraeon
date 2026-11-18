@@ -957,6 +957,12 @@ function validMessage(value: unknown): boolean {
 
 function validModelItem(value: unknown): boolean {
   if (!isRecord(value)) return false;
+  if (value.kind === "runtime_notice")
+    return (
+      hasExactKeys(value, ["kind", "notice", "text"]) &&
+      value.notice === "response_correction" &&
+      typeof value.text === "string"
+    );
   if (value.kind === "prompt_delta")
     return (
       hasExactKeys(value, ["kind", "logicalMessages"]) &&

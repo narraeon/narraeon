@@ -1,3 +1,4 @@
+import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
   ModelHostOutcomeUnknownError,
   type ModelHostDelta,
@@ -224,7 +225,10 @@ export function projectGoogleInteractions(payload: {
     throw new ModelHostOutcomeUnknownError(
       `Google Interactions returned unsupported terminal status: ${payload.status}`,
     );
-  if (!validGoogleInteractionsSteps(payload.steps)) invalid();
+  if (!validGoogleInteractionsSteps(payload.steps))
+    throw new ModelResponseFormatError(
+      "Return complete, well-formed model output or function calls.",
+    );
   const calls: NonNullable<ModelHostResponse["toolCalls"]> = [];
   let text = "";
   let reasoning = "";
@@ -238,7 +242,9 @@ export function projectGoogleInteractions(payload: {
         !record(step.arguments) ||
         calls.some((call) => call.id === step.id)
       )
-        invalid();
+        throw new ModelResponseFormatError(
+          "Each function call needs a unique ID, a name and an object containing its arguments.",
+        );
       calls.push({
         id: step.id,
         name: step.name,
@@ -263,7 +269,10 @@ export function projectGoogleInteractions(payload: {
           reasoning += part.text;
     }
   }
-  if ((payload.status === "requires_action") !== calls.length > 0) invalid();
+  if ((payload.status === "requires_action") !== calls.length > 0)
+    throw new ModelResponseFormatError(
+      "Return complete function calls when requesting action, or return completed prose.",
+    );
   return {
     ...(text === "" ? {} : { text }),
     ...(reasoning === "" ? {} : { reasoningContent: reasoning }),

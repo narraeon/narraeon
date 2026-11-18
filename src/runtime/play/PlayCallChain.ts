@@ -1,4 +1,8 @@
 import {
+  ModelResponseFormatError,
+  validateModelToolCalls,
+} from "../model/ModelResponseCorrection.ts";
+import {
   playAssistantPrefill,
   assertCurrentPrefillConnection,
 } from "../model/AssistantPrefill.ts";
@@ -86,7 +90,6 @@ import {
   equalModelHostBinding,
   ModelHostCancelledError,
   ModelHostFailureError,
-  ModelHostOutcomeUnknownError,
 } from "../model/ModelHost.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { validGoogleInteractionsContinuation } from "../model/ProviderExchangeState.ts";
@@ -2419,31 +2422,6 @@ export class PlayCallChain {
         "The durable Provider result no longer matches its assistant event.",
       );
     const calls = durable.toolCalls ?? [];
-    if (
-      (session.lastRequest?.modelConfig?.provider ??
-        session.modelBinding?.provider) === "google_interactions" &&
-      calls.length > 0
-    ) {
-      const boundary = session.events.findLastIndex(
-        (event) =>
-          event.kind === "player" ||
-          (event.kind === "assistant" &&
-            event.status === "completed" &&
-            event.responseKind === "narrative"),
-      );
-      if (
-        session.events
-          .slice(boundary + 1)
-          .some(
-            (event) =>
-              event.kind === "tool_call" &&
-              calls.some((call) => call.id === event.callId),
-          )
-      )
-        throw new ModelHostOutcomeUnknownError(
-          "Google Interactions repeated a tool-call ID during the same send; its outcome cannot be safely settled. Use a fresh context.",
-        );
-    }
     const text = durable.text ?? "";
     const hasText = text.trim().length > 0;
     const responseKind =
@@ -2778,6 +2756,7 @@ export class PlayCallChain {
     let request =
       modelHost.freezeRequest?.(firstRequest) ?? structuredClone(firstRequest);
     let attempt = firstAttempt;
+    let correcting = false;
     for (;;) {
       this.#setInvocationAbortable(session.chainId, true);
       if (signal.aborted)
@@ -2901,12 +2880,41 @@ export class PlayCallChain {
           throw new ModelHostCancelledError(
             "The player cancelled the dispatched model request; its response was not committed.",
           );
+        validateModelToolCalls(
+          response,
+          modelHost.binding().provider !== "google_interactions",
+        );
+        if (
+          (session.lastRequest?.modelConfig?.provider ??
+            session.modelBinding?.provider) === "google_interactions" &&
+          (response.toolCalls?.length ?? 0) > 0
+        ) {
+          const boundary = session.events.findLastIndex(
+            (event) =>
+              event.kind === "player" ||
+              (event.kind === "assistant" &&
+                event.status === "completed" &&
+                event.responseKind === "narrative"),
+          );
+          if (
+            session.events
+              .slice(boundary + 1)
+              .some(
+                (event) =>
+                  event.kind === "tool_call" &&
+                  response.toolCalls?.some((call) => call.id === event.callId),
+              )
+          )
+            throw new ModelResponseFormatError(
+              "A tool-call ID already has a settled result in this turn. Use that result and issue a new ID for any new call.",
+            );
+        }
         if (
           request.operationId?.startsWith("narrative-only:") &&
           (response.toolCalls?.length ?? 0) > 0
         )
-          throw new ModelHostFailureError(
-            "Narrative regeneration cannot execute tool calls; retry the narrative request.",
+          throw new ModelResponseFormatError(
+            "This request requires narrative text only. Return the narrative without calling tools.",
           );
         this.#setInvocationAbortable(session.chainId, false);
         if ((response.toolCalls?.length ?? 0) > 0)
@@ -2916,6 +2924,30 @@ export class PlayCallChain {
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
       } catch (error: unknown) {
+        if (error instanceof ModelResponseFormatError) {
+          event.responseKind = "empty";
+          if (!correcting && !signal.aborted) {
+            event.status = "interrupted";
+            event.stopReason = error.message;
+            request = {
+              ...request,
+              appended: [...request.appended, error.notice()],
+            };
+            correcting = true;
+            attempt += 1;
+            await this.#advances.end(
+              session,
+              {
+                kind: "resumable",
+                reason: "response_correction",
+                request,
+                attempt: attempt - 1,
+              },
+              advance,
+            );
+            continue;
+          }
+        }
         await this.#advances.end(
           session,
           dispatchFailureEnding(
@@ -2987,6 +3019,7 @@ export class PlayCallChain {
           return projectView(session);
         }
         this.#notifySnapshot(observer, session);
+        correcting = false;
         request = settled.nextRequest;
         attempt = 1;
       } catch (error: unknown) {

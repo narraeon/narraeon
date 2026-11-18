@@ -17,7 +17,11 @@ export interface PlayRequestContextEvidence {
   transcriptDigest: string;
   bootstrapDigest: string;
   toolsDigest: string;
-  suffix: { kind: "runtime_notice"; notice: "turn_guide"; text: string }[];
+  suffix: {
+    kind: "runtime_notice";
+    notice: "turn_guide" | "response_correction";
+    text: string;
+  }[];
 }
 
 export function contextDigest(value: unknown): string {
@@ -36,7 +40,9 @@ export function captureRequestContext(
   const suffix = request.appended.slice(transcript.length);
   if (
     !suffix.every(
-      (item) => item.kind === "runtime_notice" && item.notice === "turn_guide",
+      (item) =>
+        item.kind === "runtime_notice" &&
+        (item.notice === "turn_guide" || item.notice === "response_correction"),
     )
   )
     return null;
@@ -72,7 +78,8 @@ export function validRequestContextEvidence(
     item.suffix.every(
       (suffix) =>
         suffix?.kind === "runtime_notice" &&
-        suffix.notice === "turn_guide" &&
+        (suffix.notice === "turn_guide" ||
+          suffix.notice === "response_correction") &&
         typeof suffix.text === "string",
     )
   );

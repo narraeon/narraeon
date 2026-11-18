@@ -2472,7 +2472,7 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
               {
                 event_type: "step.delta",
                 index: 0,
-                delta: { type: "text", text: "不应提交" },
+                delta: { type: "text", text: "纠正后的正文" },
               },
               { event_type: "step.stop", index: 0 },
               {
@@ -2509,9 +2509,8 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
     modelHost: host,
   });
   expect(result).toMatchObject({
-    status: "interrupted",
+    status: "ready",
     canRetry: false,
-    lastFailureKind: "outcome_unknown",
   });
   expect(
     result.events.filter(
@@ -2519,21 +2518,25 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
     ),
   ).toHaveLength(1);
   expect(
-    result.events.findLast((event) => event.kind === "assistant"),
+    result.events.find(
+      (event) => event.kind === "assistant" && event.status === "interrupted",
+    ),
   ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
   const cold = await new PlayCallChain(
     new FileNativeWorldStore(root),
   ).inspectWorld(worldId);
   expect(
-    cold?.events.findLast((event) => event.kind === "assistant"),
+    cold?.events.find(
+      (event) => event.kind === "assistant" && event.status === "interrupted",
+    ),
   ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
   const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
     worldId,
   );
   expect(JSON.stringify(endpoint.state).match(/only-once/g)).toHaveLength(1);
-  expect(JSON.stringify(endpoint.history)).not.toContain("不应提交");
+  expect(JSON.stringify(endpoint.history)).toContain("纠正后的正文");
   expect(JSON.stringify(endpoint.history)).not.toContain("重复响应片段");
-  expect(dispatches).toBe(2);
+  expect(dispatches).toBe(3);
 });
 
 test("Google 工具顺序结算后遇到未完成续接不重放或提交半响应", async () => {
@@ -14138,6 +14141,7 @@ test("只重新生成叙事时拒绝工具调用并能在重启后重试", async
           },
         ],
       },
+      { outcome: "failure", message: "503 service unavailable" },
     ],
   });
   const interrupted = await new PlayCallChain(

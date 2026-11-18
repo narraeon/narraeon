@@ -1349,6 +1349,7 @@ function validModelItemShape(
       hasExactKeys(value, ["kind", "notice", "text"]) &&
       (value.notice === "checkpoint_rounds" ||
         value.notice === "continuation" ||
+        value.notice === "response_correction" ||
         value.notice === "tool_step" ||
         value.notice === "turn_guide") &&
       typeof value.text === "string"

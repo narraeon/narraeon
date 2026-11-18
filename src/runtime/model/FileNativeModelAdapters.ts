@@ -1,3 +1,4 @@
+import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import { modelHostInputText } from "./ModelHost.ts";
 import {
   assertAssistantPrefill,
@@ -820,7 +821,9 @@ export class FileNativeModelHost implements ModelHost {
         )
           throw unknownProviderResponse("Chat Completions");
         if (!validChatAssistantMessage(message))
-          throw unknownProviderResponse("Chat Completions");
+          throw new ModelResponseFormatError(
+            "Return a valid Chat Completions assistant response. Each tool call needs an ID, a name and valid arguments.",
+          );
         capture?.setReasoning(message.reasoning_content ?? undefined);
         return {
           ...(message.content == null ? {} : { text: message.content }),
@@ -960,7 +963,9 @@ export class FileNativeModelHost implements ModelHost {
         assertModelOutputComplete(payload.stop_reason);
         const content = payload.content!;
         if (!validAnthropicContent(content))
-          throw unknownProviderResponse("Anthropic Messages");
+          throw new ModelResponseFormatError(
+            "Return a valid Anthropic Messages assistant response. Each tool call needs an ID, a name and valid arguments.",
+          );
         await trace("anthropic_response", payload);
         const reasoningContent = content
           .filter(
@@ -1129,20 +1134,21 @@ async function capturedProviderOperation<Value extends object>(
     return { ...value, diagnostics: capture.snapshot() };
   } catch (error: unknown) {
     if (error instanceof ModelHostCancelledError) throw error;
-    const reportedError = sanitizeGoogleErrors
-      ? error instanceof ModelHostFailureError
-        ? modelHostFailureRequiresFreshContext(error)
-          ? new ModelHostFailureError(
-              "Google Interactions context limit exceeded; start a fresh context",
-              { details: { code: "context_length_exceeded" } },
+    const reportedError =
+      sanitizeGoogleErrors && !(error instanceof ModelResponseFormatError)
+        ? error instanceof ModelHostFailureError
+          ? modelHostFailureRequiresFreshContext(error)
+            ? new ModelHostFailureError(
+                "Google Interactions context limit exceeded; start a fresh context",
+                { details: { code: "context_length_exceeded" } },
+              )
+            : new ModelHostFailureError(
+                "Google Interactions request was rejected",
+              )
+          : new ModelHostOutcomeUnknownError(
+              "Google Interactions request outcome could not be confirmed",
             )
-          : new ModelHostFailureError(
-              "Google Interactions request was rejected",
-            )
-        : new ModelHostOutcomeUnknownError(
-            "Google Interactions request outcome could not be confirmed",
-          )
-      : error;
+        : error;
     if (capture !== undefined && failureLog !== undefined) {
       const exchange = capture.snapshot();
       const failure: AiFailureDescription = {
@@ -2648,7 +2654,9 @@ async function openAIResponsesRequest(
       assertModelOutputComplete(responsesStopReason(payload));
       const output = cloneResponseOutput(payload.output);
       if (!validResponsesOutput(output))
-        throw unknownProviderResponse("Responses API");
+        throw new ModelResponseFormatError(
+          "Return a valid Responses API assistant response with well-formed messages and tool calls.",
+        );
       const text = output
         .flatMap((item) => {
           if (

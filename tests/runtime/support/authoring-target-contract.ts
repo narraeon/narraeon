@@ -60,14 +60,45 @@ export function authoringTargetContract(name: string, create: Factory): void {
       { outcome: "response", continuation: "lost", text: "Incomplete." },
     ],
   ] satisfies [string, ScriptedModelHostStep][])(
-    `${name}: %s cannot be replayed`,
+    `${name}: reports %s to the model without another user message or file change`,
     async (_label, step) => {
-      const f = await create(() => [step]);
+      const f = await create(() => [
+        step,
+        { outcome: "response", text: "Corrected." },
+      ]);
+      const files = await f.files();
       const result = await f.send();
-      expect(result.runStatus).toBe("interrupted");
-      expect(result.canRetry).toBe(false);
+      expect(result.runStatus).toBe("ready");
+      expect(result.messages.map(({ text }) => text)).toEqual([
+        "Change.",
+        "Corrected.",
+      ]);
+      expect(f.requests).toHaveLength(2);
+      expect(f.requests[1]!.appended.at(-1)).toMatchObject({
+        kind: "runtime_notice",
+        notice: "response_correction",
+      });
+      expect(await f.files()).toEqual(files);
+      expect((await f.read(result.sessionId)).runStatus).toBe("ready");
     },
   );
+  test(`${name}: stops after an unsuccessful correction and can resend`, async () => {
+    const invalid: ScriptedModelHostStep = {
+      outcome: "response",
+      toolCalls: [{ id: "", name: "read", arguments: {} }],
+    };
+    const f = await create(() => [
+      invalid,
+      invalid,
+      { outcome: "response", text: "Recovered." },
+    ]);
+    const view = await f.send();
+    expect(view).toMatchObject({ runStatus: "interrupted", canRetry: true });
+    expect(f.requests).toHaveLength(2);
+    expect(
+      (await f.resume(view.sessionId)).messages.map(({ text }) => text),
+    ).toEqual(["Change.", "Recovered."]);
+  });
   test(`${name}: cancellation ignores a late response and retains retry`, async () => {
     const f = await create(
       (write) => [write, { outcome: "response", text: "Finished." }],

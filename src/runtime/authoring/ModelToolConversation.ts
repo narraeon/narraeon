@@ -1,8 +1,13 @@
 import {
+  ModelResponseFormatError,
+  validateModelToolCalls,
+} from "../model/ModelResponseCorrection.ts";
+import {
   prefillFor,
   type PartialAuthoringResponse,
 } from "../model/AssistantPrefill.ts";
 import {
+  checkpointNextAuthoringDispatch,
   prepareAuthoringDispatch,
   failAuthoringDispatch,
   type AuthoringDispatchPhase,
@@ -256,6 +261,7 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
+    let correcting = false;
     let phase: AuthoringDispatchPhase = "settling";
     let dispatchedRequest: ModelHostExchange | undefined;
     try {
@@ -293,38 +299,56 @@ export class ModelToolConversation<
         await input.save(session);
         input.changed?.(true);
         phase = "dispatched";
-        const response = await input.host.exchange(request, {
-          signal: live.controller.signal,
-          onGoogleHop: (hop) => {
-            const requestId = input.exchangeRequestId ?? live.requestId;
-            const snapshot = session.requests?.findLast(
-              (entry) => entry.requestId === requestId,
+        let response: ModelHostResponse;
+        try {
+          response = await input.host.exchange(request, {
+            signal: live.controller.signal,
+            onGoogleHop: (hop) => {
+              const requestId = input.exchangeRequestId ?? live.requestId;
+              const snapshot = session.requests?.findLast(
+                (entry) => entry.requestId === requestId,
+              );
+              const retry = snapshot?.retryAttempts?.find(
+                (item) => item.requestId === live.requestId,
+              );
+              if (retry?.wireRequest !== undefined) {
+                retry.wireRequest = withGoogleHop(retry.wireRequest, hop);
+                return input.recordGoogleHop?.(retry.requestId, hop);
+              }
+              if (snapshot?.wireRequest === undefined) return;
+              snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
+              return input.recordGoogleHop?.(requestId, hop);
+            },
+            onDelta: (delta) => {
+              if (delta.kind !== "text") live.nonTextReceived = true;
+              recordDelta(live, delta);
+              input.changed?.(false);
+            },
+          });
+          if (live.controller.signal.aborted)
+            throw new ModelHostCancelledError(
+              "The authoring request was cancelled",
             );
-            const retry = snapshot?.retryAttempts?.find(
-              (item) => item.requestId === live.requestId,
-            );
-            if (retry?.wireRequest !== undefined) {
-              retry.wireRequest = withGoogleHop(retry.wireRequest, hop);
-              return input.recordGoogleHop?.(retry.requestId, hop);
-            }
-            if (snapshot?.wireRequest === undefined) return;
-            snapshot.wireRequest = withGoogleHop(snapshot.wireRequest, hop);
-            return input.recordGoogleHop?.(requestId, hop);
-          },
-          onDelta: (delta) => {
-            if (delta.kind !== "text") live.nonTextReceived = true;
-            recordDelta(live, delta);
-            input.changed?.(false);
-          },
-        });
-        if (live.controller.signal.aborted)
-          throw new ModelHostCancelledError(
-            "The authoring request was cancelled",
-          );
+          assertCompleteResponse(response);
+          validateModelToolCalls(response);
+        } catch (error) {
+          if (
+            !(error instanceof ModelResponseFormatError) ||
+            live.controller.signal.aborted
+          )
+            throw error;
+          // Invalid output has no usable text prefix, even when its stream contained text.
+          live.nonTextReceived = true;
+          if (correcting) throw error;
+          correcting = true;
+          session.modelItems.push(error.notice());
+          delete session.partialResponse;
+          checkpointNextAuthoringDispatch(session, "dispatching");
+          continue;
+        }
+        correcting = false;
         phase = "validating";
-        assertCompleteResponse(response);
         const toolCalls = response.toolCalls ?? [];
-        assertUniqueToolCallIds(toolCalls);
         const visibleText = response.text ?? "";
         session.usage = aggregateModelUsage(session.usage, response.usage);
         if (toolCalls.length === 0 && visibleText.trim().length === 0) {
@@ -506,20 +530,9 @@ export function rememberAuthoringRequest(
 
 function assertCompleteResponse(response: ModelHostResponse): void {
   if (response.providerState === undefined)
-    throw new Error(
-      "The complete authoring response is missing provider continuation state",
+    throw new ModelResponseFormatError(
+      "The previous response was incomplete. Return a complete response to the current request.",
     );
-}
-
-function assertUniqueToolCallIds(
-  calls: readonly { id: string; name: string }[],
-): void {
-  const ids = new Set<string>();
-  for (const call of calls) {
-    if (call.id.length === 0 || call.name.length === 0 || ids.has(call.id))
-      throw new Error("The model returned invalid or duplicate tool-call IDs");
-    ids.add(call.id);
-  }
 }
 
 function rememberRequest(
