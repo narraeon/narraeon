@@ -167,13 +167,16 @@ function renderWith({
   value,
   latestSessionId,
   history,
+  target = "content-package",
 }: {
   value: SettingImprovementView | null;
   latestSessionId: string | null;
   history: V1SettingImprovementHistoryItem[];
+  target?: "content-package" | "world-revision";
 }): string {
   return renderToStaticMarkup(
     createElement(SettingImprovementPanel, {
+      target,
       packageName: "Test",
       modelConfigured: true,
       hasUnsavedFileDraft: false,
@@ -270,3 +273,55 @@ function historyItem(
     ...overrides,
   };
 }
+
+test.each(["content-package", "world-revision"] as const)(
+  "%s automatic retry uses one current status and keeps attempts inside closed call details",
+  (target) => {
+    const current = view({ runStatus: "running" });
+    const exchange = current.turns[0]!.exchanges[0]!;
+    exchange.status = "streaming";
+    exchange.text = "";
+    exchange.retries = [
+      {
+        retry: 1,
+        reason: "rate_limit",
+        waitMs: 1000,
+        retryAt: 1000,
+        status: "dispatching",
+      },
+      {
+        retry: 2,
+        reason: "rate_limit",
+        waitMs: 2000,
+        retryAt: 3000,
+        status: "waiting",
+      },
+    ];
+    const html = renderWith({
+      value: current,
+      latestSessionId: current.sessionId,
+      history: [],
+      target,
+    });
+    expect(html.match(/class="setting-conversation-running"/gu)).toHaveLength(
+      1,
+    );
+    expect(html).toContain("正在等待自动重试…");
+    expect(html).toContain("自动重试 2/3");
+    expect(html).not.toContain("setting-conversation-failure");
+    expect(html).toContain('<details class="model-call-details">');
+    current.runStatus = "ready";
+    exchange.status = "completed";
+    exchange.text = "Recovered";
+    const completed = renderWith({
+      value: current,
+      latestSessionId: current.sessionId,
+      history: [],
+      target,
+    });
+    expect(completed).not.toContain('class="setting-conversation-running"');
+    expect(completed).not.toContain("setting-conversation-failure");
+    expect(completed).toContain("自动重试 1/3");
+    expect(completed).toContain("Recovered");
+  },
+);

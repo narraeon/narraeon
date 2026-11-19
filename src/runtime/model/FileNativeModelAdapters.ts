@@ -1,3 +1,10 @@
+import {
+  withModelRetry,
+  RetryableModelFailure,
+  retryAfterMs,
+  hardQuotaFailure,
+  provenConnectTimeout,
+} from "./ModelRetry.ts";
 import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
   equalModelHostBinding,
@@ -316,30 +323,42 @@ export class FileNativeModelHost implements ModelHost {
     observer?: ModelHostExchangeObserver,
   ): Promise<ModelHostResponse> {
     const host = this.#requestHost(request);
+    request = structuredClone(request);
     assertAssistantPrefill(host.freezeRequest(request));
-    return host
-      .#exchange(request, {
-        ...observer,
-        onDelta: assistantPrefillDelta(request, observer?.onDelta),
-      })
-      .then((response) => {
-        try {
-          return completeAssistantPrefill(request, response);
-        } catch (error) {
-          observer?.onDelta?.({ kind: "tool", text: "" });
-          throw new ModelHostFailureError(
-            error instanceof Error
-              ? error.message
-              : "Invalid assistant prefix response",
-            { cause: error },
-          );
-        }
-      });
+    const deadline =
+      host.#connection.provider === "google_interactions"
+        ? Date.now() + 60 * 60 * 1000
+        : undefined;
+    return withModelRetry(
+      () =>
+        host.#exchange(
+          request,
+          {
+            ...observer,
+            onDelta: assistantPrefillDelta(request, observer?.onDelta),
+          },
+          deadline,
+        ),
+      { signal: observer?.signal, onRetry: observer?.onRetry, deadline },
+    ).then((response) => {
+      try {
+        return completeAssistantPrefill(request, response);
+      } catch (error) {
+        observer?.onDelta?.({ kind: "tool", text: "" });
+        throw new ModelHostFailureError(
+          error instanceof Error
+            ? error.message
+            : "Invalid assistant prefix response",
+          { cause: error },
+        );
+      }
+    });
   }
 
   async #exchange(
     request: ModelHostExchange,
     observer?: ModelHostExchangeObserver,
+    deadline?: number,
   ): Promise<ModelHostResponse> {
     assertExchangeCompatibility(this.#connection, request);
     await trace("model_host_exchange", modelHostTrace(request));
@@ -358,6 +377,7 @@ export class FileNativeModelHost implements ModelHost {
           observer?.retainLateExtensionResponse === true,
           observer?.onGoogleHop,
           observer?.diagnosticAttempt,
+          deadline,
         );
       return await this.#anthropic(request, observer?.onDelta, signal);
     } catch (error: unknown) {
@@ -446,6 +466,7 @@ export class FileNativeModelHost implements ModelHost {
     retainLateExtensionResponse = false,
     onGoogleHop?: ModelHostExchangeObserver["onGoogleHop"],
     diagnosticAttempt?: number,
+    deadline = Date.now() + 60 * 60 * 1000,
   ): Promise<ModelHostResponse> {
     const controller = new AbortController();
     const capture = providerCapture(
@@ -502,7 +523,7 @@ export class FileNativeModelHost implements ModelHost {
                 ),
               );
             },
-            60 * 60 * 1000,
+            Math.max(0, deadline - Date.now()),
           );
         }),
         new Promise<never>((_, reject) => {
@@ -676,6 +697,10 @@ export class FileNativeModelHost implements ModelHost {
               hop.status = "interrupted";
               void report(hop);
             }
+            if (token !== undefined && error instanceof RetryableModelFailure)
+              throw new ModelHostOutcomeUnknownError(
+                "Google continuation failed after progress",
+              );
             throw error;
           }
         } while (payload.status === "requires_continuation");
@@ -1189,16 +1214,23 @@ async function capturedProviderOperation<Value extends object>(
   } catch (error: unknown) {
     if (error instanceof ModelHostCancelledError) throw error;
     const reportedError =
-      sanitizeGoogleErrors && !(error instanceof ModelResponseFormatError)
+      sanitizeGoogleErrors &&
+      !(error instanceof ModelResponseFormatError) &&
+      !(error instanceof RetryableModelFailure)
         ? error instanceof ModelHostFailureError
-          ? isModelHostTokenLimitFailure(error)
+          ? hardQuotaFailure(error.message)
             ? new ModelHostFailureError(
-                "Google Interactions context limit exceeded",
-                { details: { code: "context_length_exceeded" } },
+                "Google Interactions hard quota exhausted",
+                { details: { code: "hard_quota_exhausted", httpStatus: 429 } },
               )
-            : new ModelHostFailureError(
-                "Google Interactions request was rejected",
-              )
+            : isModelHostTokenLimitFailure(error)
+              ? new ModelHostFailureError(
+                  "Google Interactions context limit exceeded",
+                  { details: { code: "context_length_exceeded" } },
+                )
+              : new ModelHostFailureError(
+                  "Google Interactions request was rejected",
+                )
           : new ModelHostOutcomeUnknownError(
               "Google Interactions request outcome could not be confirmed",
             )
@@ -2493,6 +2525,19 @@ async function googleInitialRejection(response: Response): Promise<Error> {
     return new ModelHostOutcomeUnknownError(
       "Google Interactions request outcome could not be confirmed",
     );
+  if (response.status === 429 && hardQuotaFailure(evidence))
+    return new ModelHostFailureError(
+      "Google Interactions hard quota exhausted",
+      { details: { code: "hard_quota_exhausted", httpStatus: 429 } },
+    );
+  if (
+    response.status === 429 &&
+    !isModelHostTokenLimitFailure(new ModelHostFailureError(evidence))
+  )
+    return new RetryableModelFailure(
+      "rate_limit",
+      retryAfterMs(response.headers.get("retry-after")),
+    );
   return isModelHostTokenLimitFailure(new ModelHostFailureError(evidence))
     ? new ModelHostFailureError("Google Interactions context limit exceeded", {
         details: { code: "context_length_exceeded" },
@@ -2560,8 +2605,22 @@ async function providerError(response: Response): Promise<Error> {
     statusText: response.statusText,
     body: text,
   });
+  if (response.status === 429 && hardQuotaFailure(text))
+    return new ModelHostFailureError(
+      "Provider hard quota or balance exhausted",
+      { details: { code: "hard_quota_exhausted", httpStatus: 429 } },
+    );
+  if (
+    response.status === 429 &&
+    !isModelHostTokenLimitFailure(new ModelHostFailureError(text))
+  )
+    return new RetryableModelFailure(
+      "rate_limit",
+      retryAfterMs(response.headers.get("retry-after")),
+    );
   return new ModelHostFailureError(
     `Provider request failed: ${response.status} ${text}`,
+    { details: { httpStatus: response.status } },
   );
 }
 
@@ -3195,6 +3254,8 @@ async function dispatchProviderRequest(
     return await fetchImplementation(url, init);
   } catch (error: unknown) {
     if (init.signal?.aborted === true) throw cancelledModelRequest(error);
+    if (provenConnectTimeout(error))
+      throw new RetryableModelFailure("connect_timeout");
     throw new ModelHostOutcomeUnknownError(
       `${label} request was dispatched but its outcome is unknown`,
       {

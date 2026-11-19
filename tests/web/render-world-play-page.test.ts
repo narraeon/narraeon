@@ -6930,3 +6930,130 @@ function createObservedProgress(chainId: string, exchangeId: string) {
     dispatches: 1,
   };
 }
+
+test("automatic retry updates one progress position then disappears after success", async () => {
+  let receive!: Parameters<ObserveConversation>[1];
+  let chain = playChainView("retry-chain", "retry-send", "Go");
+  chain.status = "running";
+  chain.activeInvocation = {
+    chainId: chain.chainId,
+    exchangeId: "retry-send",
+    phase: "waiting",
+    startedAt: Date.now(),
+    lastActivityAt: Date.now(),
+    reasoningChars: 0,
+    textChars: 0,
+    toolChars: 0,
+    toolCalls: 0,
+    dispatches: 1,
+  };
+  const assistant = chain.events.find((event) => event.kind === "assistant")!;
+  if (assistant.kind !== "assistant") throw new Error("missing assistant");
+  assistant.status = "streaming";
+  assistant.text = "";
+  assistant.retries = [
+    {
+      retry: 1,
+      reason: "rate_limit",
+      waitMs: 1000,
+      retryAt: Date.now() + 1000,
+      status: "waiting",
+    },
+  ];
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(chain));
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve(
+          playDecorations(null, "world-one", chain.parentHead),
+        );
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  await screen.findByText("自动重试 1/3", { exact: false });
+  expect(
+    document.querySelectorAll(".play-run-progress .model-retry-status p"),
+  ).toHaveLength(1);
+  expect(screen.queryByText("正在等待模型响应…")).toBeNull();
+  assistant.retries.push({
+    retry: 2,
+    reason: "rate_limit",
+    waitMs: 2000,
+    retryAt: Date.now() + 2000,
+    status: "waiting",
+  });
+  chain = { ...chain, updatedAt: chain.updatedAt + 1 };
+  await act(async () => {
+    await receive({ kind: "play", value: structuredClone(chain) }, true);
+  });
+  await screen.findByText("自动重试 2/3", { exact: false });
+  expect(
+    document.querySelectorAll(".play-run-progress .model-retry-status p"),
+  ).toHaveLength(1);
+  expect(
+    document.querySelectorAll(".call-chain-failure[role=alert]"),
+  ).toHaveLength(0);
+  assistant.status = "completed";
+  assistant.text = "Recovered story";
+  chain = { ...chain, status: "ready", updatedAt: chain.updatedAt + 1 };
+  await act(async () => {
+    await receive({ kind: "play", value: structuredClone(chain) }, true);
+  });
+  await screen.findByText("Recovered story");
+  expect(
+    document.querySelector(".play-run-progress .model-retry-status"),
+  ).toBeNull();
+  expect(
+    document.querySelectorAll(".call-chain-failure[role=alert]"),
+  ).toHaveLength(0);
+});
+
+test("multiple failed followups for one reply collapse into one summary without counting successful requests", async () => {
+  const chain = playChainView("failed-followups", "send", "Go");
+  chain.events.push(
+    ...["one", "two", "ok"].map((name, index) => ({
+      id: 10 + index,
+      kind: "followup" as const,
+      followupId: name,
+      displayName: `Panel ${name}`,
+      replyEventId: 4,
+      status: "completed" as const,
+      text: "",
+      toolCalls: [],
+      ...(name === "ok" ? {} : { failure: "Temporary rate limit exhausted" }),
+    })),
+  );
+  const client = {
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(chain));
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve(
+          playDecorations(null, "world-one", chain.parentHead),
+        );
+      throw new Error(`Unexpected request ${request.type}`);
+    }),
+  };
+  renderWorld(client);
+  await screen.findByText("2 个后置请求未完成");
+  expect(
+    document.querySelectorAll(".call-chain-followup-summary"),
+  ).toHaveLength(1);
+  const summary = document.querySelector<HTMLDetailsElement>(
+    ".call-chain-followup-summary > details",
+  )!;
+  expect(summary.open).toBe(false);
+  expect(summary.textContent).toContain("Panel one");
+  expect(summary.textContent).toContain("Panel two");
+  expect(summary.textContent).not.toContain("Panel ok");
+  expect(
+    screen.getByText("Alex opens the door and lets you go first."),
+  ).toBeTruthy();
+});

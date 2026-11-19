@@ -1159,7 +1159,7 @@ test.each([
     },
     vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response("rate limited", { status: 429 })),
+      .mockResolvedValue(new Response("rate limited", { status: 503 })),
   );
   await expect(rejectedAdapter.exchange(request)).rejects.toBeInstanceOf(
     ModelHostFailureError,

@@ -346,6 +346,15 @@ export class ModelToolConversation<
         try {
           response = await input.host.exchange(request, {
             signal: live.controller.signal,
+            onRetry: async (evidence) => {
+              if (call !== undefined) {
+                const retries = (call.retries ??= []);
+                retries[evidence.retry - 1] = evidence;
+                session.updatedAt = Math.max(Date.now(), session.updatedAt + 1);
+                await input.save(session);
+                input.changed?.(true);
+              }
+            },
             onGoogleHop: (hop) => {
               const requestId = input.exchangeRequestId ?? live.requestId;
               const snapshot = session.requests?.findLast(

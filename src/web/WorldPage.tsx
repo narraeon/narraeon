@@ -1,3 +1,4 @@
+import { ModelRetryStatus } from "./ModelRetryStatus.tsx";
 import { PlayTurnCallDetails } from "./PlayTurnCallDetails.tsx";
 import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
@@ -947,6 +948,26 @@ export function WorldPage({
     activeStatus === "interrupted" && failureWasSuperseded
       ? retryRejection
       : currentPlayFailure;
+  const liveRetryCall = playCallChain?.events.findLast(
+    (event) =>
+      (event.kind === "assistant" || event.kind === "followup") &&
+      event.status === "streaming",
+  );
+  const liveRetryItem = playTimeline?.items.findLast(
+    (item) =>
+      item.kind === "event" &&
+      item.chainId === activeChainId &&
+      (item.event.kind === "assistant" || item.event.kind === "followup") &&
+      item.event.status === "streaming",
+  );
+  const activeModelRetries =
+    liveRetryCall?.kind === "assistant" || liveRetryCall?.kind === "followup"
+      ? liveRetryCall.retries
+      : liveRetryItem?.kind === "event" &&
+          (liveRetryItem.event.kind === "assistant" ||
+            liveRetryItem.event.kind === "followup")
+        ? liveRetryItem.event.retries
+        : undefined;
   const activeFailureVisible =
     !failureWasSuperseded &&
     activeStatus === "interrupted" &&
@@ -2120,6 +2141,7 @@ export function WorldPage({
               )}
               {playProgress === null ? null : (
                 <PlayRunProgress
+                  retries={activeModelRetries}
                   progress={playProgress}
                   now={playProgressNow}
                   onCancel={() => void cancelPlayGeneration()}
@@ -2950,6 +2972,7 @@ function PlayTimeline({
           return (
             <Fragment key={group.key}>
               {group.items.map((item) =>
+                item.event.kind !== "followup" &&
                 timelineEventBelongsInStory(item.event) &&
                 (item.event.kind !== "failure" ||
                   (activeFailure?.chainId === item.chainId &&
@@ -2993,6 +3016,58 @@ function PlayTimeline({
                   />
                 ) : null,
               )}
+              {Array.from(
+                new Set(
+                  group.items
+                    .filter(
+                      (item) =>
+                        item.event.kind === "followup" && item.event.failed,
+                    )
+                    .map((item) =>
+                      item.event.kind === "followup"
+                        ? `${item.chainId}:${item.event.replyEventId ?? "legacy"}`
+                        : "",
+                    ),
+                ),
+              ).map((key) => {
+                const failed = group.items.filter(
+                  (item) =>
+                    item.event.kind === "followup" &&
+                    item.event.failed &&
+                    `${item.chainId}:${item.event.replyEventId ?? "legacy"}` ===
+                      key,
+                );
+                return (
+                  <li
+                    key={`failed-followups:${key}`}
+                    className="call-chain-followup-summary"
+                  >
+                    <details>
+                      <summary>
+                        {uiText("{count} 个后置请求未完成", {
+                          count: failed.length,
+                        })}
+                      </summary>
+                      <ol>
+                        {failed.map((item) => (
+                          <TimelineEvent
+                            key={`${item.chainId}:${item.event.id}`}
+                            client={client}
+                            worldId={worldId}
+                            chainId={item.chainId}
+                            event={item.event}
+                            restartDisabled={restartDisabled}
+                            freshContextDisabled={freshContextDisabled}
+                            showTechnicalInfo={showTechnicalInfo}
+                            onRestartFrom={onRestartFrom}
+                            onEditPlayer={onEditPlayer}
+                          />
+                        ))}
+                      </ol>
+                    </details>
+                  </li>
+                );
+              })}
               {showTechnicalInfo ? (
                 <PlayTurnCallDetails
                   items={group.items}
@@ -3484,6 +3559,7 @@ function TimelineEvent({
             onRead={() => void detailTarget.recover()}
           />
           {full?.failure === undefined ? null : <p>{full.failure}</p>}
+          <ModelRetryStatus retries={full?.retries ?? event.retries} history />
         </details>
       </li>
     );

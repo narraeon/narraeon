@@ -1,3 +1,4 @@
+import type { ModelRetryEvidence } from "./modelRetry.ts";
 import type { ContentSelection } from "./sillyTavernContent.ts";
 import {
   parseGameplay,
@@ -464,6 +465,7 @@ export interface V1SettingConversationExchange {
   retryOf?: string;
   failure?: string;
   toolFragment?: string;
+  retries?: ModelRetryEvidence[];
   /** Null means this dispatch received no usage; absent on older records. */
   usage?: ModelUsage | null;
   toolCalls: V1SettingConversationToolCall[];
@@ -674,6 +676,7 @@ export interface V1SettingImprovementView {
       visibleText?: string;
       /** Current incomplete tool-call argument fragments, available in-process. */
       toolFragment?: string;
+      retries?: ModelRetryEvidence[];
       receivedAt: number;
     } | null;
     updatedAt: number;
@@ -810,6 +813,7 @@ export type V1PlayCallChainEvent =
       reasoningRecorded?: true;
       reasoning?: string;
       toolFragment?: string;
+      retries?: ModelRetryEvidence[];
       usage?: ModelUsage;
       stopReason?: string;
       continuation?: "available" | "unavailable";
@@ -856,6 +860,7 @@ export type V1PlayCallChainEvent =
       reasoningRecorded?: true;
       reasoning?: string;
       toolFragment?: string;
+      retries?: ModelRetryEvidence[];
       usage?: ModelUsage;
       /** Small locator; the encoding itself follows the bounded diagnostic window. */
       requestPreviewExchange?: number;
@@ -913,6 +918,7 @@ export type V1PlayTimelineEventSummary =
       replyEventId?: number;
       status?: "streaming" | "completed" | "interrupted" | "cancelled";
       toolCallCount: number;
+      retries?: ModelRetryEvidence[];
       hasReasoning?: boolean;
       failed: boolean;
       usage?: ModelUsage;

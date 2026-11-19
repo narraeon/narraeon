@@ -3176,3 +3176,250 @@ test("Responses replays the historical CLIProxyAPI encoder and records independe
     }).binding().protocolConfigFingerprint,
   );
 });
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+  "google_interactions",
+] as const)(
+  "%s retries two 429 rejections with identical native requests",
+  async (provider) => {
+    vi.useFakeTimers();
+    try {
+      const bodies: unknown[] = [];
+      const host = new FileNativeModelHost(
+        {
+          provider,
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "secret",
+          modelId: "manual-model",
+          contextWindowTokens: 64000,
+          maxOutputTokens: 2048,
+        },
+        async (_url, init) => {
+          await Promise.resolve();
+          bodies.push(init?.body);
+          if (bodies.length < 3)
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: "rate_limit_exceeded",
+                  message: "Temporary rate limit; see billing help",
+                },
+              }),
+              { status: 429, headers: { "content-type": "application/json" } },
+            );
+          if (provider === "google_interactions")
+            return new Response(
+              [
+                {
+                  event_type: "step.start",
+                  index: 0,
+                  step: { type: "model_output" },
+                },
+                {
+                  event_type: "step.delta",
+                  index: 0,
+                  delta: { type: "text", text: "Recovered." },
+                },
+                { event_type: "step.stop", index: 0 },
+                {
+                  event_type: "interaction.completed",
+                  interaction: { status: "completed" },
+                },
+              ]
+                .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                .join(""),
+              { headers: { "content-type": "text/event-stream" } },
+            );
+          return Response.json(
+            provider === "chat_completions"
+              ? {
+                  choices: [
+                    {
+                      message: { role: "assistant", content: "Recovered." },
+                      finish_reason: "stop",
+                    },
+                  ],
+                }
+              : provider === "openai_responses"
+                ? {
+                    id: "response",
+                    status: "completed",
+                    output: [
+                      {
+                        type: "message",
+                        role: "assistant",
+                        content: [{ type: "output_text", text: "Recovered." }],
+                      },
+                    ],
+                  }
+                : {
+                    id: "response",
+                    role: "assistant",
+                    content: [{ type: "text", text: "Recovered." }],
+                    stop_reason: "end_turn",
+                  },
+          );
+        },
+      );
+      const receipts: unknown[] = [];
+      const pending = host.exchange(
+        exchangeFor(provider, "manual-model", host.binding().cacheStrategy),
+        {
+          onRetry: (receipt) => {
+            receipts.push(receipt);
+          },
+        },
+      );
+      const checked = expect(pending).resolves.toMatchObject({
+        text: "Recovered.",
+      });
+      await vi.runAllTimersAsync();
+      await checked;
+      expect(bodies).toHaveLength(3);
+      expect(new Set(bodies).size).toBe(1);
+      expect(receipts).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+  "google_interactions",
+] as const)(
+  "%s never retries explicit hard balance failures and retains safe evidence",
+  async (provider) => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        Response.json(
+          {
+            error: {
+              code: "insufficient_balance",
+              message: "Your credit balance is too low. private-echo",
+            },
+          },
+          { status: 429 },
+        ),
+      ),
+    );
+    const host = new FileNativeModelHost(
+      {
+        provider,
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2048,
+      },
+      fetchMock,
+    );
+    const error: unknown = await host
+      .exchange(
+        exchangeFor(provider, "manual-model", host.binding().cacheStrategy),
+      )
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(ModelHostFailureError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((error as ModelHostFailureError).details).toEqual({
+      code: "hard_quota_exhausted",
+      httpStatus: 429,
+    });
+    expect((error as Error).message).not.toContain("private-echo");
+  },
+);
+
+test.each(["UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "ETIMEDOUT"])(
+  "unproven timeout %s is never replayed",
+  async (code) => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.reject(
+        new TypeError("fetch failed", {
+          cause: Object.assign(new Error("timeout"), { code }),
+        }),
+      ),
+    );
+    const host = new FileNativeModelHost(
+      {
+        provider: "chat_completions",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 2048,
+      },
+      fetchMock,
+    );
+    await expect(
+      host.exchange(
+        exchangeFor("chat_completions", "manual-model", "provider_managed"),
+      ),
+    ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  },
+);
+
+test("Google connection timeout after continuation progress is unknown and records interrupted evidence without retry", async () => {
+  const hops: GoogleHopEvidence[] = [];
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      new Response(
+        [
+          { event_type: "interaction.created", interaction: { id: "first" } },
+          {
+            event_type: "interaction.completed",
+            interaction: {
+              status: "requires_continuation",
+              continuation_token: "private-token",
+            },
+          },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    )
+    .mockRejectedValueOnce(
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("Connect Timeout Error"), {
+          code: "UND_ERR_CONNECT_TIMEOUT",
+        }),
+      }),
+    );
+  const host = new FileNativeModelHost(
+    {
+      provider: "google_interactions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "secret",
+      modelId: "manual-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2048,
+    },
+    fetchMock,
+  );
+  const retry = vi.fn();
+  await expect(
+    host.exchange(
+      exchangeFor("google_interactions", "manual-model", "provider_managed"),
+      {
+        onRetry: retry,
+        onGoogleHop: (hop) => {
+          hops.push(structuredClone(hop));
+        },
+      },
+    ),
+  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(retry).not.toHaveBeenCalled();
+  expect(hops.at(-1)).toMatchObject({
+    hop: 2,
+    tokenSupplied: true,
+    status: "interrupted",
+  });
+});

@@ -17,7 +17,7 @@ test.beforeAll(async () => {
     request.on("end", () => {
       providerCalls++;
       if (rejectModel) {
-        response.writeHead(429, { "content-type": "application/json" });
+        response.writeHead(503, { "content-type": "application/json" });
         response.end(
           JSON.stringify({
             error: {

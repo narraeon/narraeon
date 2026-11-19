@@ -1,3 +1,4 @@
+import { validOptionalModelRetries } from "../../protocol/modelRetry.ts";
 import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
 import { playFreshContextReason } from "./PlayFailure.ts";
 import { playAssistantPrefill } from "../model/AssistantPrefill.ts";
@@ -1838,6 +1839,9 @@ function summarizeEvent(
         : { replyEventId: event.replyEventId }),
       ...(event.status === undefined ? {} : { status: event.status }),
       toolCallCount: event.toolCalls.length,
+      ...(event.retries === undefined
+        ? {}
+        : { retries: structuredClone(event.retries) }),
       hasReasoning: Boolean(event.reasoning),
       failed: event.failure !== undefined,
       ...(event.usage === undefined
@@ -2194,6 +2198,7 @@ function validOptionalFollowupIdentity(
   value: Record<string, unknown>,
 ): boolean {
   return (
+    validOptionalModelRetries(value.retries) &&
     (value.replyEventId === undefined ||
       (Number.isSafeInteger(value.replyEventId) &&
         Number(value.replyEventId) >= 1)) &&
@@ -2207,6 +2212,7 @@ function validOptionalFollowupIdentity(
 
 function validAssistantEventCore(value: Record<string, unknown>): boolean {
   return (
+    validOptionalModelRetries(value.retries) &&
     (value.checkpoint === undefined ||
       (value.checkpoint === true &&
         value.status === "completed" &&

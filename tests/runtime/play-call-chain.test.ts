@@ -14723,3 +14723,119 @@ test.each([
     }),
   ).rejects.toThrow(/no supported/iu);
 });
+
+test("automatic backoff keeps player, tool settlement and narrative unique across main and followup requests", async () => {
+  const { retryChat } = await import("./support/retry-chat.ts");
+  const { host, bodies } = retryChat([
+    "rate_limit",
+    "rate_limit",
+    {
+      content: null,
+      tool_calls: [
+        {
+          id: "write-once",
+          type: "function",
+          function: {
+            name: "world_patch",
+            arguments: JSON.stringify({
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "已安全结算",
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    "connect_timeout",
+    { content: "恢复后叙事" },
+    "rate_limit",
+    { content: "后置完成" },
+    { content: "第二后置完成" },
+  ]);
+  const { worlds, worldId, root } = await createWorld(
+    "automatic-backoff",
+    undefined,
+    host.binding(),
+  );
+  const chain = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  );
+  const snapshots: V1PlayCallChainView[] = [];
+  const result = await chain.start({
+    worldId,
+    chainId: "automatic-backoff",
+    exchangeId: "send",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+    observer: {
+      onSnapshot: (view) => {
+        snapshots.push(structuredClone(view));
+      },
+    },
+  });
+  expect(result.status).toBe("ready");
+  expect(result.events.filter(({ kind }) => kind === "player")).toHaveLength(1);
+  expect(
+    result.events.filter(
+      (event) => event.kind === "tool_call" && event.callId === "write-once",
+    ),
+  ).toHaveLength(1);
+  expect(
+    result.events.filter(
+      (event) => event.kind === "tool_result" && event.callId === "write-once",
+    ),
+  ).toMatchObject([{ ok: true }]);
+  expect(result.events.filter(({ kind }) => kind === "failure")).toHaveLength(
+    0,
+  );
+  expect(bodies).toHaveLength(8);
+  expect(bodies[0]).toBe(bodies[1]);
+  expect(bodies[1]).toBe(bodies[2]);
+  expect(bodies[3]).toBe(bodies[4]);
+  expect(bodies[5]).toBe(bodies[6]);
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.filter((text) => text === "Go.")).toHaveLength(1);
+  expect(history.filter((text) => text === "恢复后叙事")).toHaveLength(1);
+  const receipts = result.events.flatMap((event) =>
+    event.kind === "assistant" || event.kind === "followup"
+      ? (event.retries ?? [])
+      : [],
+  );
+  expect(receipts.map(({ reason }) => reason)).toEqual([
+    "rate_limit",
+    "rate_limit",
+    "connect_timeout",
+    "rate_limit",
+  ]);
+  expect(
+    snapshots.some((view) =>
+      view.events.some(
+        (event) =>
+          (event.kind === "assistant" || event.kind === "followup") &&
+          event.retries?.at(-1)?.status === "waiting",
+      ),
+    ),
+  ).toBe(true);
+  const reopened = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(
+    reopened?.events.flatMap((event) =>
+      event.kind === "assistant" || event.kind === "followup"
+        ? (event.retries ?? [])
+        : [],
+    ),
+  ).toEqual(receipts);
+}, 15000);

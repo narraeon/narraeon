@@ -1,3 +1,5 @@
+import { ModelRetryStatus } from "./ModelRetryStatus.tsx";
+import type { ModelRetryEvidence } from "../protocol/modelRetry.ts";
 import type { V1PlayRunPhase } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
 import type { PlayRunProgressValue } from "./PlayRunProgressState.ts";
@@ -6,11 +8,14 @@ export function PlayRunProgress({
   progress,
   now,
   onCancel,
+  retries,
 }: {
   progress: PlayRunProgressValue;
   now: number;
   onCancel: () => void;
+  retries?: ModelRetryEvidence[] | undefined;
 }): React.JSX.Element {
+  const retryWaiting = retries?.at(-1)?.status === "waiting";
   const elapsed = Math.max(0, Math.round((now - progress.startedAt) / 1000));
   const silence = Math.max(
     0,
@@ -25,7 +30,11 @@ export function PlayRunProgress({
       aria-label={uiText("本次模型调用进度")}
     >
       <div className="model-run-headline">
-        <strong>{phaseLabel(progress.phase)}</strong>
+        <strong>
+          {retryWaiting
+            ? uiText("正在等待自动重试…")
+            : phaseLabel(progress.phase)}
+        </strong>
         <span>{uiText("已运行 {seconds} 秒", { seconds: elapsed })}</span>
         <span className={stalled ? "model-run-age-stalled" : undefined}>
           {silence === 0
@@ -46,7 +55,8 @@ export function PlayRunProgress({
           <dd>{progress.dispatches}</dd>
         </div>
       </dl>
-      {progress.phase === "waiting" ? (
+      <ModelRetryStatus retries={retries} active />
+      {progress.phase === "waiting" && !retryWaiting ? (
         <p className="model-run-note">
           {uiText(
             "Provider 尚未返回可区分的增量；这可能是排队、模型内部思考或网络等待。",

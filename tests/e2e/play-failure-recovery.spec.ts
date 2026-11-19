@@ -38,7 +38,7 @@ test.beforeAll(async () => {
       } else {
         response.writeHead(
           step?.kind === "reject"
-            ? 429
+            ? 503
             : step?.kind === "context_limit"
               ? 400
               : 500,

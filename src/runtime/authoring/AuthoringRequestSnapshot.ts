@@ -1,3 +1,5 @@
+import { validOptionalModelRetries } from "../../protocol/modelRetry.ts";
+import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
 import {
   isPlayPresetBinding,
   type PlayPresetBinding,
@@ -29,6 +31,7 @@ export interface AuthoringCall {
   assistantItemIndex?: number;
   usage?: ModelUsage | null;
   failure?: string;
+  retries?: ModelRetryEvidence[];
 }
 
 /**
@@ -205,6 +208,7 @@ function validAuthoringCall(value: unknown): value is AuthoringCall {
   if (typeof value !== "object" || value === null) return false;
   const call = value as Partial<AuthoringCall>;
   return (
+    validOptionalModelRetries(call.retries) &&
     typeof call.id === "string" &&
     call.id.startsWith("call-") &&
     Number.isSafeInteger(call.exchange) &&

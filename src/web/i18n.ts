@@ -1899,6 +1899,15 @@ const worldPageEnglishMessages: Record<string, string> = {
   "已有 {seconds} 秒没有收到任何新数据，模型调用可能已经卡住；你可以继续等待或取消。":
     "No new data has arrived for {seconds} seconds. The model call may be stuck; you can keep waiting or cancel it.",
   "正在准备模型请求…": "Preparing the model request…",
+  "{count} 个后置请求未完成": "{count} follow-up requests did not complete",
+  "服务商建议等待 {seconds} 秒后再试。":
+    "The Provider recommends waiting {seconds} seconds before trying again.",
+  服务商暂时限流: "Provider temporarily rate limited the request",
+  连接建立超时: "Connection timed out before dispatch",
+  "自动重试 {retry}/3": "Automatic retry {retry}/3",
+  "等待约 {seconds} 秒": "Wait about {seconds} seconds",
+  "等待中，可停止": "Waiting; you can stop",
+  "正在等待自动重试…": "Waiting to retry automatically…",
   "正在等待模型响应…": "Waiting for the model response…",
   "思考中（正在接收 Provider 返回推理）":
     "Reasoning (receiving Provider-returned reasoning)",

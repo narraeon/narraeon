@@ -77,6 +77,9 @@ export function authoringConversationTurns<T extends AuthoringHistory>(
           ...(call.usage === undefined
             ? {}
             : { usage: structuredClone(call.usage) }),
+          ...(call.retries === undefined
+            ? {}
+            : { retries: structuredClone(call.retries) }),
           toolCalls: [],
         };
         current.exchanges.push(response);

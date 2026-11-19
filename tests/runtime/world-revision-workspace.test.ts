@@ -4100,3 +4100,62 @@ test.each(["assistant", "disabled"] as const)(
     expect((await worlds.recoverEndpoint(worldId)).head).toBe(before);
   },
 );
+
+test("world revision retries its frozen authoring step inside the same epoch", async () => {
+  const { retryChat } = await import("./support/retry-chat.ts");
+  const { root, worldId, worlds, workspace } = await createdWorld();
+  const { host, bodies } = retryChat([
+    "rate_limit",
+    "rate_limit",
+    { content: "Recovered revision answer." },
+  ]);
+  const revisions: number[] = [];
+  const observedHost: ModelHost = {
+    binding: () => host.binding(),
+    freezeRequest: (request) => host.freezeRequest(request),
+    exchange: (request, observer) =>
+      host.exchange(request, {
+        ...observer,
+        onRetry: async (evidence) => {
+          await observer?.onRetry?.(evidence);
+          const stored = await new FileNativeWorldRevisionStore(
+            root,
+          ).listSessions(worldId);
+          revisions.push(stored[0]!.updatedAt);
+        },
+      }),
+  };
+  const service = () =>
+    new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+      locale: () => "zh-CN",
+      bindModelHost: () => Promise.resolve(observedHost),
+      bindExistingModelHost: () => Promise.resolve(observedHost),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+      preview: () => preview,
+    });
+  const before = await worlds.recoverEndpoint(worldId);
+  const result = await service().send({
+    worldId,
+    requestId: "automatic-retry",
+    message: "Discuss revision.",
+    continuation: { kind: "fresh_context" },
+  });
+  expect(result.runStatus).toBe("ready");
+  expect(revisions).toHaveLength(4);
+  expect(new Set(revisions).size).toBe(4);
+  expect(result.turns).toHaveLength(1);
+  expect(result.turns[0]?.exchanges).toHaveLength(1);
+  expect(result.turns[0]?.exchanges[0]?.retries).toHaveLength(2);
+  expect(new Set(bodies).size).toBe(1);
+  expect(result.lastFailure).toBeNull();
+  expect((await worlds.recoverEndpoint(worldId)).history).toEqual(
+    before.history,
+  );
+  const reopened = await service().readSession(worldId, result.sessionId);
+  expect(reopened.turns).toEqual(result.turns);
+}, 10000);

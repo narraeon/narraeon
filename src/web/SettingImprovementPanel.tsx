@@ -1,3 +1,7 @@
+import {
+  ModelRetryLimitNotice,
+  ModelRetryStatus,
+} from "./ModelRetryStatus.tsx";
 import type { PlayRequestContext } from "../protocol/playRequestContext.ts";
 import { RequestContextDetails } from "./PlayRequestContextDetails.tsx";
 import {
@@ -836,6 +840,7 @@ export function SettingImprovementPanel({
                   {view.lastFailure && (
                     <>
                       <strong>{uiText("上一次操作未完成")}</strong>
+                      <ModelRetryLimitNotice message={view.lastFailure} />
                       <details>
                         <summary>{uiText("查看详情")}</summary>
                         <p>{view.lastFailure}</p>
@@ -1479,6 +1484,7 @@ function SettingConversationTurnView({
             <ModelCallDetails
               key={exchange.id}
               number={index + 1}
+              retries={exchange.retries}
               status={exchange.status}
               retryOf={
                 original < 0
@@ -1788,6 +1794,10 @@ function SettingConversationProgress({
   view: SettingImprovementView | null;
   now: number;
 }): React.JSX.Element {
+  const retries = view?.turns
+    .flatMap((turn) => turn.exchanges)
+    .findLast((exchange) => exchange.status === "streaming")?.retries;
+  const retryWaiting = retries?.at(-1)?.status === "waiting";
   const progress = view?.progress;
   const stream = progress?.streaming;
   const silence =
@@ -1806,7 +1816,10 @@ function SettingConversationProgress({
     <div className="setting-conversation-running" role="status">
       <span className="setting-conversation-spinner" aria-hidden="true" />
       <div>
-        <strong>{uiText("AI 正在处理…")}</strong>
+        <strong>
+          {uiText(retryWaiting ? "正在等待自动重试…" : "AI 正在处理…")}
+        </strong>
+        <ModelRetryStatus retries={retries} active />
         <p>
           {uiText(
             "第 {exchange} 次模型交换 · {tools} 次工具调用 · 已接收 {chars} 字",

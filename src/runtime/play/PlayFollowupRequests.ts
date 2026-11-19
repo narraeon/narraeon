@@ -1,3 +1,4 @@
+import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
 import type { WorldExtensionRequests } from "../extension/WorldExtensionRequests.ts";
 import type { FrozenArtifactPresentation } from "./FileNativePlayPresetStore.ts";
 import type {
@@ -40,6 +41,7 @@ export interface PlayFollowupOutcome {
     markdown: string;
   }[];
   failure?: string;
+  retries?: ModelRetryEvidence[];
   requestPreviewStatus?: "attempted" | "completed" | "cancelled";
   requestPreviewRecorded?: boolean;
 }
@@ -50,6 +52,7 @@ export interface PlayFollowupRun {
 }
 
 export interface PlayFollowupObserver {
+  onRetry?: (evidence: ModelRetryEvidence) => Promise<void> | void;
   onRequest?: (id: string, request: ModelHostExchange) => Promise<boolean>;
   onGoogleHop?: (id: string, evidence: GoogleHopEvidence) => Promise<void>;
   onProviderDispatch?: (
@@ -257,6 +260,10 @@ async function runOne(
       );
       response = await input.modelHost.exchange(request, {
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        onRetry: async (evidence) => {
+          (outcome.retries ??= [])[evidence.retry - 1] = evidence;
+          await input.observer?.onRetry?.(evidence);
+        },
         onGoogleHop: (evidence) =>
           input.observer?.onGoogleHop?.(followup.id, evidence),
         ...(input.controls !== undefined

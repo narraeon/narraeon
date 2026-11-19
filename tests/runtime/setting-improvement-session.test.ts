@@ -5647,3 +5647,32 @@ test("Google 设定完善将中断正文和内部指令发送给模型并原样�
     ]),
   );
 });
+
+test("setting authoring retries a frozen step without duplicating the author turn and preserves receipts on reopen", async () => {
+  const { retryChat } = await import("./support/retry-chat.ts");
+  const fixture = await createFixture([]);
+  const { host, bodies } = retryChat([
+    "rate_limit",
+    "rate_limit",
+    { content: "Recovered authoring answer." },
+  ]);
+  const service = serviceFor(fixture.root, fixture.content, host);
+  const result = await sendFresh(
+    service,
+    fixture.packageId,
+    "automatic-retry",
+    "Discuss the setting.",
+  );
+  expect(result.runStatus).toBe("ready");
+  expect(result.turns).toHaveLength(1);
+  expect(result.turns[0]?.exchanges).toHaveLength(1);
+  expect(result.turns[0]?.exchanges[0]?.retries).toHaveLength(2);
+  expect(new Set(bodies).size).toBe(1);
+  expect(result.lastFailure).toBeNull();
+  const reopened = await serviceFor(
+    fixture.root,
+    fixture.content,
+    host,
+  ).readSession(fixture.packageId, result.sessionId);
+  expect(reopened.turns).toEqual(result.turns);
+}, 10000);

@@ -1,3 +1,4 @@
+import { ModelRetryLimitNotice } from "./ModelRetryStatus.tsx";
 import {
   ModelRecoveryActions,
   type ComposerFreshContextReason,
@@ -36,6 +37,7 @@ export function PlayFailureNotice({
   return (
     <>
       <strong>{uiText(text.title)}</strong>
+      <ModelRetryLimitNotice message={message} />
       {recovery?.freshContextReason === undefined && (
         <p>
           {playFailureDescription(

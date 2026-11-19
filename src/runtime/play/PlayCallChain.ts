@@ -2450,6 +2450,9 @@ export class PlayCallChain {
         responseKind,
         exchange: advance.exchange,
         attempt: advance.attempt,
+        ...(existing.retries === undefined
+          ? {}
+          : { retries: structuredClone(existing.retries) }),
         ...(existing.usageRecorded === true
           ? { usageRecorded: true as const }
           : {}),
@@ -2864,6 +2867,13 @@ export class PlayCallChain {
         response = await modelHost.exchange(request, {
           signal,
           diagnosticAttempt: attempt,
+          onRetry: async (evidence) => {
+            (event.retries ??= [])[evidence.retry - 1] = evidence;
+            touch(session);
+            await this.#persist(session);
+            this.changed(session.worldId);
+            this.#notifySnapshot(observer, session);
+          },
           onGoogleHop: (hop) =>
             this.#worlds.playTimeline.recordGoogleHop(
               session.worldId,
@@ -3175,6 +3185,9 @@ export class PlayCallChain {
               ? "interrupted"
               : "completed",
         text: outcome.text,
+        ...(outcome.retries === undefined
+          ? {}
+          : { retries: structuredClone(outcome.retries) }),
         ...(outcome.reasoning === undefined
           ? {}
           : { reasoning: outcome.reasoning }),
@@ -3237,6 +3250,15 @@ export class PlayCallChain {
           ? {}
           : { failureLog: this.#failureLog }),
         observer: {
+          onRetry: async (evidence) => {
+            if (activeFollowup !== undefined) {
+              (activeFollowup.retries ??= [])[evidence.retry - 1] = evidence;
+              touch(session);
+              await this.#persist(session);
+              this.changed(session.worldId);
+              this.#notifySnapshot(observer, session);
+            }
+          },
           onGoogleHop: async (id, hop) => {
             if (previewExchange !== undefined)
               await this.#worlds.playTimeline.recordGoogleHop(

@@ -186,6 +186,7 @@ export function PlayTurnCallDetails({
             return (
               <ModelCallDetails
                 key={`${chainId}:${event.id}`}
+                retries={event.retries}
                 number={index + 1}
                 label={`${uiText("后置请求")} · ${event.displayName}`}
                 status={
@@ -258,6 +259,7 @@ export function PlayTurnCallDetails({
           return (
             <ModelCallDetails
               key={`${chainId}:${event.id}`}
+              retries={event.retries}
               number={index + 1}
               label={uiText("游玩主链")}
               status={

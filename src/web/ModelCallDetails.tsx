@@ -1,3 +1,5 @@
+import { ModelRetryStatus } from "./ModelRetryStatus.tsx";
+import type { ModelRetryEvidence } from "../protocol/modelRetry.ts";
 import type { ReactNode } from "react";
 import type { ModelUsage } from "../protocol/modelUsage.ts";
 import { uiText } from "./i18n.ts";
@@ -40,6 +42,7 @@ export function ModelCallDetails({
   label,
   status = "completed",
   retryOf,
+  retries,
   failure,
   context,
   reasoning,
@@ -50,6 +53,7 @@ export function ModelCallDetails({
   label?: string;
   status?: CallStatus | undefined;
   retryOf?: string | undefined;
+  retries?: ModelRetryEvidence[] | undefined;
   failure?: ReactNode;
   context: ReactNode;
   reasoning: ReactNode;
@@ -68,6 +72,11 @@ export function ModelCallDetails({
           {retryOf ? ` · ${retryOf}` : ""}
         </small>
       </header>
+      <ModelRetryStatus
+        retries={retries}
+        active={status === "streaming"}
+        history
+      />
       {failure ? <div className="model-call-failure">{failure}</div> : null}
       <div className="model-call-sections">
         {context}

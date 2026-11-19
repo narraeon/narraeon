@@ -1,3 +1,4 @@
+import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { playerInputText } from "../../shared/turn-guide.ts";
 import type {
@@ -187,6 +188,7 @@ export interface ModelHostDelta {
 }
 
 export interface ModelHostExchangeObserver {
+  onRetry?: (evidence: ModelRetryEvidence) => Promise<void> | void;
   onDelta?: (delta: ModelHostDelta) => void;
   /** Sanitized evidence for one Google dispatch, updated as it progresses. */
   onGoogleHop?: (evidence: GoogleHopEvidence) => Promise<void> | void;
