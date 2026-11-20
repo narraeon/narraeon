@@ -1,4 +1,8 @@
 import {
+  supersededPlayEvents,
+  publicAttempt,
+} from "../../shared/latest-model-attempts.ts";
+import {
   ModelResponseFormatError,
   validateModelToolCalls,
 } from "../model/ModelResponseCorrection.ts";
@@ -3929,6 +3933,8 @@ function mergeChangedDocuments(
 function projectContext(
   context: PersistedPlayCallChainContext,
 ): V1PlayCallChainContextView {
+  const supersededEventIds = supersededPlayEvents(context.events);
+  const superseded = new Set(supersededEventIds);
   const freshContextReason = playFreshContextReason(context);
   const response = context.events.findLast(
     (event) => event.kind === "assistant" && event.status === "completed",
@@ -3964,9 +3970,11 @@ function projectContext(
     canContinuePartial:
       !freshContextReason && playAssistantPrefill(context) !== null,
     ...(freshContextReason === undefined ? {} : { freshContextReason }),
+    supersededEventIds,
     events: context.events
+      .filter((event) => !superseded.has(event.id))
       .slice(-projectedEventTail)
-      .map((event) => projectActivityEvent(event)),
+      .map((event) => publicAttempt(projectActivityEvent(event))),
     changedDocuments: structuredClone(context.changedDocuments),
     lastFailure: context.lastFailure,
     ...(context.lastFailureKind === undefined

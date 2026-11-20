@@ -4084,8 +4084,9 @@ test.each(["assistant", "disabled"] as const)(
     expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
       sent[0]?.messages,
     );
-    const [initial, retry] = done.turns[0]!.exchanges;
-    expect(retry).toMatchObject({ status: "completed", retryOf: initial!.id });
+    const [retry] = done.turns[0]!.exchanges;
+    expect(done.turns[0]!.exchanges).toHaveLength(1);
+    expect(retry).toMatchObject({ status: "completed" });
     const context = await createService().readCallContext(
       worldId,
       done.sessionId,
@@ -4150,7 +4151,7 @@ test("world revision retries its frozen authoring step inside the same epoch", a
   expect(new Set(revisions).size).toBe(4);
   expect(result.turns).toHaveLength(1);
   expect(result.turns[0]?.exchanges).toHaveLength(1);
-  expect(result.turns[0]?.exchanges[0]?.retries).toHaveLength(2);
+  expect(result.turns[0]?.exchanges[0]?.retries).toBeUndefined();
   expect(new Set(bodies).size).toBe(1);
   expect(result.lastFailure).toBeNull();
   expect((await worlds.recoverEndpoint(worldId)).history).toEqual(

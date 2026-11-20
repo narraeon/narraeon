@@ -62,11 +62,7 @@ export function ModelCallDetails({
         {label ? <h4>{label}</h4> : null}
         <small>{uiText(statusLabel[status])}</small>
       </header>
-      <ModelRetryStatus
-        retries={retries}
-        active={status === "streaming"}
-        history
-      />
+      <ModelRetryStatus retries={retries} active={status === "streaming"} />
       {failure ? <div className="model-call-failure">{failure}</div> : null}
       <div className="model-call-sections">
         {context}

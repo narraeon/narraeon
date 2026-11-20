@@ -4,14 +4,12 @@ import { uiText } from "./i18n.ts";
 export function ModelRetryStatus({
   retries,
   active = false,
-  history = false,
 }: {
   retries?: ModelRetryEvidence[] | undefined;
   active?: boolean;
-  history?: boolean;
 }) {
   const waiting = active && retries?.at(-1)?.status === "waiting";
-  const entries = history ? retries : waiting ? retries?.slice(-1) : [];
+  const entries = waiting ? retries?.slice(-1) : [];
   if (!entries?.length) return null;
   return (
     <div className="model-retry-status" role={waiting ? "status" : undefined}>

@@ -656,21 +656,20 @@ for (const kind of ["setting", "revision"] as const) {
     ).toBeVisible();
     await expect(trace.locator(".model-call")).toHaveCount(1);
     await expect(trace.locator(".model-call")).toContainText("已完成");
-    await expect(trace.locator(".model-call-attempt-history")).toHaveCount(1);
-    await expect(
-      trace.locator(".model-call-attempt-history > summary"),
-    ).toContainText("3 次尝试");
-    await trace.locator(".model-call-attempt-history > summary").click();
-    await expect(
-      trace.locator(".model-call-attempt-list .model-call"),
-    ).toHaveCount(3);
+    await expect(trace.locator(".model-call-attempt-history")).toHaveCount(0);
+    await expect(trace.getByText("历史尝试", { exact: false })).toHaveCount(0);
     expect(contexts).toHaveLength(0);
+    const current = await target.overview();
+    expect(current.latest!.turns[0]!.exchanges).toHaveLength(1);
+    expect(current.latest!.turns[0]!.exchanges[0]!.id).not.toBe(firstCallId);
     await trace
-      .locator(".model-call-attempt-list .model-call .technical-details")
+      .locator(".model-call .technical-details")
       .first()
       .locator(":scope > summary")
       .click();
-    await expect.poll(() => contexts).toEqual([firstCallId]);
+    await expect
+      .poll(() => contexts)
+      .toEqual([current.latest!.turns[0]!.exchanges[0]!.id]);
     expect(providerCalls).toBe(4);
     await page.reload();
     if (kind === "revision") await target.open();

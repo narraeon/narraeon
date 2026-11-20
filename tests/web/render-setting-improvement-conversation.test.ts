@@ -321,7 +321,7 @@ test.each(["content-package", "world-revision"] as const)(
     });
     expect(completed).not.toContain('class="setting-conversation-running"');
     expect(completed).not.toContain("setting-conversation-failure");
-    expect(completed).toContain("自动重试 1/3");
+    expect(completed).not.toContain("自动重试");
     expect(completed).toContain("Recovered");
   },
 );
@@ -358,5 +358,5 @@ test("repeated manual retry keeps only the latest default card", () => {
   const html = render(current);
   expect(html.match(/class="model-call"/gu)).toHaveLength(1);
   expect(html).not.toContain("第 1 次调用");
-  expect(html).toContain("历史尝试");
+  expect(html).not.toContain("历史尝试");
 });

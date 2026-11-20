@@ -11,6 +11,7 @@ import type { ObserveConversation } from "../../src/web/ConversationObserver.ts"
 import { AuthoringWorkspace } from "../../src/web/AuthoringWorkspace.ts";
 import {
   contentPackageTarget,
+  confirmsAuthoringRequest,
   worldRevisionTarget,
 } from "../../src/web/AuthoringTarget.ts";
 import { RuntimeRequestError } from "../../src/web/runtimeClient.ts";
@@ -1073,4 +1074,21 @@ test("保存中的玩法变更期间不能开始文件草稿，结束后重新�
   workspace.editFiles([{ path: "control/frame.yaml", contents: "draft" }]);
   expect(workspace.getSnapshot().dirty).toBe(true);
   workspace.close();
+});
+
+test("an accepted command remains confirmed after another window replaces its failed diagnostics", () => {
+  const view = {
+    sessionId: "session",
+    runStatus: "running" as const,
+    messages: [],
+    turns: [],
+    usage: emptyAggregatedModelUsage(),
+    progress: { exchange: 1, toolCalls: 0, streaming: null, updatedAt: 1 },
+    lastFailure: null,
+    confirmedRequestIds: ["original", "new-retry"],
+    requestPreviews: [{ requestId: "new-retry", legacyBootstrap: false }],
+  };
+  expect(confirmsAuthoringRequest(view, "original")).toBe(true);
+  expect(confirmsAuthoringRequest(view, "new-retry")).toBe(true);
+  expect(confirmsAuthoringRequest(view, "not-accepted")).toBe(false);
 });

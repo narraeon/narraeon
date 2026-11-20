@@ -649,6 +649,8 @@ export interface V1SettingImprovementView {
   canRetry?: boolean;
   canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestIdentity[];
+  /** Accepted command receipts, independent of diagnostics retained for display. */
+  confirmedRequestIds?: string[];
   sessionId: string;
   packageId: string;
   runStatus: "ready" | "running" | "paused" | "interrupted";
@@ -729,6 +731,8 @@ export interface V1WorldRevisionView {
   canRetry?: boolean;
   canContinuePartial?: boolean;
   requestPreviews?: V1AuthoringRequestIdentity[];
+  /** Accepted command receipts, independent of diagnostics retained for display. */
+  confirmedRequestIds?: string[];
   sessionId: string;
   worldId: string;
   epochId: string;
@@ -951,6 +955,7 @@ export type V1PlayTimelineItem =
     };
 
 export interface V1PlayTimelinePage {
+  supersededEvents?: { chainId: string; eventIds: number[] }[];
   worldId: string;
   generation: string;
   activeChainId: string | null;
@@ -968,6 +973,8 @@ export interface V1PlayTimelinePage {
 
 /** One model context as projected into the durable player-visible timeline. */
 export interface V1PlayCallChainContextView {
+  /** Tombstones remove superseded attempts from already loaded event projections. */
+  supersededEventIds?: number[];
   freshContextReason?: FreshContextReason;
   requiresFreshContext?: true;
   chainId: string;

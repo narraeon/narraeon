@@ -794,7 +794,11 @@ describe("世界游玩页面", () => {
     fireEvent.click(toggle);
     expect(within(story).getByText("AI 响应")).toBeTruthy();
     expect(within(story).getByText("全新上下文")).toBeTruthy();
-    expect(within(story).getAllByText("已完成 · 第 1 次派发")).toHaveLength(1);
+    expect(
+      story.querySelector(".call-chain-assistant > article > header")
+        ?.textContent,
+    ).toContain("已完成");
+    expect(story.textContent).not.toContain("次派发");
     expect(within(story).getByText("本段调用详情")).toBeTruthy();
     expect(within(story).getByText("本上下文已提交的世界变化")).toBeTruthy();
     expect(within(story).getByText("default")).toBeTruthy();
@@ -920,7 +924,7 @@ describe("世界游玩页面", () => {
     renderWorld(client);
     await screen.findByText("Alex 正在推门");
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
-    expect(screen.queryByText("接收中 · 第 1 次派发")).toBeNull();
+    expect(screen.queryByText("接收中")).toBeNull();
     expect(screen.queryByText("模型推理")).toBeNull();
     expect(screen.getByRole("button", { name: "取消生成" })).toBeTruthy();
   });
@@ -2726,7 +2730,7 @@ describe("世界游玩页面", () => {
     expect(within(progress).getByText("正在输出正文…")).toBeTruthy();
     expect(within(progress).getByText("40 字")).toBeTruthy();
     expect(within(progress).getByText("24 字")).toBeTruthy();
-    expect(screen.getByText("接收中 · 第 1 次派发")).toBeTruthy();
+    expect(screen.getByText("接收中")).toBeTruthy();
     expect(screen.getByText("待定输出；响应完成前不会进入故事")).toBeTruthy();
     expect(
       screen.queryByText(
@@ -7056,4 +7060,65 @@ test("multiple failed followups for one reply collapse into one summary without 
   expect(
     screen.getByText("Alex opens the door and lets you go first."),
   ).toBeTruthy();
+});
+
+test("a replacement snapshot deletes the failed attempt from an already loaded timeline", async () => {
+  let chain = interruptedChainView();
+  let receive!: Parameters<ObserveConversation>[1];
+  const client = {
+    observeConversation: ((_target, callback) => {
+      receive = callback;
+      return vi.fn();
+    }) satisfies ObserveConversation,
+    request: vi.fn((request: V1Request) => {
+      if (request.type === "world.read")
+        return Promise.resolve(worldView(chain));
+      if (request.type === "world.play-decorations.read")
+        return Promise.resolve(
+          playDecorations(null, "world-one", chain.parentHead),
+        );
+      return Promise.resolve({ status: "unavailable", messages: [] });
+    }),
+  };
+  renderWorld(client, undefined, {
+    initialReadingPreferences: {
+      ...defaultAppReadingPreferences,
+      showTechnicalInfo: true,
+    },
+  });
+  await screen.findByRole("heading", { name: "宿舍世界" });
+  expect(document.body.textContent).toContain(
+    "The Provider stream disconnected midway.",
+  );
+  chain = {
+    ...chain,
+    status: "running",
+    canRetry: false,
+    lastFailure: null,
+    updatedAt: 2,
+    supersededEventIds: [2, 3],
+    events: [
+      chain.events[0]!,
+      {
+        id: 4,
+        kind: "assistant",
+        status: "streaming",
+        text: "",
+        responseKind: "pending",
+        exchange: 2,
+        attempt: 2,
+      },
+    ],
+  };
+  await act(async () => {
+    await receive({ kind: "play", value: structuredClone(chain) }, true);
+  });
+  expect(document.body.textContent).not.toContain(
+    "The Provider stream disconnected midway.",
+  );
+  expect(document.body.textContent).not.toContain(
+    "Alex has opened the door halfway",
+  );
+  expect(document.body.textContent).not.toContain("历史尝试");
+  expect(document.querySelectorAll(".model-call")).toHaveLength(1);
 });

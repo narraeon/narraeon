@@ -19,6 +19,7 @@ import {
 import {
   authoringRequestPreviews,
   authoringRequestIdentities,
+  confirmedAuthoringRequestIds,
   authoringActiveBinding,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
@@ -1293,6 +1294,7 @@ export class WorldRevisionSession {
         : null;
     return {
       requestPreviews: authoringRequestIdentities(session),
+      confirmedRequestIds: confirmedAuthoringRequestIds(session),
       sessionId: session.sessionId,
       worldId: session.worldId,
       epochId: session.epochId,

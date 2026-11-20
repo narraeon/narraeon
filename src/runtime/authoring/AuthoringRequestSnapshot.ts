@@ -1,3 +1,4 @@
+import { latestAuthoringCalls } from "../../shared/latest-model-attempts.ts";
 import { validOptionalModelRetries } from "../../protocol/modelRetry.ts";
 import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
 import {
@@ -330,12 +331,30 @@ function isUserItem(value: unknown): boolean {
   );
 }
 
+function visibleAuthoringRequests(
+  requests: readonly AuthoringRequestSnapshot[],
+): Set<string> {
+  return new Set(
+    requests.flatMap((snapshot) => {
+      const calls = snapshot.calls;
+      if (!calls?.length)
+        return [
+          snapshot.retryAttempts?.at(-1)?.requestId ?? snapshot.requestId,
+        ];
+      return latestAuthoringCalls(calls).map(
+        (call) => call.retryRequestId ?? snapshot.requestId,
+      );
+    }),
+  );
+}
+
 export function authoringRequestPreviews(session: {
   creationRequestId: string;
   bootstrap: PromptCompilation;
   requests?: AuthoringRequestSnapshot[];
 }) {
   const requests = session.requests ?? [];
+  const visible = visibleAuthoringRequests(requests);
   const legacy = requests.length === 0 || requests[0]!.modelItemStart > 0;
   return [
     ...(legacy
@@ -367,7 +386,7 @@ export function authoringRequestPreviews(session: {
         })),
       ],
     ),
-  ];
+  ].filter((entry) => entry.legacyBootstrap || visible.has(entry.requestId));
 }
 
 export function authoringRequestIdentities(session: {
@@ -375,6 +394,7 @@ export function authoringRequestIdentities(session: {
   requests?: AuthoringRequestSnapshot[];
 }) {
   const requests = session.requests ?? [];
+  const visible = visibleAuthoringRequests(requests);
   return [
     ...(requests.length === 0 || requests[0]!.modelItemStart > 0
       ? [{ requestId: session.creationRequestId, legacyBootstrap: true }]
@@ -386,5 +406,15 @@ export function authoringRequestIdentities(session: {
         legacyBootstrap: false,
       })),
     ]),
-  ];
+  ].filter((entry) => entry.legacyBootstrap || visible.has(entry.requestId));
+}
+
+/** Receipt identities survive removal of superseded public diagnostics. */
+export function confirmedAuthoringRequestIds(session: {
+  requests?: AuthoringRequestSnapshot[];
+}): string[] {
+  return (session.requests ?? []).flatMap((snapshot) => [
+    snapshot.requestId,
+    ...(snapshot.retryAttempts ?? []).map((attempt) => attempt.requestId),
+  ]);
 }

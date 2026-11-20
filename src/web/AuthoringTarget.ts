@@ -27,6 +27,7 @@ export function confirmsAuthoringRequest(
 ): boolean {
   // A legacy bootstrap can identify session creation before any message was accepted.
   return (
+    view?.confirmedRequestIds?.includes(requestId) === true ||
     view?.requestPreviews?.some(
       (preview) => !preview.legacyBootstrap && preview.requestId === requestId,
     ) === true

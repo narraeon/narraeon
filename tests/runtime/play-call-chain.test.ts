@@ -29,6 +29,7 @@ import {
   type V1PlayCallChainView,
   type V1PlayContextReadingView,
   type V1PlayTimelinePage,
+  type V1PlayTimelineItem,
   type V1Response,
 } from "../../src/protocol/v1.ts";
 import { contentTreeFingerprint } from "../../src/runtime/content/ContentTreeFingerprint.ts";
@@ -2522,7 +2523,7 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
     result.events.find(
       (event) => event.kind === "assistant" && event.status === "interrupted",
     ),
-  ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
+  ).toBeUndefined();
   const cold = await new PlayCallChain(
     new FileNativeWorldStore(root),
   ).inspectWorld(worldId);
@@ -2530,7 +2531,7 @@ test("Google 同一发送重复工具响应不会再次修改世界", async () =
     cold?.events.find(
       (event) => event.kind === "assistant" && event.status === "interrupted",
     ),
-  ).toMatchObject({ status: "interrupted", text: "重复响应片段" });
+  ).toBeUndefined();
   const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
     worldId,
   );
@@ -14813,12 +14814,7 @@ test("automatic backoff keeps player, tool settlement and narrative unique acros
       ? (event.retries ?? [])
       : [],
   );
-  expect(receipts.map(({ reason }) => reason)).toEqual([
-    "rate_limit",
-    "rate_limit",
-    "connect_timeout",
-    "rate_limit",
-  ]);
+  expect(receipts).toEqual([]);
   expect(
     snapshots.some((view) =>
       view.events.some(
@@ -14888,19 +14884,65 @@ test("manual retry links survive real failure, cancellation, success and cold ti
       },
     });
     const current = view.events.findLast((event) => event.kind === "assistant");
-    expect(current?.kind === "assistant" && current.retryOf).toBe(previous.id);
+    expect(current?.kind === "assistant" && current.retryOf).toBeUndefined();
+    expect(view.events.some((event) => event.id === previous.id)).toBe(false);
+    expect(
+      view.events.filter((event) => event.kind === "assistant"),
+    ).toHaveLength(1);
+    await expect(
+      worlds.playTimeline.readDetail(worldId, "retry-links", previous.id),
+    ).rejects.toThrow("superseded");
+    expect(
+      (
+        await worlds.playTimeline.readRequestContext(
+          worldId,
+          "retry-links",
+          previous.id,
+        )
+      ).status,
+    ).toBe("unavailable");
   }
   expect(view.status).toBe("ready");
   const calls = view.events.filter((event) => event.kind === "assistant");
-  expect(calls).toHaveLength(4);
-  expect(calls.map(({ attempt }) => attempt)).toEqual([1, 2, 3, 4]);
-  expect(calls.map(({ status }) => status)).toEqual([
-    "interrupted",
-    "interrupted",
-    "interrupted",
-    "completed",
-  ]);
-  expect(view.events.some((event) => event.kind === "cancellation")).toBe(true);
+  expect(calls).toHaveLength(1);
+  expect(calls.map(({ attempt }) => attempt)).toEqual([4]);
+  expect(calls.map(({ status }) => status)).toEqual(["completed"]);
+  expect(
+    view.events.some(
+      (event) => event.kind === "cancellation" || event.kind === "failure",
+    ),
+  ).toBe(false);
+  const raw = (await worlds.playTimeline.readCurrent(worldId))!.value;
+  expect(raw.events.filter((event) => event.kind === "assistant")).toHaveLength(
+    4,
+  );
+  const statePath = join(
+    root,
+    "worlds-file-native",
+    worldId,
+    "runtime",
+    "play-contexts",
+    createHash("sha256").update("retry-links").digest("hex"),
+    "state.json",
+  );
+  const legacyState = JSON.parse(await readFile(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  delete legacyState.supersededEventIds;
+  await writeFile(statePath, JSON.stringify(legacyState));
+  const pages: V1PlayTimelineItem[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await worlds.playTimeline.readPage(worldId, 1, cursor);
+    pages.push(...page.items);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor !== undefined);
+  expect(
+    pages.filter(
+      (item) => item.kind === "event" && item.event.kind === "assistant",
+    ),
+  ).toHaveLength(1);
   const reopened = await new PlayCallChain(
     new FileNativeWorldStore(root),
   ).inspectWorld(worldId);

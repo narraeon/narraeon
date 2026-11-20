@@ -3445,12 +3445,7 @@ function TimelineEvent({
                         ? uiText("空模型响应")
                         : uiText("AI 响应")}
                 </strong>
-                <span>
-                  {uiText("{status} · 第 {attempt} 次派发", {
-                    status: callChainAssistantStatusLabel(event.status),
-                    attempt: event.attempt,
-                  })}
-                </span>
+                <span>{callChainAssistantStatusLabel(event.status)}</span>
               </>
             ) : event.status === "interrupted" ? (
               <strong>{uiText("中断片段")}</strong>
@@ -3559,7 +3554,10 @@ function TimelineEvent({
             onRead={() => void detailTarget.recover()}
           />
           {full?.failure === undefined ? null : <p>{full.failure}</p>}
-          <ModelRetryStatus retries={full?.retries ?? event.retries} history />
+          <ModelRetryStatus
+            retries={full?.retries ?? event.retries}
+            active={event.status === "streaming"}
+          />
         </details>
       </li>
     );
@@ -3784,16 +3782,26 @@ function mergePlayTimelinePage(
         ? `context:${item.chainId}`
         : `event:${item.chainId}:${item.event.id}`;
   const incoming = new Map(page.items.map((item) => [key(item), item]));
-  const items = current.items.map((item) => {
-    const replacement = incoming.get(key(item));
-    incoming.delete(key(item));
-    return (
-      replacement ??
-      (item.kind === "genesis"
-        ? item
-        : { ...item, current: item.chainId === page.activeChainId })
-    );
-  });
+  const items = current.items
+    .filter(
+      (item) =>
+        item.kind !== "event" ||
+        !page.supersededEvents?.some(
+          (entry) =>
+            entry.chainId === item.chainId &&
+            entry.eventIds.includes(item.event.id),
+        ),
+    )
+    .map((item) => {
+      const replacement = incoming.get(key(item));
+      incoming.delete(key(item));
+      return (
+        replacement ??
+        (item.kind === "genesis"
+          ? item
+          : { ...item, current: item.chainId === page.activeChainId })
+      );
+    });
   return {
     ...page,
     items: [...items, ...incoming.values()],
@@ -3810,19 +3818,26 @@ function applyPlayTimelineFrame(
       if (current === null) return current;
       const chain = frame.value;
       const previousActiveChainId = current.activeChainId;
-      const items = current.items.map((item) => {
-        if (item.kind === "genesis") return item;
-        if (item.kind === "context_boundary")
-          return item.chainId === chain.chainId
-            ? {
-                ...item,
-                playPreset: structuredClone(chain.playPreset),
-                changedDocuments: structuredClone(chain.changedDocuments),
-                current: true,
-              }
-            : { ...item, current: false };
-        return { ...item, current: item.chainId === chain.chainId };
-      });
+      const items = current.items
+        .filter(
+          (item) =>
+            item.kind !== "event" ||
+            item.chainId !== chain.chainId ||
+            !chain.supersededEventIds?.includes(item.event.id),
+        )
+        .map((item) => {
+          if (item.kind === "genesis") return item;
+          if (item.kind === "context_boundary")
+            return item.chainId === chain.chainId
+              ? {
+                  ...item,
+                  playPreset: structuredClone(chain.playPreset),
+                  changedDocuments: structuredClone(chain.changedDocuments),
+                  current: true,
+                }
+              : { ...item, current: false };
+          return { ...item, current: item.chainId === chain.chainId };
+        });
       if (
         previousActiveChainId !== chain.chainId &&
         !items.some(

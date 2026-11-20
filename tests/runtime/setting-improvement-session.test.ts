@@ -2047,6 +2047,7 @@ test("retry retains the original request identity through a subsequent tool exch
     requestId: "retry-action",
   });
   expect(result.runStatus).toBe("ready");
+  expect(result.confirmedRequestIds).toEqual(["original", "retry-action"]);
   expect(host.requests.map((request) => request.requestId)).toEqual([
     "original",
     "original",
@@ -2056,7 +2057,6 @@ test("retry retains the original request identity through a subsequent tool exch
     toolCallId: "read",
   });
   expect(result.requestPreviews?.map(({ requestId }) => requestId)).toEqual([
-    "original",
     "retry-action",
   ]);
 });
@@ -5250,11 +5250,20 @@ test("设定完善中断正文在重启后继续发送，保持冻结请求及�
   expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
     sent[0]?.messages,
   );
-  const retryCall = done.turns[0]!.exchanges[1]!;
+  const retryCall = done.turns[0]!.exchanges[0]!;
   expect(retryCall).toMatchObject({
     status: "completed",
-    retryOf: originalCall.id,
   });
+  expect(done.turns[0]!.exchanges).toHaveLength(1);
+  expect(
+    (
+      await cold.readCallContext(
+        fixture.packageId,
+        first.sessionId,
+        originalCall.id,
+      )
+    ).status,
+  ).toBe("unavailable");
   const context = await cold.readCallContext(
     fixture.packageId,
     first.sessionId,
@@ -5270,7 +5279,7 @@ test("设定完善中断正文在重启后继续发送，保持冻结请求及�
     first.sessionId,
     originalCall.id,
   );
-  expect(originalContext.status).toBe("available");
+  expect(originalContext.status).toBe("unavailable");
   expect(
     originalContext.messages.some(({ role }) => role === "assistant · prefill"),
   ).toBe(false);
@@ -5666,7 +5675,7 @@ test("setting authoring retries a frozen step without duplicating the author tur
   expect(result.runStatus).toBe("ready");
   expect(result.turns).toHaveLength(1);
   expect(result.turns[0]?.exchanges).toHaveLength(1);
-  expect(result.turns[0]?.exchanges[0]?.retries).toHaveLength(2);
+  expect(result.turns[0]?.exchanges[0]?.retries).toBeUndefined();
   expect(new Set(bodies).size).toBe(1);
   expect(result.lastFailure).toBeNull();
   const reopened = await serviceFor(

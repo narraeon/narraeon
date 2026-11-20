@@ -97,24 +97,21 @@ test.each([false, true])(
       "正在接收",
     );
     expect(request).not.toHaveBeenCalled();
+    expect(
+      view.container.querySelector(".model-call-attempt-history"),
+    ).toBeNull();
+    expect(view.container.textContent).not.toContain("first failure");
+    expect(view.container.textContent).not.toContain("stopped");
     await open(
       view.container.querySelector<HTMLDetailsElement>(
-        ".model-call-attempt-history",
+        ".model-call .technical-details",
       )!,
     );
-    expect(
-      view.container.querySelectorAll(".model-call-attempt-list .model-call"),
-    ).toHaveLength(2);
-    expect(request).not.toHaveBeenCalled();
-    const oldContext = view.container.querySelector<HTMLDetailsElement>(
-      ".model-call-attempt-list .technical-details",
-    )!;
-    await open(oldContext);
     expect(request).toHaveBeenCalledWith({
       type: "play.timeline.context",
       worldId: "world",
       chainId: "chain",
-      eventId: 1,
+      eventId: 5,
     });
     third.status = "completed";
     third.responseKind = "narrative";
@@ -129,7 +126,7 @@ test.each([false, true])(
     );
     expect(refreshed.container.querySelectorAll(".model-call")).toHaveLength(1);
     expect(refreshed.container.textContent).toContain("1 model steps");
-    expect(refreshed.container.textContent).toContain("Previous attempts");
+    expect(refreshed.container.textContent).not.toContain("Previous attempts");
     expect(refreshed.container.textContent).not.toMatch(
       /Call \d|Retry of call/u,
     );

@@ -1,3 +1,7 @@
+import {
+  supersededPlayEvents,
+  publicAttempt,
+} from "../../shared/latest-model-attempts.ts";
 import { validOptionalModelRetries } from "../../protocol/modelRetry.ts";
 import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
 import { playFreshContextReason } from "./PlayFailure.ts";
@@ -172,6 +176,7 @@ interface PersistedContextBase {
 }
 
 interface PersistedContextState {
+  supersededEventIds?: number[];
   canContinuePartial?: boolean;
   freshContextReason?: FreshContextReason;
   schemaVersion: 3;
@@ -230,6 +235,8 @@ interface TimelineCursor {
 }
 
 export class FileNativePlayTimelineStore {
+  readonly #legacyAttemptProjection = new Map<string, Promise<Set<number>>>();
+
   readonly #worldsRoot: string;
 
   readonly #currentHead: ((worldId: string) => Promise<string>) | undefined;
@@ -493,6 +500,7 @@ export class FileNativePlayTimelineStore {
         playAssistantPrefill(value) !== null,
       ...(freshContextReason === undefined ? {} : { freshContextReason }),
       eventCount: value.events.length,
+      supersededEventIds: supersededPlayEvents(value.events),
       transcriptCount: value.transcript.length,
       completedToolCount: value.completedTools.length,
       promptRunCount: promptRuns.length,
@@ -1062,6 +1070,58 @@ export class FileNativePlayTimelineStore {
     return result;
   }
 
+  async #superseded(
+    worldId: string,
+    chainId: string,
+    state: PersistedContextState,
+  ): Promise<Set<number>> {
+    if (state.supersededEventIds !== undefined)
+      return new Set(state.supersededEventIds);
+    const key = JSON.stringify([
+      worldId,
+      chainId,
+      state.eventCount,
+      state.updatedAt,
+      state.continuationDigest,
+    ]);
+    const cached = this.#legacyAttemptProjection.get(key);
+    if (cached !== undefined) return cached;
+    const read = async () => {
+      const summaries: V1PlayTimelineEventSummary[] = [];
+      for (let offset = 0; offset < state.eventCount; offset += 16) {
+        summaries.push(
+          ...(await Promise.all(
+            Array.from(
+              { length: Math.min(16, state.eventCount - offset) },
+              async (_, index) => {
+                const value = await readJson<unknown>(
+                  join(
+                    this.#contextRoot(worldId, chainId),
+                    "summaries",
+                    numbered(offset + index + 1),
+                  ),
+                );
+                assertTimelineEventSummary(value);
+                return value;
+              },
+            ),
+          )),
+        );
+      }
+      return new Set(supersededPlayEvents(summaries));
+    };
+    const pending = read().catch((error: unknown) => {
+      this.#legacyAttemptProjection.delete(key);
+      throw error;
+    });
+    this.#legacyAttemptProjection.set(key, pending);
+    while (this.#legacyAttemptProjection.size > 16)
+      this.#legacyAttemptProjection.delete(
+        this.#legacyAttemptProjection.keys().next().value!,
+      );
+    return pending;
+  }
+
   async readPage(
     worldId: string,
     limit: number,
@@ -1081,6 +1141,7 @@ export class FileNativePlayTimelineStore {
         "Play timeline cursor belongs to a different timeline revision",
       );
     const reverse: V1PlayTimelineItem[] = [];
+    const suppressed = new Map<string, Set<number>>();
     const metadata = new Map<
       string,
       {
@@ -1093,6 +1154,11 @@ export class FileNativePlayTimelineStore {
       if (metadata.has(chainId)) return metadata.get(chainId) ?? null;
       const loaded = await this.#readContextMetadata(worldId, chainId);
       metadata.set(chainId, loaded);
+      if (loaded !== null)
+        suppressed.set(
+          chainId,
+          await this.#superseded(worldId, chainId, loaded.state),
+        );
       return loaded;
     };
     while (reverse.length < limit && pointer.chainId !== null) {
@@ -1100,6 +1166,10 @@ export class FileNativePlayTimelineStore {
       if (context === null)
         throw new Error("Play timeline cursor points to a missing context");
       if (pointer.eventId > 0) {
+        if (suppressed.get(pointer.chainId)?.has(pointer.eventId)) {
+          pointer = { ...pointer, eventId: pointer.eventId - 1 };
+          continue;
+        }
         const summary = await readJson<unknown>(
           join(
             this.#contextRoot(worldId, pointer.chainId),
@@ -1117,7 +1187,7 @@ export class FileNativePlayTimelineStore {
           ...(context.index.importedFromArchive
             ? { requiresFreshContext: true }
             : {}),
-          event: projectLegacyModelBindingFailure(summary),
+          event: publicAttempt(projectLegacyModelBindingFailure(summary)),
         });
         pointer = { ...pointer, eventId: pointer.eventId - 1 };
         continue;
@@ -1188,6 +1258,10 @@ export class FileNativePlayTimelineStore {
         ? {}
         : { activeLastFailureKind: active.state.lastFailureKind }),
       items: reverse.reverse(),
+      supersededEvents: [...suppressed].map(([chainId, eventIds]) => ({
+        chainId,
+        eventIds: [...eventIds],
+      })),
       nextCursor:
         pointer.chainId === null && pointer.genesisIndex < 0
           ? null
@@ -1265,6 +1339,9 @@ export class FileNativePlayTimelineStore {
       const metadata = await this.#readContextMetadata(worldId, chainId);
       return metadata !== null &&
         metadata.state.eventCount >= eventId &&
+        !(await this.#superseded(worldId, chainId, metadata.state)).has(
+          eventId,
+        ) &&
         (await this.#contextIsReachable(worldId, chainId))
         ? result
         : unavailable;
@@ -1369,6 +1446,8 @@ export class FileNativePlayTimelineStore {
     const metadata = await this.#readContextMetadata(worldId, chainId);
     if (metadata === null || eventId > metadata.state.eventCount)
       throw new Error("Play timeline event is outside the current context");
+    if ((await this.#superseded(worldId, chainId, metadata.state)).has(eventId))
+      throw new Error("The model attempt has been superseded");
     const event = await readJson<unknown>(
       join(this.#contextRoot(worldId, chainId), "events", numbered(eventId)),
     );
@@ -1387,14 +1466,14 @@ export class FileNativePlayTimelineStore {
               event.followupId,
             ).catch(() => null);
       return {
-        ...event,
+        ...publicAttempt(event),
         requestPreview:
           wireRequest === null || event.requestPreviewStatus === undefined
             ? { status: "unavailable" }
             : { status: event.requestPreviewStatus, wireRequest },
       };
     }
-    return projectLegacyModelBindingFailure(event);
+    return publicAttempt(projectLegacyModelBindingFailure(event));
   }
 
   newGeneration(): string {
@@ -1944,6 +2023,14 @@ function assertContextState(
     typeof value.canRetry !== "boolean" ||
     (value.canContinuePartial !== undefined &&
       typeof value.canContinuePartial !== "boolean") ||
+    (value.supersededEventIds !== undefined &&
+      (!Array.isArray(value.supersededEventIds) ||
+        !value.supersededEventIds.every(
+          (id: unknown) =>
+            Number.isSafeInteger(id) &&
+            Number(id) >= 1 &&
+            Number(id) <= Number(value.eventCount),
+        ))) ||
     !validCount(value.eventCount) ||
     !validCount(value.transcriptCount) ||
     !validCount(value.completedToolCount) ||

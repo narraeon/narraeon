@@ -19,6 +19,7 @@ import {
 import {
   authoringRequestPreviews,
   authoringRequestIdentities,
+  confirmedAuthoringRequestIds,
   authoringActiveBinding,
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
@@ -1253,6 +1254,7 @@ export class SettingImprovementSession {
         : null;
     return {
       requestPreviews: authoringRequestIdentities(session),
+      confirmedRequestIds: confirmedAuthoringRequestIds(session),
       sessionId: session.sessionId,
       packageId: session.packageId,
       runStatus: streaming === null ? session.runStatus : "running",

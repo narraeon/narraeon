@@ -1,3 +1,7 @@
+import {
+  latestAuthoringCalls,
+  publicAttempt,
+} from "../../shared/latest-model-attempts.ts";
 import type { PlayRequestContext } from "../../protocol/playRequestContext.ts";
 import type {
   V1SettingAuthoringDiff,
@@ -55,7 +59,9 @@ export function authoringConversationTurns<T extends AuthoringHistory>(
       turns.push(current);
       currentTools = new Map();
       tracked = new Map();
-      for (const call of snapshots.get(index)?.calls ?? []) {
+      for (const call of latestAuthoringCalls(
+        snapshots.get(index)?.calls ?? [],
+      )) {
         const live =
           call.status === "attempted" && streaming?.callId === call.id
             ? streaming
@@ -124,7 +130,10 @@ export function authoringConversationTurns<T extends AuthoringHistory>(
         };
     }
   }
-  return turns;
+  return turns.map((turn) => ({
+    ...turn,
+    exchanges: turn.exchanges.map(publicAttempt),
+  }));
 }
 
 export function readAuthoringCallContext(
@@ -137,7 +146,9 @@ export function readAuthoringCallContext(
   };
   const requests = session.requests ?? [];
   for (const [index, snapshot] of requests.entries()) {
-    const call = snapshot.calls?.find(({ id }) => id === callId);
+    const call = latestAuthoringCalls(snapshot.calls ?? []).find(
+      ({ id }) => id === callId,
+    );
     if (call === undefined) continue;
     const retry = snapshot.retryAttempts?.find(
       ({ requestId }) => requestId === call.retryRequestId,
