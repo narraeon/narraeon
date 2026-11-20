@@ -178,7 +178,12 @@ for (const kind of ["play", "setting", "revision"] as const) {
     await group.locator(":scope > summary").click();
     const first = group.locator(".model-call").first();
     await expect(first.getByText("正在接收", { exact: true })).toBeVisible();
-    await first.getByText("工具调用 · 0 次", { exact: true }).click();
+    // Before the first tool fragment, the same label is a noninteractive placeholder.
+    const liveTools = first
+      .locator("summary")
+      .filter({ hasText: /^工具调用 · 0 次$/u });
+    await expect(liveTools).toBeVisible();
+    await liveTools.click();
     await expect(first.getByText("正在接收的工具调用片段")).toBeVisible();
     expect(contexts).toHaveLength(0);
     await expect.poll(() => releaseTool !== undefined).toBe(true);
