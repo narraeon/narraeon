@@ -2224,6 +2224,10 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "已修改内容包 · {count} 个文件": "Content package updated · {count} files",
   "已修改修订工作树 · {count} 个文件":
     "Revision working tree updated · {count} files",
+  模型步骤: "Model step",
+  "{count} 个模型步骤": "{count} model steps",
+  历史尝试: "Previous attempts",
+  "{count} 次尝试": "{count} attempts",
   本段调用详情: "Call details",
   历史调用错误: "Historical call error",
   当时的上下文: "Context at dispatch",

@@ -607,15 +607,23 @@ for (const kind of ["setting", "revision"] as const) {
     const target = await prepare(page, kind);
     rejectModel = true;
     let writes = 0;
+    let firstCallId = "";
+    const contexts: string[] = [];
     await page.route("**/api/runtime/v1", async (route) => {
-      if (runtimeInput(route)?.type !== `${target.prefix}.message`)
-        return route.continue();
+      const input = runtimeInput(route);
+      if (
+        input?.type === "setting-improvement.call.context" ||
+        input?.type === "world.revision.call.context"
+      )
+        contexts.push(input.callId);
+      if (input?.type !== `${target.prefix}.message`) return route.continue();
       writes++;
       const response = await route.fetch();
-      expect(
-        ((await response.json()) as { result: AuthoringConversationView })
-          .result.runStatus,
-      ).toBe("interrupted");
+      const result = (
+        (await response.json()) as { result: AuthoringConversationView }
+      ).result;
+      expect(result.runStatus).toBe("interrupted");
+      firstCallId = result.turns[0]!.exchanges[0]!.id;
       await route.abort("failed");
     });
     await send(page, "An interrupted authoring request.");
@@ -628,19 +636,51 @@ for (const kind of ["setting", "revision"] as const) {
     expect(writes).toBe(1);
     expect(providerCalls).toBe(1);
 
+    const trace = page.locator(".model-call-details");
+    await trace.locator(":scope > summary").click();
+    for (let retry = 0; retry < 2; retry++) {
+      await page.getByRole("button", { name: "重新发送", exact: true }).click();
+      await expect.poll(() => providerCalls).toBe(retry + 2);
+      await expect(
+        page.getByRole("button", { name: "重新发送", exact: true }),
+      ).toBeEnabled();
+      await expect(trace.locator(".model-call")).toHaveCount(1);
+      await expect(trace.locator(".model-call > header")).not.toContainText(
+        "第 ",
+      );
+    }
     rejectModel = false;
     await page.getByRole("button", { name: "重新发送", exact: true }).click();
     await expect(
       page.getByText("The authoring reply is visible.", { exact: true }),
     ).toBeVisible();
-    const trace = page.locator(".model-call-details");
-    await trace.locator(":scope > summary").click();
-    await expect(trace.locator(".model-call")).toHaveCount(2);
-    await expect(trace.locator(".model-call").first()).toContainText("未完成");
-    await expect(trace.locator(".model-call").last()).toContainText(
-      "重试第 1 次调用",
+    await expect(trace.locator(".model-call")).toHaveCount(1);
+    await expect(trace.locator(".model-call")).toContainText("已完成");
+    await expect(trace.locator(".model-call-attempt-history")).toHaveCount(1);
+    await expect(
+      trace.locator(".model-call-attempt-history > summary"),
+    ).toContainText("3 次尝试");
+    await trace.locator(".model-call-attempt-history > summary").click();
+    await expect(
+      trace.locator(".model-call-attempt-list .model-call"),
+    ).toHaveCount(3);
+    expect(contexts).toHaveLength(0);
+    await trace
+      .locator(".model-call-attempt-list .model-call .technical-details")
+      .first()
+      .locator(":scope > summary")
+      .click();
+    await expect.poll(() => contexts).toEqual([firstCallId]);
+    expect(providerCalls).toBe(4);
+    await page.reload();
+    if (kind === "revision") await target.open();
+    await page.locator(".model-call-details > summary").click();
+    await expect(page.locator(".model-call-details .model-call")).toHaveCount(
+      1,
     );
-    expect(providerCalls).toBe(2);
+    await expect(page.locator(".model-call-details .model-call")).toContainText(
+      "已完成",
+    );
   });
 
   for (const late of ["success", "failure"] as const)

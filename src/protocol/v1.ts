@@ -808,6 +808,8 @@ export type V1PlayCallChainEvent =
       checkpoint?: true;
       exchange: number;
       attempt: number;
+      /** Previous attempt of this same logical step; absent in older timelines. */
+      retryOf?: number;
       usageRecorded?: true;
       /** Lightweight projections retain the availability of the stored reasoning. */
       reasoningRecorded?: true;

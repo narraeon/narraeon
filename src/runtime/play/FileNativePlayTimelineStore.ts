@@ -2213,6 +2213,10 @@ function validOptionalFollowupIdentity(
 function validAssistantEventCore(value: Record<string, unknown>): boolean {
   return (
     validOptionalModelRetries(value.retries) &&
+    (value.retryOf === undefined ||
+      (Number.isSafeInteger(value.retryOf) &&
+        Number(value.retryOf) >= 1 &&
+        Number(value.retryOf) < Number(value.id))) &&
     (value.checkpoint === undefined ||
       (value.checkpoint === true &&
         value.status === "completed" &&

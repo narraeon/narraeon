@@ -173,7 +173,7 @@ for (const kind of ["play", "setting", "revision"] as const) {
 
     const group = page.locator(".model-call-details");
     await expect(group.locator(":scope > summary")).toContainText(
-      "1 次模型调用",
+      "1 个模型步骤",
     );
     await group.locator(":scope > summary").click();
     const first = group.locator(".model-call").first();
@@ -186,7 +186,7 @@ for (const kind of ["play", "setting", "revision"] as const) {
 
     await expect(page.getByText(finalText, { exact: true })).toBeVisible();
     await expect(group.locator(":scope > summary")).toContainText(
-      "2 次模型调用",
+      "2 个模型步骤",
     );
     await expect(first.getByText("已完成", { exact: true })).toBeVisible();
     const second = group.locator(".model-call").nth(1);

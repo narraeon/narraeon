@@ -14839,3 +14839,72 @@ test("automatic backoff keeps player, tool settlement and narrative unique acros
     ),
   ).toEqual(receipts);
 }, 15000);
+
+test("manual retry links survive real failure, cancellation, success and cold timeline reads", async () => {
+  const { ModelHostCancelledError } =
+    await import("../../src/runtime/model/ModelHost.ts");
+  const script = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "failure", message: "first failure" },
+      { outcome: "failure", message: "second failure" },
+      { outcome: "response", text: "Recovered." },
+    ],
+  });
+  let dispatches = 0;
+  const host: ModelHost = {
+    binding: () => script.binding(),
+    exchange: (request, observer) => {
+      dispatches++;
+      if (dispatches === 2)
+        return Promise.reject(new ModelHostCancelledError("Stopped"));
+      return script.exchange(request, observer);
+    },
+  };
+  const { worlds, worldId, root } = await createWorld("retry-links");
+  const chains = new PlayCallChain(worlds);
+  let view = await chains.start({
+    worldId,
+    chainId: "retry-links",
+    exchangeId: "initial",
+    playerText: "Go.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  for (let retry = 0; retry < 3; retry++) {
+    const previous = view.events.findLast(
+      (event) => event.kind === "assistant",
+    )!;
+    view = await chains.append({
+      worldId,
+      chainId: "retry-links",
+      exchangeId: `retry-${retry}`,
+      playerText: "",
+      modelHost: host,
+      resolvePrompt: () => {
+        throw new Error("Retry must retain its frozen prompt");
+      },
+    });
+    const current = view.events.findLast((event) => event.kind === "assistant");
+    expect(current?.kind === "assistant" && current.retryOf).toBe(previous.id);
+  }
+  expect(view.status).toBe("ready");
+  const calls = view.events.filter((event) => event.kind === "assistant");
+  expect(calls).toHaveLength(4);
+  expect(calls.map(({ attempt }) => attempt)).toEqual([1, 2, 3, 4]);
+  expect(calls.map(({ status }) => status)).toEqual([
+    "interrupted",
+    "interrupted",
+    "interrupted",
+    "completed",
+  ]);
+  expect(view.events.some((event) => event.kind === "cancellation")).toBe(true);
+  const reopened = await new PlayCallChain(
+    new FileNativeWorldStore(root),
+  ).inspectWorld(worldId);
+  expect(
+    reopened?.events.filter((event) => event.kind === "assistant"),
+  ).toEqual(calls);
+});

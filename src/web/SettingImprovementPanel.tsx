@@ -1,3 +1,5 @@
+import { ModelCallAttempts } from "./ModelCallAttempts.tsx";
+import { groupCallAttempts } from "./GroupModelCallAttempts.ts";
 import {
   ModelRetryLimitNotice,
   ModelRetryStatus,
@@ -1409,6 +1411,11 @@ function SettingConversationTurnView({
   onCancelEdit: () => void;
   onSaveEdit: (policy: "keep" | "revert") => Promise<void>;
 }): React.JSX.Element {
+  const callAttempts = groupCallAttempts(
+    turn.exchanges,
+    (call) => call.id,
+    (call) => call.retryOf,
+  );
   return (
     <section className="setting-conversation-turn">
       <article className="setting-conversation-message setting-conversation-user">
@@ -1475,50 +1482,47 @@ function SettingConversationTurnView({
           </article>
         ) : null,
       )}
-      <ModelCallDetailsGroup count={turn.exchanges.length}>
-        {turn.exchanges.map((exchange, index) => {
-          const original = turn.exchanges.findIndex(
-            ({ id }) => id === exchange.retryOf,
-          );
-          return (
-            <ModelCallDetails
-              key={exchange.id}
-              number={index + 1}
-              retries={exchange.retries}
-              status={exchange.status}
-              retryOf={
-                original < 0
-                  ? undefined
-                  : uiText("重试第 {number} 次调用", { number: original + 1 })
-              }
-              failure={exchange.failure}
-              context={
-                <RequestContextDetails load={() => loadContext(exchange.id)} />
-              }
-              reasoning={<ModelCallReasoning text={exchange.reasoning} />}
-              tools={
-                <ModelCallTools
-                  count={exchange.toolCalls.length}
-                  stepText={
-                    exchange.toolCalls.length > 0 ? exchange.text : undefined
-                  }
-                  fragment={exchange.toolFragment}
-                >
-                  <SettingConversationTools
-                    exchange={exchange}
-                    revisingWorld={revisingWorld}
-                    currentFiles={currentFiles}
-                    rollbackDisabled={rollbackDisabled}
-                    rollbackableChangeSetIds={rollbackableChangeSetIds}
-                    rollingBackFile={rollingBackFile}
-                    onRollbackFile={onRollbackFile}
+      <ModelCallDetailsGroup count={callAttempts.length}>
+        {callAttempts.map((attempts) => (
+          <ModelCallAttempts
+            key={attempts[0]!.id}
+            attempts={attempts}
+            render={(exchange) => (
+              <ModelCallDetails
+                key={exchange.id}
+                retries={exchange.retries}
+                status={exchange.status}
+                failure={exchange.failure}
+                context={
+                  <RequestContextDetails
+                    load={() => loadContext(exchange.id)}
                   />
-                </ModelCallTools>
-              }
-              usage={exchange.usage}
-            />
-          );
-        })}
+                }
+                reasoning={<ModelCallReasoning text={exchange.reasoning} />}
+                tools={
+                  <ModelCallTools
+                    count={exchange.toolCalls.length}
+                    stepText={
+                      exchange.toolCalls.length > 0 ? exchange.text : undefined
+                    }
+                    fragment={exchange.toolFragment}
+                  >
+                    <SettingConversationTools
+                      exchange={exchange}
+                      revisingWorld={revisingWorld}
+                      currentFiles={currentFiles}
+                      rollbackDisabled={rollbackDisabled}
+                      rollbackableChangeSetIds={rollbackableChangeSetIds}
+                      rollingBackFile={rollingBackFile}
+                      onRollbackFile={onRollbackFile}
+                    />
+                  </ModelCallTools>
+                }
+                usage={exchange.usage}
+              />
+            )}
+          />
+        ))}
       </ModelCallDetailsGroup>
     </section>
   );

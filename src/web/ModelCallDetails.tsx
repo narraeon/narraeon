@@ -20,7 +20,7 @@ export function ModelCallDetailsGroup({
         <small>
           {count === null
             ? uiText("仅保留部分调用记录")
-            : uiText("{count} 次模型调用", { count })}
+            : uiText("{count} 个模型步骤", { count })}
         </small>
       </summary>
       <div className="model-call-list">{children}</div>
@@ -38,10 +38,8 @@ const statusLabel: Record<CallStatus, string> = {
 };
 
 export function ModelCallDetails({
-  number,
   label,
   status = "completed",
-  retryOf,
   retries,
   failure,
   context,
@@ -49,10 +47,8 @@ export function ModelCallDetails({
   tools,
   usage,
 }: {
-  number: number;
   label?: string;
   status?: CallStatus | undefined;
-  retryOf?: string | undefined;
   retries?: ModelRetryEvidence[] | undefined;
   failure?: ReactNode;
   context: ReactNode;
@@ -63,14 +59,8 @@ export function ModelCallDetails({
   return (
     <section className="model-call">
       <header>
-        <h4>
-          {uiText("第 {number} 次调用", { number })}
-          {label ? ` · ${label}` : ""}
-        </h4>
-        <small>
-          {uiText(statusLabel[status])}
-          {retryOf ? ` · ${retryOf}` : ""}
-        </small>
+        {label ? <h4>{label}</h4> : null}
+        <small>{uiText(statusLabel[status])}</small>
       </header>
       <ModelRetryStatus
         retries={retries}

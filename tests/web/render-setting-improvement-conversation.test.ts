@@ -325,3 +325,38 @@ test.each(["content-package", "world-revision"] as const)(
     expect(completed).toContain("Recovered");
   },
 );
+
+test("repeated manual retry keeps only the latest default card", () => {
+  const current = view();
+  current.turns[0]!.exchanges = [
+    {
+      id: "first",
+      exchange: 1,
+      status: "interrupted",
+      text: "",
+      failure: "failure one",
+      toolCalls: [],
+    },
+    {
+      id: "second",
+      exchange: 1,
+      retryOf: "first",
+      status: "interrupted",
+      text: "",
+      failure: "failure two",
+      toolCalls: [],
+    },
+    {
+      id: "third",
+      exchange: 1,
+      retryOf: "second",
+      status: "streaming",
+      text: "",
+      toolCalls: [],
+    },
+  ];
+  const html = render(current);
+  expect(html.match(/class="model-call"/gu)).toHaveLength(1);
+  expect(html).not.toContain("第 1 次调用");
+  expect(html).toContain("历史尝试");
+});

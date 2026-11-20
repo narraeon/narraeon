@@ -2450,6 +2450,9 @@ export class PlayCallChain {
         responseKind,
         exchange: advance.exchange,
         attempt: advance.attempt,
+        ...(existing.retryOf === undefined
+          ? {}
+          : { retryOf: existing.retryOf }),
         ...(existing.retries === undefined
           ? {}
           : { retries: structuredClone(existing.retries) }),
@@ -2789,6 +2792,9 @@ export class PlayCallChain {
       this.#observeInvocation(session.chainId, "waiting");
       this.#advances.beginDispatch(session, request, attempt);
       const responseExchange = request.exchange ?? session.exchange;
+      const previousAttempt = session.events.findLast(
+        (previous) => previous.kind === "assistant",
+      );
       const event: Extract<V1PlayCallChainEvent, { kind: "assistant" }> = {
         id: session.nextEventId++,
         kind: "assistant",
@@ -2797,6 +2803,11 @@ export class PlayCallChain {
         responseKind: "pending",
         exchange: responseExchange,
         attempt,
+        ...(attempt > 1 &&
+        previousAttempt?.kind === "assistant" &&
+        previousAttempt.status === "interrupted"
+          ? { retryOf: previousAttempt.id }
+          : {}),
         usageRecorded: true,
       };
       session.events.push(event);

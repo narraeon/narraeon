@@ -1,3 +1,5 @@
+import { ModelCallAttempts } from "./ModelCallAttempts.tsx";
+import { groupCallAttempts } from "./GroupModelCallAttempts.ts";
 import {
   useCallback,
   useEffect,
@@ -38,6 +40,7 @@ interface Call {
   event: Assistant | Followup;
   tools: { call?: ToolCall; result?: ToolResult }[];
   endings: Ending[];
+  retryOf?: string;
 }
 
 function playCalls(items: readonly TimelineItem[]) {
@@ -45,11 +48,34 @@ function playCalls(items: readonly TimelineItem[]) {
   const orphanTools = new Map<string, Call["tools"]>();
   const orphanFailures: { chainId: string; event: Ending }[] = [];
   let main: Call | undefined;
+  let previous: Call | undefined;
   for (const { chainId, event } of items) {
     if (event.kind === "assistant" || event.kind === "followup") {
-      const call = { chainId, event, tools: [], endings: [] };
+      const parent =
+        event.kind === "assistant"
+          ? event.retryOf !== undefined
+            ? `${chainId}:${event.retryOf}`
+            : event.attempt > 1 &&
+                previous?.chainId === chainId &&
+                previous.event.kind === "assistant" &&
+                previous.event.status === "interrupted" &&
+                previous.tools.length === 0
+              ? `${chainId}:${previous.event.id}`
+              : undefined
+          : undefined;
+      const call: Call = {
+        chainId,
+        event,
+        tools: [],
+        endings: [],
+        ...(parent === undefined ? {} : { retryOf: parent }),
+      };
+      previous = event.kind === "assistant" ? call : undefined;
       calls.push(call);
       main = event.kind === "assistant" ? call : undefined;
+    } else if (event.kind === "player") {
+      previous = undefined;
+      main = undefined;
     } else if (event.kind === "tool_call" || event.kind === "tool_result") {
       const tools =
         main?.chainId === chainId
@@ -87,6 +113,11 @@ export function PlayTurnCallDetails({
   request: (input: V1Request) => Promise<unknown>;
 }) {
   const { calls, orphanTools, orphanFailures } = playCalls(items);
+  const callAttempts = groupCallAttempts(
+    calls,
+    (call) => `${call.chainId}:${call.event.id}`,
+    (call) => call.retryOf,
+  );
   if (
     calls.length === 0 &&
     orphanTools.size === 0 &&
@@ -95,7 +126,9 @@ export function PlayTurnCallDetails({
     return null;
   return (
     <li className="world-timeline-trace">
-      <ModelCallDetailsGroup count={calls.length === 0 ? null : calls.length}>
+      <ModelCallDetailsGroup
+        count={calls.length === 0 ? null : callAttempts.length}
+      >
         {[...orphanTools].map(([chainId, tools]) => (
           <ModelCallTools key={chainId} count={tools.length}>
             {calls.length > 0 ? <p>{uiText("仅保留部分调用记录")}</p> : null}
@@ -122,201 +155,207 @@ export function PlayTurnCallDetails({
             <pre>{event.message}</pre>
           </details>
         ))}
-        {calls.map(({ chainId, event, tools, endings }, index) => {
-          const ending = endings[0];
-          const live =
-            liveChain?.chainId === chainId && event.status === "streaming"
-              ? liveChain.events.find(
-                  (candidate) =>
-                    candidate.id === event.id &&
-                    (candidate.kind === "assistant" ||
-                      candidate.kind === "followup") &&
-                    candidate.status === "streaming",
-                )
-              : undefined;
-          const streaming =
-            live?.kind === "assistant" || live?.kind === "followup"
-              ? live
-              : undefined;
-          const load = (eventId: number) =>
-            request({
-              type: "play.timeline.detail",
-              worldId,
-              chainId,
-              eventId,
-            }) as Promise<V1PlayCallChainEvent>;
-          const context = (
-            <PlayRequestContextDetails
-              worldId={worldId}
-              chainId={chainId}
-              eventId={event.id}
-              load={(input) => request(input) as Promise<PlayRequestContext>}
-            >
-              {event.kind === "followup" && event.status !== "streaming" ? (
-                <TimelineDetails
-                  load={() => load(event.id)}
-                  label={uiText("请求编码")}
-                >
-                  {(detail) =>
-                    detail.kind !== "followup" ? null : (
-                      <>
-                        <p>
-                          {uiText(
-                            detail.requestPreview?.status === "completed"
-                              ? "请求编码：已收到完整响应"
-                              : detail.requestPreview?.status === "cancelled"
-                                ? "请求编码：派发后取消"
-                                : detail.requestPreview?.status === "attempted"
-                                  ? "请求编码：已尝试派发，响应未确认"
-                                  : "请求编码不可用（未提供或已超出保留窗口）",
-                          )}
-                        </p>
-                        {detail.requestPreview?.status === "unavailable" ||
-                        detail.requestPreview === undefined ? null : (
-                          <pre>{json(detail.requestPreview.wireRequest)}</pre>
-                        )}
-                      </>
+        {callAttempts.map((attempts) => (
+          <ModelCallAttempts
+            key={`${attempts[0]!.chainId}:${attempts[0]!.event.id}`}
+            attempts={attempts}
+            render={({ chainId, event, tools, endings }) => {
+              const ending = endings[0];
+              const live =
+                liveChain?.chainId === chainId && event.status === "streaming"
+                  ? liveChain.events.find(
+                      (candidate) =>
+                        candidate.id === event.id &&
+                        (candidate.kind === "assistant" ||
+                          candidate.kind === "followup") &&
+                        candidate.status === "streaming",
                     )
+                  : undefined;
+              const streaming =
+                live?.kind === "assistant" || live?.kind === "followup"
+                  ? live
+                  : undefined;
+              const load = (eventId: number) =>
+                request({
+                  type: "play.timeline.detail",
+                  worldId,
+                  chainId,
+                  eventId,
+                }) as Promise<V1PlayCallChainEvent>;
+              const context = (
+                <PlayRequestContextDetails
+                  worldId={worldId}
+                  chainId={chainId}
+                  eventId={event.id}
+                  load={(input) =>
+                    request(input) as Promise<PlayRequestContext>
                   }
-                </TimelineDetails>
-              ) : null}
-            </PlayRequestContextDetails>
-          );
-          if (event.kind === "followup") {
-            return (
-              <ModelCallDetails
-                key={`${chainId}:${event.id}`}
-                retries={event.retries}
-                number={index + 1}
-                label={`${uiText("后置请求")} · ${event.displayName}`}
-                status={
-                  event.status ?? (event.failed ? "interrupted" : "completed")
-                }
-                context={context}
-                reasoning={
-                  <PlayCallReasoning
-                    text={streaming?.reasoning}
-                    recorded={event.hasReasoning ?? event.status === undefined}
-                    streaming={event.status === "streaming"}
-                    load={() => load(event.id)}
-                  />
-                }
-                tools={
-                  event.toolCallCount > 0 ? (
+                >
+                  {event.kind === "followup" && event.status !== "streaming" ? (
                     <TimelineDetails
                       load={() => load(event.id)}
-                      label={toolLabel(event.toolCallCount)}
+                      label={uiText("请求编码")}
                     >
                       {(detail) =>
-                        detail.kind === "followup" ? (
+                        detail.kind !== "followup" ? null : (
                           <>
-                            {detail.text === "" ? null : (
-                              <p className="model-call-step">{detail.text}</p>
+                            <p>
+                              {uiText(
+                                detail.requestPreview?.status === "completed"
+                                  ? "请求编码：已收到完整响应"
+                                  : detail.requestPreview?.status ===
+                                      "cancelled"
+                                    ? "请求编码：派发后取消"
+                                    : detail.requestPreview?.status ===
+                                        "attempted"
+                                      ? "请求编码：已尝试派发，响应未确认"
+                                      : "请求编码不可用（未提供或已超出保留窗口）",
+                              )}
+                            </p>
+                            {detail.requestPreview?.status === "unavailable" ||
+                            detail.requestPreview === undefined ? null : (
+                              <pre>
+                                {json(detail.requestPreview.wireRequest)}
+                              </pre>
                             )}
-                            {detail.toolCalls.map((call) => (
-                              <details
-                                className="technical-details"
-                                key={call.callId}
-                              >
-                                <summary>
-                                  {uiText("调用 {tool}", { tool: call.name })} ·{" "}
-                                  {uiText(call.ok ? "成功" : "拒绝／失败")}
-                                </summary>
-                                <ToolParameter value={call.arguments} />
-                                <ToolReceipt markdown={call.markdown} />
-                              </details>
-                            ))}
                           </>
-                        ) : null
+                        )
                       }
                     </TimelineDetails>
-                  ) : (
-                    <ModelCallTools
-                      count={0}
-                      fragment={streaming?.toolFragment}
-                    />
-                  )
-                }
-                usage={
-                  event.usage ?? (event.status === undefined ? undefined : null)
-                }
-              />
-            );
-          }
-          const original = calls.findIndex(
-            (candidate) =>
-              candidate.chainId === chainId &&
-              candidate.event.kind === "assistant" &&
-              candidate.event.exchange === event.exchange &&
-              candidate.event.attempt === 1,
-          );
-          const retryOf =
-            event.attempt <= 1
-              ? undefined
-              : original >= 0
-                ? uiText("重试第 {number} 次调用", { number: original + 1 })
-                : uiText("重试模型交换 {number}", { number: event.exchange });
-          return (
-            <ModelCallDetails
-              key={`${chainId}:${event.id}`}
-              retries={event.retries}
-              number={index + 1}
-              label={uiText("游玩主链")}
-              status={
-                ending?.kind === "cancellation"
-                  ? "cancelled"
-                  : ending?.kind === "failure"
-                    ? "interrupted"
-                    : event.status
+                  ) : null}
+                </PlayRequestContextDetails>
+              );
+              if (event.kind === "followup") {
+                return (
+                  <ModelCallDetails
+                    key={`${chainId}:${event.id}`}
+                    retries={event.retries}
+                    label={`${uiText("后置请求")} · ${event.displayName}`}
+                    status={
+                      event.status ??
+                      (event.failed ? "interrupted" : "completed")
+                    }
+                    context={context}
+                    reasoning={
+                      <PlayCallReasoning
+                        text={streaming?.reasoning}
+                        recorded={
+                          event.hasReasoning ?? event.status === undefined
+                        }
+                        streaming={event.status === "streaming"}
+                        load={() => load(event.id)}
+                      />
+                    }
+                    tools={
+                      event.toolCallCount > 0 ? (
+                        <TimelineDetails
+                          load={() => load(event.id)}
+                          label={toolLabel(event.toolCallCount)}
+                        >
+                          {(detail) =>
+                            detail.kind === "followup" ? (
+                              <>
+                                {detail.text === "" ? null : (
+                                  <p className="model-call-step">
+                                    {detail.text}
+                                  </p>
+                                )}
+                                {detail.toolCalls.map((call) => (
+                                  <details
+                                    className="technical-details"
+                                    key={call.callId}
+                                  >
+                                    <summary>
+                                      {uiText("调用 {tool}", {
+                                        tool: call.name,
+                                      })}{" "}
+                                      ·{" "}
+                                      {uiText(call.ok ? "成功" : "拒绝／失败")}
+                                    </summary>
+                                    <ToolParameter value={call.arguments} />
+                                    <ToolReceipt markdown={call.markdown} />
+                                  </details>
+                                ))}
+                              </>
+                            ) : null
+                          }
+                        </TimelineDetails>
+                      ) : (
+                        <ModelCallTools
+                          count={0}
+                          fragment={streaming?.toolFragment}
+                        />
+                      )
+                    }
+                    usage={
+                      event.usage ??
+                      (event.status === undefined ? undefined : null)
+                    }
+                  />
+                );
               }
-              retryOf={retryOf}
-              failure={
-                endings.length === 0
-                  ? undefined
-                  : endings.map(({ message }) => (
-                      <span key={message}>{message}</span>
-                    ))
-              }
-              context={context}
-              reasoning={
-                <PlayCallReasoning
-                  text={streaming?.reasoning}
-                  recorded={event.hasReasoning}
-                  streaming={event.status === "streaming"}
-                  load={() => load(event.id)}
-                />
-              }
-              tools={
-                <ModelCallTools
-                  count={tools.length}
-                  stepText={
-                    event.status !== "streaming" &&
-                    (event.responseKind === "tool_step" ||
-                      event.status === "interrupted" ||
-                      (event.responseKind === undefined &&
-                        event.committedHead === undefined) ||
-                      tools.length > 0)
-                      ? event.text
-                      : undefined
+              return (
+                <ModelCallDetails
+                  key={`${chainId}:${event.id}`}
+                  retries={event.retries}
+                  label={uiText("游玩主链")}
+                  status={
+                    ending?.kind === "cancellation"
+                      ? "cancelled"
+                      : ending?.kind === "failure"
+                        ? "interrupted"
+                        : event.status
                   }
-                  fragment={streaming?.toolFragment}
-                >
-                  {tools.map(({ call, result }) => (
-                    <PlayToolDetails
-                      key={call?.id ?? result?.id}
-                      call={call}
-                      result={result}
-                      load={load}
+                  failure={
+                    endings.length === 0
+                      ? undefined
+                      : endings.map(({ message }) => (
+                          <span key={message}>{message}</span>
+                        ))
+                  }
+                  context={context}
+                  reasoning={
+                    <PlayCallReasoning
+                      text={streaming?.reasoning}
+                      recorded={event.hasReasoning}
+                      streaming={event.status === "streaming"}
+                      load={() => load(event.id)}
                     />
-                  ))}
-                </ModelCallTools>
-              }
-              usage={
-                event.usage ?? (event.usageRecorded === true ? null : undefined)
-              }
-            />
-          );
-        })}
+                  }
+                  tools={
+                    <ModelCallTools
+                      count={tools.length}
+                      stepText={
+                        event.status !== "streaming" &&
+                        (event.responseKind === "tool_step" ||
+                          event.status === "interrupted" ||
+                          (event.responseKind === undefined &&
+                            event.committedHead === undefined) ||
+                          tools.length > 0)
+                          ? event.text
+                          : undefined
+                      }
+                      fragment={streaming?.toolFragment}
+                    >
+                      {tools.map(({ call, result }) => (
+                        <PlayToolDetails
+                          key={call?.id ?? result?.id}
+                          call={call}
+                          result={result}
+                          load={load}
+                        />
+                      ))}
+                    </ModelCallTools>
+                  }
+                  usage={
+                    event.usage ??
+                    (event.usageRecorded === true ? null : undefined)
+                  }
+                />
+              );
+            }}
+          />
+        ))}
       </ModelCallDetailsGroup>
     </li>
   );
