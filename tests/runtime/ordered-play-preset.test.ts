@@ -313,6 +313,7 @@ import {
   applyPlayPresetStructuredEditor,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { builtinPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import { builtinAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
 test("legacy migration retains disabled copies and resources while frozen requests remain unchanged", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-migrate-"));
   roots.push(root);
@@ -520,19 +521,27 @@ test.each(["en", "zh-CN"] as const)(
       },
       tools: [],
     };
-    const results = [
-      compiler.compileSettingImprovement({
+    const results = {
+      setting: compiler.compileSettingImprovement({
         gameplay: { mode: "interactive-fiction" },
         ...common,
         contentPackageTitle: "Package",
       }),
-      compiler.compileWorldRevision({
+      "world-revision": compiler.compileWorldRevision({
         gameplay: { mode: "interactive-fiction" },
         ...common,
         worldTitle: "World",
       }),
-    ];
-    for (const result of results) {
+    };
+    for (const target of ["setting", "world-revision"] as const) {
+      const result = results[target];
+      const builtin = builtinAuthorPrompts(locale, target).find(
+        ({ id }) => id === "author.mechanics",
+      );
+      const mechanics = result.logicalMessages.find(
+        ({ promptId }) => promptId === "author.mechanics",
+      );
+      expect(mechanics?.markdown).toBe(builtin?.body);
       const encoded = JSON.stringify(result.provider);
       expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
       expect(encoded).not.toContain("# Player-visible narrative rules");
@@ -541,7 +550,7 @@ test.each(["en", "zh-CN"] as const)(
         locale === "en" ? "Authoring tools and settlement" : "创作工具与结算",
       );
     }
-    const references = results.map(
+    const references = Object.values(results).map(
       (result) =>
         result.logicalMessages
           .flatMap(({ blocks }) => blocks)

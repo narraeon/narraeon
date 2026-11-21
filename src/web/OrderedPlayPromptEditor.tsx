@@ -1,9 +1,6 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
-import {
-  builtinAuthorPrompts,
-  authoringMechanics,
-} from "../shared/ordered-author-prompts.ts";
+import { builtinAuthorPrompts } from "../shared/ordered-author-prompts.ts";
 import { useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
@@ -57,7 +54,7 @@ export function OrderedPlayPromptEditor({
   const zh = locale === "zh-CN";
   const t = (en: string, cn: string) => (zh ? cn : en);
   const catalog: BuiltinPlayPrompt[] = authoring
-    ? builtinAuthorPrompts(locale)
+    ? builtinAuthorPrompts(locale, "setting")
     : builtinPlayPrompts(locale);
   const selected =
     entries.find((entry) => entry.id === selectedId) ?? entries[0];
@@ -630,7 +627,13 @@ export function OrderedPlayPromptEditor({
           <summary>
             {t("World revision tool contract", "世界修订工具契约")}
           </summary>
-          <pre>{authoringMechanics(locale, "world-revision")}</pre>
+          <pre>
+            {
+              builtinAuthorPrompts(locale, "world-revision").find(
+                ({ id }) => id === builtin.id,
+              )!.body
+            }
+          </pre>
         </details>
       )}
     </section>

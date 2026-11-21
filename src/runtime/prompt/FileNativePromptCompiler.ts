@@ -16,10 +16,7 @@ import type {
 } from "../../protocol/worldExtensions.ts";
 import { effectiveFollowupDefinitions } from "../play/OrderedFollowups.ts";
 import { legacyAuthorPrompts } from "../play/FileNativePlayPresetStore.ts";
-import {
-  builtinAuthorPrompts,
-  authoringMechanics,
-} from "../../shared/ordered-author-prompts.ts";
+import { builtinAuthorPrompts } from "../../shared/ordered-author-prompts.ts";
 import {
   type PromptMessageRole,
   builtinPlayPrompts,
@@ -564,7 +561,7 @@ export class FileNativePromptCompiler {
         blocks = [
           {
             source: input.runtimeSource,
-            markdown: authoringMechanics(this.#locale, input.target),
+            markdown: builtin.body,
           },
         ];
       if (builtin?.id === "author.target")

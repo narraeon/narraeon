@@ -25,7 +25,7 @@ export function builtinAuthorPrompts(
         : "Authoring tools and settlement (required)",
       required: true,
       category: "mechanics",
-      body: authoringMechanics(locale, "setting"),
+      body: authoringMechanics(locale, target),
     },
     modelPromptBuiltin("author", locale),
     {
