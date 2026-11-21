@@ -262,6 +262,94 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
   expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
 });
 
+test("Google CLIProxyAPI 主请求和后置预览在重读时保留合法头名称", async () => {
+  const { host } = googleAuthoringHost(
+    [
+      googleSignedText("The door opens."),
+      googleTools([
+        {
+          id: "panel",
+          name: "artifact_emit",
+          arguments: { output: "status_bar", payload: { hp: 9 } },
+        },
+      ]),
+      googleTools([
+        {
+          id: "options",
+          name: "artifact_emit",
+          arguments: { output: "options", payload: { first: "Follow" } },
+        },
+      ]),
+    ],
+    undefined,
+    { dialect: "cliproxyapi" },
+  );
+  const modelBinding = host.binding();
+  const chainId = "google-cliproxy-followup-encoding";
+  const { worlds, root, worldId } = await createWorld(
+    chainId,
+    undefined,
+    modelBinding,
+  );
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding,
+    modelHost: host,
+  });
+
+  const cold = new FileNativeWorldStore(root);
+  const main = await cold.playTimeline.readInitialEncoding(worldId, chainId);
+  expect(main?.headerNames).toEqual([
+    "Accept",
+    "x-goog-api-key",
+    "Content-Type",
+    "X-Session-Id",
+  ]);
+  const followup = view.events.find((event) => event.kind === "followup")!;
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  const detail = await runtime.handle({
+    type: "play.timeline.detail",
+    worldId,
+    chainId,
+    eventId: followup.id,
+  });
+  expect(detail).toMatchObject({
+    result: {
+      requestPreview: {
+        status: "completed",
+        wireRequest: {
+          headerNames: main?.headerNames,
+          redactedProviderContinuation: true,
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(detail)).not.toContain("synthetic-signature-secret");
+
+  await expect(
+    cold.playTimeline.recordFollowupEncoding(
+      worldId,
+      chainId,
+      1,
+      "unexpected-header",
+      { ...main!, headerNames: [...main!.headerNames.slice(0, 3), "X-Other"] },
+    ),
+  ).resolves.toBe(false);
+});
+
 test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
   const logRoot = await mkdtemp(join(tmpdir(), "google-followup-log-"));
   roots.push(logRoot);

@@ -2532,10 +2532,6 @@ function followupEncodingFileName(exchange: number, requestId: string): string {
 function safeFollowupEncoding(value: unknown): value is ModelHostWireRequest {
   if (
     !isSafeGoogleWireRequest(value) ||
-    value.headerNames.length !== 3 ||
-    value.headerNames[0] !== "Accept" ||
-    value.headerNames[1] !== "x-goog-api-key" ||
-    value.headerNames[2] !== "Content-Type" ||
     !isRecord(value.body) ||
     !Array.isArray(value.body.input)
   )

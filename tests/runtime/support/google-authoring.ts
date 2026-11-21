@@ -1,3 +1,4 @@
+import type { ModelProviderDialect } from "../../../src/protocol/modelConnections.ts";
 import type { AiFailureRecorder } from "../../../src/runtime/model/AiFailureLog.ts";
 import { FileNativeModelHost } from "../../../src/runtime/model/FileNativeModelAdapters.ts";
 
@@ -114,6 +115,7 @@ export function googleAuthoringHost(
   failureLog?: AiFailureRecorder,
   override: {
     baseUrl?: string;
+    dialect?: ModelProviderDialect;
     modelId?: string;
     maxOutputTokens?: number;
   } = {},
