@@ -375,6 +375,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
   expect(cancelled.statusCode).toBe(200);
   for (const accept of ["application/json", "application/x-ndjson"]) {
     const paused = await server.inject({
+      authority: "127.0.0.1:4317",
       method: "POST",
       url: "/api/runtime/v1",
       headers: { ...headers, accept },
