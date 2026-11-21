@@ -1722,49 +1722,68 @@ test.each(["cancel", "disconnect"] as const)(
   },
 );
 
-test("Google setting cold restart can resume a request proven not dispatched", async () => {
-  const root = await temporaryRoot("google-setting-before-dispatch-");
-  const content = new ContentWorkspace(root, { locale: () => "en" });
-  const { localId } = await content.createCurrentTreeContentPackage();
-  const initial = googleAuthoringHost([googleText("Original.")]);
-  const first = await sendFresh(
-    serviceFor(root, content, initial.host),
-    localId,
-    "first",
-    "Frozen message.",
-  );
-  const store = new FileNativeSettingImprovementStore(root);
-  const saved = await store.read(first.sessionId);
-  saved.modelItems = saved.modelItems.filter(
-    ({ kind }) => kind !== "assistant",
-  );
-  saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
-  saved.runStatus = "running";
-  saved.activeRequestId = "first";
-  saved.completedRequestIds = [];
-  saved.googleOutcomeUnknown = false;
-  await store.save(saved);
-  const restarted = googleAuthoringHost([googleText("Resumed.")]);
-  const service = serviceFor(root, content, restarted.host);
-  const resumed = await service.resume({
-    packageId: localId,
-    sessionId: first.sessionId,
-    requestId: "resume",
-  });
-  expect(resumed.runStatus).toBe("ready");
-  expect(resumed.messages.map(({ role }) => role)).toEqual([
-    "user",
-    "assistant",
-  ]);
-  expect(
-    JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
-  ).toHaveLength(1);
-  const snapshot = (await store.read(first.sessionId)).requests![0]!;
-  expect(snapshot.wireRequest?.googleHops?.length).toBeGreaterThanOrEqual(1);
-  expect(
-    snapshot.retryAttempts?.[0]?.wireRequest?.googleHops?.length,
-  ).toBeGreaterThanOrEqual(1);
-});
+test.each([false, true])(
+  "Google setting cold restart can resume the saved request (in-flight dispatch: %s)",
+  async (dispatched) => {
+    const root = await temporaryRoot("google-setting-before-dispatch-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const initial = googleAuthoringHost([googleText("Original.")]);
+    const first = await sendFresh(
+      serviceFor(root, content, initial.host),
+      localId,
+      "first",
+      "Frozen message.",
+    );
+    const store = new FileNativeSettingImprovementStore(root);
+    const saved = await store.read(first.sessionId);
+    saved.modelItems = saved.modelItems.filter(
+      ({ kind }) => kind !== "assistant",
+    );
+    saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
+    saved.runStatus = "running";
+    saved.activeRequestId = "first";
+    saved.completedRequestIds = [];
+    saved.googleOutcomeUnknown = dispatched;
+    if (dispatched)
+      saved.retryDispatch = {
+        requestId: "first",
+        exchange: saved.exchange,
+        modelItemCount: saved.modelItems.length,
+        state: "dispatching",
+      };
+    await store.save(saved);
+    const restarted = googleAuthoringHost([googleText("Resumed.")]);
+    const service = serviceFor(root, content, restarted.host);
+    if (dispatched) {
+      const recovered = await service.readSession(localId, first.sessionId);
+      expect(recovered).toMatchObject({
+        runStatus: "interrupted",
+        canRetry: true,
+      });
+      expect(recovered.lastFailure).toMatch(/continue this conversation/iu);
+    }
+    expect(restarted.sent).toHaveLength(0);
+    const resumed = await service.resume({
+      packageId: localId,
+      sessionId: first.sessionId,
+      requestId: "resume",
+    });
+    expect(resumed.runStatus).toBe("ready");
+    expect(resumed.messages.map(({ role }) => role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(
+      JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
+    ).toHaveLength(1);
+    const snapshot = (await store.read(first.sessionId)).requests![0]!;
+    expect(snapshot.wireRequest?.googleHops?.length).toBeGreaterThanOrEqual(1);
+    expect(
+      snapshot.retryAttempts?.[0]?.wireRequest?.googleHops?.length,
+    ).toBeGreaterThanOrEqual(1);
+  },
+);
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
   const fixture = JSON.parse(
@@ -2243,6 +2262,50 @@ test.each([
       )
     ).canRetry,
   ).toBe(lengthLimit);
+});
+
+test("Google authoring preserves the model adapter's pre-dispatch binding rejection", async () => {
+  const fixture = await createFixture([]);
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  const mismatched = new FileNativeModelHost(
+    {
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "synthetic",
+      modelId: "mismatched",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    fetch,
+  );
+  const googleBinding = googleAuthoringHost([]).host.binding();
+  const host: ModelHost = {
+    binding: () => googleBinding,
+    exchange: (request, observer) => mismatched.exchange(request, observer),
+  };
+  const session = serviceFor(fixture.root, fixture.content, host);
+
+  const result = await sendFresh(
+    session,
+    fixture.packageId,
+    "binding",
+    "Inspect.",
+  );
+
+  expect(result).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: false,
+    freshContextReason: "continuation_unavailable",
+    lastFailure:
+      "The compiled prompt protocol does not match the selected model host",
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  await expect(
+    session.readSession(fixture.packageId, result.sessionId),
+  ).resolves.toMatchObject({
+    canRetry: false,
+    lastFailure: result.lastFailure,
+  });
 });
 
 test("a changed package makes an interrupted request stale before a read or a direct retry", async () => {

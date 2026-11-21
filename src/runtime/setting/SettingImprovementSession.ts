@@ -1057,7 +1057,6 @@ export class SettingImprovementSession {
             session.googleOutcomeUnknown !== false
           )
             session.googleOutcomeUnknown = true;
-          markInterruptedAfterRestart(session);
           const lastItem = session.modelItems.at(-1);
           if (
             session.retryDispatch === undefined &&
@@ -1068,14 +1067,9 @@ export class SettingImprovementSession {
           ) {
             session.schemaVersion = 6;
             checkpointNextAuthoringDispatch(session, "retryable");
-            session.runStatus = "interrupted";
           }
           recoverAuthoringDispatch(session);
-          if (
-            session.modelBinding.provider === "google_interactions" &&
-            session.retryDispatch?.state === "retryable"
-          )
-            session.googleOutcomeUnknown = false;
+          markInterruptedAfterRestart(session);
           session.updatedAt = Date.now();
           if (await this.#store.saveIfUnchanged(original, session))
             return session;

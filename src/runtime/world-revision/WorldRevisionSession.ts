@@ -1234,11 +1234,6 @@ export class WorldRevisionSession {
     )
       checkpointNextAuthoringDispatch(session, "retryable");
     recoverAuthoringDispatch(session);
-    if (
-      session.modelBinding.provider === "google_interactions" &&
-      session.retryDispatch?.state === "retryable"
-    )
-      session.googleOutcomeUnknown = false;
     session.runStatus = "interrupted";
     session.activeRequestId = null;
     if (requestId !== null)

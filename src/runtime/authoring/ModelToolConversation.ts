@@ -35,6 +35,7 @@ import type {
 } from "../model/ModelHost.ts";
 import { ModelHostCancelledError } from "../model/ModelHost.ts";
 import { withGoogleHop } from "../model/GoogleRequestPreview.ts";
+import { dispatchRequiresFreshContext } from "../model/DispatchFailure.ts";
 import {
   retargetFrozenCompilation,
   type PromptCompilation,
@@ -496,7 +497,8 @@ export class ModelToolConversation<
       failAuthoringDispatch(session, error, phase);
       if (
         session.modelBinding.provider === "google_interactions" &&
-        session.retryDispatch?.state === "retryable"
+        (session.retryDispatch?.state === "retryable" ||
+          dispatchRequiresFreshContext(error))
       )
         session.googleOutcomeUnknown = false;
       session.runStatus = "interrupted";

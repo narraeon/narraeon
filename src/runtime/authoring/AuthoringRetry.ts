@@ -75,6 +75,11 @@ export function failAuthoringDispatch(
 export function recoverAuthoringDispatch(session: RetryState): void {
   if (session.retryDispatch?.state === "dispatching")
     session.retryDispatch.state = "retryable";
+  if (
+    session.modelBinding.provider === "google_interactions" &&
+    session.retryDispatch?.state === "retryable"
+  )
+    session.googleOutcomeUnknown = false;
 }
 
 /** Releases before #195 kept length failures blocked even with a complete dispatch checkpoint. */

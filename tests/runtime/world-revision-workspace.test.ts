@@ -478,54 +478,74 @@ test.each(["cancel", "disconnect"] as const)(
   },
 );
 
-test("Google world revision cold restart can resume a request proven not dispatched", async () => {
-  const { root, worldId, worlds, workspace } = await createdWorld();
-  const makeService = (host: FileNativeModelHost) =>
-    new WorldRevisionSession({
-      store: new FileNativeWorldRevisionStore(root),
-      workspace,
-      worlds,
-      compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
-      locale: () => "zh-CN",
-      bindModelHost: () => Promise.resolve(host),
-      bindExistingModelHost: () => Promise.resolve(host),
-      bindPlayPreset: () =>
-        Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
-      preview: () => preview,
+test.each([false, true])(
+  "Google world revision cold restart can resume the saved request (in-flight dispatch: %s)",
+  async (dispatched) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const makeService = (host: FileNativeModelHost) =>
+      new WorldRevisionSession({
+        store: new FileNativeWorldRevisionStore(root),
+        workspace,
+        worlds,
+        compiler: new FileNativePromptCompiler({ locale: "zh-CN" }),
+        locale: () => "zh-CN",
+        bindModelHost: () => Promise.resolve(host),
+        bindExistingModelHost: () => Promise.resolve(host),
+        bindPlayPreset: () =>
+          Promise.resolve(builtinDefaultPlayPresetBinding("zh-CN")),
+        preview: () => preview,
+      });
+    const initial = googleAuthoringHost([googleText("Original.")]);
+    const first = await makeService(initial.host).send({
+      worldId,
+      requestId: "first",
+      message: "Frozen message.",
+      continuation: { kind: "fresh_context" },
     });
-  const initial = googleAuthoringHost([googleText("Original.")]);
-  const first = await makeService(initial.host).send({
-    worldId,
-    requestId: "first",
-    message: "Frozen message.",
-    continuation: { kind: "fresh_context" },
-  });
-  const store = new FileNativeWorldRevisionStore(root);
-  const saved = await store.readSession(first.sessionId);
-  saved.modelItems = saved.modelItems.filter(
-    ({ kind }) => kind !== "assistant",
-  );
-  saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
-  saved.runStatus = "running";
-  saved.activeRequestId = "first";
-  saved.completedRequestIds = [];
-  saved.googleOutcomeUnknown = false;
-  await store.saveSession(saved);
-  const restarted = googleAuthoringHost([googleText("Resumed.")]);
-  const resumed = await makeService(restarted.host).resume({
-    worldId,
-    sessionId: first.sessionId,
-    requestId: "resume",
-  });
-  expect(resumed.runStatus).toBe("ready");
-  expect(resumed.messages.map(({ role }) => role)).toEqual([
-    "user",
-    "assistant",
-  ]);
-  expect(
-    JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
-  ).toHaveLength(1);
-});
+    const store = new FileNativeWorldRevisionStore(root);
+    const saved = await store.readSession(first.sessionId);
+    saved.modelItems = saved.modelItems.filter(
+      ({ kind }) => kind !== "assistant",
+    );
+    saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
+    saved.runStatus = "running";
+    saved.activeRequestId = "first";
+    saved.completedRequestIds = [];
+    saved.googleOutcomeUnknown = dispatched;
+    if (dispatched)
+      saved.retryDispatch = {
+        requestId: "first",
+        exchange: saved.exchange,
+        modelItemCount: saved.modelItems.length,
+        state: "dispatching",
+      };
+    await store.saveSession(saved);
+    const restarted = googleAuthoringHost([googleText("Resumed.")]);
+    const service = makeService(restarted.host);
+    if (dispatched) {
+      const recovered = await service.readSession(worldId, first.sessionId);
+      expect(recovered).toMatchObject({
+        runStatus: "interrupted",
+        canRetry: true,
+      });
+      expect(recovered.lastFailure).toContain("Continue this conversation");
+    }
+    expect(restarted.sent).toHaveLength(0);
+    const resumed = await service.resume({
+      worldId,
+      sessionId: first.sessionId,
+      requestId: "resume",
+    });
+    expect(resumed.runStatus).toBe("ready");
+    expect(resumed.messages.map(({ role }) => role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(
+      JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
+    ).toHaveLength(1);
+  },
+);
 
 test("Google world revision records failures when a complete tool response lacks a settlement intent", async () => {
   const { root, worldId, worlds, workspace } = await createdWorld();
