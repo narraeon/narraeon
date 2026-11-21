@@ -722,8 +722,8 @@ test("world browsing creates no epoch; the first edit claims one without losing 
     if (input.type === "world.revision.overview")
       return { ...f.overview(), epoch: null };
     if (input.type === "world.surface.read")
-      return input.surface === "control"
-        ? [{ path: "frame.yaml", contents: "saved" }]
+      return input.surface === "revision"
+        ? [{ path: "control/frame.yaml", contents: "saved" }]
         : [];
     if (input.type === "world.revision.open") return opening.promise;
     return original(input);

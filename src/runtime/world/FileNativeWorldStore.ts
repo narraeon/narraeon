@@ -20,6 +20,7 @@ import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   assertSameGameplay,
+  gameplayPath,
   readGameplay,
   type Gameplay,
 } from "../../protocol/gameplay.ts";
@@ -102,6 +103,7 @@ export class FileNativeWorldCreationError extends Error {
     | "candidate_validation_failed"
     | "operation_conflict"
     | "endpoint_discarded"
+    | "endpoint_read_conflict"
     | "world_corrupt"
     | "inconsistent_materialization";
 
@@ -412,7 +414,11 @@ export class FileNativeWorldStore {
 
   async readWorldSummary(worldId: string): Promise<FileNativeWorldSummary> {
     assertIdentity(worldId, "World ID");
-    return readWorldSummaryAt(join(this.#worldsRoot, worldId));
+    return readWorldSummaryAt(
+      join(this.#worldsRoot, worldId),
+      undefined,
+      (rebuild) => this.operations.withWorldAuthorityLock(worldId, rebuild),
+    );
   }
 
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
@@ -534,7 +540,7 @@ export class FileNativeWorldStore {
     assertIdentity(worldId, "World ID");
     const head = await this.currentHead(worldId);
     const [control, playerViews] = await Promise.all([
-      this.readSurface(worldId, "control"),
+      this.readSurface(worldId, "control", head),
       this.renderPlayerViewsAtHead(worldId, head),
     ]);
     const definitions = extensionDefinitions(
@@ -798,30 +804,40 @@ export class FileNativeWorldStore {
 
   async readSurface(
     worldId: string,
-    surface: "state" | "control" | "history",
+    surface: "state" | "control" | "history" | "revision",
+    head?: string,
   ): Promise<ContentTreeFile[]>;
   async readSurface(
     worldId: string,
     surface: "runtime",
+    head?: string,
   ): Promise<Genesis & { historyEntries: number }>;
   async readSurface(
     worldId: string,
-    surface: "state" | "control" | "history" | "runtime",
+    surface: "state" | "control" | "history" | "runtime" | "revision",
+    head?: string,
   ): Promise<ContentTreeFile[] | (Genesis & { historyEntries: number })> {
     assertIdentity(worldId, "World ID");
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    if (surface === "runtime") {
+    const authority = new WorldLedgerAuthority(root);
+    try {
+      if (surface === "revision")
+        return await authority.recoverRevisionFiles(head);
+      if (surface !== "runtime")
+        return await authority.recoverSurface(surface, head);
       const genesis = await readJson<Genesis>(
         join(root, "runtime", "genesis.json"),
       );
       return {
         ...genesis,
-        historyEntries: (await readTree(join(root, "history"))).length,
+        historyEntries: (await authority.recoverSurface("history", head))
+          .length,
       };
+    } catch (error: unknown) {
+      throw endpointReadError(error, head);
     }
-    return readTree(join(root, surface));
   }
 
   async renderPlayerViews(worldId: string) {
@@ -851,7 +867,16 @@ export class FileNativeWorldStore {
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    return (await new WorldLedgerAuthority(root).readHead()).head;
+    try {
+      return (await new WorldLedgerAuthority(root).readHead()).head;
+    } catch (error: unknown) {
+      if (
+        error instanceof WorldTurnLedgerError &&
+        error.code === "read_conflict"
+      )
+        throw endpointReadError(error, undefined);
+      throw error;
+    }
   }
 
   async withArchiveExport<T>(
@@ -1126,7 +1151,7 @@ export class FileNativeWorldStore {
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const [state, draft] = await Promise.all([
-      readTree(join(root, "state")),
+      new WorldLedgerAuthority(root).recoverState(),
       readTree(join(root, "runtime/control-draft")),
     ]);
     if (draft.length === 0)
@@ -2589,6 +2614,12 @@ function endpointReadError(
       `Authority endpoint was rewound away${head === undefined ? "" : `: ${head}`}`,
       { cause: error },
     );
+  if (error instanceof WorldTurnLedgerError && error.code === "read_conflict")
+    return new FileNativeWorldCreationError(
+      "endpoint_read_conflict",
+      error.message,
+      { cause: error },
+    );
   return new FileNativeWorldCreationError(
     "world_corrupt",
     `Cannot recover immutable Authority endpoint${head === undefined ? "" : `: ${head}`}`,
@@ -2809,9 +2840,22 @@ async function readWorldTitleAt(
 /** Worlds copy the package's gameplay identity with control; its absence means interactive fiction. */
 async function readWorldGameplayAt(root: string): Promise<Gameplay> {
   try {
-    return readGameplay(
-      controlGameplayFiles(await readTree(join(root, "control"))),
-    );
+    const files: ContentTreeFile[] = [];
+    const entries = await readdir(join(root, "control"), {
+      withFileTypes: true,
+    }).catch((error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const entry of entries) {
+      const path = `control/${entry.name}`;
+      if (entry.isFile() && path.toLowerCase() === gameplayPath)
+        files.push({
+          path,
+          contents: await readFile(join(root, path), "utf8"),
+        });
+    }
+    return readGameplay(files);
   } catch (error: unknown) {
     throw new FileNativeWorldCreationError(
       "world_corrupt",

@@ -385,7 +385,8 @@ export type V1Request =
   | {
       type: "world.surface.read";
       worldId: string;
-      surface: "state" | "control" | "history" | "runtime";
+      surface: "state" | "control" | "history" | "runtime" | "revision";
+      head?: string;
     }
   | { type: "world.extensions.read"; worldId: string }
   | {
@@ -1049,6 +1050,7 @@ export class V1ProtocolError extends Error {
     | WorldArchiveErrorCode
     | "operation_conflict"
     | "endpoint_discarded"
+    | "endpoint_read_conflict"
     | "content_conflict"
     | "inconsistent_materialization"
     | "model_protocol_mismatch";
@@ -1782,11 +1784,22 @@ function validateRequestFields(request: Record<string, unknown>): void {
     request.surface !== "state" &&
     request.surface !== "control" &&
     request.surface !== "history" &&
-    request.surface !== "runtime"
+    request.surface !== "runtime" &&
+    request.surface !== "revision"
   )
     throw new V1ProtocolError(
       "invalid_request",
       "world.surface.read.surface is invalid",
+    );
+  if (
+    request.type === "world.surface.read" &&
+    request.head !== undefined &&
+    (typeof request.head !== "string" ||
+      !/^(?:genesis|commit:[1-9][0-9]*)$/u.test(request.head))
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.surface.read.head is invalid",
     );
   if (
     (request.type === "setting-improvement.preview" ||

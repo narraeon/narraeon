@@ -253,9 +253,10 @@ export async function createServer(input: {
         return reply.send(response);
       } catch (error: unknown) {
         if (error instanceof V1ProtocolError) {
-          // 端点已被回退丢弃或内容包已被其他操作修改：客户端应重新读取，不是服务端错误。
+          // 读取期间端点或内容包发生变化时，客户端可以重试。
           const status =
             error.code === "endpoint_discarded" ||
+            error.code === "endpoint_read_conflict" ||
             error.code === "content_conflict"
               ? 409
               : 400;

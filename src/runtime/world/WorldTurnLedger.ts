@@ -7,7 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 // 世界轮账本：当前文件就是当前端点；每轮只记录它改动过的文件的修改前像。
 // 回退只追加一轮 rewind，它在读取时被视为逻辑上的空操作，被丢弃的轮不再可达。
@@ -46,7 +46,8 @@ export class WorldTurnLedgerError extends Error {
     | "discarded"
     | "corrupt"
     | "invalid_path"
-    | "missing_record";
+    | "missing_record"
+    | "read_conflict";
 
   constructor(code: WorldTurnLedgerError["code"], message: string) {
     super(message);
@@ -347,6 +348,7 @@ async function readAllRecords(root: string): Promise<StoredTurn[]> {
 
 interface LedgerView {
   head: number;
+  /** In descending sequence order, starting at the physical head. */
   turns: Map<number, StoredTurn>;
 }
 
@@ -384,14 +386,22 @@ function viewOf(head: number, turns: readonly StoredTurn[]): LedgerView {
 
 // 进程内视图缓存，按端点失效。一个数据目录只被一个进程操作（ADR-0044），
 // 所以 head 相同即记录相同：任何改变可见记录的写入都会先推进 head。
-// 只有 beginTurn 与 recoverIncomplete 会在 head 之上写入或删除记录，它们不影响视图
-// （视图只包含序号不大于 head 的记录，且 recoverIncomplete 本身会在结束时失效缓存）。
+// beginTurn 与 recoverIncomplete 会在 head 之上写入或删除记录，它们不改变已发布的视图。
 const viewCache = new Map<string, LedgerView>();
+
+// An unpublished turn can start and be rolled back without advancing head.
+// Track overlapping writes for as long as a reader can observe them.
+const activeReaders = new Map<string, { generation: number; count: number }>();
+
+function noteFileWrite(root: string): void {
+  const readers = activeReaders.get(resolve(root));
+  if (readers !== undefined) readers.generation += 1;
+}
 
 // 一次读取只解析一个视图。回退先发布新端点、再删除被丢弃的轮记录：读完记录后端点仍未变化，
 // 说明读到的记录与这个端点一致；端点变了就用新端点重新读取。
 async function loadView(root: string): Promise<LedgerView> {
-  for (;;) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     const head = await readHead(root);
     const cached = viewCache.get(resolve(root));
     if (cached?.head === head) return cached;
@@ -401,6 +411,10 @@ async function loadView(root: string): Promise<LedgerView> {
     viewCache.set(resolve(root), view);
     return view;
   }
+  throw new WorldTurnLedgerError(
+    "read_conflict",
+    "读取期间世界端点持续变化，请重试",
+  );
 }
 
 // 世界目录被删除、归档导入或分叉发布到已存在路径之前调用：下一次读取从磁盘重建视图。
@@ -495,10 +509,10 @@ export async function beginTurn(
       input.changes.map((change) => change.path),
     ),
   };
-  await writeFileAtomic(
-    join(root, turnFileName(record.sequence)),
-    `${JSON.stringify(record, null, 2)}\n`,
-  );
+  const path = turnFileName(record.sequence);
+  const text = `${JSON.stringify(record, null, 2)}\n`;
+  parseTurn(text, basename(path));
+  await writeFileAtomic(join(root, path), text);
   return record;
 }
 
@@ -507,6 +521,7 @@ export async function applyChanges(
   root: string,
   changes: readonly WorldTurnFileChange[],
 ): Promise<void> {
+  noteFileWrite(root);
   for (const change of changes) {
     assertSafePath(change.path);
     const absolute = join(root, change.path);
@@ -523,7 +538,19 @@ export async function commitTurnHead(
   root: string,
   record: WorldTurnRecord,
 ): Promise<void> {
+  const key = resolve(root);
+  const previous = await loadView(root);
+  if (record.sequence !== previous.head + 1)
+    throw new WorldTurnLedgerError("corrupt", "要发布的轮与当前端点不一致");
+  const path = turnFileName(record.sequence);
+  const text = await readFile(join(root, path), "utf8");
+  const published = {
+    record: parseTurn(text, basename(path)),
+    digest: createHash("sha256").update(text).digest("hex"),
+  };
+  const next = viewOf(record.sequence, [...previous.turns.values(), published]);
   await publishHead(root, record.sequence);
+  viewCache.set(key, next);
 }
 
 export async function appendTurn(
@@ -571,6 +598,7 @@ export async function recoverIncomplete(
     .map(({ record }) => record)
     .filter((record) => record.sequence > head)
     .sort((left, right) => right.sequence - left.sequence);
+  if (incomplete.length > 0) noteFileWrite(root);
   for (const record of incomplete) {
     for (const file of [...record.files].reverse()) {
       const absolute = join(root, file.path);
@@ -592,25 +620,40 @@ export async function recoverIncomplete(
 
 export async function listTurns(root: string): Promise<WorldTurnRecord[]> {
   const view = await loadView(root);
-  return [...view.turns.values()].reverse().map(({ record }) => record);
+  return turnsThrough(view, view.head);
 }
 
-// 把端点解析为它所表示的逻辑位置（rewind 位置等价于它恢复的位置）。
-export async function resolveEndpoint(
+function turnsThrough(view: LedgerView, position: number): WorldTurnRecord[] {
+  const turns = [];
+  for (const [sequence, { record }] of view.turns) {
+    if (sequence <= position) turns.push(record);
+  }
+  return turns.reverse();
+}
+
+export async function readTurnHistory(
   root: string,
-  sequence: number,
-): Promise<number> {
-  return resolvePosition(await loadView(root), sequence);
+  requested?: number,
+): Promise<{
+  sequence: number;
+  turns: WorldTurnRecord[];
+}> {
+  const view = await loadView(root);
+  const sequence = resolvePosition(view, requested ?? view.head);
+  return { sequence, turns: turnsThrough(view, sequence) };
 }
 
 // 当前端点的逻辑位置、它的轮记录与记录摘要，三者来自同一个视图。
-export async function readEndpoint(root: string): Promise<{
+export async function readEndpoint(
+  root: string,
+  requested?: number,
+): Promise<{
   sequence: number;
   record: WorldTurnRecord | null;
   digest: string | null;
 }> {
   const view = await loadView(root);
-  const sequence = resolvePosition(view, view.head);
+  const sequence = resolvePosition(view, requested ?? view.head);
   const turn = view.turns.get(sequence);
   return {
     sequence,
@@ -635,41 +678,104 @@ export async function readFileAt(
   sequence: number,
   relativePath: string,
 ): Promise<string | null> {
-  assertSafePath(relativePath);
-  const view = await loadView(root);
-  const position = resolvePosition(view, sequence);
-  const overlay = overlayAfter(view, position);
-  if (overlay.has(relativePath)) return overlay.get(relativePath) ?? null;
-  return readTextOrNull(join(root, relativePath));
+  const { files } = await readLedgerFiles(root, sequence, {
+    paths: [relativePath],
+  });
+  return files.get(relativePath) ?? null;
 }
 
 // 读取端点 sequence 处 dirs 下的全部文件（相对路径 → 内容）。
 export async function readTreeAt(
   root: string,
-  sequence: number,
+  sequence: number | undefined,
   dirs: readonly string[],
 ): Promise<Map<string, string>> {
-  const view = await loadView(root);
-  const position = resolvePosition(view, sequence);
-  const overlay = overlayAfter(view, position);
-  const tree = new Map<string, string>();
-  for (const dir of dirs) {
-    assertSafePath(dir);
-    for (const path of await listFiles(root, dir)) {
-      if (!overlay.has(path)) {
-        const text = await readTextOrNull(join(root, path));
-        if (text !== null) tree.set(path, text);
+  return (await readLedgerFiles(root, sequence, { dirs })).files;
+}
+
+/** Read all requested files and turn metadata from one published endpoint. */
+export async function readLedgerFiles(
+  root: string,
+  sequence: number | undefined,
+  selection: {
+    dirs?: readonly string[];
+    paths?: readonly string[];
+    includeTurns?: boolean;
+  },
+): Promise<{
+  sequence: number;
+  files: Map<string, string>;
+  turns: WorldTurnRecord[];
+}> {
+  const { dirs = [], paths = [], includeTurns = false } = selection;
+  for (const path of [...dirs, ...paths]) assertSafePath(path);
+  const key = resolve(root);
+  const readers = activeReaders.get(key) ?? { generation: 0, count: 0 };
+  activeReaders.set(key, readers);
+  readers.count += 1;
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const generation = readers.generation;
+      const view = await loadView(root);
+      const position = resolvePosition(view, sequence ?? view.head);
+      const stable = async () =>
+        (await readHead(root)) === view.head &&
+        readers.generation === generation;
+      let files: Map<string, string>;
+      try {
+        const pendingPath = turnFileName(view.head + 1);
+        const pendingText = await readTextOrNull(join(root, pendingPath));
+        const pending =
+          pendingText === null
+            ? undefined
+            : parseTurn(pendingText, basename(pendingPath));
+        // The journal is written before replacement starts. Its before-images
+        // recover the published files even if the writer is paused mid-turn.
+        const overlay = new Map(
+          pending?.files.map(({ path, before }) => [path, before]),
+        );
+        for (const [path, before] of overlayAfter(view, position))
+          overlay.set(path, before);
+        files = await collectFiles(root, dirs, paths, overlay);
+      } catch (error: unknown) {
+        if (await stable()) throw error;
+        continue;
       }
+      if (!(await stable())) continue;
+      const turns = includeTurns ? turnsThrough(view, position) : [];
+      return { sequence: position, files, turns };
+    }
+    throw new WorldTurnLedgerError(
+      "read_conflict",
+      "读取期间世界端点持续变化，请重试",
+    );
+  } finally {
+    readers.count -= 1;
+    if (readers.count === 0) activeReaders.delete(key);
+  }
+}
+
+async function collectFiles(
+  root: string,
+  dirs: readonly string[],
+  paths: readonly string[],
+  overlay: ReadonlyMap<string, string | null>,
+): Promise<Map<string, string>> {
+  const wanted = new Set(paths);
+  for (const dir of dirs)
+    for (const path of await listFiles(root, dir)) wanted.add(path);
+  const files = new Map<string, string>();
+  for (const [path, before] of overlay) {
+    if (wanted.has(path) || dirs.some((dir) => path.startsWith(`${dir}/`))) {
+      wanted.delete(path);
+      if (before !== null) files.set(path, before);
     }
   }
-  for (const [path, before] of overlay) {
-    const inDir = dirs.some(
-      (dir) => path === dir || path.startsWith(dir + "/"),
-    );
-    if (!inDir || before === null) continue;
-    tree.set(path, before);
+  for (const path of wanted) {
+    const text = await readTextOrNull(join(root, path));
+    if (text !== null) files.set(path, text);
   }
-  return tree;
+  return files;
 }
 
 async function listFiles(root: string, dir: string): Promise<string[]> {
@@ -686,7 +792,12 @@ async function listFiles(root: string, dir: string): Promise<string[]> {
       const child = `${relative}/${entry.name}`;
       if (entry.isDirectory()) {
         await visit(child);
-      } else if (entry.isFile() && !entry.name.endsWith(".tmp")) {
+      } else if (
+        entry.isFile() &&
+        !/\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/u.test(
+          entry.name,
+        )
+      ) {
         found.push(child);
       }
     }

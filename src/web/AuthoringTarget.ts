@@ -357,25 +357,13 @@ export function worldRevisionTarget(
   const snapshot = async (
     overview: V1WorldRevisionOverview,
   ): Promise<AuthoringTargetSnapshot> => {
-    let files = overview.epoch?.locked ? overview.epoch.files : null;
-    if (files === null) {
-      const [state, control] = await Promise.all([
-        request<ContentTreeFile[]>(client, {
-          type: "world.surface.read",
-          worldId: id,
-          surface: "state",
-        }),
-        request<ContentTreeFile[]>(client, {
-          type: "world.surface.read",
-          worldId: id,
-          surface: "control",
-        }),
-      ]);
-      files = [
-        ...state.map((file) => ({ ...file, path: `state/${file.path}` })),
-        ...control.map((file) => ({ ...file, path: `control/${file.path}` })),
-      ];
-    }
+    const files =
+      (overview.epoch?.locked ? overview.epoch.files : null) ??
+      (await request<ContentTreeFile[]>(client, {
+        type: "world.surface.read",
+        worldId: id,
+        surface: "revision",
+      }));
     return {
       files,
       latest: overview.latest,

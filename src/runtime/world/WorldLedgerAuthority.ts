@@ -16,13 +16,13 @@ import {
 import {
   appendTurn,
   initializeLedger,
-  listTurns,
   readEndpoint,
   readFileAt,
   readHead as readLedgerHead,
+  readLedgerFiles,
   readTreeAt,
   readTurnDigest,
-  resolveEndpoint,
+  readTurnHistory,
   type WorldTurnFileChange,
   type WorldTurnRecord,
 } from "./WorldTurnLedger.ts";
@@ -192,15 +192,10 @@ export class WorldLedgerAuthority {
     return commit.operationId;
   }
 
-  async #positionOf(head?: string): Promise<number> {
-    if (head === undefined) return (await this.readHead()).sequence;
-    return resolveEndpoint(this.#root, parsePosition(head));
-  }
-
-  async #commitAtPosition(position: number): Promise<WorldTurnCommit> {
-    const turn = (await listTurns(this.#root)).find(
-      (candidate) => candidate.sequence === position,
-    );
+  #commitFromRecord(
+    position: number,
+    turn: WorldTurnRecord | null,
+  ): WorldTurnCommit {
     const commit = turn?.payload as WorldTurnCommit | undefined;
     if (commit?.sequence !== position)
       throw new WorldAuthorityError(
@@ -210,14 +205,6 @@ export class WorldLedgerAuthority {
     return commit;
   }
 
-  /** 端点位置处可见的全部提交（按轮号），不含 genesis 与回退轮。 */
-  async #commitsUpTo(position: number): Promise<WorldTurnCommit[]> {
-    const turns: WorldTurnRecord[] = await listTurns(this.#root);
-    return turns
-      .filter((turn) => turn.sequence <= position && turn.payload !== undefined)
-      .map((turn) => turn.payload as WorldTurnCommit);
-  }
-
   async #genesisHistory(): Promise<WorldHistoryMessage[]> {
     const genesis = await readJsonOrNull<{ history?: WorldHistoryMessage[] }>(
       join(this.#root, genesisFile),
@@ -225,38 +212,34 @@ export class WorldLedgerAuthority {
     return structuredClone(genesis?.history ?? []);
   }
 
-  async #materialsAt(position: number): Promise<MaterialSelection[]> {
-    const text = await readFileAt(this.#root, position, materialsFile);
-    if (text === null) return [];
+  #materialsFrom(text: string | undefined): MaterialSelection[] {
+    if (text === undefined) return [];
     const parsed = JSON.parse(text) as { items?: MaterialSelection[] };
     return structuredClone(parsed.items ?? []);
   }
 
-  async #stateAt(position: number): Promise<ContentTreeFile[]> {
-    return this.#surfaceAt(position, "state");
-  }
-
-  async #controlAt(position: number): Promise<ContentTreeFile[]> {
-    return this.#surfaceAt(position, "control");
-  }
-
-  async #surfaceAt(
-    position: number,
-    surface: "state" | "control",
+  async recoverSurface(
+    surface: "state" | "control" | "history",
+    head?: string,
   ): Promise<ContentTreeFile[]> {
-    const prefix = `${surface}/`;
-    const tree = await readTreeAt(this.#root, position, [surface]);
+    const position = head === undefined ? undefined : parsePosition(head);
+    return surfaceFiles(
+      await readTreeAt(this.#root, position, [surface]),
+      surface,
+    );
+  }
+
+  async recoverRevisionFiles(head?: string): Promise<ContentTreeFile[]> {
+    const position = head === undefined ? undefined : parsePosition(head);
+    const tree = await readTreeAt(this.#root, position, ["state", "control"]);
     return [...tree]
-      .map(([path, contents]) => ({
-        path: path.slice(prefix.length),
-        contents,
-      }))
+      .map(([path, contents]) => ({ path, contents }))
       .sort((left, right) => left.path.localeCompare(right.path));
   }
 
   /** 端点的控制文件：与状态同一账本视图，回退与分叉随端点恢复。 */
   async recoverControl(head?: string): Promise<ContentTreeFile[]> {
-    return this.#controlAt(await this.#positionOf(head));
+    return this.recoverSurface("control", head);
   }
 
   /** 把当前端点的控制文件替换为 next 所需的逐文件改动（写入或删除，未变化的不记录）。 */
@@ -293,18 +276,22 @@ export class WorldLedgerAuthority {
   }
 
   async recover(head?: string): Promise<WorldRecoveredEndpoint> {
-    const position = await this.#positionOf(head);
-    const commits = await this.#commitsUpTo(position);
+    const { sequence, files, turns } = await readLedgerFiles(
+      this.#root,
+      head === undefined ? undefined : parsePosition(head),
+      { dirs: ["state"], paths: [materialsFile], includeTurns: true },
+    );
+    const commits = commitsFromTurns(turns);
     const history = [
       ...(await this.#genesisHistory()),
       ...commits.flatMap((commit) => commit.historyAppend),
     ];
     const checkpoint = this.#checkpointAt(commits);
     return {
-      head: headName(position),
-      state: await this.#stateAt(position),
+      head: headName(sequence),
+      state: surfaceFiles(files, "state"),
       history: structuredClone(history),
-      additionalMaterials: await this.#materialsAt(position),
+      additionalMaterials: this.#materialsFrom(files.get(materialsFile)),
       ...(checkpoint === undefined
         ? {}
         : { narrativeCheckpoint: structuredClone(checkpoint) }),
@@ -318,31 +305,42 @@ export class WorldLedgerAuthority {
   async readNarrativeCheckpoint(
     head?: string,
   ): Promise<NarrativeCheckpoint | undefined> {
-    const position = await this.#positionOf(head);
-    return this.#checkpointAt(await this.#commitsUpTo(position));
+    const { turns } = await readTurnHistory(
+      this.#root,
+      head === undefined ? undefined : parsePosition(head),
+    );
+    return this.#checkpointAt(commitsFromTurns(turns));
   }
 
   async recoverState(head?: string): Promise<ContentTreeFile[]> {
-    return this.#stateAt(await this.#positionOf(head));
+    return this.recoverSurface("state", head);
   }
 
   async recoverMaterials(head?: string): Promise<MaterialSelection[]> {
-    return this.#materialsAt(await this.#positionOf(head));
+    const { files } = await readLedgerFiles(
+      this.#root,
+      head === undefined ? undefined : parsePosition(head),
+      { paths: [materialsFile] },
+    );
+    return this.#materialsFrom(files.get(materialsFile));
   }
 
   async readHistory(): Promise<{ head: string; commits: WorldTurnCommit[] }> {
-    const position = await this.#positionOf();
+    const { sequence, turns } = await readTurnHistory(this.#root);
     return {
-      head: headName(position),
-      commits: await this.#commitsUpTo(position),
+      head: headName(sequence),
+      commits: commitsFromTurns(turns),
     };
   }
 
   /** 已提交的一轮；genesis 没有提交，返回 null。 */
   async commitAt(head: string): Promise<WorldTurnCommit | null> {
-    const position = await this.#positionOf(head);
-    if (position === 0) return null;
-    return this.#commitAtPosition(position);
+    const { sequence, record } = await readEndpoint(
+      this.#root,
+      parsePosition(head),
+    );
+    if (sequence === 0) return null;
+    return this.#commitFromRecord(sequence, record);
   }
 
   /** 某一轮修改的状态文件内容：即该轮结束时的文件，并校验哈希。 */
@@ -427,13 +425,15 @@ export class WorldLedgerAuthority {
     commit: WorldTurnCommit;
     digest: string;
   }> {
-    const position = await this.#positionOf(head);
-    if (position === 0)
+    const { sequence, record, digest } = await readEndpoint(
+      this.#root,
+      parsePosition(head),
+    );
+    if (sequence === 0)
       throw new WorldAuthorityError("conflict", "Genesis is not a commit");
-    const commit = await this.#commitAtPosition(position);
-    const digest = await readTurnDigest(this.#root, position);
+    const commit = this.#commitFromRecord(sequence, record);
     if (digest === null)
-      throw new WorldAuthorityError("corrupt", `第 ${position} 轮缺少记录`);
+      throw new WorldAuthorityError("corrupt", `第 ${sequence} 轮缺少记录`);
     return { commit, digest };
   }
 
@@ -471,7 +471,7 @@ export class WorldLedgerAuthority {
     const head = `commit:${String(sequence)}`;
 
     const currentState = new Map(
-      (await this.#stateAt(current.sequence)).map((file) => [
+      (await this.recoverState(current.head)).map((file) => [
         file.path,
         file.contents,
       ]),
@@ -587,6 +587,26 @@ export class WorldLedgerAuthority {
       throw new WorldAuthorityError("corrupt", "新提交缺少轮记录");
     return { commit, commitDigest };
   }
+}
+
+function commitsFromTurns(
+  turns: readonly WorldTurnRecord[],
+): WorldTurnCommit[] {
+  return turns.flatMap(({ payload }) =>
+    payload === undefined ? [] : [payload as WorldTurnCommit],
+  );
+}
+
+function surfaceFiles(
+  tree: ReadonlyMap<string, string>,
+  surface: string,
+): ContentTreeFile[] {
+  const prefix = `${surface}/`;
+  const files: ContentTreeFile[] = [];
+  for (const [path, contents] of tree)
+    if (path.startsWith(prefix))
+      files.push({ path: path.slice(prefix.length), contents });
+  return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 // 与状态前像哈希保持同一格式（sha256:<hex>）。
