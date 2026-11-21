@@ -1,6 +1,7 @@
 import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { authoringTargetContract } from "./support/authoring-target-contract.ts";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type * as FileSystem from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +51,11 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof FileSystem>();
+  return { ...fs, rename: vi.fn(fs.rename) };
+});
 
 test("Google world revision keeps changes in its epoch and requires rereading after apply", async () => {
   const seeded = seededRevisionBase();
@@ -1632,6 +1638,111 @@ test("应用含删除与移动的修订后世界文件随之变化，回退到�
   expect(restored?.contents).toContain("旧商人");
 });
 
+test.each(["active", "legacy applying", "failed receipt write"] as const)(
+  "Apply publishes a document path swap and unlocks the world from %s",
+  async (startingState) => {
+    const { root, worldId, worlds, workspace } = await createdWorld();
+    const initial = await workspace.open(worldId);
+    const seeded = await workspace.replace({
+      worldId,
+      epochId: initial.epochId,
+      expectedRevision: initial.revision,
+      files: seededRevisionBase(),
+    });
+    await workspace.apply({
+      worldId,
+      epochId: seeded.epochId,
+      expectedRevision: seeded.revision,
+    });
+    const beforeHead = await worlds.currentHead(worldId);
+    const beforeSwap = await worlds.readSurface(worldId, "state");
+    const oldPath = "state/npc/old.yaml";
+    const placePath = "state/place.yaml";
+    const opened = await workspace.open(worldId);
+    const swapped = await workspace.replace({
+      worldId,
+      epochId: opened.epochId,
+      expectedRevision: opened.revision,
+      files: opened.files.map((file) => ({
+        ...file,
+        path:
+          file.path === oldPath
+            ? placePath
+            : file.path === placePath
+              ? oldPath
+              : file.path,
+      })),
+    });
+    const runtime = await revisionRuntime(root);
+    const apply = () =>
+      runtime.handle({
+        type: "world.revision.apply",
+        worldId,
+        epochId: swapped.epochId,
+        expectedRevision: swapped.revision,
+      });
+    const applied = { result: { epoch: { lifecycle: "applied" } } };
+    if (startingState === "active") {
+      await expect(apply()).resolves.toMatchObject(applied);
+    } else if (startingState === "legacy applying") {
+      // The old Runtime persisted this marker before rejecting the path swap.
+      await new FileNativeWorldRevisionStore(root).saveEpoch({
+        ...swapped,
+        lifecycle: "applying",
+        apply: {
+          operationId: `world-revision-${swapped.epochId}`,
+          expectedRevision: swapped.revision,
+          phase: "prepared",
+          committedHead: null,
+        },
+      });
+    } else {
+      const epochPath = join(
+        root,
+        "world-revisions",
+        "epochs",
+        `${swapped.epochId}.json`,
+      );
+      const publish = vi.mocked(rename).getMockImplementation()!;
+      vi.mocked(rename).mockImplementation(async (source, target) => {
+        if (
+          target === epochPath &&
+          (await readFile(source, "utf8")).includes('"phase": "committed"')
+        )
+          throw Object.assign(new Error("Apply receipt write failed"), {
+            code: "EIO",
+          });
+        return publish(source, target);
+      });
+      try {
+        await expect(apply()).rejects.toThrow("Apply receipt write failed");
+        expect(await worlds.currentHead(worldId)).toBe("commit:2");
+        expect(await worlds.readWorldRevisionLock(worldId)).toMatchObject({
+          epochId: swapped.epochId,
+        });
+      } finally {
+        vi.mocked(rename).mockReset();
+      }
+    }
+    if (startingState !== "active") {
+      await expect(
+        runtime.handle({ type: "world.revision.overview", worldId }),
+      ).resolves.toMatchObject(applied);
+    }
+    expect(await worlds.readWorldRevisionLock(worldId)).toBeNull();
+    expect(await worlds.currentHead(worldId)).toBe("commit:2");
+    const afterSwap = await worlds.readSurface(worldId, "state");
+    expect(
+      afterSwap.find(({ path }) => path === "npc/old.yaml")?.contents,
+    ).toBe(beforeSwap.find(({ path }) => path === "place.yaml")?.contents);
+    expect(afterSwap.find(({ path }) => path === "place.yaml")?.contents).toBe(
+      beforeSwap.find(({ path }) => path === "npc/old.yaml")?.contents,
+    );
+    await worlds.rewindPlayerRevision(worldId, beforeHead);
+    expect(await worlds.readSurface(worldId, "state")).toEqual(beforeSwap);
+  },
+);
+
 test("玩法身份在世界修订中只能保持不变，持久化的修订往返后仍原样应用", async () => {
   const tabletop = [
     ...minimalFileNativeContentScaffold("zh-CN"),
@@ -3196,24 +3307,7 @@ test("世界修订预览保留检查点与增长基准，应用记录显式世�
     nextMaterials: [],
     stateChanges: [],
   });
-  const runtime = new V1Runtime({
-    dataRoot: root,
-    configRoot: join(root, "config"),
-  });
-  await runtime.initialize();
-  await runtime.handle({
-    type: "model.save",
-    connection: {
-      name: "Revision integration model",
-      presetId: "custom",
-      provider: "chat_completions",
-      baseUrl: "https://provider.invalid/v1",
-      apiKey: "test-key",
-      modelId: modelBinding.modelId,
-      contextWindowTokens: 32_000,
-      maxOutputTokens: 4_096,
-    },
-  });
+  const runtime = await revisionRuntime(root);
   const host = new ScriptedModelHost({
     binding: modelBinding,
     steps: [
@@ -3556,6 +3650,28 @@ authoringTargetContract("world revision", async (steps, delay = false) => {
     release: () => release.resolve(),
   };
 });
+
+async function revisionRuntime(root: string): Promise<V1Runtime> {
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  await runtime.handle({
+    type: "model.save",
+    connection: {
+      name: "Revision integration model",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "test-key",
+      modelId: modelBinding.modelId,
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 4_096,
+    },
+  });
+  return runtime;
+}
 
 async function createdWorld(
   packageFiles = minimalFileNativeContentScaffold("zh-CN"),

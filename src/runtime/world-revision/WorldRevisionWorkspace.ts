@@ -610,20 +610,8 @@ function stateChanges(
         throw new WorldRevisionWorkspaceError(
           `Cannot resolve changed world document: ${file.path}`,
         );
-      if (previous !== undefined) {
-        const before = baseSnapshot.query({
-          kind: "read_document",
-          document: { logicalPath: file.path },
-        });
-        if (
-          before.kind !== "read_document" ||
-          !before.ok ||
-          before.document.documentId !== result.document.documentId
-        )
-          throw new WorldRevisionWorkspaceError(
-            `Existing world-document identity changed: ${file.path}`,
-          );
-      }
+      // Revision validation tracks identity across moves. The ledger tracks
+      // the previous bytes at each path, including when documents swap paths.
       return [
         {
           kind: previous === undefined ? "create" : "replace",
