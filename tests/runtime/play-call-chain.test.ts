@@ -14746,6 +14746,56 @@ test.each(["retry", "continue", "prompt"])(
   },
 );
 
+test("续写响应格式无效时，纠错派发从原请求开始并移除旧前缀", async () => {
+  const { prefillHost } = await import("./support/prefill-host.ts");
+  const { host, sent } = prefillHost([
+    { text: "尚未提交的旧前缀" },
+    { text: "", finish: "stop", json: true, extra: { content: 42 } },
+    { text: "重新生成的完整叙事。", finish: "stop" },
+  ]);
+  const dispatch = vi.spyOn(host, "exchange");
+  const { worlds, worldId } = await createWorld(
+    "prefill-format-correction",
+    undefined,
+    host.binding(),
+  );
+  const chain = new PlayCallChain(worlds);
+  const first = await chain.start({
+    worldId,
+    chainId: "prefill-correction",
+    exchangeId: "first",
+    playerText: "开始。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(first.canContinuePartial).toBe(true);
+  const done = await chain.append({
+    worldId,
+    chainId: first.chainId,
+    exchangeId: "continue",
+    playerText: "",
+    recovery: "continue_partial",
+    modelHost: host,
+  });
+  expect(sent).toHaveLength(3);
+  expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
+    role: "assistant",
+    content: "尚未提交的旧前缀",
+  });
+  expect(dispatch.mock.calls[2]?.[0]).not.toHaveProperty("assistantPrefill");
+  expect(JSON.stringify(sent[2]?.messages)).not.toContain("尚未提交的旧前缀");
+  expect(JSON.stringify(sent[2]?.messages)).toContain(
+    "Return a corrected response",
+  );
+  expect(done.status).toBe("ready");
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.slice(-2)).toEqual(["开始。", "重新生成的完整叙事。"]);
+});
+
 test("正文 token 截断继续发送只结算合并后的完整正文", async () => {
   const { prefillHost } = await import("./support/prefill-host.ts");
   const { host, sent } = prefillHost(

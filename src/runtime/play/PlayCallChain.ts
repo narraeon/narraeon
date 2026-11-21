@@ -2983,6 +2983,7 @@ export class PlayCallChain {
               appended: [...request.appended, error.notice()],
               requestAttempt: attempt + 1,
             };
+            delete request.assistantPrefill;
             correcting = true;
             attempt += 1;
             await this.#advances.end(
