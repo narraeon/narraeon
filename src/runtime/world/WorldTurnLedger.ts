@@ -532,7 +532,7 @@ export async function rewindTo(
 ): Promise<WorldTurnRecord | null> {
   const view = await loadView(root);
   const target = resolvePosition(view, sequence);
-  if (target === view.head) return null;
+  if (target === resolvePosition(view, view.head)) return null;
   const overlay = overlayAfter(view, target);
   const changes: WorldTurnFileChange[] = [];
   for (const [path, before] of overlay) {
@@ -543,7 +543,7 @@ export async function rewindTo(
   const record = await appendTurn(root, {
     mode: "rewind",
     changes,
-    restoresSequence: sequence,
+    restoresSequence: target,
   });
   // 端点已发布，丢弃的记录即可删除；失败可忽略，读取已把它们当作不可达，下次回退或恢复会再清理。
   for (let position = target + 1; position <= view.head; position += 1) {

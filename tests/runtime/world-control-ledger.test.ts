@@ -133,6 +133,37 @@ test("控制编辑应用是一轮 control_apply：只推进一轮，回退到应
   );
 });
 
+test("回退到较早的回退轮后可以重新打开和分叉", async () => {
+  const fixture = await world();
+  await commitPlay(fixture, "genesis", "保留这句话。");
+  await commitPlay(fixture, "commit:1", "第一次丢弃。");
+  await fixture.store.rewindPlayerRevision(fixture.worldId, "commit:1");
+
+  await commitPlay(fixture, "commit:1", "第二次丢弃。");
+  await fixture.store.rewindPlayerRevision(fixture.worldId, "commit:3");
+
+  const reopened = new FileNativeWorldStore(fixture.root);
+  expect(await reopened.currentHead(fixture.worldId)).toBe("commit:1");
+  expect(await reopened.recoverEndpoint(fixture.worldId, "commit:5")).toEqual(
+    await reopened.recoverEndpoint(fixture.worldId, "commit:1"),
+  );
+  await expect(
+    reopened.recoverEndpoint(fixture.worldId, "commit:3"),
+  ).rejects.toMatchObject({
+    code: "endpoint_discarded",
+  });
+  const fork = await reopened.deriveWorld({
+    operationId: "fork-after-rewind",
+    sourceWorldId: fixture.worldId,
+    sourceHead: "commit:1",
+    hostPresetId: "host",
+  });
+  expect(await reopened.recoverEndpoint(fork.world.worldId)).toEqual({
+    ...(await reopened.recoverEndpoint(fixture.worldId)),
+    worldId: fork.world.worldId,
+  });
+});
+
 test("在修订之前的端点分叉：新世界的 control 等于该端点的控制，来源世界保持应用后的控制", async () => {
   const fixture = await world();
   const genesisControl = await fixture.store.readSurface(
