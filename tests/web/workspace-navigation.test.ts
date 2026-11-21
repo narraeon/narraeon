@@ -555,7 +555,7 @@ test.each(["receipt", "lost receipt", "rejection"])(
     const option = screen.getByRole("menuitemradio", { checked: false });
     fireEvent.click(option);
     fireEvent.click(option);
-    expect(edit.textContent).toContain(first.name);
+    expect(edit.textContent).toBe(first.name);
     await act(async () => {
       select.resolve();
       await select.promise;
@@ -565,13 +565,13 @@ test.each(["receipt", "lost receipt", "rejection"])(
     ).toHaveLength(1);
     if (reject) {
       expect(screen.getByRole("alert").textContent).toContain("切换失败");
-      expect(edit.textContent).toContain(first.name);
+      expect(edit.textContent).toBe(first.name);
       reject = false;
       fireEvent.click(screen.getByRole("menuitemradio", { checked: false }));
       await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
       expect(screen.queryByRole("alert")).toBeNull();
     }
-    expect(edit.textContent).toContain("同模型备用");
+    expect(edit.textContent).toBe("同模型备用");
     expect(draft).toHaveProperty("value", "保留这段输入");
     expect(window.location.hash).toBe("#/preview");
     expect(screen.queryByRole("menu")).toBeNull();

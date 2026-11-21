@@ -158,11 +158,6 @@
   text-align: start;
   text-overflow: ellipsis;
 }
-.workspace-model-label strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .workspace-model-dot {
   flex: none;
   width: 6px;

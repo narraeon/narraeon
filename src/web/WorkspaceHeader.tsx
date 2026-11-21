@@ -128,8 +128,7 @@ export function WorkspaceHeader({
               aria-hidden="true"
             />
             <span className="workspace-model-label">
-              {uiText("模型连接")}
-              {activeModelName !== null && <strong>{activeModelName}</strong>}
+              {activeModelName ?? uiText("模型连接")}
             </span>
           </button>
           {model.connections.some(
