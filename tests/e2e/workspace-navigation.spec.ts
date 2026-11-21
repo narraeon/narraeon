@@ -201,3 +201,43 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     390,
   );
 });
+
+test("手机地址栏展开和收起时，长页面只在标题栏下方滚动", async ({ page }) => {
+  // Headless browsers have no address bar. Give large viewport units their
+  // toolbar-hidden value while the actual viewport changes below.
+  const largeHeight = 754;
+  await page.route("**/*.css", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.text()).replace(
+      /(\d+(?:\.\d+)?)l?vh\b/gu,
+      (_, amount: string) => `${(Number(amount) * largeHeight) / 100}px`,
+    );
+    await route.fulfill({ response, body });
+  });
+  await page.setViewportSize({ width: 390, height: largeHeight });
+  await page.goto("/#/models");
+  await expect(page.locator(".model-connection-screen")).toBeVisible();
+
+  const content = page.locator(".workspace-body");
+  const menu = page.locator(".workspace-menu-toggle");
+  for (const height of [714, largeHeight]) {
+    await page.setViewportSize({ width: 390, height });
+    const atBottom = await content.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return (
+        element.scrollTop > 0 &&
+        element.scrollTop + element.clientHeight === element.scrollHeight
+      );
+    });
+    expect(atBottom).toBe(true);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const headerBox = await page.locator(".workspace-header").boundingBox();
+    expect(headerBox?.y).toBe(0);
+    expect(
+      await content.evaluate((el) => el.getBoundingClientRect().bottom),
+    ).toBe(height);
+    await menu.click();
+    await expect(page.locator(".workspace-navigation")).toBeVisible();
+    await menu.click();
+  }
+});
