@@ -1,9 +1,23 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import type * as FileSystem from "node:fs/promises";
+import {
+  link,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof FileSystem>();
+  return { ...fs, link: vi.fn(fs.link), rename: vi.fn(fs.rename) };
+});
 
 const fixture = fileURLToPath(
   new URL(
@@ -12,9 +26,14 @@ const fixture = fileURLToPath(
   ),
 );
 
-test.each([false, true])(
-  "schema 2 upgrade preserves exact historical source; conflicting backup: %s",
-  async (conflicting) => {
+test.each([
+  { existing: "absent", failPublication: false },
+  { existing: "identical", failPublication: false },
+  { existing: "conflicting", failPublication: false },
+  { existing: "absent", failPublication: true },
+])(
+  "schema 2 upgrade without hard links preserves its source (backup: $existing, publication failure: $failPublication)",
+  async ({ existing, failPublication }) => {
     const root = await mkdtemp(join(tmpdir(), "revision-migration-"));
     try {
       const source = await readFile(fixture);
@@ -26,25 +45,62 @@ test.each([false, true])(
       const backup = join(sessions, ".legacy", `${sessionId}.json`);
       await mkdir(join(sessions, ".legacy"), { recursive: true });
       await writeFile(path, source);
-      if (conflicting) await writeFile(backup, "partial");
-      const store = new FileNativeWorldRevisionStore(root);
-      const session = await store.readSession(sessionId);
-      expect(session.schemaVersion).toBe(2);
-      // Recovery may need to save a released schema before the next user send.
-      session.lastFailure = "Recovered after interruption.";
-      if (conflicting) {
-        await expect(store.saveSession(session)).rejects.toThrow(
-          /backup does not match/iu,
-        );
+      const conflictingBackup = Buffer.from(
+        "prior backup with different bytes",
+      );
+      if (existing === "identical") await writeFile(backup, source);
+      if (existing === "conflicting")
+        await writeFile(backup, conflictingBackup);
+      vi.mocked(link).mockRejectedValue(
+        Object.assign(new Error("Hard links are unavailable"), {
+          code: "EACCES",
+        }),
+      );
+      const upgrade = async () => {
+        const store = new FileNativeWorldRevisionStore(root);
+        const session = await store.readSession(sessionId);
+        expect(session.schemaVersion).toBe(2);
+        // Recovery may need to save a released schema before the next user send.
+        session.lastFailure = "Recovered after interruption.";
+        await store.saveSession(session);
+      };
+      if (existing === "conflicting") {
+        await expect(upgrade()).rejects.toThrow(/backup does not match/iu);
         expect(await readFile(path)).toEqual(source);
+        expect(await readFile(backup)).toEqual(conflictingBackup);
         return;
       }
-      await store.saveSession(session);
+      if (failPublication) {
+        const publish = vi.mocked(rename).getMockImplementation()!;
+        vi.mocked(rename).mockImplementation(async (source, target) => {
+          if (target === backup)
+            throw Object.assign(new Error("Backup publication interrupted"), {
+              code: "EIO",
+            });
+          return publish(source, target);
+        });
+        await expect(upgrade()).rejects.toThrow(
+          "Backup publication interrupted",
+        );
+        expect(await readFile(path)).toEqual(source);
+        await expect(readFile(backup)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        vi.mocked(rename).mockReset();
+      }
+      await upgrade();
       expect(await readFile(backup)).toEqual(source);
-      expect((await store.readSession(sessionId)).schemaVersion).toBe(3);
-      await store.saveSession(await store.readSession(sessionId));
+      const reopened = new FileNativeWorldRevisionStore(root);
+      const upgraded = await reopened.readSession(sessionId);
+      expect(upgraded).toMatchObject({
+        schemaVersion: 3,
+        lastFailure: "Recovered after interruption.",
+      });
+      await reopened.saveSession(upgraded);
       expect(await readFile(backup)).toEqual(source);
     } finally {
+      vi.mocked(link).mockReset();
+      vi.mocked(rename).mockReset();
       await rm(root, { recursive: true, force: true });
     }
   },

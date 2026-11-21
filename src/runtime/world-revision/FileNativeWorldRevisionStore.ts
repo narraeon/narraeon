@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
 import type { GoogleHopEvidence } from "../model/ModelHost.ts";
 import {
-  link,
+  lstat,
   mkdir,
   open,
   readFile,
@@ -330,27 +330,19 @@ export class FileNativeWorldRevisionStore {
                 ? `${session.sessionId}.json`
                 : `${session.sessionId}.schema-v${old.schemaVersion}.json`,
             );
-            await mkdir(dirname(backup), { recursive: true, mode: 0o700 });
-            const temporary = `${backup}.${randomUUID()}.tmp`;
-            try {
-              const handle = await open(temporary, "wx", 0o600);
-              try {
-                await handle.writeFile(source);
-              } finally {
-                await handle.close();
-              }
-              try {
-                await link(temporary, backup);
-              } catch (error) {
-                if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-              }
-              if (!(await readFile(backup)).equals(source))
-                throw new Error(
-                  "World-revision legacy source backup does not match the original bytes",
-                );
-            } finally {
-              await rm(temporary, { force: true });
-            }
+            // Session saves are serialized in the single Runtime. Publish the
+            // complete backup atomically and keep any previously published copy.
+            const existingBackup = await lstat(backup).catch(
+              (error: unknown) => {
+                if (isNodeError(error) && error.code === "ENOENT") return null;
+                throw error;
+              },
+            );
+            if (existingBackup === null) await publishFile(backup, source);
+            else if (!(await readFile(backup)).equals(source))
+              throw new Error(
+                "World-revision legacy source backup does not match the original bytes",
+              );
             if (session.schemaVersion <= 2) session.schemaVersion = 3;
             validateSession(session);
           }
@@ -1332,12 +1324,19 @@ function assertSessionId(value: string): void {
 }
 
 async function publishJson(path: string, value: unknown): Promise<void> {
+  await publishFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function publishFile(
+  path: string,
+  contents: string | Buffer,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     const handle = await open(temporary, "wx", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+      await handle.writeFile(contents);
     } finally {
       await handle.close();
     }
