@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import {
   hasCLIProxyThinkingSuffix,
+  isSameModelServiceOrigin,
   modelReasoningPolicyIssue,
   modelProviderPresets,
   responsesConnectionCapabilities,
@@ -37,6 +38,7 @@ import {
   ModelHostBindingMismatchError,
   type ModelHostBinding,
 } from "./ModelHost.ts";
+import { fetchModelService } from "./fetchModelService.ts";
 
 const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
@@ -213,9 +215,7 @@ export class ModelConnectionStore {
       );
       if (stored === undefined)
         throw new Error("Model configuration not found");
-      // A saved connection owns its credential across later protocol and
-      // endpoint edits; an explicit key in this request still takes precedence.
-      apiKey = stored.apiKey;
+      apiKey = savedApiKeyForOrigin(stored, baseUrl);
     }
     if (apiKey === undefined)
       throw new Error("Fetching the model list requires an API key");
@@ -234,12 +234,10 @@ export class ModelConnectionStore {
     const ids = new Set<string>();
     const seenTokens = new Set<string>();
     for (;;) {
-      const response = await this.#fetch(new URL(url), {
-        method: "GET",
-        headers,
-        signal,
-        ...(google ? { redirect: "error" as const } : {}),
-      });
+      const options = { method: "GET", headers, signal };
+      const response = await (google
+        ? this.#fetch(new URL(url), { ...options, redirect: "error" })
+        : fetchModelService(this.#fetch, new URL(url), options));
       const payload = await readModelListPage(response);
       const field = google ? "models" : "data";
       const entries =
@@ -381,9 +379,11 @@ function normalizeSaveInput(
     maxOutputTokens: input.maxOutputTokens,
   });
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
-  // Credential reuse follows the saved configuration identity, not its current
-  // protocol or endpoint fields.
-  const apiKey = explicitApiKey ?? existing?.apiKey;
+  const apiKey =
+    explicitApiKey ??
+    (existing === undefined
+      ? undefined
+      : savedApiKeyForOrigin(existing, baseUrl));
   if (apiKey === undefined)
     throw new Error("A new model configuration requires an API key");
   validatePresetBinding(presetId, provider, baseUrl);
@@ -733,6 +733,15 @@ function normalizeBaseUrl(value: string): string {
     );
   url.pathname = url.pathname.replace(/\/+$/u, "");
   return url.toString().replace(/\/$/u, "");
+}
+
+function savedApiKeyForOrigin(
+  connection: StoredModelConnection,
+  baseUrl: string,
+): string {
+  if (!isSameModelServiceOrigin(connection.baseUrl, baseUrl))
+    throw new Error("Changing the model service origin requires an API key");
+  return connection.apiKey;
 }
 
 function normalizeOptionalApiKey(value: unknown): string | undefined {

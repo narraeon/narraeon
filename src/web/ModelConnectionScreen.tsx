@@ -6,6 +6,7 @@ import { SyncNotice } from "./SyncNotice.tsx";
 import {
   hasCLIProxyThinkingSuffix,
   isGoogleThinkingLevel,
+  isSameModelServiceOrigin,
   responsesConnectionCapabilities,
   googleThinkingLevels,
   type CopyModelConnectionResult,
@@ -142,7 +143,12 @@ export function ModelConnectionScreen({
     [form.presetId, library.presets],
   );
   const google = form.provider === "google_interactions";
-  const credentialsMustBeEntered = form.connectionId === null;
+  const savedConnection = library.connections.find(
+    ({ id }) => id === form.connectionId,
+  );
+  const credentialsMustBeEntered =
+    savedConnection === undefined ||
+    !isSameModelServiceOrigin(savedConnection.baseUrl, form.baseUrl);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(
@@ -163,6 +169,11 @@ export function ModelConnectionScreen({
   ): void {
     setForm((current) => {
       const updated = { ...current, ...next };
+      if (
+        updated.baseUrl !== current.baseUrl &&
+        !isSameModelServiceOrigin(current.baseUrl, updated.baseUrl)
+      )
+        updated.apiKey = "";
       if (updated.provider !== "openai_responses")
         updated.responsesTurnInstructions = false;
       if (
@@ -825,13 +836,15 @@ export function ModelConnectionScreen({
             placeholder={
               form.connectionId === null
                 ? uiText("新配置必填")
-                : uiText("留空以沿用本机保存的现有凭据")
+                : credentialsMustBeEntered
+                  ? uiText("更换服务来源时必填")
+                  : uiText("留空以沿用本机保存的现有凭据")
             }
             onChange={(event) => change({ apiKey: event.target.value }, true)}
           />
           <p className="field-note">
             {uiText(
-              "编辑已有配置时，API Key 留空会把本机保存的现有凭据用于当前协议和端点；填写新值会覆盖它。",
+              "地址的协议方案、主机和端口相同时，可留空沿用本机凭据。更换服务来源须填写对应的 API Key。",
             )}
           </p>
 

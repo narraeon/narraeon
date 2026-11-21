@@ -5,6 +5,10 @@ import {
   hardQuotaFailure,
   provenConnectTimeout,
 } from "./ModelRetry.ts";
+import {
+  fetchModelService,
+  ModelServiceRedirectError,
+} from "./fetchModelService.ts";
 import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
   equalModelHostBinding,
@@ -3319,9 +3323,15 @@ async function dispatchProviderRequest(
   label: string,
 ): Promise<Response> {
   try {
-    return await fetchImplementation(url, init);
+    return await (init.redirect === "error"
+      ? fetchImplementation(url, init)
+      : fetchModelService(fetchImplementation, url, init));
   } catch (error: unknown) {
     if (init.signal?.aborted === true) throw cancelledModelRequest(error);
+    if (error instanceof ModelServiceRedirectError)
+      throw new ModelHostFailureError(error.message, {
+        details: { httpStatus: error.httpStatus },
+      });
     if (provenConnectTimeout(error))
       throw new RetryableModelFailure("connect_timeout");
     throw new ModelHostOutcomeUnknownError(

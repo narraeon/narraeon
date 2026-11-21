@@ -1,3 +1,17 @@
+export function isSameModelServiceOrigin(left: string, right: string): boolean {
+  try {
+    const source = new URL(left);
+    const target = new URL(right);
+    return (
+      (source.protocol === "http:" || source.protocol === "https:") &&
+      source.protocol === target.protocol &&
+      source.origin === target.origin
+    );
+  } catch {
+    return false;
+  }
+}
+
 export type ModelProviderKind =
   | "chat_completions"
   | "openai_responses"

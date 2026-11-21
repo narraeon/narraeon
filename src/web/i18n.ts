@@ -890,10 +890,11 @@ const englishMessages: Record<string, string> = {
   "的内置端点；手动修改后按自定义端点保存。":
     "'s built-in endpoint. After a manual edit it will be saved as a custom endpoint.",
   新配置必填: "Required for a new configuration",
+  更换服务来源时必填: "Required when changing the service origin",
   留空以沿用本机保存的现有凭据:
     "Leave blank to reuse the existing credential saved on this device",
-  "编辑已有配置时，API Key 留空会把本机保存的现有凭据用于当前协议和端点；填写新值会覆盖它。":
-    "When editing an existing configuration, leaving API Key blank reuses the credential saved on this device for the current protocol and endpoint. Enter a new value to replace it.",
+  "地址的协议方案、主机和端口相同时，可留空沿用本机凭据。更换服务来源须填写对应的 API Key。":
+    "Leave the API Key blank to reuse the saved credential when the address uses the same scheme, host, and port. Enter the API Key for the new service origin when changing any of these.",
   "模型 ID": "Model ID",
   "模型提示词（可选）": "Model prompt (optional)",
   "正在拉取…": "Fetching…",
