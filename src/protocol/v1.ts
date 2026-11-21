@@ -1396,13 +1396,14 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
   }
   if (
-    request.type === "setting-improvement.message.edit" &&
+    (request.type === "setting-improvement.message.edit" ||
+      request.type === "world.revision.message.edit") &&
     request.filePolicy !== "keep" &&
     request.filePolicy !== "revert"
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "setting-improvement.message.edit.filePolicy is invalid",
+      `${request.type}.filePolicy is invalid`,
     );
   if (
     request.type === "world.story.export" &&
@@ -1477,6 +1478,21 @@ function validateRequestFields(request: Record<string, unknown>): void {
         "content.gameplay.set.scheme is invalid",
       );
   }
+  if (
+    request.type === "content.replace" &&
+    !(request.files as unknown[]).every(
+      (file) =>
+        isRecord(file) &&
+        typeof file.path === "string" &&
+        file.path.length > 0 &&
+        typeof file.contents === "string" &&
+        (file.encoding === undefined || file.encoding === "base64"),
+    )
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "content.replace.files is invalid",
+    );
   if (request.type === "content.import") {
     const archiveBase64 = request.archiveBase64 as string;
     if (
@@ -1704,8 +1720,7 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
   }
   if (
-    (request.type === "artifacts.read" || request.type === "artifacts.debug") &&
-    "channel" in request &&
+    request.type === "artifacts.read" &&
     request.channel !== undefined &&
     (typeof request.channel !== "string" || request.channel.length === 0)
   )
@@ -1736,7 +1751,9 @@ function validateRequestFields(request: Record<string, unknown>): void {
       );
   }
   if (
-    (request.type === "play.timeline.detail" ||
+    (request.type === "play.chain.revise-player" ||
+      request.type === "play.chain.regenerate-narrative" ||
+      request.type === "play.timeline.detail" ||
       request.type === "play.timeline.context") &&
     (!Number.isSafeInteger(request.eventId) || Number(request.eventId) < 1)
   )
@@ -1799,13 +1816,14 @@ function validateRequestFields(request: Record<string, unknown>): void {
       "Authoring preview sessionId is invalid",
     );
   if (
-    request.type === "world.revision.status" &&
+    (request.type === "world.revision.status" ||
+      request.type === "setting-improvement.status") &&
     request.sessionId !== undefined &&
     (typeof request.sessionId !== "string" || request.sessionId.length === 0)
   )
     throw new V1ProtocolError(
       "invalid_request",
-      "world.revision.status.sessionId is invalid",
+      `${request.type}.sessionId is invalid`,
     );
   if (
     request.type === "setting-improvement.message" ||
@@ -1817,7 +1835,8 @@ function validateRequestFields(request: Record<string, unknown>): void {
       (continuation.kind !== "fresh_context" &&
         continuation.kind !== "continue_context") ||
       (continuation.kind === "continue_context" &&
-        typeof continuation.sessionId !== "string") ||
+        (typeof continuation.sessionId !== "string" ||
+          continuation.sessionId.length === 0)) ||
       (continuation.kind === "fresh_context" && "sessionId" in continuation)
     )
       throw new V1ProtocolError(
