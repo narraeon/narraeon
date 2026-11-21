@@ -14,10 +14,7 @@ import {
   parsePlayPresetFiles,
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import {
-  settingImprovementRuntimeContract,
-  settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 
 /**
  * Fiction requests are the compatibility contract for tabletop work: every
@@ -70,6 +67,9 @@ import {
  * also receives the boundary. Frozen requests are not recompiled.
  * Responses source-aware turn guides (#198) change the ordered append preview
  * in both locales. The remaining 74 compilation digests stay unchanged.
+ * Ordered authoring adds control-file and Unicode guidance and shares the
+ * play turn-guide reference with world revision (#233). Only new authoring
+ * compiles change.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -166,11 +166,6 @@ function computeDigests(): Record<string, string> {
       compiler.compileSettingImprovement({
         gameplay: { mode: "interactive-fiction" },
         contentPackageTitle: "Golden package",
-        runtimeContract: settingImprovementRuntimeContract(
-          locale,
-          fictionGameplay,
-        ),
-        authorPrompt: "golden author prompt",
         playPreset: binding,
         modelBinding,
         tools: settingImprovementToolDefinitions(locale, fictionGameplay),
@@ -181,11 +176,6 @@ function computeDigests(): Record<string, string> {
         gameplay: { mode: "interactive-fiction" },
         worldTitle: "Golden world",
         epoch: { id: "epoch-golden", baseHead: "head-golden" },
-        runtimeContract: settingImprovementRuntimeContract(
-          locale,
-          fictionGameplay,
-        ),
-        authorPrompt: "golden author prompt",
         playPreset: binding,
         modelBinding,
         tools: settingImprovementToolDefinitions(locale, fictionGameplay),
@@ -347,11 +337,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "c5a9efa1fd9a8c1ea36caf036cb2a26d277054553fc6683db32bc0adad03d5e4",
   "revision/en":
-    "b0828803453d3ee43038978d717c96120413f76eab8320664289fb968f46c3ce",
+    "02151d2fa3af127f5e38cbc0da6fb5756a89304b32ecbf0dc198e6b37ebed504",
   "revision/zh-CN":
-    "74b8b891fbb03d6aa0b06e8a897e155b8521ad76020c6859efb78d4da9122420",
+    "7693db3883bdda1064e9a9d51ca4e621f4e873360c765d58d91738e7c5668d26",
   "setting/en":
-    "ac7fb1d5a9ee209c9fa47269362458ab229eff16f8a5a957bb9c5f7c97a19536",
+    "abfa2b1111f6cb5b44da3a23ef0615a4ac6a47654ff86355ba50df67d17f4875",
   "setting/zh-CN":
-    "1880a2a4db0a5da0721263f4ada9d23c904130a2cbd5a83c7df5706d9143a4af",
+    "c1dc09b7b48e1274b8ba50762b90daec082c444b3ef6b921f274dd7080195d61",
 };

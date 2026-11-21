@@ -16,10 +16,7 @@ import type {
 } from "../../protocol/worldExtensions.ts";
 import { effectiveFollowupDefinitions } from "../play/OrderedFollowups.ts";
 import { legacyAuthorPrompts } from "../play/FileNativePlayPresetStore.ts";
-import {
-  builtinAuthorPrompts,
-  authoringMechanics,
-} from "../../shared/ordered-author-prompts.ts";
+import { builtinAuthorPrompts } from "../../shared/ordered-author-prompts.ts";
 import {
   type PromptMessageRole,
   builtinPlayPrompts,
@@ -224,8 +221,6 @@ export interface SettingImprovementPromptInput {
   contentPackageTitle: string;
   /** The package's gameplay; a tabletop package states its scheme in the author target. */
   gameplay: Gameplay;
-  runtimeContract: string;
-  authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   modelPrompt?: ModelConnectionPrompt | undefined;
@@ -239,8 +234,6 @@ export interface WorldRevisionPromptInput {
   epoch?: { id: string; baseHead: string };
   /** The world's fixed gameplay, stated in the author target for tabletop worlds. */
   gameplay: Gameplay;
-  runtimeContract: string;
-  authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   modelPrompt?: ModelConnectionPrompt | undefined;
@@ -256,8 +249,6 @@ interface AuthoringConversationPromptInput {
   boundary: { source: string; markdown: string } | null;
   runtimeSource: string;
   gameplay: Gameplay;
-  runtimeContract: string;
-  authorPrompt: string;
   playPreset: PlayPresetBinding;
   modelBinding: FileNativePromptInput["modelBinding"];
   modelPrompt?: ModelConnectionPrompt | undefined;
@@ -490,8 +481,6 @@ export class FileNativePromptCompiler {
       runtimeSource: "runtime:builtin/setting-improvement",
       target: "setting",
       gameplay: input.gameplay,
-      runtimeContract: input.runtimeContract,
-      authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
       modelPrompt: input.modelPrompt,
@@ -518,8 +507,6 @@ export class FileNativePromptCompiler {
       runtimeSource: "runtime:builtin/world-revision",
       target: "world-revision",
       gameplay: input.gameplay,
-      runtimeContract: input.runtimeContract,
-      authorPrompt: input.authorPrompt,
       playPreset: input.playPreset,
       modelBinding: input.modelBinding,
       modelPrompt: input.modelPrompt,
@@ -574,7 +561,7 @@ export class FileNativePromptCompiler {
         blocks = [
           {
             source: input.runtimeSource,
-            markdown: authoringMechanics(this.#locale, input.target),
+            markdown: builtin.body,
           },
         ];
       if (builtin?.id === "author.target")
@@ -1591,14 +1578,9 @@ function settingImprovementPresetReference(
       : [
           {
             source: "play-preset:turn-guide",
-            markdown: [
-              turnGuideHeader(locale, false),
-              ...turnGuideLines,
-              "",
-              locale === "zh-CN"
-                ? "世界 frame 的 instructions 可用 turnGuide 在世界占位处补充一到两行本世界特有、最容易丢的约束；不要复制上述跨世界规则。"
-                : "The world frame's instructions may add one or two world-specific, easily lost constraints with turnGuide at the world placeholder; do not copy the cross-world lines above.",
-            ].join("\n"),
+            markdown: [turnGuideHeader(locale, false), ...turnGuideLines].join(
+              "\n",
+            ),
           },
         ];
   const heading =
@@ -1636,25 +1618,23 @@ function settingImprovementPresetReference(
         : "These blocks apply only when future play produces player-visible story. Do not use them as prose models for YAML or Markdown setting documents in this conversation.",
       narrativeBlocks,
     ),
-    revision
-      ? null
-      : settingImprovementReferenceGroup(
-          provider === "openai_responses"
-            ? locale === "zh-CN"
-              ? "本轮提示（游玩请求）"
-              : "Turn guide (play requests)"
-            : locale === "zh-CN"
-              ? "本轮提示（每次发送的尾部）"
-              : "Turn guide (per-send suffix)",
-          provider === "openai_responses"
-            ? locale === "zh-CN"
-              ? "每次游玩请求按编排顺序使用已启用块的尾部行，提醒模型本轮的写作要求。"
-              : "Each play request uses the enabled blocks’ turn-guide lines in their arranged order as reminders for writing that turn."
-            : locale === "zh-CN"
-              ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
-              : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
-          turnGuideBlocks,
-        ),
+    settingImprovementReferenceGroup(
+      provider === "openai_responses"
+        ? locale === "zh-CN"
+          ? "本轮提示（游玩请求）"
+          : "Turn guide (play requests)"
+        : locale === "zh-CN"
+          ? "本轮提示（每次发送的尾部）"
+          : "Turn guide (per-send suffix)",
+      provider === "openai_responses"
+        ? locale === "zh-CN"
+          ? "每次游玩请求按编排顺序使用已启用块的尾部行，提醒模型本轮的写作要求。"
+          : "Each play request uses the enabled blocks’ turn-guide lines in their arranged order as reminders for writing that turn."
+        : locale === "zh-CN"
+          ? "这些行在每次游玩发送时追加在玩家输入之后，由已启用块的尾部行按同一顺序拼成；它们是提醒，不是世界事实。"
+          : "These lines are appended after the player input on every play send, assembled from the enabled blocks' turn-guide lines in the same order. They are reminders, not world facts.",
+      turnGuideBlocks,
+    ),
   ].filter((group) => group !== null);
   return [
     heading,

@@ -313,6 +313,7 @@ import {
   applyPlayPresetStructuredEditor,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { builtinPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import { builtinAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
 test("legacy migration retains disabled copies and resources while frozen requests remain unchanged", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-migrate-"));
   roots.push(root);
@@ -511,8 +512,6 @@ test.each(["en", "zh-CN"] as const)(
     await store.select(preset.id);
     const compiler = new FileNativePromptCompiler({ locale });
     const common = {
-      runtimeContract: "AUTHOR_MECHANICS",
-      authorPrompt: "AUTHOR_POLICY",
       playPreset: await store.bindCurrent(),
       modelBinding: {
         provider: "chat_completions" as const,
@@ -522,19 +521,27 @@ test.each(["en", "zh-CN"] as const)(
       },
       tools: [],
     };
-    const results = [
-      compiler.compileSettingImprovement({
+    const results = {
+      setting: compiler.compileSettingImprovement({
         gameplay: { mode: "interactive-fiction" },
         ...common,
         contentPackageTitle: "Package",
       }),
-      compiler.compileWorldRevision({
+      "world-revision": compiler.compileWorldRevision({
         gameplay: { mode: "interactive-fiction" },
         ...common,
         worldTitle: "World",
       }),
-    ];
-    for (const result of results) {
+    };
+    for (const target of ["setting", "world-revision"] as const) {
+      const result = results[target];
+      const builtin = builtinAuthorPrompts(locale, target).find(
+        ({ id }) => id === "author.mechanics",
+      );
+      const mechanics = result.logicalMessages.find(
+        ({ promptId }) => promptId === "author.mechanics",
+      );
+      expect(mechanics?.markdown).toBe(builtin?.body);
       const encoded = JSON.stringify(result.provider);
       expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
       expect(encoded).not.toContain("# Player-visible narrative rules");
@@ -543,7 +550,7 @@ test.each(["en", "zh-CN"] as const)(
         locale === "en" ? "Authoring tools and settlement" : "创作工具与结算",
       );
     }
-    const references = results.map(
+    const references = Object.values(results).map(
       (result) =>
         result.logicalMessages
           .flatMap(({ blocks }) => blocks)
@@ -687,8 +694,6 @@ test("disabled author recommendations do not fall back and author saves preserve
   const compilation = new FileNativePromptCompiler().compileSettingImprovement({
     gameplay: { mode: "interactive-fiction" },
     contentPackageTitle: "Test",
-    runtimeContract: "NOT_A_FALLBACK",
-    authorPrompt: "NOT_A_FALLBACK",
     playPreset: binding,
     modelBinding: {
       provider: "chat_completions",
@@ -700,7 +705,6 @@ test("disabled author recommendations do not fall back and author saves preserve
   });
   const encoded = JSON.stringify(compilation.provider);
   expect(encoded).toContain("MY_FIXED_AUTHOR_TEXT");
-  expect(encoded).not.toContain("NOT_A_FALLBACK");
   expect(encoded).not.toContain("Recommended setting-improvement method");
   expect(encoded).not.toContain("Future play semantics");
   const removed = {

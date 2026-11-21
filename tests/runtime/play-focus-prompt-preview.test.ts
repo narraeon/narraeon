@@ -13,7 +13,6 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { builtinPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
 import {
-  settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
   SettingAuthoringTransaction,
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
@@ -77,11 +76,6 @@ test.each(["en", "zh-CN"] as const)(
     const author = compiler.compileSettingImprovement({
       contentPackageTitle: "Two paths",
       gameplay: fictionGameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        fictionGameplay,
-      ),
-      authorPrompt: "Author the world.",
       playPreset: preset,
       modelBinding: input.modelBinding,
       tools: settingImprovementToolDefinitions(locale, fictionGameplay),
@@ -223,11 +217,6 @@ test.each(["en", "zh-CN"] as const)(
     const author = compiler.compileSettingImprovement({
       contentPackageTitle: "Two paths",
       gameplay: fictionGameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        fictionGameplay,
-      ),
-      authorPrompt: "Edit this prop only.",
       playPreset: preset,
       modelBinding: input.modelBinding,
       tools: settingImprovementToolDefinitions(locale, fictionGameplay),

@@ -4,10 +4,7 @@ import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { builtinDefaultPlayPresetBinding } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { FileNativePromptCompiler } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
-import {
-  settingImprovementRuntimeContract,
-  settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 
 test.each([
   {
@@ -42,11 +39,6 @@ test.each([
   const bootstrap = compiler.compileSettingImprovement({
     gameplay: { mode: "interactive-fiction" },
     contentPackageTitle: "Package",
-    runtimeContract: settingImprovementRuntimeContract(
-      scenario.locale,
-      fictionGameplay,
-    ),
-    authorPrompt: "Author setting documents.",
     playPreset: builtinDefaultPlayPresetBinding(scenario.locale),
     modelBinding: host.binding(),
     tools,
@@ -88,11 +80,6 @@ test.each([
     const bootstrap = compiler.compileSettingImprovement({
       gameplay: { mode: "interactive-fiction" },
       contentPackageTitle: "雾港来信",
-      runtimeContract: settingImprovementRuntimeContract(
-        "zh-CN",
-        fictionGameplay,
-      ),
-      authorPrompt: "保留已有事实，只按用户当前消息行动。",
       playPreset,
       modelBinding: host.binding(),
       tools,
@@ -234,8 +221,6 @@ test.each([
     }).compileSettingImprovement({
       gameplay: { mode: "interactive-fiction" },
       contentPackageTitle: "TARGET_MARKER",
-      runtimeContract: "UNUSED_OLD_CONTRACT",
-      authorPrompt: "UNUSED_OLD_POLICY",
       playPreset: preset,
       modelBinding: host.binding(),
       tools: settingImprovementToolDefinitions("en", fictionGameplay),
@@ -265,6 +250,5 @@ test.each([
         body.indexOf(markers[index - 1]!),
       );
     expect(body).not.toContain("AUTHOR_DISABLED");
-    expect(body).not.toContain("UNUSED_OLD_POLICY");
   },
 );

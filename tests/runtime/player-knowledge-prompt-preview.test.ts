@@ -7,10 +7,7 @@ import {
   FileNativePromptCompiler,
   retargetFrozenCompilation,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
-import {
-  settingImprovementRuntimeContract,
-  settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
 
 const contracts = {
@@ -92,11 +89,6 @@ test.each(["en", "zh-CN"] as const)(
     });
     const authorInput = {
       gameplay: fictionGameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        fictionGameplay,
-      ),
-      authorPrompt: "Develop the opening without revealing the hidden secret.",
       playPreset: preset,
       modelBinding: input.modelBinding,
       tools: settingImprovementToolDefinitions(locale, fictionGameplay),
@@ -198,8 +190,6 @@ test.each(["en", "zh-CN"] as const)(
           contentPackageTitle: "An existing package",
           gameplay:
             mode === "tabletop" ? { mode, scheme: "d20" } : fictionGameplay,
-          runtimeContract: "Current authoring tools.",
-          authorPrompt: "Change an unrelated prop only.",
           playPreset: preset,
           modelBinding: input.modelBinding,
           tools: [],
@@ -271,8 +261,6 @@ test.each(["en", "zh-CN"] as const)(
     const author = compiler.compileSettingImprovement({
       contentPackageTitle: "My package",
       gameplay: fictionGameplay,
-      runtimeContract: "Current authoring tools.",
-      authorPrompt: "Edit one prop.",
       playPreset: preset,
       modelBinding: input.modelBinding,
       tools: [],

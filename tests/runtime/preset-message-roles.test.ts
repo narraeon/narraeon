@@ -322,8 +322,6 @@ test("authoring and world revision use the same configured message roles", async
   );
   const compiler = new FileNativePromptCompiler();
   const common = {
-    runtimeContract: "contract",
-    authorPrompt: "author",
     playPreset: binding,
     modelBinding: {
       provider: "chat_completions" as const,

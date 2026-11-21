@@ -179,8 +179,6 @@ describe("per-world tool exposure", () => {
     const compiled = compiler.compileSettingImprovement({
       gameplay: { mode: "interactive-fiction" },
       contentPackageTitle: "Authoring",
-      runtimeContract: "contract",
-      authorPrompt: "author",
       playPreset: builtinDefaultPlayPresetBinding("en"),
       modelBinding: input.modelBinding,
       tools,

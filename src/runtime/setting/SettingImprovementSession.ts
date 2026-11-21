@@ -48,10 +48,7 @@ import type {
   ModelHostBinding,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  settingImprovementPromptForBinding,
-  type PlayPresetBinding,
-} from "../play/FileNativePlayPresetStore.ts";
+import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type {
   FileNativePromptCompiler,
   PromptPreview,
@@ -64,6 +61,8 @@ import {
   ModelToolConversation,
   type ModelToolConversationStreaming,
   rememberAuthoringRequest,
+  isResponseCorrection,
+  recoverPausedAuthoringCorrection,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import {
@@ -75,7 +74,6 @@ import {
 } from "./FileNativeSettingImprovementStore.ts";
 import {
   SettingAuthoringTransaction,
-  settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
   authoringPreloadAuthorization,
   buildAuthoringPreload,
@@ -730,11 +728,6 @@ export class SettingImprovementSession {
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       gameplay: package_.gameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        package_.gameplay,
-      ),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       modelPrompt,
@@ -816,11 +809,6 @@ export class SettingImprovementSession {
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       gameplay: package_.gameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        package_.gameplay,
-      ),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       tools,
@@ -1029,7 +1017,10 @@ export class SettingImprovementSession {
     }
     let expected = original;
     const session = structuredClone(original);
-    if (recoverLegacyLengthLimit(session)) {
+    if (
+      recoverLegacyLengthLimit(session) ||
+      recoverPausedAuthoringCorrection(session)
+    ) {
       if (await this.#store.saveIfUnchanged(expected, session)) return session;
       return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
     }
@@ -1052,23 +1043,19 @@ export class SettingImprovementSession {
             session.googleOutcomeUnknown !== false
           )
             session.googleOutcomeUnknown = true;
-          markInterruptedAfterRestart(session);
+          const lastItem = session.modelItems.at(-1);
           if (
             session.retryDispatch === undefined &&
             session.requests?.at(-1) !== undefined &&
-            (session.modelItems.at(-1)?.kind === "user" ||
-              session.modelItems.at(-1)?.kind === "tool")
+            (lastItem?.kind === "user" ||
+              lastItem?.kind === "tool" ||
+              isResponseCorrection(lastItem))
           ) {
             session.schemaVersion = 6;
             checkpointNextAuthoringDispatch(session, "retryable");
-            session.runStatus = "interrupted";
           }
           recoverAuthoringDispatch(session);
-          if (
-            session.modelBinding.provider === "google_interactions" &&
-            session.retryDispatch?.state === "retryable"
-          )
-            session.googleOutcomeUnknown = false;
+          markInterruptedAfterRestart(session);
           session.updatedAt = Date.now();
           if (await this.#store.saveIfUnchanged(original, session))
             return session;

@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { createElement, useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { OrderedPlayPromptEditor } from "../../src/web/OrderedPlayPromptEditor.tsx";
+import {
+  builtinAuthorPrompts,
+  defaultOrderedAuthorPrompts,
+} from "../../src/shared/ordered-author-prompts.ts";
 import {
   builtinPlayPrompts,
   defaultOrderedPlayPrompts,
@@ -13,6 +17,47 @@ afterEach(() => {
   cleanup();
   setWebLocale("zh-CN");
 });
+
+test.each([
+  {
+    locale: "en",
+    textLabel: "Prompt text",
+    revisionLabel: "World revision tool contract",
+  },
+  {
+    locale: "zh-CN",
+    textLabel: "提示词正文",
+    revisionLabel: "世界修订工具契约",
+  },
+] as const)(
+  "$locale author directory previews the catalog mechanics for each target",
+  ({ locale, textLabel, revisionLabel }) => {
+    setWebLocale(locale);
+    render(
+      createElement(OrderedPlayPromptEditor, {
+        entries: defaultOrderedAuthorPrompts(),
+        authoring: true,
+        onChange: vi.fn(),
+      }),
+    );
+    const revisionSummary = screen.getByText(revisionLabel);
+    fireEvent.click(revisionSummary);
+    const previews = {
+      setting: screen.getByLabelText<HTMLTextAreaElement>(textLabel).value,
+      "world-revision":
+        revisionSummary.parentElement!.querySelector("pre")!.textContent,
+    };
+    expect(previews.setting).not.toEqual(previews["world-revision"]);
+
+    for (const target of ["setting", "world-revision"] as const) {
+      const builtin = builtinAuthorPrompts(locale, target).find(
+        ({ id }) => id === "author.mechanics",
+      );
+      expect(previews[target]).toBe(builtin?.body);
+    }
+  },
+);
+
 test("authors clone readonly recommendations, disable originals, and reorder with keyboard", () => {
   function Editor() {
     const [entries, setEntries] = useState<OrderedPlayPrompt[]>(

@@ -26,6 +26,7 @@ import {
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   builtinDefaultPlayPresetBinding,
+  legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   revisionForPlayPresetFiles,
   presetHostBinding,
@@ -1722,49 +1723,68 @@ test.each(["cancel", "disconnect"] as const)(
   },
 );
 
-test("Google setting cold restart can resume a request proven not dispatched", async () => {
-  const root = await temporaryRoot("google-setting-before-dispatch-");
-  const content = new ContentWorkspace(root, { locale: () => "en" });
-  const { localId } = await content.createCurrentTreeContentPackage();
-  const initial = googleAuthoringHost([googleText("Original.")]);
-  const first = await sendFresh(
-    serviceFor(root, content, initial.host),
-    localId,
-    "first",
-    "Frozen message.",
-  );
-  const store = new FileNativeSettingImprovementStore(root);
-  const saved = await store.read(first.sessionId);
-  saved.modelItems = saved.modelItems.filter(
-    ({ kind }) => kind !== "assistant",
-  );
-  saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
-  saved.runStatus = "running";
-  saved.activeRequestId = "first";
-  saved.completedRequestIds = [];
-  saved.googleOutcomeUnknown = false;
-  await store.save(saved);
-  const restarted = googleAuthoringHost([googleText("Resumed.")]);
-  const service = serviceFor(root, content, restarted.host);
-  const resumed = await service.resume({
-    packageId: localId,
-    sessionId: first.sessionId,
-    requestId: "resume",
-  });
-  expect(resumed.runStatus).toBe("ready");
-  expect(resumed.messages.map(({ role }) => role)).toEqual([
-    "user",
-    "assistant",
-  ]);
-  expect(
-    JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
-  ).toHaveLength(1);
-  const snapshot = (await store.read(first.sessionId)).requests![0]!;
-  expect(snapshot.wireRequest?.googleHops?.length).toBeGreaterThanOrEqual(1);
-  expect(
-    snapshot.retryAttempts?.[0]?.wireRequest?.googleHops?.length,
-  ).toBeGreaterThanOrEqual(1);
-});
+test.each([false, true])(
+  "Google setting cold restart can resume the saved request (in-flight dispatch: %s)",
+  async (dispatched) => {
+    const root = await temporaryRoot("google-setting-before-dispatch-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const initial = googleAuthoringHost([googleText("Original.")]);
+    const first = await sendFresh(
+      serviceFor(root, content, initial.host),
+      localId,
+      "first",
+      "Frozen message.",
+    );
+    const store = new FileNativeSettingImprovementStore(root);
+    const saved = await store.read(first.sessionId);
+    saved.modelItems = saved.modelItems.filter(
+      ({ kind }) => kind !== "assistant",
+    );
+    saved.messages = saved.messages.filter(({ role }) => role !== "assistant");
+    saved.runStatus = "running";
+    saved.activeRequestId = "first";
+    saved.completedRequestIds = [];
+    saved.googleOutcomeUnknown = dispatched;
+    if (dispatched)
+      saved.retryDispatch = {
+        requestId: "first",
+        exchange: saved.exchange,
+        modelItemCount: saved.modelItems.length,
+        state: "dispatching",
+      };
+    await store.save(saved);
+    const restarted = googleAuthoringHost([googleText("Resumed.")]);
+    const service = serviceFor(root, content, restarted.host);
+    if (dispatched) {
+      const recovered = await service.readSession(localId, first.sessionId);
+      expect(recovered).toMatchObject({
+        runStatus: "interrupted",
+        canRetry: true,
+      });
+      expect(recovered.lastFailure).toMatch(/continue this conversation/iu);
+    }
+    expect(restarted.sent).toHaveLength(0);
+    const resumed = await service.resume({
+      packageId: localId,
+      sessionId: first.sessionId,
+      requestId: "resume",
+    });
+    expect(resumed.runStatus).toBe("ready");
+    expect(resumed.messages.map(({ role }) => role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(
+      JSON.stringify(restarted.sent[0]).match(/Frozen message\./gu),
+    ).toHaveLength(1);
+    const snapshot = (await store.read(first.sessionId)).requests![0]!;
+    expect(snapshot.wireRequest?.googleHops?.length).toBeGreaterThanOrEqual(1);
+    expect(
+      snapshot.retryAttempts?.[0]?.wireRequest?.googleHops?.length,
+    ).toBeGreaterThanOrEqual(1);
+  },
+);
 
 test("重整前真实 schema-v2 作者会话保留原生工具历史，下一次发送保存当前编排", async () => {
   const fixture = JSON.parse(
@@ -2245,6 +2265,50 @@ test.each([
   ).toBe(lengthLimit);
 });
 
+test("Google authoring preserves the model adapter's pre-dispatch binding rejection", async () => {
+  const fixture = await createFixture([]);
+  const fetch = vi.fn<typeof globalThis.fetch>();
+  const mismatched = new FileNativeModelHost(
+    {
+      provider: "chat_completions",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "synthetic",
+      modelId: "mismatched",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 2000,
+    },
+    fetch,
+  );
+  const googleBinding = googleAuthoringHost([]).host.binding();
+  const host: ModelHost = {
+    binding: () => googleBinding,
+    exchange: (request, observer) => mismatched.exchange(request, observer),
+  };
+  const session = serviceFor(fixture.root, fixture.content, host);
+
+  const result = await sendFresh(
+    session,
+    fixture.packageId,
+    "binding",
+    "Inspect.",
+  );
+
+  expect(result).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: false,
+    freshContextReason: "continuation_unavailable",
+    lastFailure:
+      "The compiled prompt protocol does not match the selected model host",
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  await expect(
+    session.readSession(fixture.packageId, result.sessionId),
+  ).resolves.toMatchObject({
+    canRetry: false,
+    lastFailure: result.lastFailure,
+  });
+});
+
 test("a changed package makes an interrupted request stale before a read or a direct retry", async () => {
   const fixture = await createFixture([
     { outcome: "failure", message: "connection reset" },
@@ -2520,63 +2584,158 @@ test.each([
   },
 );
 
-test("模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求", async () => {
-  const fixture = await createFixture([
-    ...Array.from({ length: 64 }, (_, index) => ({
-      outcome: "response" as const,
-      toolCalls: [
-        {
-          id: `read-opening-${index}`,
-          name: "setting_read",
-          arguments: { path: "opening.md" },
-        },
-      ],
-    })),
-    { outcome: "response", text: "Finished after continuing.", toolCalls: [] },
-  ]);
+test.each([false, true])(
+  "模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求（最后一步纠错：%s）",
+  async (correcting) => {
+    const fixture = await createFixture([
+      ...Array.from({ length: 64 }, (_, index) => ({
+        outcome: "response" as const,
+        ...(correcting && index === 63
+          ? { continuation: "lost" as const }
+          : {}),
+        toolCalls: [
+          {
+            id: `read-opening-${index}`,
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          ...(index === 0
+            ? [
+                {
+                  id: "published-opening",
+                  name: "setting_write_file",
+                  arguments: {
+                    path: "opening.md",
+                    contents: "The opening is published.",
+                  },
+                },
+              ]
+            : []),
+        ],
+      })),
+      {
+        outcome: "response",
+        text: "Finished after continuing.",
+        toolCalls: [],
+      },
+    ]);
 
-  const paused = await sendFresh(
-    fixture.session,
-    fixture.packageId,
-    "request-long",
-    "Inspect the opening repeatedly.",
-  );
+    const paused = await sendFresh(
+      fixture.session,
+      fixture.packageId,
+      "request-long",
+      "Inspect the opening repeatedly.",
+    );
 
-  expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
-  expect(fixture.host.requests).toHaveLength(64);
+    expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
+    expect(fixture.host.requests).toHaveLength(64);
 
-  const resume = () =>
-    fixture.session.resume({
-      packageId: fixture.packageId,
-      sessionId: paused.sessionId,
-      requestId: "resume-long",
+    const readTree = () =>
+      fixture.content.readCurrentTreeContentPackage(fixture.packageId);
+    const published = await readTree();
+    expect(published.files).toContainEqual({
+      path: "opening.md",
+      contents: "The opening is published.",
     });
-  const resumed = await resume();
+    const restarted = serviceFor(fixture.root, fixture.content, fixture.host);
+    const resume = () =>
+      restarted.resume({
+        packageId: fixture.packageId,
+        sessionId: paused.sessionId,
+        requestId: "resume-long",
+      });
+    const resumed = await resume();
 
-  expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
-  expect(fixture.host.requests).toHaveLength(65);
-  const continued = fixture.host.requests.at(-1)!;
-  expect(continued.appended.at(-1)).toMatchObject({
-    kind: "tool",
-    toolCallId: "read-opening-63",
+    expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
+    expect(fixture.host.requests).toHaveLength(65);
+    const continued = fixture.host.requests.at(-1)!;
+    const last = continued.appended.at(-1);
+    expect(last).toMatchObject(
+      correcting
+        ? {
+            kind: "runtime_notice",
+            notice: "response_correction",
+          }
+        : { kind: "tool", toolCallId: "read-opening-63" },
+    );
+    if (correcting)
+      expect(last).toHaveProperty(
+        "text",
+        expect.stringContaining("Return a corrected response"),
+      );
+    expect(continued.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
+    expect(resumed.messages.map(({ role }) => role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(resumed.turns).toHaveLength(1);
+    expect(
+      resumed.turns[0]?.exchanges
+        .flatMap((exchange) => exchange.toolCalls)
+        .filter(({ callId }) => callId === "published-opening"),
+    ).toHaveLength(1);
+    expect((await readTree()).treeRevision).toBe(published.treeRevision);
+
+    await expect(resume()).resolves.toMatchObject({ runStatus: "ready" });
+    expect(fixture.host.requests).toHaveLength(65);
+    await expect(
+      fixture.session.resume({
+        packageId: fixture.packageId,
+        sessionId: paused.sessionId,
+        requestId: "resume-ready",
+      }),
+    ).rejects.toThrow("Only a paused authoring conversation can be continued");
+  },
+);
+
+test("Google setting resumes a format correction paused by an older runtime", async () => {
+  const fixture = await createFixture([]);
+  const read = (id: string) => ({
+    id,
+    name: "setting_read",
+    arguments: { path: "opening.md" },
   });
-  expect(continued.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
-  expect(resumed.messages.map(({ role }) => role)).toEqual([
-    "user",
-    "assistant",
+  const before = googleAuthoringHost([
+    googleTools([read("settled")]),
+    googleTools([read("duplicate"), read("duplicate")]),
+    googleTools([read("duplicate"), read("duplicate")]),
   ]);
-  expect(resumed.turns).toHaveLength(1);
-  expect(resumed.turns[0]?.exchanges).toHaveLength(65);
+  const stopped = await sendFresh(
+    serviceFor(fixture.root, fixture.content, before.host),
+    fixture.packageId,
+    "google-pause",
+    "Inspect the opening.",
+  );
+  expect(stopped.runStatus).toBe("interrupted");
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const saved = await store.read(stopped.sessionId);
+  expect(saved.modelItems.at(-1)).toMatchObject({
+    kind: "runtime_notice",
+    notice: "response_correction",
+  });
+  // Before the fix, reaching the exchange limit on the first correction left
+  // this notice in a paused session with the in-flight Google flag set.
+  saved.runStatus = "paused";
+  saved.lastFailure = null;
+  delete saved.retryDispatch;
+  saved.googleOutcomeUnknown = true;
+  await store.save(saved);
 
-  await expect(resume()).resolves.toMatchObject({ runStatus: "ready" });
-  expect(fixture.host.requests).toHaveLength(65);
-  await expect(
-    fixture.session.resume({
-      packageId: fixture.packageId,
-      sessionId: paused.sessionId,
-      requestId: "resume-ready",
-    }),
-  ).rejects.toThrow("Only a paused authoring conversation can be continued");
+  const after = googleAuthoringHost([googleText("Finished.")]);
+  const resumed = await serviceFor(
+    fixture.root,
+    fixture.content,
+    after.host,
+  ).resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "google-resume",
+  });
+  expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
+  expect(after.sent).toHaveLength(1);
+  expect(JSON.stringify(after.sent[0])).toContain(
+    "Return a corrected response",
+  );
 });
 
 test("synthetic schema 2 paused state continues without inventing a retry checkpoint", async () => {
@@ -3078,6 +3237,21 @@ test("默认可继续精确历史上下文，显式全新上下文创建第二�
     "Fresh context",
   );
   expect(fresh.sessionId).not.toBe(first.sessionId);
+  const freshRequest = fixture.host.requests[1]!;
+  expect(freshRequest.appended).toEqual([
+    { kind: "user", text: "Fresh context" },
+  ]);
+  const material = freshRequest.bootstrap.provider.messages
+    .map(({ content }) => content)
+    .join("\n");
+  expect(material).toContain("narraeon.package-followups/v1");
+  expect(material).toContain("frame.maintenance.documents");
+  expect(material).toContain("frame.maintenance.clock");
+  expect(material).toContain(String.raw`\uXXXX`);
+  expect(material).toContain("turnGuide");
+  expect(
+    freshRequest.tools.some(({ name }) => name === "setting_write_file"),
+  ).toBe(true);
 
   const resumed = await fixture.session.send({
     packageId: fixture.packageId,
@@ -3109,6 +3283,35 @@ test("默认可继续精确历史上下文，显式全新上下文创建第二�
   await expect(
     fixture.session.readSession(fixture.packageId, fresh.sessionId),
   ).resolves.toMatchObject({ sessionId: fresh.sessionId });
+});
+
+test("fresh setting author request keeps the saved v1 author prompt", async () => {
+  const fixture = await createFixture([{ outcome: "response", text: "Done." }]);
+  const files = legacyDefaultPlayPresetFilesForLocale("en");
+  files["prompts/setting-improvement.md"] = "Use this saved author rule.";
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  const preset = {
+    ...builtinDefaultPlayPresetBinding("en"),
+    revision: revisionForPlayPresetFiles(files),
+    definition: parsed.definition,
+    files,
+  };
+  expect(
+    await sendFresh(
+      serviceFor(fixture.root, fixture.content, fixture.host, preset),
+      fixture.packageId,
+      "legacy-preset",
+      "Inspect the package.",
+    ),
+  ).toMatchObject({ runStatus: "ready" });
+
+  const messages = fixture.host.requests[0]!.bootstrap.provider.messages.map(
+    ({ content }) => content,
+  ).join("\n");
+  expect(messages).toContain("Use this saved author rule.");
+  expect(messages).toContain("narraeon.package-followups/v1");
+  expect(messages).not.toContain("Recommended authoring method");
 });
 
 test("另一个对话改动当前树后，旧对话的读取授权失效并要求重新读取", async () => {

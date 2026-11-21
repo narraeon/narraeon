@@ -20,7 +20,6 @@ import {
   buildAuthoringPreload,
   contentPackageAuthoringSurface,
   SettingAuthoringTransaction,
-  settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
   worldRevisionAuthoringSurface,
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
@@ -323,11 +322,6 @@ describe("authoring preload in the compiled request", () => {
     return new FileNativePromptCompiler().compileSettingImprovement({
       gameplay: fictionGameplay,
       contentPackageTitle: "Preload",
-      runtimeContract: settingImprovementRuntimeContract(
-        "zh-CN",
-        fictionGameplay,
-      ),
-      authorPrompt: "stable author prompt",
       playPreset,
       modelBinding,
       tools: settingImprovementToolDefinitions("zh-CN", fictionGameplay),

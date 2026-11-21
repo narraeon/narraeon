@@ -299,8 +299,6 @@ test("setting and world-revision compile fresh author defaults through the same 
       playPreset: binding,
       modelBinding: input.modelBinding,
       tools: [],
-      runtimeContract: "runtime",
-      authorPrompt: "write",
       gameplay: { mode: "interactive-fiction" as const },
     };
     const setting = compiler.compileSettingImprovement({

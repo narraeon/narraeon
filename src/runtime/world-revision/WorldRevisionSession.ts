@@ -42,6 +42,8 @@ import {
   ModelToolConversation,
   type ModelToolConversationStreaming,
   rememberAuthoringRequest,
+  isResponseCorrection,
+  recoverPausedAuthoringCorrection,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
@@ -52,10 +54,7 @@ import type {
   ModelHostExchange,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  settingImprovementPromptForBinding,
-  type PlayPresetBinding,
-} from "../play/FileNativePlayPresetStore.ts";
+import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type {
   FileNativePromptCompiler,
   PromptPreview,
@@ -81,7 +80,6 @@ import type {
 import {
   WorldRevisionAuthoringTransaction,
   inspectWorldRevisionFiles,
-  worldRevisionRuntimeContract,
   worldRevisionToolDefinitions,
 } from "./WorldRevisionAuthoringTransaction.ts";
 import type { WorldRevisionWorkspace } from "./WorldRevisionWorkspace.ts";
@@ -747,8 +745,6 @@ export class WorldRevisionSession {
       worldTitle:
         worlds.find((world) => world.worldId === worldId)?.title ?? worldId,
       gameplay,
-      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       modelPrompt,
@@ -845,8 +841,6 @@ export class WorldRevisionSession {
       epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
       worldTitle,
       gameplay,
-      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       tools,
@@ -1104,7 +1098,10 @@ export class WorldRevisionSession {
     if (this.#conversation.isRunning(session.sessionId)) return session;
     await this.#workspace.active(session.worldId);
     session = await this.#store.readSession(session.sessionId);
-    if (recoverLegacyLengthLimit(session)) {
+    if (
+      recoverLegacyLengthLimit(session) ||
+      recoverPausedAuthoringCorrection(session)
+    ) {
       await this.#store.saveSession(session);
       return session;
     }
@@ -1223,15 +1220,12 @@ export class WorldRevisionSession {
       session.retryDispatch === undefined &&
       session.pendingSettlement === null &&
       session.requests?.at(-1) !== undefined &&
-      (lastItem?.kind === "user" || lastItem?.kind === "tool")
+      (lastItem?.kind === "user" ||
+        lastItem?.kind === "tool" ||
+        isResponseCorrection(lastItem))
     )
       checkpointNextAuthoringDispatch(session, "retryable");
     recoverAuthoringDispatch(session);
-    if (
-      session.modelBinding.provider === "google_interactions" &&
-      session.retryDispatch?.state === "retryable"
-    )
-      session.googleOutcomeUnknown = false;
     session.runStatus = "interrupted";
     session.activeRequestId = null;
     if (requestId !== null)
