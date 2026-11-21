@@ -39,6 +39,10 @@ import {
   type ModelHostBinding,
 } from "./ModelHost.ts";
 import { fetchModelService } from "./fetchModelService.ts";
+import {
+  providerRejectionText,
+  readProviderRejectionBody,
+} from "./ProviderRejection.ts";
 
 const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
@@ -238,7 +242,7 @@ export class ModelConnectionStore {
       const response = await (google
         ? this.#fetch(new URL(url), { ...options, redirect: "error" })
         : fetchModelService(this.#fetch, new URL(url), options));
-      const payload = await readModelListPage(response);
+      const payload = await readModelListPage(response, apiKey);
       const field = google ? "models" : "data";
       const entries =
         google && payload.models === undefined ? [] : payload[field];
@@ -789,8 +793,21 @@ function googleModelResourceId(name: unknown): string | undefined {
 
 async function readModelListPage(
   response: Response,
+  apiKey: string,
 ): Promise<Record<string, unknown>> {
-  if (!response.ok) throw await providerListError(response);
+  if (!response.ok) {
+    const body = await readProviderRejectionBody(response);
+    const diagnostic = providerRejectionText(
+      body ?? "",
+      apiKey,
+      response.headers.get("content-type"),
+    );
+    throw new Error(
+      ["Failed to fetch model list:", response.status, diagnostic]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxModelListBytes)
     throw new Error("Provider model-list response exceeds the 1 MiB limit");
@@ -806,11 +823,6 @@ async function readModelListPage(
   if (!isRecord(payload))
     throw new Error("Provider model-list response must be an object");
   return payload;
-}
-
-async function providerListError(response: Response): Promise<Error> {
-  const text = (await response.text()).slice(0, 4096);
-  return new Error(`Failed to fetch model list: ${response.status} ${text}`);
 }
 
 function verifyPrivateMode(mode: number): void {

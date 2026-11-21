@@ -877,6 +877,26 @@ test.each([
   ).rejects.toThrow(message);
 });
 
+test("模型列表错误保留普通文本说明并遮蔽已知凭据和敏感字段", async () => {
+  const store = new ModelConnectionStore(await temporaryRoot(), () =>
+    Promise.resolve(
+      new Response(
+        "Model list denied for list-key\nAuthorization: Bearer mock-token",
+        { status: 403 },
+      ),
+    ),
+  );
+  await expect(
+    store.listModels({
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "list-key",
+    }),
+  ).rejects.toThrow(
+    "Failed to fetch model list: 403 Model list denied for [redacted]\nAuthorization: [redacted]",
+  );
+});
+
 test("编辑已有配置时仅在同一来源复用本机凭据", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

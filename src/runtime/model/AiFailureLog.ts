@@ -59,7 +59,7 @@ export interface AiExchangeDiagnostics {
     statusText: string;
     contentType: string | null;
     body: string;
-    /** False means the Runtime only received the recorded prefix. */
+    /** Whether the Runtime received the whole body before any redaction. */
     bodyComplete: boolean;
   };
   /** Only reasoning/thinking text the Provider actually returned. */
@@ -333,6 +333,14 @@ export class AiExchangeCapture {
 
   setGoogleHops(hops: GoogleHopEvidence[]): void {
     this.#googleHops = structuredClone(hops);
+  }
+
+  captureRejection({
+    body,
+    ...metadata
+  }: NonNullable<AiExchangeDiagnostics["response"]>): void {
+    this.#response = metadata;
+    this.#responseChunks.push(Buffer.from(body));
   }
 
   captureResponse(response: Response): Response {
