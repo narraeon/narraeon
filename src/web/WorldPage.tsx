@@ -258,6 +258,9 @@ export function WorldPage({
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const worldProjectionVersion = useRef(0);
   const initializedWorldId = useRef<string | null>(null);
+  const reconcileObservedPlay = useRef<((world: WorldReadView) => void) | null>(
+    null,
+  );
   const [observationStopped, setObservationStopped] = useState(false);
   const [observationRevision, setObservationRevision] = useState(0);
   const [supersededFailure, setSupersededFailure] = useState<{
@@ -451,6 +454,7 @@ export function WorldPage({
       const initialized = initializedWorldId.current === next.worldId;
       initializedWorldId.current = next.worldId;
       applyWorld(next, initialized, true);
+      reconcileObservedPlay.current?.(next);
     },
     [applyWorld],
   );
@@ -532,17 +536,78 @@ export function WorldPage({
   useEffect(() => {
     if (client.observeConversation === undefined || openedWorldId !== worldId)
       return;
+    interface PlayObservation {
+      key: string | null;
+      verification: string | undefined;
+      chain: V1PlayCallChainView | null;
+      isCurrent: (() => boolean) | undefined;
+    }
+    type Hydration = Omit<PlayObservation, "chain">;
+    let pendingHydration: { observation: PlayObservation } | undefined;
+    let hydrated: Hydration | undefined;
+    let visibleObservation: PlayObservation | undefined;
     let active = true;
-    let hydratedHead: string | undefined;
     let observedDecorations: string | undefined;
     let observedExtensions: number | undefined;
     let outage = false;
-    let observationVersion = 0;
+    const showObservation = (observation: PlayObservation) => {
+      const { chain } = observation;
+      if (chain === null) return;
+      visibleObservation = observation;
+      applyPlayCallChain(chain);
+      if (chain.status === "running") {
+        setPlayProgress((current) =>
+          progressFromCallChain(
+            chain.chainId,
+            chain.activeInvocation?.exchangeId ??
+              (current?.chainId === chain.chainId ? current.exchangeId : null),
+            chain,
+            current,
+          ),
+        );
+        setPlayProgressNow(Date.now());
+      } else setPlayProgress(null);
+      applyPlayTimelineFrame(
+        { kind: "snapshot", value: chain, final: chain.status !== "running" },
+        setPlayTimeline,
+      );
+      if (
+        cancelledExchangeRef.current !== null &&
+        (chain.lastCancelled === true ||
+          chain.events.at(-1)?.kind === "cancellation")
+      ) {
+        setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+      }
+    };
+    reconcileObservedPlay.current = (projection) => {
+      const observation = pendingHydration?.observation;
+      if (observation === undefined || observation.isCurrent?.() === false)
+        return;
+      const { key, verification, isCurrent } = observation;
+      hydrated = { key, verification, isCurrent };
+      const page = projection.playTimeline ?? legacyTimelinePage(projection);
+      // A durable read can trail live events in the same invocation. An
+      // older frame being verified cannot replace a newer frame already shown.
+      const latest =
+        verification !== undefined &&
+        visibleObservation?.key === key &&
+        visibleObservation.isCurrent?.() !== false &&
+        visibleObservation.chain !== null &&
+        !timelineHasNewerActivity(page, visibleObservation.chain)
+          ? visibleObservation
+          : observation;
+      // Apply the newest compatible live text after the durable timeline, in
+      // the same update as the read so an older streaming prefix cannot flash.
+      if (
+        latest.chain !== null &&
+        !timelineHasNewerActivity(page, latest.chain)
+      )
+        showObservation(latest);
+    };
     const unsubscribe = client.observeConversation(
       { kind: "play", id: worldId },
       (observation, _changed, isCurrent) => {
         if (!active || observation.kind !== "play") return;
-        const version = ++observationVersion;
         setObservationStopped(false);
         if (observation.extensionsRevision !== observedExtensions) {
           observedExtensions = observation.extensionsRevision;
@@ -550,111 +615,87 @@ export function WorldPage({
         }
         const next = observation.value;
         const verifyFirst = observationNeedsVerification(next);
-        const readProjection = async (): Promise<WorldReadView | null> => {
-          const projection = await worldTarget.read();
-          return active &&
-            isCurrent?.() !== false &&
-            version === observationVersion
-            ? projection
-            : null;
-        };
-        if (next === null) {
-          if (!verifyFirst) return;
-          void readProjection();
-          return;
-        }
-        // Ignore token deltas. Follow-up outcomes (including failure/clear),
-        // chain transitions and reconnect snapshots invalidate the projection.
-        const revision = JSON.stringify([
-          next.chainId,
-          next.parentHead,
-          next.status,
-          next.events
-            .filter((event) => event.kind === "followup")
-            .map((event) => event.id),
-        ]);
-        if (observedDecorations !== revision) {
-          observedDecorations = revision;
-          setDecorationRevision((current) => current + 1);
-        }
-        const needsHydration =
-          verifyFirst || hydratedHead !== `${next.parentHead}:${next.status}`;
-        const showObservation = (worldHydrated = false) => {
-          worldTarget.accept({ complete: worldHydrated || !needsHydration });
-          applyPlayCallChain(next);
-          if (next.status === "running") {
-            setPlayProgress((current) =>
-              progressFromCallChain(
+        const key =
+          next === null
+            ? null
+            : JSON.stringify([
                 next.chainId,
-                next.activeInvocation?.exchangeId ??
-                  (current?.chainId === next.chainId
-                    ? current.exchangeId
-                    : null),
-                next,
-                current,
-              ),
-            );
-            setPlayProgressNow(Date.now());
-          } else setPlayProgress(null);
-          applyPlayTimelineFrame(
-            { kind: "snapshot", value: next, final: next.status !== "running" },
-            setPlayTimeline,
-          );
-          if (
-            cancelledExchangeRef.current !== null &&
-            (next.lastCancelled === true ||
-              next.events.at(-1)?.kind === "cancellation")
-          ) {
-            setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+                next.parentHead,
+                next.status,
+                next.activeInvocation?.exchangeId,
+              ]);
+        if (next !== null) {
+          // Follow-up outcomes can update decorations without changing the world endpoint.
+          const revision = JSON.stringify([
+            key,
+            next.events
+              .filter((event) => event.kind === "followup")
+              .map((event) => event.id),
+          ]);
+          if (observedDecorations !== revision) {
+            observedDecorations = revision;
+            setDecorationRevision((current) => current + 1);
           }
-        };
+        }
+        const lastEvent = next?.events.at(-1);
+        const verification = verifyFirst
+          ? JSON.stringify([
+              lastEvent?.id,
+              lastEvent?.kind,
+              lastEvent?.kind === "assistant" ? lastEvent.status : undefined,
+            ])
+          : undefined;
+        const latest = { key, verification, chain: next, isCurrent };
+        const matches = (read: Hydration | undefined) =>
+          read?.key === key &&
+          read.isCurrent?.() !== false &&
+          (verification === undefined || read.verification === verification);
+        const needsHydration =
+          (verifyFirst || next !== null) && !matches(hydrated);
+        const shared = matches(pendingHydration?.observation)
+          ? pendingHydration
+          : undefined;
         // A revision can legitimately shorten a chain. Verify an older-looking
         // snapshot before exposing it in place of a newer visible event.
-        if (!verifyFirst) showObservation();
-        if (needsHydration) {
-          // Projection I/O must not hold the observer's serial delivery queue.
-          void readProjection().then((projection) => {
-            if (projection === null) return;
-            hydratedHead = `${next.parentHead}:${next.status}`;
-            const page =
-              projection.playTimeline ?? legacyTimelinePage(projection);
-            if (page && !timelineHasNewerActivity(page, next))
-              showObservation(true);
-            if (page !== undefined) {
-              setPlayTimeline((current) =>
-                mergePlayTimelinePage(current, page),
-              );
-              setPlayContextUsage((current) =>
-                current?.worldId === page.worldId &&
-                current.chainId === page.activeChainId
-                  ? current
-                  : null,
-              );
-              setPlayCallChain((current) =>
-                current !== null && timelineHasNewerActivity(page, current)
-                  ? null
-                  : current,
-              );
-              if (
-                timelineHasNewerActivity(page, next) &&
-                page.activeStatus !== "running"
-              )
-                setPlayProgress(null);
-            }
-          });
+        if (!verifyFirst && next !== null) {
+          if (shared === undefined)
+            worldTarget.accept({ complete: !needsHydration });
+          showObservation(latest);
         }
+        if (shared !== undefined) {
+          shared.observation = latest;
+          return;
+        }
+        if (!needsHydration) {
+          pendingHydration = undefined;
+          return;
+        }
+        if (verifyFirst && pendingHydration !== undefined)
+          worldTarget.accept({ complete: false });
+        const requested = { observation: latest };
+        hydrated = undefined;
+        pendingHydration = requested;
+        // Keep receiving live frames while the world read is in flight.
+        void worldTarget.read().then(() => {
+          if (pendingHydration === requested) pendingHydration = undefined;
+        });
       },
       (connection) => {
         if (!active) return;
         if (connection === "connected" || connection === "synchronized") {
           outage = false;
-          hydratedHead = undefined;
+          hydrated = undefined;
+          pendingHydration = undefined;
           observedDecorations = undefined;
           setDecorationRevision((current) => current + 1);
         } else {
           if (connection === "failed") setObservationStopped(true);
           if (!outage) {
             outage = true;
+            if (pendingHydration !== undefined) {
+              pendingHydration = undefined;
+              worldTarget.accept({ complete: false });
+            }
             void worldTarget.recover();
           }
         }
@@ -662,6 +703,7 @@ export function WorldPage({
     );
     return () => {
       active = false;
+      reconcileObservedPlay.current = null;
       unsubscribe();
     };
   }, [client, worldId, openedWorldId, worldTarget, observationRevision]);
@@ -3895,6 +3937,7 @@ function applyPlayTimelineFrame(
         ...current,
         activeChainId: chain.chainId,
         activeStatus: chain.status,
+        activeInvocationExchangeId: chain.activeInvocation?.exchangeId ?? null,
         activeCanRetry: chain.canRetry,
         activeCanContinuePartial: chain.canContinuePartial ?? false,
         activeFreshContextReason: chain.freshContextReason,
