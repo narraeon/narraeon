@@ -27,6 +27,7 @@ import {
 import type { V1StoryExport, V1StoryExportFormat } from "../../protocol/v1.ts";
 import { HistoryQuery } from "../history/HistoryQuery.ts";
 import { exportStory } from "../history/StoryExport.ts";
+import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -369,7 +370,10 @@ export class FileNativeWorldStore {
       });
     } catch (error: unknown) {
       if (error instanceof FileNativeWorldCreationError) throw error;
-      if (isNodeError(error) && error.code === "ENOENT") {
+      if (
+        error instanceof UnsupportedLegacyStorageError ||
+        (isNodeError(error) && error.code === "ENOENT")
+      ) {
         const root = await stat(join(this.#worldsRoot, worldId)).catch(
           (statError: unknown) => {
             if (isNodeError(statError) && statError.code === "ENOENT")
@@ -453,7 +457,7 @@ export class FileNativeWorldStore {
     format: V1StoryExportFormat,
     locale: AppLocale,
   ): Promise<V1StoryExport> {
-    assertIdentity(worldId, "World ID");
+    assertIdentity(worldId, "World ID", RuntimeRequestRejection);
     await this.ensureCurrentStorage(worldId);
     return this.operations.withWorldAuthorityLock(worldId, async () => {
       const root = join(this.#worldsRoot, worldId);
@@ -476,10 +480,10 @@ export class FileNativeWorldStore {
     worldId: string,
     name: string,
   ): Promise<FileNativeWorldSummary> {
-    assertIdentity(worldId, "World ID");
+    assertIdentity(worldId, "World ID", RuntimeRequestRejection);
     const trimmed = name.trim();
     if (!validWorldName(trimmed))
-      throw new TypeError(
+      throw new RuntimeRequestRejection(
         "World name must contain 1 to 160 characters and no line breaks",
       );
     return this.operations.withWorldLocalMetadataMutation(worldId, async () => {
@@ -506,8 +510,11 @@ export class FileNativeWorldStore {
    * world-state mutation prevents deletion from racing an active play or
    * correction operation. Expired claims do not block cleanup.
    */
-  async deleteWorld(worldId: string): Promise<{ deleted: true }> {
-    assertIdentity(worldId, "World ID");
+  async deleteWorld(
+    worldId: string,
+    beforeDelete?: () => Promise<void>,
+  ): Promise<{ deleted: true }> {
+    assertIdentity(worldId, "World ID", RuntimeRequestRejection);
     const root = join(this.#worldsRoot, worldId);
     try {
       await readPublicationAt(root);
@@ -516,6 +523,7 @@ export class FileNativeWorldStore {
         throw new FileNativeWorldNotFoundError({ cause: error });
       throw error;
     }
+    await beforeDelete?.();
     return this.operations.withExclusiveWorldStateMutation(worldId, () =>
       this.operations.withWorldAuthorityLock(worldId, async () => {
         forgetLedger(root);
@@ -2990,9 +2998,13 @@ function isWorldLocalMetadata(value: unknown): value is WorldLocalMetadata {
   );
 }
 
-function assertIdentity(value: string, label: string): void {
+function assertIdentity(
+  value: string,
+  label: string,
+  ErrorType: new (message: string) => Error = TypeError,
+): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u.test(value)) {
-    throw new TypeError(`${label} is invalid`);
+    throw new ErrorType(`${label} is invalid`);
   }
 }
 

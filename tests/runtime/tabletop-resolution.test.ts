@@ -170,6 +170,84 @@ test("percentile shares units, cancels bonus and penalty dice, and treats 00 wit
   });
 });
 
+test.each([
+  {
+    units: 5,
+    tens: 4,
+    selected: 45,
+    target: 50,
+    relation: "45 <= 50",
+    margin: 5,
+    signedMargin: "+5",
+    outcome: "success",
+  },
+  {
+    units: 0,
+    tens: 5,
+    selected: 50,
+    target: 50,
+    relation: "50 <= 50",
+    margin: 0,
+    signedMargin: "+0",
+    outcome: "success",
+  },
+  {
+    units: 5,
+    tens: 8,
+    selected: 85,
+    target: 50,
+    relation: "85 > 50",
+    margin: -35,
+    signedMargin: "-35",
+    outcome: "failure",
+  },
+  {
+    units: 1,
+    tens: 0,
+    selected: 1,
+    target: 0,
+    relation: "1 > 0",
+    margin: -1,
+    signedMargin: "-1",
+    outcome: "critical_success",
+  },
+  {
+    units: 0,
+    tens: 0,
+    selected: 100,
+    target: 100,
+    relation: "100 <= 100",
+    margin: 0,
+    signedMargin: "+0",
+    outcome: "critical_failure",
+  },
+])(
+  "percentile receipt compares $selected to $target for $outcome",
+  ({
+    units,
+    tens,
+    selected,
+    target,
+    relation,
+    margin,
+    signedMargin,
+    outcome,
+  }) => {
+    const receipt = resolved(
+      "percentile_check",
+      { goal: "Open", target },
+      sequence(units, tens),
+    );
+    expect(receipt).toMatchObject({ selected, target, margin, outcome });
+    expect(resolutionMarkdown(receipt, "en")).toContain(
+      `Calculation: ${relation}; margin ${signedMargin}`,
+    );
+    expect(resolutionMarkdown(receipt, "zh-CN")).toContain(
+      `计算：${relation}；差值 ${signedMargin}`,
+    );
+  },
+);
+
 test("percentile critical boundaries and target limits are fixed", () => {
   expect(
     resolved("percentile_check", { goal: "Open", target: 1 }, sequence(1, 0)),

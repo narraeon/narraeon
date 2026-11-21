@@ -11,6 +11,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { linkExclusive } from "../FileNativeExclusiveLink.ts";
+import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
@@ -1068,7 +1069,7 @@ function validPackageTitle(title: string): boolean {
 function normalizePackageTitle(title: string): string {
   const normalized = title.trim();
   if (!validPackageTitle(normalized))
-    throw new CurrentTreeContentLibraryError(
+    throw new RuntimeRequestRejection(
       "A content-package title must contain 1 to 160 characters and no line breaks",
     );
   return normalized;

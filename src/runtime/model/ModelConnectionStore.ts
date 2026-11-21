@@ -29,6 +29,7 @@ import {
   type ModelThinkingMode,
   type SaveModelConnectionInput,
 } from "../../protocol/modelConnections.ts";
+import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import {
   FileNativeModelHost,
   type FileNativeModelConnection,
@@ -100,13 +101,17 @@ export class ModelConnectionStore {
               ({ id }) => id === input.connectionId,
             );
       if (input.connectionId !== undefined && index < 0)
-        throw new Error("The model configuration to edit was not found");
+        throw new RuntimeRequestRejection(
+          "The model configuration to edit was not found",
+        );
       if (index < 0 && document.connections.length >= maxStoredConnections)
-        throw new Error("The model configuration limit has been reached");
+        throw new RuntimeRequestRejection(
+          "The model configuration limit has been reached",
+        );
       const existing = index < 0 ? undefined : document.connections[index];
       const saved: StoredModelConnection = {
         id: existing?.id ?? randomUUID(),
-        ...normalizeSaveInput(input, existing),
+        ...validateConnectionInput(() => normalizeSaveInput(input, existing)),
       };
       if (index < 0) document.connections.push(saved);
       else document.connections[index] = saved;
@@ -121,13 +126,19 @@ export class ModelConnectionStore {
       const document = await this.#readDocument();
       const source = document.connections.find(({ id }) => id === connectionId);
       if (source === undefined)
-        throw new Error("The model configuration to copy was not found");
+        throw new RuntimeRequestRejection(
+          "The model configuration to copy was not found",
+        );
       if (document.connections.length >= maxStoredConnections)
-        throw new Error("The model configuration limit has been reached");
+        throw new RuntimeRequestRejection(
+          "The model configuration limit has been reached",
+        );
       const copied: StoredModelConnection = {
         ...structuredClone(source),
         id: randomUUID(),
-        name: requiredTrimmed(name, "Configuration name", 160),
+        name: validateConnectionInput(() =>
+          requiredTrimmed(name, "Configuration name", 160),
+        ),
       };
       document.connections.push(copied);
       await this.#writeDocument(document);
@@ -142,7 +153,9 @@ export class ModelConnectionStore {
     return this.#mutate(async () => {
       const document = await this.#readDocument();
       if (!document.connections.some(({ id }) => id === connectionId))
-        throw new Error("The model configuration to enable was not found");
+        throw new RuntimeRequestRejection(
+          "The model configuration to enable was not found",
+        );
       document.activeConnectionId = connectionId;
       await this.#writeDocument(document);
       return this.#viewDocument(document);
@@ -156,12 +169,14 @@ export class ModelConnectionStore {
         ({ id }) => id === connectionId,
       );
       if (index < 0)
-        throw new Error("The model configuration to delete was not found");
+        throw new RuntimeRequestRejection(
+          "The model configuration to delete was not found",
+        );
       if (
         document.activeConnectionId === connectionId &&
         document.connections.length > 1
       )
-        throw new Error(
+        throw new RuntimeRequestRejection(
           "Switch to another model configuration before deleting the current one",
         );
       document.connections.splice(index, 1);
@@ -338,6 +353,16 @@ export class ModelConnectionStore {
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
+  }
+}
+
+function validateConnectionInput<T>(validate: () => T): T {
+  try {
+    return validate();
+  } catch (error: unknown) {
+    if (error instanceof Error)
+      throw new RuntimeRequestRejection(error.message, { cause: error });
+    throw error;
   }
 }
 

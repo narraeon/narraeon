@@ -318,25 +318,27 @@ async function runOne(
       .filter(
         ({ name }) =>
           !outcome.toolCalls.some(
-            ({ ok, arguments: args }) =>
-              ok && (args as { output?: unknown })?.output === name,
+            ({ ok, name: toolName, arguments: args }) =>
+              ok &&
+              toolName === "artifact_emit" &&
+              (args as { output?: unknown })?.output === name,
           ),
       )
       .map(({ name }) => name);
-    if (missing.length > 0)
+    if (missing.length > 0) {
       outcome.failure = `Follow-up request ${followup.id} did not submit required artifacts: ${missing.join(", ")}`;
-    if (outcome.failure !== undefined && response.diagnostics !== undefined)
-      await input.failureLog?.recordFailure({
-        exchange: response.diagnostics,
-        failures: [
-          {
-            kind: "format_validation",
-            message: outcome.failure,
-            details: { missing },
-          },
-        ],
-      });
-    else if (failedTools.length === 0 && response.diagnostics !== undefined)
+      if (response.diagnostics !== undefined)
+        await input.failureLog?.recordFailure({
+          exchange: response.diagnostics,
+          failures: [
+            {
+              kind: "format_validation",
+              message: outcome.failure,
+              details: { missing },
+            },
+          ],
+        });
+    } else if (failedTools.length === 0 && response.diagnostics !== undefined)
       await input.failureLog?.resolve({
         exchange: response.diagnostics,
         message: `Follow-up request ${followup.id} recovered during a later model exchange.`,
