@@ -272,7 +272,7 @@ export class ModelToolConversation<
     live: LiveRun<View>,
   ): Promise<View> {
     const { session } = input;
-    let correcting = false;
+    let correcting = isResponseCorrection(session.modelItems.at(-1));
     let phase: AuthoringDispatchPhase = "settling";
     let dispatchedRequest: ModelHostExchange | undefined;
     let call: AuthoringCall | undefined;
@@ -390,6 +390,8 @@ export class ModelToolConversation<
             live.controller.signal.aborted
           )
             throw error;
+          if (session.modelBinding.provider === "google_interactions")
+            session.googleOutcomeUnknown = false;
           // Invalid output has no usable text prefix, even when its stream contained text.
           live.toolReceived = true;
           if (call !== undefined) {
@@ -459,8 +461,7 @@ export class ModelToolConversation<
         );
         input.changed?.(true);
       }
-      // The exchange budget only bounds a runaway loop. Every tool response is
-      // already settled, so the conversation pauses and can resume unchanged.
+      // Keep settled tool results and any outstanding correction in the transcript.
       delete session.retryDispatch;
       session.runStatus = "paused";
       session.activeRequestId = null;
@@ -564,6 +565,7 @@ export function resumePausedAuthoringConversation(
   const last = session.modelItems.at(-1);
   if (
     last?.kind !== "tool" &&
+    !isResponseCorrection(last) &&
     !(
       session.modelBinding.provider === "google_interactions" &&
       session.googleOutcomeUnknown === false &&
@@ -571,12 +573,36 @@ export function resumePausedAuthoringConversation(
     )
   )
     throw new Error(
-      "The paused authoring conversation does not end with settled tool results",
+      "The paused authoring conversation does not end with settled tool results or a pending response correction",
     );
   session.runStatus = "running";
   session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
   session.lastFailure = null;
   session.updatedAt = Date.now();
+}
+
+export function isResponseCorrection(
+  item: ModelHostAppendItem | undefined,
+): boolean {
+  return (
+    item?.kind === "runtime_notice" && item.notice === "response_correction"
+  );
+}
+
+export function recoverPausedAuthoringCorrection(
+  session: ModelToolConversationState,
+): boolean {
+  // Earlier runtimes left the dispatch flag set when the budget ended on a
+  // known invalid response. The saved correction notice proves it returned.
+  if (
+    session.runStatus !== "paused" ||
+    session.modelBinding.provider !== "google_interactions" ||
+    session.googleOutcomeUnknown !== true ||
+    !isResponseCorrection(session.modelItems.at(-1))
+  )
+    return false;
+  session.googleOutcomeUnknown = false;
+  return true;
 }
 
 export function requiredAuthoringMessage(message: string): string {

@@ -2520,63 +2520,158 @@ test.each([
   },
 );
 
-test("模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求", async () => {
-  const fixture = await createFixture([
-    ...Array.from({ length: 64 }, (_, index) => ({
-      outcome: "response" as const,
-      toolCalls: [
-        {
-          id: `read-opening-${index}`,
-          name: "setting_read",
-          arguments: { path: "opening.md" },
-        },
-      ],
-    })),
-    { outcome: "response", text: "Finished after continuing.", toolCalls: [] },
-  ]);
+test.each([false, true])(
+  "模型调用达到单条消息上限时暂停，继续时不追加用户消息并沿用冻结请求（最后一步纠错：%s）",
+  async (correcting) => {
+    const fixture = await createFixture([
+      ...Array.from({ length: 64 }, (_, index) => ({
+        outcome: "response" as const,
+        ...(correcting && index === 63
+          ? { continuation: "lost" as const }
+          : {}),
+        toolCalls: [
+          {
+            id: `read-opening-${index}`,
+            name: "setting_read",
+            arguments: { path: "opening.md" },
+          },
+          ...(index === 0
+            ? [
+                {
+                  id: "published-opening",
+                  name: "setting_write_file",
+                  arguments: {
+                    path: "opening.md",
+                    contents: "The opening is published.",
+                  },
+                },
+              ]
+            : []),
+        ],
+      })),
+      {
+        outcome: "response",
+        text: "Finished after continuing.",
+        toolCalls: [],
+      },
+    ]);
 
-  const paused = await sendFresh(
-    fixture.session,
-    fixture.packageId,
-    "request-long",
-    "Inspect the opening repeatedly.",
-  );
+    const paused = await sendFresh(
+      fixture.session,
+      fixture.packageId,
+      "request-long",
+      "Inspect the opening repeatedly.",
+    );
 
-  expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
-  expect(fixture.host.requests).toHaveLength(64);
+    expect(paused).toMatchObject({ runStatus: "paused", lastFailure: null });
+    expect(fixture.host.requests).toHaveLength(64);
 
-  const resume = () =>
-    fixture.session.resume({
-      packageId: fixture.packageId,
-      sessionId: paused.sessionId,
-      requestId: "resume-long",
+    const readTree = () =>
+      fixture.content.readCurrentTreeContentPackage(fixture.packageId);
+    const published = await readTree();
+    expect(published.files).toContainEqual({
+      path: "opening.md",
+      contents: "The opening is published.",
     });
-  const resumed = await resume();
+    const restarted = serviceFor(fixture.root, fixture.content, fixture.host);
+    const resume = () =>
+      restarted.resume({
+        packageId: fixture.packageId,
+        sessionId: paused.sessionId,
+        requestId: "resume-long",
+      });
+    const resumed = await resume();
 
-  expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
-  expect(fixture.host.requests).toHaveLength(65);
-  const continued = fixture.host.requests.at(-1)!;
-  expect(continued.appended.at(-1)).toMatchObject({
-    kind: "tool",
-    toolCallId: "read-opening-63",
+    expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
+    expect(fixture.host.requests).toHaveLength(65);
+    const continued = fixture.host.requests.at(-1)!;
+    const last = continued.appended.at(-1);
+    expect(last).toMatchObject(
+      correcting
+        ? {
+            kind: "runtime_notice",
+            notice: "response_correction",
+          }
+        : { kind: "tool", toolCallId: "read-opening-63" },
+    );
+    if (correcting)
+      expect(last).toHaveProperty(
+        "text",
+        expect.stringContaining("Return a corrected response"),
+      );
+    expect(continued.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
+    expect(resumed.messages.map(({ role }) => role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(resumed.turns).toHaveLength(1);
+    expect(
+      resumed.turns[0]?.exchanges
+        .flatMap((exchange) => exchange.toolCalls)
+        .filter(({ callId }) => callId === "published-opening"),
+    ).toHaveLength(1);
+    expect((await readTree()).treeRevision).toBe(published.treeRevision);
+
+    await expect(resume()).resolves.toMatchObject({ runStatus: "ready" });
+    expect(fixture.host.requests).toHaveLength(65);
+    await expect(
+      fixture.session.resume({
+        packageId: fixture.packageId,
+        sessionId: paused.sessionId,
+        requestId: "resume-ready",
+      }),
+    ).rejects.toThrow("Only a paused authoring conversation can be continued");
+  },
+);
+
+test("Google setting resumes a format correction paused by an older runtime", async () => {
+  const fixture = await createFixture([]);
+  const read = (id: string) => ({
+    id,
+    name: "setting_read",
+    arguments: { path: "opening.md" },
   });
-  expect(continued.bootstrap).toEqual(fixture.host.requests[0]!.bootstrap);
-  expect(resumed.messages.map(({ role }) => role)).toEqual([
-    "user",
-    "assistant",
+  const before = googleAuthoringHost([
+    googleTools([read("settled")]),
+    googleTools([read("duplicate"), read("duplicate")]),
+    googleTools([read("duplicate"), read("duplicate")]),
   ]);
-  expect(resumed.turns).toHaveLength(1);
-  expect(resumed.turns[0]?.exchanges).toHaveLength(65);
+  const stopped = await sendFresh(
+    serviceFor(fixture.root, fixture.content, before.host),
+    fixture.packageId,
+    "google-pause",
+    "Inspect the opening.",
+  );
+  expect(stopped.runStatus).toBe("interrupted");
+  const store = new FileNativeSettingImprovementStore(fixture.root);
+  const saved = await store.read(stopped.sessionId);
+  expect(saved.modelItems.at(-1)).toMatchObject({
+    kind: "runtime_notice",
+    notice: "response_correction",
+  });
+  // Before the fix, reaching the exchange limit on the first correction left
+  // this notice in a paused session with the in-flight Google flag set.
+  saved.runStatus = "paused";
+  saved.lastFailure = null;
+  delete saved.retryDispatch;
+  saved.googleOutcomeUnknown = true;
+  await store.save(saved);
 
-  await expect(resume()).resolves.toMatchObject({ runStatus: "ready" });
-  expect(fixture.host.requests).toHaveLength(65);
-  await expect(
-    fixture.session.resume({
-      packageId: fixture.packageId,
-      sessionId: paused.sessionId,
-      requestId: "resume-ready",
-    }),
-  ).rejects.toThrow("Only a paused authoring conversation can be continued");
+  const after = googleAuthoringHost([googleText("Finished.")]);
+  const resumed = await serviceFor(
+    fixture.root,
+    fixture.content,
+    after.host,
+  ).resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "google-resume",
+  });
+  expect(resumed).toMatchObject({ runStatus: "ready", lastFailure: null });
+  expect(after.sent).toHaveLength(1);
+  expect(JSON.stringify(after.sent[0])).toContain(
+    "Return a corrected response",
+  );
 });
 
 test("synthetic schema 2 paused state continues without inventing a retry checkpoint", async () => {

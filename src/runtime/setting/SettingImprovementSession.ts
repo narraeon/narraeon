@@ -64,6 +64,8 @@ import {
   ModelToolConversation,
   type ModelToolConversationStreaming,
   rememberAuthoringRequest,
+  isResponseCorrection,
+  recoverPausedAuthoringCorrection,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import {
@@ -1029,7 +1031,10 @@ export class SettingImprovementSession {
     }
     let expected = original;
     const session = structuredClone(original);
-    if (recoverLegacyLengthLimit(session)) {
+    if (
+      recoverLegacyLengthLimit(session) ||
+      recoverPausedAuthoringCorrection(session)
+    ) {
       if (await this.#store.saveIfUnchanged(expected, session)) return session;
       return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
     }
@@ -1053,11 +1058,13 @@ export class SettingImprovementSession {
           )
             session.googleOutcomeUnknown = true;
           markInterruptedAfterRestart(session);
+          const lastItem = session.modelItems.at(-1);
           if (
             session.retryDispatch === undefined &&
             session.requests?.at(-1) !== undefined &&
-            (session.modelItems.at(-1)?.kind === "user" ||
-              session.modelItems.at(-1)?.kind === "tool")
+            (lastItem?.kind === "user" ||
+              lastItem?.kind === "tool" ||
+              isResponseCorrection(lastItem))
           ) {
             session.schemaVersion = 6;
             checkpointNextAuthoringDispatch(session, "retryable");

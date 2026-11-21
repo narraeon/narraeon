@@ -42,6 +42,8 @@ import {
   ModelToolConversation,
   type ModelToolConversationStreaming,
   rememberAuthoringRequest,
+  isResponseCorrection,
+  recoverPausedAuthoringCorrection,
   resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
@@ -1104,7 +1106,10 @@ export class WorldRevisionSession {
     if (this.#conversation.isRunning(session.sessionId)) return session;
     await this.#workspace.active(session.worldId);
     session = await this.#store.readSession(session.sessionId);
-    if (recoverLegacyLengthLimit(session)) {
+    if (
+      recoverLegacyLengthLimit(session) ||
+      recoverPausedAuthoringCorrection(session)
+    ) {
       await this.#store.saveSession(session);
       return session;
     }
@@ -1223,7 +1228,9 @@ export class WorldRevisionSession {
       session.retryDispatch === undefined &&
       session.pendingSettlement === null &&
       session.requests?.at(-1) !== undefined &&
-      (lastItem?.kind === "user" || lastItem?.kind === "tool")
+      (lastItem?.kind === "user" ||
+        lastItem?.kind === "tool" ||
+        isResponseCorrection(lastItem))
     )
       checkpointNextAuthoringDispatch(session, "retryable");
     recoverAuthoringDispatch(session);
