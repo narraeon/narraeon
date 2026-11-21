@@ -1,5 +1,6 @@
 import { registerConversationStream } from "./ConversationStream.ts";
 import { checkWebAccess } from "./WebAccess.ts";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
@@ -82,6 +83,7 @@ export async function createServer(input: {
   staticRoot: string;
   port: number;
   trustedOrigins?: readonly string[];
+  mobileStartupKey?: Buffer;
   logger?: boolean;
   logStream?: Writable;
 }): Promise<FastifyInstance> {
@@ -117,6 +119,7 @@ export async function createServer(input: {
       request.log.info({ req: request }, "incoming request");
     done();
   };
+  const mobileStartupKey = input.mobileStartupKey;
   server.addHook("onSend", (request, reply, payload, done) => {
     void reply
       .header(
@@ -133,6 +136,23 @@ export async function createServer(input: {
       )
       .header("X-Content-Type-Options", "nosniff")
       .header("X-Frame-Options", "DENY");
+    const challenge = request.headers["x-narraeon-startup-challenge"];
+    const path = request.url.split("?", 1)[0];
+    if (
+      mobileStartupKey !== undefined &&
+      request.method === "GET" &&
+      reply.statusCode === 200 &&
+      typeof challenge === "string" &&
+      /^[a-f0-9]{64}$/.test(challenge) &&
+      (path === "/" || path === "/index.html" || path?.startsWith("/assets/"))
+    ) {
+      const proof = createHmac("sha256", mobileStartupKey)
+        .update(`${challenge}\n${request.url}`)
+        .digest("hex");
+      void reply
+        .header("X-Narraeon-Startup-Proof", proof)
+        .header("Cache-Control", "no-store");
+    }
     done(null, payload);
   });
   registerConversationStream(server, input.runtime);

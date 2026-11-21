@@ -17,6 +17,7 @@ export interface StartWebServerInput {
   host: WebHost;
   port: number;
   trustedOrigins?: readonly string[];
+  mobileStartupKey?: Buffer;
   logger?: boolean;
 }
 
@@ -34,6 +35,9 @@ export async function startWebServer(
       ...(input.trustedOrigins === undefined
         ? {}
         : { trustedOrigins: input.trustedOrigins }),
+      ...(input.mobileStartupKey === undefined
+        ? {}
+        : { mobileStartupKey: input.mobileStartupKey }),
       ...(input.logger === undefined ? {} : { logger: input.logger }),
     });
     await server.listen({ host: input.host, port: input.port });
