@@ -1127,7 +1127,8 @@ export function WorldPage({
         ? uiText("正在从当前世界重新拼接上下文…")
         : hasSubmittedText
           ? uiText("正在把玩家输入追加到现有上下文…")
-          : activeStatus === "interrupted"
+          : activeStatus === "interrupted" &&
+              activeFailureKind !== "dispatch_budget"
             ? recovery === "continue_partial"
               ? uiText("正在续写上次未完成的回复…")
               : uiText("正在原样发送上次未完成的模型请求…")
@@ -2265,9 +2266,19 @@ export function WorldPage({
             />
             {visiblePlayFailure === null || activeFailureVisible ? null : (
               <div
-                className="play-call-failure"
-                role="alert"
-                aria-label={uiText("模型调用失败")}
+                className={
+                  activeFailureKind === "dispatch_budget"
+                    ? "play-retry-note"
+                    : "play-call-failure"
+                }
+                role={
+                  activeFailureKind === "dispatch_budget" ? "status" : "alert"
+                }
+                aria-label={uiText(
+                  activeFailureKind === "dispatch_budget"
+                    ? "游玩生成已暂停"
+                    : "模型调用失败",
+                )}
               >
                 <PlayFailureNotice
                   failureKind={activeFailureKind}

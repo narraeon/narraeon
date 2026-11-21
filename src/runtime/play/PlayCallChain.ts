@@ -12,12 +12,14 @@ import {
   retargetRequestForRetry,
 } from "../model/AssistantPrefill.ts";
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
+import { playRequestSuffix } from "./PlayRequestContext.ts";
 import {
   dispatchFailureEnding,
   emptyResponseEnding,
   lastEndingCancelled,
   noContinuationEnding,
   PlayAdvanceLifecycle,
+  playDispatchLimit,
   settlementFailureEnding,
 } from "./PlayAdvanceLifecycle.ts";
 import {
@@ -123,6 +125,7 @@ import {
   type PlayFollowupOutcome,
 } from "./PlayFollowupRequests.ts";
 import {
+  appendPlayToolNote,
   FileNativePlayDocuments,
   fingerprintControl,
   type PlayDocumentToolResult,
@@ -1376,17 +1379,16 @@ export class PlayCallChain {
       throw PlayCallChainError.requiresFreshContext(
         "The saved native continuation is incompatible; start a fresh context.",
       );
-    const savedPrefix = source.lastRequest.appended.filter(
-      (item) => item.kind !== "runtime_notice" || item.notice !== "turn_guide",
-    );
+    // Include the target while reconstructing its input: a blank-input
+    // continuation notice belongs to that response, along with its prompt.
     if (
-      !isDeepStrictEqual(
+      playRequestSuffix(
+        source.lastRequest,
         transcriptThroughEvents(
           source.transcript,
-          source.events.slice(0, index),
-        ),
-        savedPrefix,
-      )
+          source.events.slice(0, index + 1),
+        ).slice(0, -1),
+      ) === null
     )
       throw new PlayCallChainError(
         "The saved narrative request does not match its timeline; no changes were made.",
@@ -1450,6 +1452,10 @@ export class PlayCallChain {
           "The saved narrative request is unavailable.",
         );
       const events = source.events.slice(0, index);
+      const transcript = transcriptThroughEvents(
+        source.transcript,
+        source.events.slice(0, index + 1),
+      ).slice(0, -1);
       const baseline = await this.#worlds.recoverEndpoint(
         intent.worldId,
         source.baselineHead,
@@ -1478,6 +1484,7 @@ export class PlayCallChain {
       request.operationId = `narrative-only:${intent.operationId}`;
       const revised: PersistedPlayCallChain = {
         ...trace,
+        transcript,
         schemaVersion: 3,
         kind: "play_call_chain",
         worldId: intent.worldId,
@@ -2432,6 +2439,7 @@ export class PlayCallChain {
     session: PlayCallChainSession,
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
     response: Awaited<ReturnType<ModelHost["exchange"]>>,
+    pauseAfterDispatch: boolean,
   ): Promise<ResponseSettlement> {
     const durable = durableModelResponse(response);
     const existing = session.events.find(({ id }) => id === advance.eventId);
@@ -2705,6 +2713,7 @@ export class PlayCallChain {
     }
 
     finalizeWriteReceipts({
+      documents: session.documents,
       stateChanges,
       completedTools,
       trailingEvents,
@@ -2757,7 +2766,7 @@ export class PlayCallChain {
         session,
         {
           kind: "resumable",
-          reason: "tool_step_settled",
+          reason: pauseAfterDispatch ? "dispatch_budget" : "tool_step_settled",
           request: nextRequest,
         },
         advance,
@@ -2784,7 +2793,8 @@ export class PlayCallChain {
       modelHost.freezeRequest?.(firstRequest) ?? structuredClone(firstRequest);
     let attempt = firstAttempt;
     let correcting = false;
-    for (;;) {
+    for (let dispatch = 1; ; dispatch += 1) {
+      const pauseAfterDispatch = dispatch === playDispatchLimit;
       this.#setInvocationAbortable(session.chainId, true);
       if (signal.aborted)
         return this.#cancelBeforeProviderDispatch(
@@ -2978,18 +2988,25 @@ export class PlayCallChain {
               appended: [...request.appended, error.notice()],
               requestAttempt: attempt + 1,
             };
+            delete request.assistantPrefill;
             correcting = true;
             attempt += 1;
             await this.#advances.end(
               session,
               {
                 kind: "resumable",
-                reason: "response_correction",
+                reason: pauseAfterDispatch
+                  ? "dispatch_budget"
+                  : "response_correction",
                 request,
                 attempt: attempt - 1,
               },
               advance,
             );
+            if (pauseAfterDispatch) {
+              this.#notifySnapshot(observer, session);
+              return projectView(session);
+            }
             continue;
           }
         }
@@ -3010,7 +3027,12 @@ export class PlayCallChain {
       }
 
       try {
-        const settled = await this.#settleResponse(session, advance, response);
+        const settled = await this.#settleResponse(
+          session,
+          advance,
+          response,
+          pauseAfterDispatch,
+        );
 
         if (settled.kind === "terminal") {
           if (!settled.narrative) {
@@ -3064,6 +3086,7 @@ export class PlayCallChain {
           return projectView(session);
         }
         this.#notifySnapshot(observer, session);
+        if (pauseAfterDispatch) return projectView(session);
         correcting = false;
         request = settled.nextRequest;
         attempt = 1;
@@ -3697,6 +3720,7 @@ function durableModelResponse(
  * then drops the candidate write. Receipts state what the commit made true.
  */
 function finalizeWriteReceipts(settlement: {
+  documents: FileNativePlayDocuments;
   stateChanges: FileNativeStateChange[];
   completedTools: PersistedCompletedToolCall[];
   trailingEvents: V1PlayCallChainEvent[];
@@ -3709,25 +3733,22 @@ function finalizeWriteReceipts(settlement: {
   for (const completed of settlement.completedTools) {
     const candidateWrite = completed.result.candidateWrite;
     if (!completed.result.ok || candidateWrite === undefined) continue;
-    const status =
-      candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
-        ? `@${candidateWrite.shortRef} write succeeded`
-        : `@${candidateWrite.shortRef} unchanged`;
-    const markdown = [status, candidateWrite.sizeAdvice]
-      .filter(Boolean)
-      .join("\n");
+    const markdown = settlement.documents.settledWriteReceipt(
+      candidateWrite,
+      committedWriteRefs.has(candidateWrite.shortRef),
+    );
     completed.result.markdown = markdown;
     delete completed.result.candidateWrite;
     const callId = completed.key.slice(completed.key.indexOf(":") + 1);
     markdownByCall.set(callId, markdown);
   }
   for (const event of settlement.trailingEvents) {
-    if (event.kind !== "tool_result") continue;
+    if (event.kind !== "tool_result" || !event.ok) continue;
     const markdown = markdownByCall.get(event.callId);
     if (markdown !== undefined) event.markdown = markdown;
   }
   for (const item of settlement.transcriptAppend) {
-    if (item.kind !== "tool") continue;
+    if (item.kind !== "tool" || item.isError === true) continue;
     const markdown = markdownByCall.get(item.toolCallId);
     if (markdown !== undefined) item.markdown = markdown;
   }
@@ -3849,14 +3870,10 @@ function prepareTool(
       };
     }
     if (resolved.kind === "alias")
-      result = {
-        ...result,
-        markdown: `${result.markdown}\n\n${renderToolAliasNote(
-          call.name,
-          executedName,
-          locale,
-        )}`,
-      };
+      appendPlayToolNote(
+        result,
+        renderToolAliasNote(call.name, executedName, locale),
+      );
     working.set(key, {
       key,
       name: executedName,

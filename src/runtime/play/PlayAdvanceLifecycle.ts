@@ -32,6 +32,18 @@ export interface PlayAdvanceLedger {
   nextEventId: number;
 }
 
+export const playDispatchLimit = 64;
+
+const resumableMessages = {
+  player_committed:
+    "The player message is committed; the frozen model request is ready to continue.",
+  tool_step_settled:
+    "The completed tool response is settled; its frozen continuation request is ready.",
+  response_correction:
+    "The previous response was invalid. Its correction can be resent.",
+  dispatch_budget: `Play paused after ${playDispatchLimit} model requests. Continue from the last settled step.`,
+};
+
 /**
  * How one play advance ends (ADR-0030, ADR-0044, ADR-0048). `end` is the only
  * writer of the status, retry, failure and event fields an ending sets, and
@@ -43,7 +55,7 @@ export type PlayAdvanceEnding =
   /** Settled, with a frozen request the player continues without replaying a result. */
   | {
       kind: "resumable";
-      reason: "player_committed" | "tool_step_settled" | "response_correction";
+      reason: keyof typeof resumableMessages;
       attempt?: number;
       request: ModelHostExchange;
     }
@@ -80,10 +92,6 @@ export interface PlayAdvanceLifecyclePorts<Session extends PlayAdvanceLedger> {
 }
 
 const messages = {
-  playerCommitted:
-    "The player message is committed; the frozen model request is ready to continue.",
-  toolStepSettled:
-    "The completed tool response is settled; its frozen continuation request is ready.",
   cancelledBeforeDispatch:
     "The player cancelled before the next Provider dispatch; the frozen request can be resumed without replaying a completed model result.",
   followupsCancelled:
@@ -311,13 +319,9 @@ function applyEnding(session: PlayAdvanceLedger, ending: PlayAdvanceEnding) {
       session.lastRequestAttempt = ending.attempt ?? 0;
       session.status = "interrupted";
       session.canRetry = true;
-      session.lastFailure =
-        ending.reason === "player_committed"
-          ? messages.playerCommitted
-          : ending.reason === "response_correction"
-            ? "The previous response was invalid. Its correction can be resent."
-            : messages.toolStepSettled;
-      session.lastFailureKind = "retryable";
+      session.lastFailure = resumableMessages[ending.reason];
+      session.lastFailureKind =
+        ending.reason === "dispatch_budget" ? "dispatch_budget" : "retryable";
       return;
     case "cancelled_before_dispatch":
       interruptStreamingEvent(session, ending.streamingEventId);

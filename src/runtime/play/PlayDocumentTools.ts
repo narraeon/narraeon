@@ -51,8 +51,20 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
+    retired?: boolean;
+    editDetails?: string;
     sizeAdvice?: string;
+    notes?: string[];
   };
+}
+
+export function appendPlayToolNote(
+  result: PlayDocumentToolResult,
+  note: string,
+): void {
+  result.markdown += `\n\n${note}`;
+  if (result.candidateWrite !== undefined)
+    (result.candidateWrite.notes ??= []).push(note);
 }
 
 class PlayDocumentToolFailure extends Error {
@@ -93,6 +105,41 @@ export class FileNativePlayDocuments {
 
   get committedSnapshot(): WorldDocumentStore {
     return this.#committedSnapshot;
+  }
+
+  settledWriteReceipt(
+    write: NonNullable<PlayDocumentToolResult["candidateWrite"]>,
+    committed: boolean,
+  ): string {
+    let status = "unchanged";
+    if (write.changed && committed) {
+      if (write.retired === undefined) {
+        status = "write succeeded";
+      } else {
+        // A later tool in the same response can reverse a candidate retirement.
+        const before =
+          documentDescriptorByRef(this.committedSnapshot, write.shortRef)
+            ?.retired === true;
+        const after =
+          documentDescriptorByRef(this.snapshot, write.shortRef)?.retired ===
+          true;
+        if (before !== after) {
+          if (write.retired === after) status = after ? "retired" : "restored";
+          else
+            status = write.retired
+              ? "retirement superseded"
+              : "restoration superseded";
+        }
+      }
+    }
+    const summary = [
+      `@${write.shortRef} ${status}`,
+      write.editDetails,
+      write.sizeAdvice,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return [summary, ...(write.notes ?? [])].join("\n\n");
   }
 
   /**
@@ -142,15 +189,12 @@ export class FileNativePlayDocuments {
       history,
       options,
     );
-    if (repaired.coerced.length === 0 || result.markdown === undefined)
-      return result;
-    return {
-      ...result,
-      markdown: `${result.markdown}\n\n${renderCoercionNote(
-        repaired.coerced,
-        options.locale ?? "en",
-      )}`,
-    };
+    if (repaired.coerced.length > 0)
+      appendPlayToolNote(
+        result,
+        renderCoercionNote(repaired.coerced, options.locale ?? "en"),
+      );
+    return result;
   }
 
   #dispatch(
@@ -475,11 +519,12 @@ function applyPlayCandidatePatch(
         "candidate",
       );
     const changed = revised.changes.length > 0;
-    const receipt = formatToolRevisionReceipt(
-      target.shortRef,
-      revised.changes,
-      revised.editOutcomes,
-    );
+    if (revised.changes.length > 1)
+      throw new Error(
+        "A world_patch revision must affect only its target document",
+      );
+    const editDetails = formatToolEditDetails(revised.editOutcomes);
+    const status = `@${target.shortRef} ${changed ? "pending write" : "unchanged"}`;
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     carryWriteAuthorizations(
@@ -507,8 +552,12 @@ function applyPlayCandidatePatch(
       }
     return {
       ok: true,
-      markdown: receipt,
-      candidateWrite: { shortRef: target.shortRef, changed },
+      markdown: editDetails === "" ? status : `${status} · ${editDetails}`,
+      candidateWrite: {
+        shortRef: target.shortRef,
+        changed,
+        ...(editDetails === "" ? {} : { editDetails }),
+      },
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
@@ -580,32 +629,20 @@ function authorizationsAfterEdits(
   return authorization;
 }
 
-function formatToolRevisionReceipt(
-  shortRef: string,
-  changes: readonly WorldDocumentRevisionChange[],
+function formatToolEditDetails(
   outcomes: readonly WorldDocumentEditOutcome[],
 ): string {
-  if (changes.length > 1)
-    throw new Error(
-      "A world_patch revision must affect only its target document",
-    );
-  const failed = outcomes.filter(({ status }) => status === "failed").length;
-  const parts = [
-    changes.length === 1
-      ? `@${shortRef} pending write`
-      : `@${shortRef} unchanged`,
-  ];
-  if (failed > 0)
-    parts.push(`${outcomes.length - failed}/${outcomes.length} edits applied`);
-  else if (outcomes.some(({ status }) => status === "no_op"))
-    parts.push(`${outcomes.length} edits applied`);
-  const notes = formatEditNotes(outcomes);
-  if (notes !== "") parts.push(notes);
-  if (failed > 0)
-    parts.push(
-      "applied edits are not resent; send again only the edits listed above",
-    );
-  return parts.join(" · ");
+  const applied = outcomes.filter(({ status }) => status === "applied").length;
+  if (applied === outcomes.length) return "";
+  return [
+    `${applied}/${outcomes.length} edits applied`,
+    formatEditNotes(outcomes),
+    outcomes.some(({ status }) => status === "failed")
+      ? "Resend only rejected edits if needed"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Lists only the edits that did not apply cleanly: failed ones and no-ops. */
@@ -674,7 +711,11 @@ function applyPlayCandidateRetirement(
     markdown: changed
       ? `@${target.shortRef} pending ${args.retired ? "retirement" : "restoration"}`
       : `@${target.shortRef} unchanged`,
-    candidateWrite: { shortRef: target.shortRef, changed },
+    candidateWrite: {
+      shortRef: target.shortRef,
+      changed,
+      retired: args.retired,
+    },
   };
 }
 

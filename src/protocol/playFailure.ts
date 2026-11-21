@@ -21,6 +21,7 @@ export const playFailureKinds = [
   "provider_error",
   "other",
   "configuration_mismatch",
+  "dispatch_budget",
 ] as const;
 
 export type PlayFailureKind = (typeof playFailureKinds)[number];

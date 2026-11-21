@@ -5,6 +5,11 @@ export const failureText: Record<
   PlayFailureKind,
   { title: string; description: string }
 > = {
+  dispatch_budget: {
+    title: "游玩生成已暂停",
+    description:
+      "本次生成已达模型请求上限。已完成的工具结果已保存，可以从这里继续。",
+  },
   configuration_mismatch: {
     title: "旧模型配置曾阻止发送",
     description:
@@ -47,6 +52,7 @@ export function playFailureDescription(
   canRetry: boolean,
   canContinuePartial = false,
 ): string {
+  if (kind === "dispatch_budget") return uiText(failureText[kind].description);
   if (canContinuePartial) return uiText("可以从已保存的部分回复接着生成。");
   if (!canRetry && kind === "retryable")
     return uiText(failureText.other.description);

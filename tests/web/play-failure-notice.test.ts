@@ -106,6 +106,7 @@ const titles = [
   ["模型连接发生错误", "Model connection error"],
   ["调用链中断", "Call chain interrupted"],
   ["旧模型配置曾阻止发送", "Previous model settings blocked sending"],
+  ["游玩生成已暂停", "Play generation paused"],
 ];
 
 for (const locale of ["zh-CN", "en"] as const)
@@ -134,9 +135,15 @@ for (const locale of ["zh-CN", "en"] as const)
       expect(technical.querySelector("summary")?.textContent).toBe(
         english ? "Technical details" : "技术详情",
       );
-      const retry = screen.queryByRole("button", {
-        name: english ? "Resend request" : "重新发送",
-      });
+      const resumeLabel =
+        failureKind === "dispatch_budget"
+          ? english
+            ? "Continue generating"
+            : "继续生成"
+          : english
+            ? "Resend request"
+            : "重新发送";
+      const retry = screen.queryByRole("button", { name: resumeLabel });
       expect(retry).not.toBeNull();
       if (retry !== null) {
         fireEvent.click(retry);
@@ -165,11 +172,7 @@ for (const locale of ["zh-CN", "en"] as const)
       expect(document.querySelector("p")?.textContent).not.toMatch(
         /全新上下文|fresh context/iu,
       );
-      expect(
-        screen.queryByRole("button", {
-          name: english ? "Resend request" : "重新发送",
-        }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: resumeLabel })).toBeNull();
     });
 
 test.each([true, false])(

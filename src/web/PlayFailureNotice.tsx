@@ -53,6 +53,7 @@ export function PlayFailureNotice({
           freshContextReason={recovery.freshContextReason}
           onFreshContext={recovery.onFreshContext}
           onResend={canResend ? recovery.onRetry : undefined}
+          resendLabel={kind === "dispatch_budget" ? "继续生成" : "重新发送"}
           onContinue={
             recovery.canContinuePartial ? recovery.onContinuePartial : undefined
           }

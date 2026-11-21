@@ -271,18 +271,16 @@ export async function createServer(input: {
             reply,
           );
         const response = await input.runtime.handle(envelope.request);
-        if (
-          (runtimeRequestType === "play.chain.start" ||
-            runtimeRequestType === "play.chain.append") &&
-          isRecord(response.result) &&
-          response.result.status === "interrupted" &&
-          typeof response.result.lastFailure === "string" &&
-          !hasPlayCancellation(response.result)
-        )
+        const playCallFailure =
+          runtimeRequestType === "play.chain.start" ||
+          runtimeRequestType === "play.chain.append"
+            ? playInterruptionFailure(response.result)
+            : null;
+        if (playCallFailure !== null)
           request.log.error(
             {
               runtimeRequestType,
-              playCallFailure: response.result.lastFailure,
+              playCallFailure,
             },
             "play call interrupted",
           );
@@ -386,15 +384,12 @@ function sendPlayCallChainStream(
           "The Runtime stream did not return a call-chain snapshot",
         );
       send({ kind: "snapshot", value: response.result, final: true });
-      if (
-        response.result.status === "interrupted" &&
-        response.result.lastFailure !== null &&
-        !hasPlayCancellation(response.result)
-      )
+      const playCallFailure = playInterruptionFailure(response.result);
+      if (playCallFailure !== null)
         request.log.error(
           {
             runtimeRequestType: runtimeRequest.type,
-            playCallFailure: response.result.lastFailure,
+            playCallFailure,
           },
           "play call interrupted",
         );
@@ -427,6 +422,12 @@ function isPlayCallChainView(value: unknown): value is V1PlayCallChainView {
   );
 }
 
-function hasPlayCancellation(value: unknown): boolean {
-  return isRecord(value) && value.lastCancelled === true;
+function playInterruptionFailure(value: unknown): string | null {
+  return isRecord(value) &&
+    value.status === "interrupted" &&
+    typeof value.lastFailure === "string" &&
+    value.lastCancelled !== true &&
+    value.lastFailureKind !== "dispatch_budget"
+    ? value.lastFailure
+    : null;
 }
