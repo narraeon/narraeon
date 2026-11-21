@@ -289,7 +289,8 @@ export class V1Runtime {
         throw new V1ProtocolError(error.code, error.message, { cause: error });
       if (
         error instanceof FileNativeWorldCreationError &&
-        error.code === "endpoint_discarded"
+        (error.code === "endpoint_discarded" ||
+          error.code === "endpoint_read_conflict")
       )
         throw new V1ProtocolError(error.code, error.message, { cause: error });
       if (
@@ -934,8 +935,12 @@ export class V1Runtime {
         });
       case "world.surface.read":
         return request.surface === "runtime"
-          ? this.#worlds.readSurface(request.worldId, "runtime")
-          : this.#worlds.readSurface(request.worldId, request.surface);
+          ? this.#worlds.readSurface(request.worldId, "runtime", request.head)
+          : this.#worlds.readSurface(
+              request.worldId,
+              request.surface,
+              request.head,
+            );
       case "world.extensions.read":
         return this.#worlds.extensionControls(
           request.worldId,
@@ -1497,7 +1502,8 @@ export class V1Runtime {
         if (
           !(
             error instanceof FileNativeWorldCreationError &&
-            error.code === "endpoint_discarded"
+            (error.code === "endpoint_discarded" ||
+              error.code === "endpoint_read_conflict")
           ) ||
           attempt >= currentEndpointReadAttempts
         )

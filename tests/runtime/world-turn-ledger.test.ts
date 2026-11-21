@@ -249,6 +249,36 @@ describe("world turn ledger", () => {
       1, 3,
     ]);
   });
+
+  test.each([
+    { restoresSequence: 3 },
+    { restoresSequence: "1" },
+    { files: [{ path: "publication.json", before: null }] },
+    { files: [{ path: "state/a.yaml", before: 4 }] },
+  ])("rejects an invalid stored rewind record: %j", async (changes) => {
+    await appendTurn(root, { mode: "play", changes: [] });
+    await appendTurn(root, { mode: "play", changes: [] });
+    const rewind = await rewindTo(root, 1);
+    await writeFile(
+      join(root, "runtime/turns/00000003.json"),
+      JSON.stringify({ ...rewind, ...changes }),
+    );
+    forgetLedger(root);
+
+    await expect(listTurns(root)).rejects.toMatchObject({ code: "corrupt" });
+  });
+
+  test("requires the earlier target of a stored rewind to exist", async () => {
+    await appendTurn(root, { mode: "play", changes: [] });
+    await appendTurn(root, { mode: "play", changes: [] });
+    await rewindTo(root, 1);
+    await rm(join(root, "runtime/turns/00000001.json"));
+    forgetLedger(root);
+
+    await expect(listTurns(root)).rejects.toMatchObject({
+      code: "missing_record",
+    });
+  });
 });
 
 describe("world turn ledger view cache", () => {

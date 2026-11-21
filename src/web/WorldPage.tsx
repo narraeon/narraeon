@@ -728,6 +728,7 @@ export function WorldPage({
               type: "world.surface.read",
               worldId,
               surface: "state",
+              head: worldHead,
             })
           : Promise.resolve(null),
       [client, worldId, worldHead, stateVisible],
@@ -758,6 +759,7 @@ export function WorldPage({
               type: "world.surface.read",
               worldId,
               surface: "control",
+              head: worldHead,
             })
           : Promise.resolve(null),
       [client, worldId, worldHead, managementVisible],
@@ -789,6 +791,7 @@ export function WorldPage({
               type: "world.surface.read",
               worldId,
               surface: "runtime",
+              head: worldHead,
             })
           : Promise.resolve(null),
       [client, worldId, worldHead, managementVisible],

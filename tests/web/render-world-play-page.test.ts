@@ -2027,7 +2027,9 @@ describe("世界游玩页面", () => {
               ? original
               : request.surface === "control"
                 ? worldView(chain).control
-                : {}) as T,
+                : request.surface === "revision"
+                  ? revisionFiles
+                  : {}) as T,
           );
         if (request.type === "artifacts.debug") return Promise.resolve([] as T);
         if (request.type === "world.revision.open") {
