@@ -14,6 +14,6 @@ status: accepted
 
 ZIP 上传上限为 1 GiB，解压总量为 2 GiB，最多 200,000 条目，单条目最多 256 MiB；上传、解压、摘要和打包均使用流式背压。未知归档格式、符号链接、特殊文件、非 UTF-8 文件名、绝对或穿越路径、重复及大小写冲突路径均拒绝。文件摘要不足以证明 Authority 正确，所以导入在迁移后还校验整条审计链及每个端点的结果 root 和 blob。
 
-目标完整 staging 的一次 rename 是导入的 durable commit point。重试先检查确定性目标的 publication，已发布则返回同一世界；未发布则清理暂存后重做。启动清理遗留上传、隔离区及导出目录，并只清理由遗留导入 operation 确定的目标 staging；下载完成或一小时到期清理导出。清理不改变已发布世界。
+目标完整 staging 的一次 rename 是导入的 durable commit point。重试先检查确定性目标的 publication，已发布则返回同一世界；未发布则清理暂存后重做。启动清理遗留上传、隔离区及导出目录，并只清理由遗留导入 operation 确定的目标 staging。运行期间，上传暂存区最多保留 32 个文件、总计 2 GiB，包含接收中和导入中的 ZIP。完成上传一小时后回收尚未开始导入的 ZIP；导入开始后保留至消费完毕。下载完成或一小时到期清理导出。清理不改变已发布世界。
 
 我们拒绝“直接复制世界目录并改写世界 ID”，因为可变投影与页面轨迹中的世界局部身份会形成第二套容易漏改的迁移逻辑；也拒绝“只导出 Authority，丢弃页面时间线”，因为导入后会失去逐条修改、分叉与调用详情。复用 [ADR-0036](0036-authority-facts-are-world-neutral-and-forks-retain-physical-closures.md) 的分叉闭包，使导出、导入和分叉共享已经验证的身份重分配与原子发布实现，并沿用 [ADR-0034](0034-released-storage-formats-require-atomic-migrations.md) 的已发布存储格式迁移。

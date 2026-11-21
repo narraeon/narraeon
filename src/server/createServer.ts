@@ -164,20 +164,30 @@ export async function createServer(input: {
       (_request, payload, done) => done(null, payload),
     );
     archives.post("/api/runtime/v1/world-archives", async (request, reply) => {
+      const body = request.body as Readable;
+      // A failed upload pipeline must leave the HTTP socket open for the error response.
+      const transfer = new PassThrough();
+      const forwardError = (error: Error) => transfer.destroy(error);
+      // The incoming body can abort while Runtime is opening the destination.
+      transfer.on("error", () => undefined);
+      body.on("error", forwardError).pipe(transfer);
       try {
-        return await input.runtime.worldArchives.upload(
-          request.body as Readable,
-        );
+        return await input.runtime.worldArchives.upload(transfer);
       } catch (error) {
         await input.runtime.recordArchiveFailure(
           { type: "world.archive.upload" },
           error,
         );
-        if (error instanceof WorldArchiveError)
+        if (error instanceof WorldArchiveError) {
+          if (!request.raw.complete) void reply.header("Connection", "close");
           return reply
             .status(error.code === "limit_exceeded" ? 413 : 400)
             .send({ error: { code: error.code, message: error.message } });
+        }
         throw error;
+      } finally {
+        body.unpipe(transfer).off("error", forwardError);
+        transfer.destroy();
       }
     });
     // The browser checks this before it starts the one-time download, so a

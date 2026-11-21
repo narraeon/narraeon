@@ -29,12 +29,13 @@ import {
   archivePath,
   extractArchive,
   inventory,
-  streamFile,
   writeArchive,
   WorldArchiveError,
   type ArchiveFile,
   type ArchiveLimits,
 } from "./WorldArchiveZip.ts";
+
+import { ArchiveUploads, type ArchiveUploadPolicy } from "./ArchiveUploads.ts";
 
 interface Manifest {
   format: typeof worldArchiveFormat;
@@ -50,6 +51,7 @@ export class WorldArchives {
   readonly #dataRoot: string;
   readonly #root: string;
   readonly #limits: ArchiveLimits;
+  readonly #uploads: ArchiveUploads;
   readonly #worlds: FileNativeWorldStore;
   readonly #chains: PlayCallChain;
   #appVersion = "";
@@ -58,12 +60,18 @@ export class WorldArchives {
     worlds: FileNativeWorldStore;
     chains: PlayCallChain;
     limits?: ArchiveLimits;
+    uploadPolicy?: ArchiveUploadPolicy;
   }) {
     this.#dataRoot = resolve(input.dataRoot);
     this.#root = join(this.#dataRoot, "world-archives");
     this.#worlds = input.worlds;
     this.#chains = input.chains;
     this.#limits = input.limits ?? worldArchiveLimits;
+    this.#uploads = new ArchiveUploads(
+      join(this.#root, "uploads"),
+      this.#limits.archiveBytes,
+      input.uploadPolicy,
+    );
   }
 
   async initialize(): Promise<void> {
@@ -78,22 +86,15 @@ export class WorldArchives {
         if (entry.startsWith(`.staging-${worldId}-`))
           await rm(join(worldsRoot, entry), { recursive: true, force: true });
     }
-    for (const name of ["uploads", "quarantine", "exports"]) {
+    await this.#uploads.initialize();
+    for (const name of ["quarantine", "exports"]) {
       await rm(join(this.#root, name), { recursive: true, force: true });
       await mkdir(join(this.#root, name), { recursive: true, mode: 0o700 });
     }
   }
 
-  async upload(source: Readable): Promise<{ uploadId: string }> {
-    const uploadId = randomUUID();
-    const path = this.#uploadPath(uploadId);
-    try {
-      await streamFile(source, path, this.#limits.archiveBytes);
-      return { uploadId };
-    } catch (error) {
-      await rm(path, { force: true });
-      throw error;
-    }
+  upload(source: Readable): Promise<{ uploadId: string }> {
+    return this.#uploads.store(source);
   }
 
   async exportWorld(input: {
@@ -226,7 +227,7 @@ export class WorldArchives {
         const worldId = `world-${digest}`;
         const targetRoot = join(this.#dataRoot, "worlds-file-native", worldId);
         const quarantine = join(this.#root, "quarantine", input.operationId);
-        const upload = this.#uploadPath(input.uploadId);
+        const upload = this.#uploads.claim(input.uploadId);
         try {
           // Publication is the durable commit point. A process may exit before writing its receipt or cleaning the upload.
           let published: {
@@ -254,6 +255,11 @@ export class WorldArchives {
             const world = await this.#worlds.readWorldSummary(worldId);
             return { outcome: "imported", world };
           }
+          if (upload === undefined)
+            throw new WorldArchiveError(
+              "invalid_archive",
+              "Upload is missing; upload the ZIP again",
+            );
           await rm(quarantine, { recursive: true, force: true });
           const worldsRoot = join(this.#dataRoot, "worlds-file-native");
           for (const entry of await readdir(worldsRoot).catch(() => []))
@@ -266,7 +272,7 @@ export class WorldArchives {
           await mkdir(extracted, { recursive: true, mode: 0o700 });
           let actual: Map<string, ArchiveFile>;
           try {
-            actual = await extractArchive(upload, extracted, this.#limits);
+            actual = await extractArchive(upload.path, extracted, this.#limits);
           } catch (error) {
             if (missing(error))
               throw new WorldArchiveError(
@@ -375,21 +381,21 @@ export class WorldArchives {
           }
           return { outcome: "imported", world: result.world };
         } finally {
-          await rm(quarantine, { recursive: true, force: true });
-          await rm(upload, { force: true });
-          const worldsRoot = join(this.#dataRoot, "worlds-file-native");
-          for (const entry of await readdir(worldsRoot).catch(() => []))
-            if (entry.startsWith(`.staging-${worldId}-`))
-              await rm(join(worldsRoot, entry), {
-                recursive: true,
-                force: true,
-              });
+          try {
+            await rm(quarantine, { recursive: true, force: true });
+            const worldsRoot = join(this.#dataRoot, "worlds-file-native");
+            for (const entry of await readdir(worldsRoot).catch(() => []))
+              if (entry.startsWith(`.staging-${worldId}-`))
+                await rm(join(worldsRoot, entry), {
+                  recursive: true,
+                  force: true,
+                });
+          } finally {
+            await upload?.remove();
+          }
         }
       },
     );
-  }
-  #uploadPath(uploadId: string): string {
-    return join(this.#root, "uploads", `${uploadId}.zip`);
   }
 }
 

@@ -67,6 +67,7 @@ export async function streamFile(
   source: Readable,
   destination: string,
   maxBytes: number,
+  reserveBytes?: (bytes: number) => WorldArchiveError | undefined,
 ): Promise<{ bytes: number; sha256: string }> {
   let bytes = 0;
   const hash = createHash("sha256");
@@ -75,16 +76,16 @@ export async function streamFile(
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.length;
       if (bytes > maxBytes)
-        callback(
+        return callback(
           new WorldArchiveError(
             "limit_exceeded",
             "The archive exceeds its size limit",
           ),
         );
-      else {
-        hash.update(chunk);
-        callback(null, chunk);
-      }
+      const reservationError = reserveBytes?.(chunk.length);
+      if (reservationError !== undefined) return callback(reservationError);
+      hash.update(chunk);
+      callback(null, chunk);
     },
   });
   await pipeline(

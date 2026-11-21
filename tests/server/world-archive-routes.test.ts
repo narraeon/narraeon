@@ -1,4 +1,6 @@
+import type * as FsPromises from "node:fs/promises";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -6,7 +8,23 @@ import { createServer } from "../../src/server/createServer.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { WorldArchiveError } from "../../src/runtime/archive/WorldArchiveZip.ts";
 import type { RuntimeErrorRecord } from "../../src/runtime/RuntimeErrorLog.ts";
+import { availableRuntimePort } from "../support/runtimeServer.ts";
 import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
+
+const archiveRead = vi.hoisted(() => ({
+  pause: undefined as ((path: unknown) => Promise<void>) | undefined,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return {
+    ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => {
+      if (archiveRead.pause !== undefined) await archiveRead.pause(args[0]);
+      return actual.stat(...args);
+    },
+  };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -15,7 +33,17 @@ afterEach(async () => {
   );
 });
 
-async function setup() {
+async function setup({
+  port = 3000,
+  archiveUploadPolicy,
+}: {
+  port?: number;
+  archiveUploadPolicy?: {
+    totalBytes: number;
+    maxUploads: number;
+    ttlMs: number;
+  };
+} = {}) {
   const fixture = await worldArchiveFixture();
   roots.push(fixture.root);
   const staticRoot = await mkdtemp(join(tmpdir(), "narraeon-archive-static-"));
@@ -27,12 +55,13 @@ async function setup() {
     dataRoot: fixture.root,
     configRoot: join(fixture.root, "config"),
     logRoot,
+    ...(archiveUploadPolicy === undefined ? {} : { archiveUploadPolicy }),
   });
   await runtime.initialize();
   const server = await createServer({
     runtime,
     staticRoot,
-    port: 3000,
+    port,
     logger: false,
   });
   return { fixture, runtime, server, logRoot };
@@ -168,6 +197,158 @@ test("归档上传失败写入 runtime-errors 日志", async () => {
       },
     ]);
   } finally {
+    await server.close();
+  }
+});
+
+test("归档上传共享字节预算，服务运行中清除过期上传后可再次上传", async () => {
+  const port = await availableRuntimePort();
+  const { fixture, runtime, server } = await setup({
+    port,
+    archiveUploadPolicy: { totalBytes: 14, maxUploads: 4, ttlMs: 60_000 },
+  });
+  const url = await server.listen({ host: "127.0.0.1", port });
+  function upload(bytes: number) {
+    return new Promise<{ status: number | undefined; body: unknown }>(
+      (resolve, reject) => {
+        const input = request(
+          `${url}/api/runtime/v1/world-archives`,
+          {
+            method: "POST",
+            agent: false,
+            headers: { "content-type": "application/zip" },
+          },
+          (response) => {
+            let body = "";
+            response
+              .setEncoding("utf8")
+              .on("data", (chunk: string) => (body += chunk));
+            response.on("end", () => {
+              try {
+                resolve({
+                  status: response.statusCode,
+                  body: JSON.parse(body) as unknown,
+                });
+              } catch (error) {
+                reject(
+                  new Error("Invalid archive HTTP response", { cause: error }),
+                );
+              }
+            });
+          },
+        );
+        input.once("error", reject).end(Buffer.alloc(bytes));
+      },
+    );
+  }
+  try {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const first = await upload(8);
+    expect(first.status).toBe(200);
+    const rejected = await upload(7);
+    expect(rejected.status).toBe(413);
+    expect(rejected.body).toMatchObject({
+      error: { code: "limit_exceeded" },
+    });
+    const second = await upload(6);
+    expect(second.status).toBe(200);
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+
+    const directory = join(fixture.root, "world-archives", "uploads");
+    await expect.poll(() => readdir(directory)).toEqual([]);
+    const next = await upload(14);
+    expect(next.status).toBe(200);
+    expect(next.body).toHaveProperty("uploadId");
+
+    await runtime.initialize();
+    expect((await upload(14)).status).toBe(200);
+  } finally {
+    vi.useRealTimers();
+    await server.close();
+  }
+});
+
+test("回收保留导入中的 ZIP，上传数量上限也在消费后释放", async () => {
+  const { fixture, server } = await setup({
+    archiveUploadPolicy: {
+      totalBytes: 1024 ** 2,
+      maxUploads: 2,
+      ttlMs: 60_000,
+    },
+  });
+  const base = "http://127.0.0.1:3000/api/runtime/v1";
+  const upload = (payload: Buffer) =>
+    server.inject({
+      method: "POST",
+      url: `${base}/world-archives`,
+      headers: { "content-type": "application/zip" },
+      payload,
+    });
+  const importZip = (uploadId: string, operationId: string) =>
+    server.inject({
+      method: "POST",
+      url: base,
+      payload: {
+        protocol: "narraeon.runtime/v1",
+        request: { type: "world.archive.import", operationId, uploadId },
+      },
+    });
+  const release = Promise.withResolvers<void>();
+  try {
+    const id = await exportArchiveId(server, fixture.worldId, "active-export");
+    const backup = await server.inject(`${base}/world-archives/${id}`);
+    expect(backup.statusCode).toBe(200);
+
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const active = await upload(backup.rawPayload);
+    const pending = await upload(Buffer.alloc(1));
+    expect(active.statusCode).toBe(200);
+    expect(pending.statusCode).toBe(200);
+    expect((await upload(Buffer.alloc(1))).statusCode).toBe(413);
+
+    const { uploadId } = active.json<{ uploadId: string }>();
+    const activePath = join(
+      fixture.root,
+      "world-archives",
+      "uploads",
+      `${uploadId}.zip`,
+    );
+    const reading = Promise.withResolvers<void>();
+    archiveRead.pause = async (path) => {
+      // Pause at the filesystem boundary, before the import first opens the ZIP.
+      if (path === activePath) {
+        reading.resolve();
+        await release.promise;
+      }
+    };
+    const importing = importZip(uploadId, "active-import");
+    await Promise.race([
+      reading.promise,
+      importing.then(() => {
+        throw new Error("Import finished before opening the upload");
+      }),
+    ]);
+    expect((await importZip(uploadId, "competing-import")).statusCode).toBe(
+      400,
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+
+    await expect
+      .poll(() => readdir(join(fixture.root, "world-archives", "uploads")))
+      .toEqual([`${uploadId}.zip`]);
+    release.resolve();
+    const result = await importing;
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ result: { outcome: "imported" } });
+    expect((await importZip(uploadId, "active-import")).statusCode).toBe(200);
+    expect((await upload(Buffer.alloc(1))).statusCode).toBe(200);
+    expect((await upload(Buffer.alloc(1))).statusCode).toBe(200);
+  } finally {
+    release.resolve();
+    archiveRead.pause = undefined;
+    vi.useRealTimers();
     await server.close();
   }
 });
