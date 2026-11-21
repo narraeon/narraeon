@@ -132,6 +132,27 @@ test("干净世界首次打开不写任何文件", async () => {
   expect(await stampsOf(worldRoot)).toEqual(stampsBefore);
 });
 
+test.each([{ files: false }, { payload: undefined }])(
+  "第一次打开世界时，验证所有记录后才恢复未完成的轮：%j",
+  async (changes) => {
+    const fixture = await world();
+    await commitPlay(fixture, "genesis", "第一句。");
+    const worldRoot = worldRootOf(fixture);
+    await crashMidTurn(worldRoot, crashedChanges());
+    const committed = join(worldRoot, "runtime/turns/00000001.json");
+    const record = JSON.parse(await readFile(committed, "utf8")) as object;
+    await writeFile(committed, JSON.stringify({ ...record, ...changes }));
+    const before = await contentsOf(worldRoot);
+
+    const reopened = new FileNativeWorldStore(fixture.root);
+    await expect(reopened.currentHead(fixture.worldId)).rejects.toMatchObject({
+      code: "world_corrupt",
+      cause: { code: "corrupt" },
+    });
+    expect(await contentsOf(worldRoot)).toEqual(before);
+  },
+);
+
 test("同一世界并发的首次打开只恢复一次，且都读到回滚后的端点", async () => {
   const fixture = await world();
   await commitPlay(fixture, "genesis", "第一句。");

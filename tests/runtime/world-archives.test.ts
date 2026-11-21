@@ -99,6 +99,31 @@ function updateManifest(files: ZipFixtureEntry[]) {
   manifest.contents = JSON.stringify(value);
 }
 
+test.each(["mode", "stateChanges"])(
+  "隔离导入拒绝含无效轮记录的归档，且没有发布世界：%s",
+  async (field) => {
+    const source = await fixture();
+    const archive = await exported(source);
+    const files = await entries(archive.zip);
+    const turn = files.find(({ path }) =>
+      path.endsWith("turns/00000001.json"),
+    )!;
+    const value = JSON.parse(String(turn.contents)) as { payload: object };
+    turn.contents = JSON.stringify(
+      field === "mode"
+        ? { ...value, mode: "unknown" }
+        : { ...value, payload: { ...value.payload, stateChanges: [null] } },
+    );
+    updateManifest(files);
+
+    const target = await empty();
+    await expect(importBuffer(target, createZip(files))).rejects.toMatchObject({
+      code: "integrity_failed",
+    });
+    expect(await target.worlds.listWorlds()).toEqual([]);
+  },
+);
+
 test("便携归档排除分叉新建的本地活动缓存，导入忽略来源缓存", async () => {
   const source = await fixture();
   const derive = source.chains.deriveWorld.bind(source.chains);

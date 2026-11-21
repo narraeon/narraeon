@@ -188,7 +188,7 @@ async function writeTurnLedger(
     await replaceDirectoryFiles(worldRoot, directory, finalFiles);
   await publishText(
     join(worldRoot, "runtime", "additional-materials.json"),
-    finalFiles.get(join("runtime", "additional-materials.json")) ?? "",
+    finalFiles.get("runtime/additional-materials.json") ?? "",
   );
   await rm(join(worldRoot, "runtime", "turns"), {
     recursive: true,
@@ -273,7 +273,7 @@ function endpointFiles(endpoint: LedgerEndpointInput): Map<string, string> {
   for (const file of projectHistoryBackgrounds(endpoint.history))
     files.set(`runtime/history-backgrounds/${file.path}`, file.contents);
   files.set(
-    join("runtime", "additional-materials.json"),
+    "runtime/additional-materials.json",
     `${JSON.stringify({ head: endpoint.head, items: endpoint.additionalMaterials }, null, 2)}\n`,
   );
   return files;

@@ -7,7 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 // 世界轮账本：当前文件就是当前端点；每轮只记录它改动过的文件的修改前像。
 // 回退只追加一轮 rewind，它在读取时被视为逻辑上的空操作，被丢弃的轮不再可达。
@@ -63,19 +63,52 @@ function turnFileName(sequence: number): string {
 }
 
 function assertSafePath(relativePath: string): void {
-  const normalized = normalize(relativePath);
-  if (
-    isAbsolute(relativePath) ||
-    normalized.startsWith(`..${sep}`) ||
-    normalized === ".." ||
-    normalized.length === 0 ||
-    normalized === headFile ||
-    normalized === turnsDirectory ||
-    normalized.startsWith(turnsDirectory + sep)
-  ) {
+  if (!isWorldPath(relativePath)) {
     throw new WorldTurnLedgerError(
       "invalid_path",
       `世界文件路径不合法：${relativePath}`,
+    );
+  }
+}
+
+function isWorldPath(path: string): boolean {
+  return (
+    (path === "runtime/additional-materials.json" ||
+      /^(?:state|control|history|runtime\/history-backgrounds)(?:\/|$)/u.test(
+        path,
+      )) &&
+    !path.includes("\\") &&
+    !path.includes("\0") &&
+    (process.platform !== "win32" || !path.includes(":")) &&
+    path
+      .split("/")
+      .every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
+
+function isWorldFilePath(path: string): boolean {
+  return (
+    isWorldPath(path) &&
+    path.includes("/") &&
+    path !== "runtime/history-backgrounds"
+  );
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSequence(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function parseLedgerJson(text: string, file: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new WorldTurnLedgerError(
+      "corrupt",
+      `世界轮账本 JSON 格式不正确：${file}`,
     );
   }
 }
@@ -121,12 +154,8 @@ export async function readHead(root: string): Promise<number> {
   if (text === null) {
     throw new WorldTurnLedgerError("no_head", "世界缺少轮账本端点");
   }
-  const parsed = JSON.parse(text) as { sequence?: unknown };
-  if (
-    typeof parsed.sequence !== "number" ||
-    !Number.isInteger(parsed.sequence) ||
-    parsed.sequence < 0
-  ) {
+  const parsed = parseLedgerJson(text, headFile);
+  if (!isObject(parsed) || !isSequence(parsed.sequence)) {
     throw new WorldTurnLedgerError("corrupt", "世界轮账本端点格式不正确");
   }
   return parsed.sequence;
@@ -142,6 +171,155 @@ async function publishHead(root: string, sequence: number): Promise<void> {
 interface StoredTurn {
   record: WorldTurnRecord;
   digest: string;
+}
+
+const turnModes = new Set<unknown>([
+  "genesis",
+  "play",
+  "correction",
+  "revision_apply",
+  "control_apply",
+  "rewind",
+] satisfies WorldTurnMode[]);
+
+function isStateChange(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    (value.kind === "create" ||
+      value.kind === "replace" ||
+      value.kind === "delete") &&
+    typeof value.documentId === "string" &&
+    typeof value.stableShortRef === "string" &&
+    typeof value.relativePath === "string" &&
+    isWorldFilePath(`state/${value.relativePath}`) &&
+    (value.codec === "yaml" || value.codec === "markdown") &&
+    (value.expectedPreviousHash === null ||
+      typeof value.expectedPreviousHash === "string") &&
+    (value.nextHash === null || typeof value.nextHash === "string")
+  );
+}
+
+function isStoredMaterial(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    ((value.kind === "document" && typeof value.document === "string") ||
+      (value.kind === "node" &&
+        typeof value.document === "string" &&
+        isObject(value.locator)) ||
+      (value.kind === "history_message" && typeof value.message === "string") ||
+      (value.kind === "history_commit" && typeof value.commit === "string"))
+  );
+}
+
+function isCommitPayload(
+  payload: unknown,
+  sequence: number,
+  mode: unknown,
+): payload is Record<string, unknown> {
+  return (
+    isObject(payload) &&
+    payload.sequence === sequence &&
+    payload.head === `commit:${sequence}` &&
+    payload.mode === mode &&
+    typeof payload.parentHead === "string" &&
+    /^(?:genesis|commit:[1-9][0-9]*)$/u.test(payload.parentHead) &&
+    (payload.operationId === null || typeof payload.operationId === "string") &&
+    Array.isArray(payload.historyAppend) &&
+    payload.historyAppend.every(
+      (message: unknown) =>
+        isObject(message) &&
+        typeof message.messageId === "string" &&
+        (message.role === "player" || message.role === "narrator") &&
+        typeof message.exactText === "string",
+    ) &&
+    Array.isArray(payload.stateChanges) &&
+    payload.stateChanges.every(isStateChange) &&
+    Array.isArray(payload.nextAdditionalMaterials) &&
+    payload.nextAdditionalMaterials.every(isStoredMaterial)
+  );
+}
+
+function parseTurn(text: string, name: string): WorldTurnRecord {
+  const value = parseLedgerJson(text, name);
+  if (
+    !isObject(value) ||
+    !isSequence(value.sequence) ||
+    value.sequence === 0 ||
+    name !== `${String(value.sequence).padStart(8, "0")}.json` ||
+    !turnModes.has(value.mode) ||
+    typeof value.createdAt !== "string" ||
+    !Array.isArray(value.files)
+  ) {
+    throw new WorldTurnLedgerError("corrupt", `世界轮记录格式不正确：${name}`);
+  }
+  const { sequence, restoresSequence, payload } = value;
+  if (
+    restoresSequence !== undefined &&
+    (!isSequence(restoresSequence) || restoresSequence >= sequence)
+  )
+    throw new WorldTurnLedgerError(
+      "corrupt",
+      `第 ${sequence} 轮的回退目标不在更早的轮中`,
+    );
+  if (payload !== undefined && !isCommitPayload(payload, sequence, value.mode))
+    throw new WorldTurnLedgerError(
+      "corrupt",
+      `第 ${sequence} 轮的提交元数据格式不正确`,
+    );
+  if (
+    value.mode === "rewind"
+      ? restoresSequence === undefined || payload !== undefined
+      : restoresSequence !== undefined &&
+        // Authority V3 migrations fold a timeline replacement into a play or correction turn.
+        ((value.mode !== "play" && value.mode !== "correction") ||
+          !isObject(payload) ||
+          payload.parentHead !==
+            (restoresSequence === 0
+              ? "genesis"
+              : `commit:${String(restoresSequence)}`))
+  ) {
+    throw new WorldTurnLedgerError(
+      "corrupt",
+      `第 ${sequence} 轮的回退记录格式不正确`,
+    );
+  }
+  const files: WorldTurnFileBefore[] = [];
+  const beforeByPath = new Map<string, string | null>();
+  for (const file of value.files as unknown[]) {
+    if (
+      !isObject(file) ||
+      typeof file.path !== "string" ||
+      (file.before !== null && typeof file.before !== "string")
+    )
+      throw new WorldTurnLedgerError(
+        "corrupt",
+        `第 ${sequence} 轮的文件前像格式不正确`,
+      );
+    // Older Windows writers used node:path.join for this one ledger path.
+    const path =
+      file.path === "runtime\\additional-materials.json"
+        ? "runtime/additional-materials.json"
+        : file.path;
+    if (
+      !isWorldFilePath(path) ||
+      (beforeByPath.has(path) && beforeByPath.get(path) !== file.before)
+    )
+      throw new WorldTurnLedgerError(
+        "corrupt",
+        `第 ${sequence} 轮含无效或冲突的世界文件前像`,
+      );
+    if (beforeByPath.has(path)) continue;
+    beforeByPath.set(path, file.before);
+    files.push({ path, before: file.before });
+  }
+  return {
+    sequence,
+    mode: value.mode as WorldTurnMode,
+    createdAt: value.createdAt,
+    ...(restoresSequence === undefined ? {} : { restoresSequence }),
+    ...(payload === undefined ? {} : { payload }),
+    files,
+  };
 }
 
 async function readAllRecords(root: string): Promise<StoredTurn[]> {
@@ -160,44 +338,48 @@ async function readAllRecords(root: string): Promise<StoredTurn[]> {
     const text = await readTextOrNull(join(root, turnsDirectory, name));
     if (text === null) continue;
     turns.push({
-      record: JSON.parse(text) as WorldTurnRecord,
+      record: parseTurn(text, name),
       digest: createHash("sha256").update(text).digest("hex"),
     });
   }
-  return turns.sort(
-    (left, right) => left.record.sequence - right.record.sequence,
-  );
+  return turns;
 }
 
 interface LedgerView {
   head: number;
-  byPosition: Map<number, WorldTurnRecord>;
-  digests: Map<number, string>;
-  discarded: Set<number>;
+  turns: Map<number, StoredTurn>;
 }
 
-// 被某个 rewind 丢弃的轮是 (restores, rewind) 之间的位置；它们可能仍在磁盘上，
-// 直到清理完成，但读取时一律忽略。
+// 沿当前端点回溯已发布的链。回退跳过被丢弃的轮，即使这些记录还未清理。
+// 遍历量取决于实际记录数，与被跳过的轮号间距无关。
 function viewOf(head: number, turns: readonly StoredTurn[]): LedgerView {
-  const byPosition = new Map<number, WorldTurnRecord>();
-  const digests = new Map<number, string>();
-  for (const { record, digest } of turns) {
-    if (record.sequence > head) continue;
-    byPosition.set(record.sequence, record);
-    digests.set(record.sequence, digest);
+  const stored = new Map(turns.map((turn) => [turn.record.sequence, turn]));
+  const visible = new Map<number, StoredTurn>();
+  let position = head;
+  while (position > 0) {
+    const turn = stored.get(position);
+    if (turn === undefined)
+      throw new WorldTurnLedgerError(
+        "missing_record",
+        `缺少第 ${position} 轮记录`,
+      );
+    visible.set(position, turn);
+    position = turn.record.restoresSequence ?? position - 1;
   }
-  const discarded = new Set<number>();
-  for (const record of byPosition.values()) {
-    if (record.restoresSequence === undefined) continue;
-    for (
-      let position = record.restoresSequence + 1;
-      position < record.sequence;
-      position += 1
-    ) {
-      discarded.add(position);
-    }
+  for (const { record } of turns) {
+    if (record.sequence <= head) continue;
+    if (
+      record.sequence !== head + 1 ||
+      (record.restoresSequence !== undefined &&
+        record.restoresSequence !== 0 &&
+        !visible.has(record.restoresSequence))
+    )
+      throw new WorldTurnLedgerError(
+        "corrupt",
+        `第 ${record.sequence} 轮的未完成记录与当前端点不一致`,
+      );
   }
-  return { head, byPosition, digests, discarded };
+  return { head, turns: visible };
 }
 
 // 进程内视图缓存，按端点失效。一个数据目录只被一个进程操作（ADR-0044），
@@ -228,7 +410,7 @@ export function forgetLedger(root: string): void {
 
 // 把一个端点解析到它的逻辑位置：rewind 位置等价于它所恢复的位置。
 function resolvePosition(view: LedgerView, sequence: number): number {
-  if (!Number.isInteger(sequence) || sequence < 0 || sequence > view.head) {
+  if (!isSequence(sequence) || sequence > view.head) {
     throw new WorldTurnLedgerError(
       "unreachable",
       `端点 ${sequence} 不在当前账本范围内`,
@@ -237,19 +419,14 @@ function resolvePosition(view: LedgerView, sequence: number): number {
   let position = sequence;
   for (;;) {
     if (position === 0) return 0;
-    if (view.discarded.has(position)) {
+    const turn = view.turns.get(position);
+    if (turn === undefined) {
       throw new WorldTurnLedgerError(
         "discarded",
         `端点 ${sequence} 已被回退丢弃`,
       );
     }
-    const record = view.byPosition.get(position);
-    if (!record) {
-      throw new WorldTurnLedgerError(
-        "missing_record",
-        `缺少第 ${position} 轮记录`,
-      );
-    }
+    const { record } = turn;
     if (record.mode !== "rewind") return position;
     if (record.restoresSequence === undefined) {
       throw new WorldTurnLedgerError(
@@ -267,18 +444,11 @@ function overlayAfter(
   sequence: number,
 ): Map<string, string | null> {
   const overlay = new Map<string, string | null>();
-  for (let position = sequence + 1; position <= view.head; position += 1) {
-    if (view.discarded.has(position)) continue;
-    const record = view.byPosition.get(position);
-    if (!record) {
-      throw new WorldTurnLedgerError(
-        "missing_record",
-        `缺少第 ${position} 轮记录`,
-      );
-    }
+  for (const [position, { record }] of view.turns) {
+    if (position <= sequence) break;
     if (record.mode === "rewind") continue;
     for (const file of record.files) {
-      if (!overlay.has(file.path)) overlay.set(file.path, file.before);
+      overlay.set(file.path, file.before);
     }
   }
   return overlay;
@@ -381,16 +551,28 @@ export async function appendTurn(
 // 世界首次打开时调用（FileNativeWorldStore），进程内推进失败时也调用：序号大于 head 的记录
 // 说明对应推进未完成，逆序恢复其修改前像。被丢弃的轮记录（读取时已忽略）在这里清理。
 // 返回是否回滚了未完成的轮。
-export async function recoverIncomplete(root: string): Promise<boolean> {
+export async function recoverIncomplete(
+  root: string,
+  requireCommitMetadata = false,
+): Promise<boolean> {
   const head = await readHead(root);
   const turns = await readAllRecords(root);
+  const view = viewOf(head, turns);
+  if (requireCommitMetadata) {
+    for (const { record } of view.turns.values()) {
+      if (record.mode !== "rewind" && record.payload === undefined)
+        throw new WorldTurnLedgerError(
+          "corrupt",
+          `第 ${record.sequence} 轮缺少提交元数据`,
+        );
+    }
+  }
   const incomplete = turns
     .map(({ record }) => record)
     .filter((record) => record.sequence > head)
     .sort((left, right) => right.sequence - left.sequence);
   for (const record of incomplete) {
     for (const file of [...record.files].reverse()) {
-      assertSafePath(file.path);
       const absolute = join(root, file.path);
       if (file.before === null) {
         await rm(absolute, { force: true });
@@ -400,29 +582,17 @@ export async function recoverIncomplete(root: string): Promise<boolean> {
     }
     await rm(join(root, turnFileName(record.sequence)), { force: true });
   }
-  const view = viewOf(head, turns);
-  for (const position of view.discarded) {
-    await rm(join(root, turnFileName(position)), { force: true });
+  for (const { record } of turns) {
+    if (record.sequence <= head && !view.turns.has(record.sequence))
+      await rm(join(root, turnFileName(record.sequence)), { force: true });
   }
-  forgetLedger(root);
+  viewCache.set(resolve(root), view);
   return incomplete.length > 0;
 }
 
 export async function listTurns(root: string): Promise<WorldTurnRecord[]> {
   const view = await loadView(root);
-  const turns: WorldTurnRecord[] = [];
-  for (let position = 1; position <= view.head; position += 1) {
-    if (view.discarded.has(position)) continue;
-    const record = view.byPosition.get(position);
-    if (!record) {
-      throw new WorldTurnLedgerError(
-        "missing_record",
-        `缺少第 ${position} 轮记录`,
-      );
-    }
-    turns.push(record);
-  }
-  return turns;
+  return [...view.turns.values()].reverse().map(({ record }) => record);
 }
 
 // 把端点解析为它所表示的逻辑位置（rewind 位置等价于它恢复的位置）。
@@ -441,10 +611,11 @@ export async function readEndpoint(root: string): Promise<{
 }> {
   const view = await loadView(root);
   const sequence = resolvePosition(view, view.head);
+  const turn = view.turns.get(sequence);
   return {
     sequence,
-    record: view.byPosition.get(sequence) ?? null,
-    digest: view.digests.get(sequence) ?? null,
+    record: turn?.record ?? null,
+    digest: turn?.digest ?? null,
   };
 }
 
@@ -545,8 +716,9 @@ export async function rewindTo(
     changes,
     restoresSequence: target,
   });
-  // 端点已发布，丢弃的记录即可删除；失败可忽略，读取已把它们当作不可达，下次回退或恢复会再清理。
-  for (let position = target + 1; position <= view.head; position += 1) {
+  // 端点已发布，丢弃的记录即可删除；失败可忽略，读取已把它们当作不可达，重新打开时会再清理。
+  for (const position of view.turns.keys()) {
+    if (position <= target) break;
     await rm(join(root, turnFileName(position)), { force: true }).catch(
       () => undefined,
     );

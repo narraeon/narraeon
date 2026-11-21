@@ -107,7 +107,7 @@ export class WorldAuthorityError extends Error {
 }
 
 const genesisFile = join("runtime", "genesis.json");
-const materialsFile = join("runtime", "additional-materials.json");
+const materialsFile = "runtime/additional-materials.json";
 
 function headName(position: number): string {
   return position === 0 ? "genesis" : `commit:${String(position)}`;
@@ -381,27 +381,6 @@ export class WorldLedgerAuthority {
    */
   async verifyStructure(): Promise<void> {
     await this.readHead();
-    const turns = await listTurns(this.#root);
-    for (const turn of turns) {
-      for (const file of turn.files) {
-        if (
-          file.path.startsWith("runtime/turns/") ||
-          file.path === "runtime/head.json"
-        )
-          throw new WorldAuthorityError(
-            "corrupt",
-            "轮记录引用了账本自身的文件",
-          );
-      }
-      if (turn.payload !== undefined) {
-        const commit = turn.payload as WorldTurnCommit;
-        if (commit.sequence !== turn.sequence)
-          throw new WorldAuthorityError(
-            "corrupt",
-            `第 ${turn.sequence} 轮的提交序号不一致`,
-          );
-      }
-    }
     const genesis = await readJsonOrNull<{ state?: unknown }>(
       join(this.#root, genesisFile),
     );

@@ -353,17 +353,16 @@ export class FileNativeWorldStore {
         if (this.#currentStorage.has(worldId)) return;
         const authority = new WorldLedgerAuthority(root);
         if (
-          (await authority.exists()) &&
-          (await this.playTimeline.layoutCurrent(worldId)) &&
-          (await this.playAdvances.layoutCurrent(worldId))
+          !(await authority.exists()) ||
+          !(await this.playTimeline.layoutCurrent(worldId)) ||
+          !(await this.playAdvances.layoutCurrent(worldId))
         ) {
-          await authority.readHead();
-        } else {
           await this.#storageMigrator.migrate(worldId);
           await migrateLegacyArtifactStore(dirname(this.#worldsRoot), worldId);
         }
         // Recovery follows migration; a world with no unfinished turn writes nothing.
-        await recoverIncomplete(root);
+        await recoverIncomplete(root, true);
+        await authority.readHead();
         this.#currentStorage.add(worldId);
       });
     } catch (error: unknown) {
@@ -391,6 +390,10 @@ export class FileNativeWorldStore {
           "This world was created by v0.2.0 or earlier; open it once with v0.3.0–v0.6.0 before upgrading",
           { cause: error },
         );
+      if (error instanceof WorldTurnLedgerError)
+        throw new FileNativeWorldCreationError("world_corrupt", error.message, {
+          cause: error,
+        });
       throw new FileNativeWorldCreationError(
         "world_corrupt",
         "World storage could not be migrated to the current format",
