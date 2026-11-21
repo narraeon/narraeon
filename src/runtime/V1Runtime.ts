@@ -9,7 +9,11 @@ import {
 } from "../shared/sillytavern-preset.ts";
 import { WorldArchives } from "./archive/WorldArchives.ts";
 import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
-import { FileNativeWorldCreationError } from "./world/FileNativeWorldStore.ts";
+import {
+  FileNativeWorldCreationError,
+  FileNativeWorldNotFoundError,
+} from "./world/FileNativeWorldStore.ts";
+import { RuntimeRequestRejection } from "./RuntimeRequestRejection.ts";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
 import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
 import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
@@ -45,7 +49,10 @@ import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
 import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
 import { type ModelHostBinding } from "./model/ModelHost.ts";
-import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
+import {
+  ModelConnectionStore,
+  ModelConnectionUnavailableError,
+} from "./model/ModelConnectionStore.ts";
 import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
 import {
@@ -104,6 +111,20 @@ import type {
 
 // 先取得当前端点再按它读取的请求，在端点被回退丢弃时最多重做这么多次（#94）。
 const currentEndpointReadAttempts = 3;
+
+// Direct preset library commands validate their inputs before persisting.
+const playPresetRequests = new Set<V1Request["type"]>([
+  "play.create",
+  "play.copy",
+  "play.save",
+  "play.rename",
+  "play.delete",
+  "play.enable",
+  "play.scripts",
+  "play.select",
+  "play.export",
+  "play.import",
+]);
 
 export class V1Runtime {
   readonly worldArchives: WorldArchives;
@@ -280,6 +301,21 @@ export class V1Runtime {
       return { protocol: v1Protocol, result };
     } catch (error) {
       await this.#errorLog?.recordRequestFailure(request, error);
+      if (
+        error instanceof RuntimeRequestRejection ||
+        (error instanceof ModelConnectionUnavailableError &&
+          request.type === "world.create") ||
+        (error instanceof FileNativeWorldNotFoundError &&
+          (request.type === "world.rename" ||
+            request.type === "world.story.export" ||
+            request.type === "world.delete")) ||
+        (error instanceof FileNativePlayPresetError &&
+          error.code !== "store_invalid" &&
+          playPresetRequests.has(request.type))
+      )
+        throw new V1ProtocolError("invalid_request", error.message, {
+          cause: error,
+        });
       if (error instanceof WorldArchiveError)
         throw new V1ProtocolError(error.code, error.message, { cause: error });
       if (
@@ -873,12 +909,24 @@ export class V1Runtime {
           this.#locale,
         );
       case "world.delete":
-        return playCall(async () => {
-          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-          await this.#playCallChains.abortWorld(request.worldId);
-          this.#playCallChains.forgetWorld(request.worldId);
-          return this.#worlds.deleteWorld(request.worldId);
-        });
+        return playCall(() =>
+          this.#worlds.deleteWorld(request.worldId, async () => {
+            try {
+              await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
+            } catch (error: unknown) {
+              if (
+                error instanceof FileNativeWorldCreationError &&
+                error.code === "operation_conflict"
+              )
+                throw new V1ProtocolError(error.code, error.message, {
+                  cause: error,
+                });
+              throw error;
+            }
+            await this.#playCallChains.abortWorld(request.worldId);
+            this.#playCallChains.forgetWorld(request.worldId);
+          }),
+        );
       case "world.archive.export":
         return this.worldArchives.exportWorld(request);
       case "world.archive.import":

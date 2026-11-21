@@ -222,3 +222,30 @@ test("an unacknowledged write reports an unknown outcome without replaying the r
   });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+test("明确拒绝重命名时直接显示原因", async () => {
+  respondWith(
+    Response.json(
+      {
+        protocol: "narraeon.runtime/v1",
+        error: {
+          code: "invalid_request",
+          message:
+            "World name must contain 1 to 160 characters and no line breaks",
+        },
+      },
+      { status: 400 },
+    ),
+  );
+  await expect(
+    new RuntimeClient().request({
+      type: "world.rename",
+      worldId: "world-one",
+      name: " ",
+    }),
+  ).rejects.toMatchObject({
+    kind: "runtime",
+    protocolCode: "invalid_request",
+    message: "世界名称须为 1–160 个字符，且不能换行。",
+  });
+});

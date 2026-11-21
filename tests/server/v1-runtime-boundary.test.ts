@@ -34,6 +34,177 @@ afterEach(async () => {
   );
 });
 
+test("写入前拒绝返回协议错误，存储故障仍返回服务错误", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-v1-write-outcome-"));
+  roots.push(root);
+  const staticRoot = join(root, "dist");
+  await mkdir(staticRoot);
+  await writeFile(join(staticRoot, "index.html"), "<!doctype html>");
+  const runtime = await createRuntime({
+    dataRoot: join(root, "data"),
+    configRoot: join(root, "config"),
+    logRoot: join(root, "logs"),
+  });
+  const server = await createServer({
+    runtime,
+    staticRoot,
+    port: 4317,
+    logger: false,
+  });
+  const send = (request: V1Request) =>
+    server.inject({
+      authority: "127.0.0.1:4317",
+      method: "POST",
+      url: "/api/runtime/v1",
+      headers: { "content-type": "application/json" },
+      payload: { protocol: v1Protocol, request },
+    });
+
+  try {
+    const model = {
+      provider: "chat_completions" as const,
+      modelId: "fixture",
+      contextWindowTokens: 4096,
+      maxOutputTokens: 512,
+    };
+    const connection = {
+      ...model,
+      name: "Custom",
+      presetId: "custom" as const,
+      baseUrl: "https://example.test",
+    };
+    const rejections: { request: V1Request; message: string }[] = [
+      {
+        request: { type: "world.rename", worldId: "world-missing", name: " " },
+        message:
+          "World name must contain 1 to 160 characters and no line breaks",
+      },
+      {
+        request: { type: "world.rename", worldId: " ", name: "Revised" },
+        message: "World ID is invalid",
+      },
+      {
+        request: { type: "world.story.export", worldId: " ", format: "text" },
+        message: "World ID is invalid",
+      },
+      {
+        request: { type: "world.delete", worldId: "world-missing" },
+        message: "World does not exist",
+      },
+      {
+        request: {
+          type: "world.story.export",
+          worldId: "world-missing",
+          format: "text",
+        },
+        message: "World does not exist",
+      },
+      {
+        request: {
+          type: "protagonist-templates.copy",
+          id: "template-02c4f746-5cbd-4554-b3cb-51b51182149a",
+        },
+        message: "Protagonist template was not found",
+      },
+      {
+        request: { type: "model.copy", connectionId: "missing", name: "Copy" },
+        message: "The model configuration to copy was not found",
+      },
+      {
+        request: { type: "model.save", connection },
+        message: "A new model configuration requires an API key",
+      },
+      {
+        request: { type: "play.select", presetId: "missing" },
+        message: "Requested play preset was not found",
+      },
+    ];
+    for (const { request, message } of rejections) {
+      const response = await send(request);
+      expect(response.statusCode, request.type).toBe(400);
+      expect(response.json(), request.type).toMatchObject({
+        protocol: v1Protocol,
+        error: { code: "invalid_request", message },
+      });
+    }
+
+    const sample = await send({ type: "content.create-sample", locale: "en" });
+    expect(sample.statusCode).toBe(200);
+    const packageId = sample.json<{ result: { localId: string } }>().result
+      .localId;
+    const rejectedTitle = await send({
+      type: "content.rename",
+      packageId,
+      name: " ",
+    });
+    expect(rejectedTitle.statusCode).toBe(400);
+    expect(rejectedTitle.json()).toMatchObject({
+      protocol: v1Protocol,
+      error: {
+        code: "invalid_request",
+        message:
+          "A content-package title must contain 1 to 160 characters and no line breaks",
+      },
+    });
+    const create = {
+      type: "world.create" as const,
+      operationId: "revision-world",
+      packageId,
+      model,
+    };
+    const missingModel = await send(create);
+    expect(missingModel.statusCode).toBe(400);
+    expect(missingModel.json()).toMatchObject({
+      protocol: v1Protocol,
+      error: {
+        code: "invalid_request",
+        message: "No V1 model connection is enabled",
+      },
+    });
+    expect(
+      (
+        await send({
+          type: "model.save",
+          connection: { ...connection, apiKey: "fixture-key" },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const created = await send(create);
+    expect(created.statusCode).toBe(200);
+    const {
+      result: {
+        world: { worldId },
+      },
+    } = created.json<{ result: { world: { worldId: string } } }>();
+    expect(
+      (await send({ type: "world.revision.open", worldId })).statusCode,
+    ).toBe(200);
+    const deletion = await send({ type: "world.delete", worldId });
+    expect(deletion.json()).toMatchObject({
+      protocol: v1Protocol,
+      error: {
+        code: "operation_conflict",
+        message:
+          "World play and other changes are locked while a world revision is open",
+      },
+    });
+    expect((await send({ type: "world.read", worldId })).statusCode).toBe(200);
+
+    await writeFile(join(root, "config", "model-connections-v1.json"), "{}", {
+      mode: 0o600,
+    });
+    const storageFailure = await send({
+      type: "model.copy",
+      connectionId: "missing",
+      name: "Copy",
+    });
+    expect(storageFailure.statusCode).toBe(500);
+    expect(storageFailure.json()).not.toHaveProperty("protocol");
+  } finally {
+    await server.close();
+  }
+});
+
 function playChainView(
   status: V1PlayCallChainView["status"],
   text: string,

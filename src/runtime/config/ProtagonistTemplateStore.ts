@@ -8,6 +8,7 @@ import {
   type ProtagonistTemplatesView,
   type SaveProtagonistTemplateInput,
 } from "../../protocol/protagonistTemplates.ts";
+import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 
 const fileName = "protagonist-templates-v1.json";
 
@@ -32,7 +33,7 @@ export class ProtagonistTemplateStore {
         !isProtagonistTemplateContent(input.name, input.body) ||
         (input.id !== undefined && !isProtagonistTemplateId(input.id))
       )
-        throw new Error(
+        throw new RuntimeRequestRejection(
           "Protagonist template requires a single-line name of 1–80 characters and a Markdown body of 1–16 KiB",
         );
       const template: ProtagonistTemplate = {
@@ -122,9 +123,10 @@ export class ProtagonistTemplateStore {
 
 function findTemplate(templates: ProtagonistTemplate[], id: string): number {
   if (!isProtagonistTemplateId(id))
-    throw new Error("Invalid protagonist template id");
+    throw new RuntimeRequestRejection("Invalid protagonist template id");
   const index = templates.findIndex((template) => template.id === id);
-  if (index < 0) throw new Error("Protagonist template was not found");
+  if (index < 0)
+    throw new RuntimeRequestRejection("Protagonist template was not found");
   return index;
 }
 
