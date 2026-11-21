@@ -32,6 +32,7 @@ test("HTTP 提供原生 ZIP 上传、自动下载文件名和完整导入，JSON
   });
   async function command(request: unknown) {
     return server.inject({
+      authority: "127.0.0.1:3000",
       method: "POST",
       url: "/api/runtime/v1",
       payload: { protocol: "narraeon.runtime/v1", request },
@@ -48,7 +49,7 @@ test("HTTP 提供原生 ZIP 上传、自动下载文件名和完整导入，JSON
       result: { archiveId: string; bytes: number };
     }>().result;
     const download = await server.inject(
-      `/api/runtime/v1/world-archives/${metadata.archiveId}`,
+      `http://127.0.0.1:3000/api/runtime/v1/world-archives/${metadata.archiveId}`,
     );
     expect(download.statusCode).toBe(200);
     expect(download.headers["content-type"]).toBe("application/zip");
@@ -60,6 +61,7 @@ test("HTTP 提供原生 ZIP 上传、自动下载文件名和完整导入，JSON
       .poll(async () => readdir(join(fixture.root, "world-archives/exports")))
       .toEqual([]);
     const uploaded = await server.inject({
+      authority: "127.0.0.1:3000",
       method: "POST",
       url: "/api/runtime/v1/world-archives",
       headers: { "content-type": "application/zip" },
@@ -81,6 +83,7 @@ test("HTTP 提供原生 ZIP 上传、自动下载文件名和完整导入，JSON
         .archiveNeedsFreshContext,
     ).toBe(true);
     const brokenUpload = await server.inject({
+      authority: "127.0.0.1:3000",
       method: "POST",
       url: "/api/runtime/v1/world-archives",
       headers: { "content-type": "application/zip" },
@@ -98,11 +101,11 @@ test("HTTP 提供原生 ZIP 上传、自动下载文件名和完整导入，JSON
       "invalid_archive",
     );
     const missingDownload = await server.inject(
-      "/api/runtime/v1/world-archives/absent",
+      "http://127.0.0.1:3000/api/runtime/v1/world-archives/absent",
     );
     expect(missingDownload.statusCode).toBe(404);
     const traversal = await server.inject(
-      "/api/runtime/v1/world-archives/a%5Cb",
+      "http://127.0.0.1:3000/api/runtime/v1/world-archives/a%5Cb",
     );
     expect(traversal.statusCode).toBe(400);
   } finally {

@@ -1,4 +1,6 @@
 import { registerConversationStream } from "./ConversationStream.ts";
+import { checkWebAccess } from "./WebAccess.ts";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
@@ -80,6 +82,8 @@ export async function createServer(input: {
   runtime: V1Runtime;
   staticRoot: string;
   port: number;
+  trustedOrigins?: readonly string[];
+  mobileStartupKey?: Buffer;
   logger?: boolean;
   logStream?: Writable;
 }): Promise<FastifyInstance> {
@@ -105,12 +109,17 @@ export async function createServer(input: {
               : { stream: input.logStream }),
           },
   });
+  server.addHook(
+    "onRequest",
+    checkWebAccess(input.port, input.trustedOrigins ?? []),
+  );
   const html = await readFile(join(input.staticRoot, "index.html"), "utf8");
   const logRuntimeRequest: preHandlerHookHandler = (request, _reply, done) => {
     if (!isPollingRequest(request))
       request.log.info({ req: request }, "incoming request");
     done();
   };
+  const mobileStartupKey = input.mobileStartupKey;
   server.addHook("onSend", (request, reply, payload, done) => {
     void reply
       .header(
@@ -127,6 +136,23 @@ export async function createServer(input: {
       )
       .header("X-Content-Type-Options", "nosniff")
       .header("X-Frame-Options", "DENY");
+    const challenge = request.headers["x-narraeon-startup-challenge"];
+    const path = request.url.split("?", 1)[0];
+    if (
+      mobileStartupKey !== undefined &&
+      request.method === "GET" &&
+      reply.statusCode === 200 &&
+      typeof challenge === "string" &&
+      /^[a-f0-9]{64}$/.test(challenge) &&
+      (path === "/" || path === "/index.html" || path?.startsWith("/assets/"))
+    ) {
+      const proof = createHmac("sha256", mobileStartupKey)
+        .update(`${challenge}\n${request.url}`)
+        .digest("hex");
+      void reply
+        .header("X-Narraeon-Startup-Proof", proof)
+        .header("Cache-Control", "no-store");
+    }
     done(null, payload);
   });
   registerConversationStream(server, input.runtime);
@@ -138,20 +164,30 @@ export async function createServer(input: {
       (_request, payload, done) => done(null, payload),
     );
     archives.post("/api/runtime/v1/world-archives", async (request, reply) => {
+      const body = request.body as Readable;
+      // A failed upload pipeline must leave the HTTP socket open for the error response.
+      const transfer = new PassThrough();
+      const forwardError = (error: Error) => transfer.destroy(error);
+      // The incoming body can abort while Runtime is opening the destination.
+      transfer.on("error", () => undefined);
+      body.on("error", forwardError).pipe(transfer);
       try {
-        return await input.runtime.worldArchives.upload(
-          request.body as Readable,
-        );
+        return await input.runtime.worldArchives.upload(transfer);
       } catch (error) {
         await input.runtime.recordArchiveFailure(
           { type: "world.archive.upload" },
           error,
         );
-        if (error instanceof WorldArchiveError)
+        if (error instanceof WorldArchiveError) {
+          if (!request.raw.complete) void reply.header("Connection", "close");
           return reply
             .status(error.code === "limit_exceeded" ? 413 : 400)
             .send({ error: { code: error.code, message: error.message } });
+        }
         throw error;
+      } finally {
+        body.unpipe(transfer).off("error", forwardError);
+        transfer.destroy();
       }
     });
     // The browser checks this before it starts the one-time download, so a

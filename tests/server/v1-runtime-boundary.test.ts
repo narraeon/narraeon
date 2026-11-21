@@ -131,6 +131,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
   };
 
   const progress = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -148,6 +149,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
   );
 
   const chainInspection = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -159,6 +161,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
   expect(chainInspection.statusCode).toBe(200);
 
   const interrupted = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -175,6 +178,7 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
   });
   expect(interrupted.statusCode).toBe(200);
   const cancelled = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -247,6 +251,7 @@ test("生产 HTTP 边界把 Provider 文本增量作为 NDJSON 调用链流直�
   });
 
   const response = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers: {
@@ -354,6 +359,7 @@ test("模型流仍在等待时，独立的精确取消请求可以终止本轮�
   };
 
   const streamed = server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers: { ...headers, accept: "application/x-ndjson" },
@@ -370,6 +376,7 @@ test("模型流仍在等待时，独立的精确取消请求可以终止本轮�
   });
   await started;
   const cancellation = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -430,33 +437,24 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     "content-type": "application/json",
   };
 
-  // The local HTTP adapter deliberately has no partial Origin policy. Public
-  // deployment needs one unified security model instead of a hostname allowlist.
-  for (const origin of [
-    undefined,
-    "http://narraeon.internal:4317",
-    "http://evil.example",
-  ]) {
-    const accepted = await server.inject({
-      method: "POST",
-      url: "/api/runtime/v1",
-      headers: {
-        "content-type": "application/json",
-        ...(origin === undefined ? {} : { origin }),
-      },
-      payload: {
-        protocol: "narraeon.runtime/v1",
-        request: { type: "workspace.read" },
-      },
-    });
-    expect(accepted.statusCode).toBe(200);
-    expect(accepted.json()).toMatchObject({
+  const accepted = await server.inject({
+    authority: "127.0.0.1:4317",
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers: { ...headers, origin: "http://127.0.0.1:4317" },
+    payload: {
       protocol: "narraeon.runtime/v1",
-      result: { storageNotices: [] },
-    });
-  }
+      request: { type: "workspace.read" },
+    },
+  });
+  expect(accepted.statusCode).toBe(200);
+  expect(accepted.json()).toMatchObject({
+    protocol: "narraeon.runtime/v1",
+    result: { storageNotices: [] },
+  });
 
   const bareRequest = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -468,6 +466,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   });
 
   const invalidProtocol = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -482,6 +481,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   });
 
   const current = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -501,6 +501,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   // Durable conversation reads pass protocol validation and safely return
   // null when the package has no open setting-improvement session.
   const unknownProgress = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -516,6 +517,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   expect(unknownProgress.json()).toMatchObject({ result: null });
 
   const malformedProgress = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -530,6 +532,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   });
 
   const pathImport = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -550,6 +553,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     },
   ]);
   const uploaded = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -569,6 +573,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   });
 
   const invalidArchive = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -587,6 +592,7 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
   expect(invalidArchive.body).toContain("ZIP");
 
   const unsupportedTree = await server.inject({
+    authority: "127.0.0.1:4317",
     method: "POST",
     url: "/api/runtime/v1",
     headers,
@@ -627,6 +633,7 @@ test("Runtime 请求失败写入 runtime-errors 日志且浏览器拿到错误�
   });
   const send = (request: unknown) =>
     server.inject({
+      authority: "127.0.0.1:4317",
       method: "POST",
       url: "/api/runtime/v1",
       headers: { "content-type": "application/json" },

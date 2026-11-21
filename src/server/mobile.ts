@@ -30,12 +30,20 @@ try {
   if (!staticRoot)
     throw new Error("NARRAEON_STATIC_ROOT is required for the mobile entry");
 
+  const startupKey = process.env.NARRAEON_MOBILE_STARTUP_KEY;
+  delete process.env.NARRAEON_MOBILE_STARTUP_KEY;
+  if (startupKey === undefined || !/^[a-f0-9]{64}$/.test(startupKey))
+    throw new Error(
+      "The Android launcher must provide a valid mobile startup key",
+    );
+
   const port = parseWebPort(process.env.NARRAEON_PORT);
   const server = await startWebServer({
     paths,
     staticRoot,
     host: "127.0.0.1",
     port,
+    mobileStartupKey: Buffer.from(startupKey, "hex"),
   });
 
   const address = server.server.address();
@@ -44,6 +52,7 @@ try {
   process.stdout.write(`NARRAEON_READY ${listeningPort}\n`);
 } catch (error: unknown) {
   recordCrash("startup", error);
+  process.exitCode = 1;
 }
 
 function recordCrash(kind: string, value: unknown): void {

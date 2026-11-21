@@ -2,6 +2,7 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { parseTrustedWebOrigins } from "../server/WebAccess.ts";
 import { resolveAppPaths } from "../runtime/config/appPaths.ts";
 import {
   parseWebHost,
@@ -37,6 +38,7 @@ interface WebCommand {
   kind: "web";
   host: WebHost;
   port: number;
+  trustedOrigins: string[];
   openBrowser: boolean;
 }
 
@@ -74,6 +76,9 @@ export async function runNarraeonCli(
       staticRoot: input.staticRoot,
       host: command.host,
       port: command.port,
+      ...(command.trustedOrigins.length === 0
+        ? {}
+        : { trustedOrigins: command.trustedOrigins }),
     });
   } catch (error: unknown) {
     if (hasErrorCode(error, "EADDRINUSE"))
@@ -147,8 +152,12 @@ function parseCliCommand(
     );
   let port: number;
   let host: WebHost;
+  let trustedOrigins: string[];
   try {
     host = parseWebHost(environment.NARRAEON_HOST);
+    trustedOrigins = parseTrustedWebOrigins(
+      environment.NARRAEON_TRUSTED_ORIGINS,
+    );
     port = parseWebPort(
       parsed.values.port ?? environment.NARRAEON_PORT,
       parsed.values.port === undefined ? "NARRAEON_PORT" : "--port",
@@ -160,6 +169,7 @@ function parseCliCommand(
     kind: "web",
     host,
     port,
+    trustedOrigins,
     openBrowser: parsed.values.open !== false,
   };
 }

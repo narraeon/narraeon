@@ -59,9 +59,13 @@ Then open <http://127.0.0.1:4317>. The named volume preserves worlds,
 configuration, credentials, logs, and recovery state across container
 recreation. Keep the host-side address as `127.0.0.1`; publishing the port on
 all interfaces would unnecessarily expose a local, single-user Runtime.
-Narraeon does not currently provide built-in web authentication or access
-control. Run it only on loopback or a trusted private network; public exposure
-is unsupported until a unified security model is designed.
+Runtime accepts the loopback addresses `127.0.0.1` and `localhost` on its
+configured listening port. For a different published port or a reverse proxy on
+a trusted private network, set `NARRAEON_TRUSTED_ORIGINS` to the comma-separated
+browser origins, for example `http://127.0.0.1:8080,https://narraeon.example`.
+Configure the proxy to preserve the incoming `Host` and `Origin` headers.
+Narraeon provides no built-in web authentication. Run it on loopback or a
+trusted private network.
 Stable releases move `latest`, prereleases move `next`, and every release also
 has an exact version tag.
 

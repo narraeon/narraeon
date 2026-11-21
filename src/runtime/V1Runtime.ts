@@ -7,6 +7,7 @@ import {
   inspectSillyTavernPreset,
   convertSillyTavernPreset,
 } from "../shared/sillytavern-preset.ts";
+import type { ArchiveUploadPolicy } from "./archive/ArchiveUploads.ts";
 import { WorldArchives } from "./archive/WorldArchives.ts";
 import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
 import { FileNativeWorldCreationError } from "./world/FileNativeWorldStore.ts";
@@ -128,6 +129,7 @@ export class V1Runtime {
     dataRoot: string;
     configRoot: string;
     logRoot?: string;
+    archiveUploadPolicy?: ArchiveUploadPolicy;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
     this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
@@ -158,6 +160,9 @@ export class V1Runtime {
       dataRoot: input.dataRoot,
       worlds: this.#worlds,
       chains: this.#playCallChains,
+      ...(input.archiveUploadPolicy === undefined
+        ? {}
+        : { uploadPolicy: input.archiveUploadPolicy }),
     });
     this.#models = new ModelConnectionStore(input.configRoot);
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {

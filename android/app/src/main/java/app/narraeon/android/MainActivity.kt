@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
@@ -19,6 +20,9 @@ import android.webkit.ConsoleMessage
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -35,6 +39,7 @@ import androidx.webkit.WebViewFeature
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
     private lateinit var container: FrameLayout
@@ -66,7 +71,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         container = FrameLayout(this)
         setContentView(container)
-        attachWebView()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = onBack()
         })
@@ -108,10 +112,44 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun attachWebView() {
+        val verifiedDocument = AtomicBoolean(false)
         val view = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val url = request.url
+                    val isLocal = url.scheme == "http" && url.encodedAuthority == BACKEND_AUTHORITY
+                    val isMainFrame = request.isForMainFrame
+                    val path = url.encodedPath
+                    if (isMainFrame) {
+                        verifiedDocument.set(false)
+                        if (!isLocal || request.method != "GET" || (path != "/" && path != "/index.html")) {
+                            return blockedResource()
+                        }
+                    } else if (!isLocal || request.method != "GET" || path?.startsWith("/assets/") != true) {
+                        return null
+                    }
+
+                    // The page and its executable assets are handed to WebView from the same
+                    // connections on which they were verified. A failed check cannot fall back to HTTP.
+                    val result = NodeService.backendIdentity.verify(URL(url.toString()), ::verifiedResource)
+                    if (result is BackendIdentity.Verification.Verified && NodeService.nodeState == NodeService.NodeState.Running) {
+                        if (isMainFrame) verifiedDocument.set(true)
+                        return result.value
+                    }
+                    if (isMainFrame) mainHandler.post {
+                        if (webView === view) showUnverifiedBackend()
+                    }
+                    return blockedResource()
+                }
+
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    if (!request.isForMainFrame) return false
+                    return request.url.scheme != "http" || request.url.encodedAuthority != BACKEND_AUTHORITY
+                }
+
                 @RequiresApi(Build.VERSION_CODES.O)
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                     onRendererGone(view, detail)
@@ -142,7 +180,11 @@ class MainActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(view, BRIDGE_NAME, setOf(BACKEND_ORIGIN)) { _, message, _, isMainFrame, reply ->
                 val data = message.data ?: return@addWebMessageListener
-                if (!isMainFrame) return@addWebMessageListener
+                if (!isMainFrame || !verifiedDocument.get() || webView !== view ||
+                    NodeService.nodeState != NodeService.NodeState.Running
+                ) {
+                    return@addWebMessageListener
+                }
                 if (data == EXPORT_LOGS_MESSAGE) LogExport.share(this) else fileSaver.handle(data, reply)
             }
         }
@@ -150,6 +192,21 @@ class MainActivity : AppCompatActivity() {
         container.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         webView = view
     }
+
+    private fun verifiedResource(connection: HttpURLConnection): WebResourceResponse {
+        val contentType = connection.contentType.orEmpty()
+        val charset = contentType.substringAfter("charset=", "").trim().ifEmpty { null }
+        val headers = connection.headerFields.mapNotNull { (name, values) ->
+            if (name == null || name.equals("X-Narraeon-Startup-Proof", true)) null
+            else name to values.joinToString(", ")
+        }.toMap()
+        val content = connection.inputStream.use { it.readBytes() }
+        return WebResourceResponse(contentType.substringBefore(';'), charset, 200, "OK", headers, content.inputStream())
+    }
+
+    private fun blockedResource() = WebResourceResponse(
+        "text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArray(0).inputStream(),
+    )
 
     // Opens the system document picker for <input type="file">. The page's accept list
     // mixes extensions and MIME types, and file managers often report a .zip as
@@ -203,43 +260,57 @@ class MainActivity : AppCompatActivity() {
             showFailure(getString(R.string.failure_renderer_repeated))
             return
         }
-        attachWebView()
-        webView?.loadUrl(BACKEND_URL)
+        waitForBackend()
     }
 
-    // Polls the local backend until it answers, then loads it. Stops early when
-    // the Node thread has already ended, since it cannot restart in this process.
+    // A WebView and its bridge are created only after the current Node instance proves
+    // it owns the listening endpoint. Apply the same check after a renderer restart.
     private fun waitForBackend() {
         poller.execute {
-            val deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
-                if (isBackendUp()) {
-                    mainHandler.post { webView?.loadUrl(BACKEND_URL) }
+            val deadline = SystemClock.elapsedRealtime() + STARTUP_TIMEOUT_MS
+            while (!Thread.currentThread().isInterrupted && SystemClock.elapsedRealtime() < deadline) {
+                when (val state = NodeService.nodeState) {
+                    is NodeService.NodeState.Exited -> {
+                        mainHandler.post { showFailure(getString(R.string.failure_backend_exited, state.detail)) }
+                        return@execute
+                    }
+                    NodeService.NodeState.Running -> when (NodeService.backendIdentity.verify(URL(BACKEND_URL)) {}) {
+                        is BackendIdentity.Verification.Verified -> {
+                            mainHandler.post {
+                                if (isFinishing || isDestroyed) return@post
+                                val current = NodeService.nodeState
+                                if (current is NodeService.NodeState.Exited) {
+                                    showFailure(getString(R.string.failure_backend_exited, current.detail))
+                                } else {
+                                    attachWebView()
+                                    webView?.loadUrl(BACKEND_URL)
+                                }
+                            }
+                            return@execute
+                        }
+                        BackendIdentity.Verification.Unverified -> {
+                            mainHandler.post { showUnverifiedBackend() }
+                            return@execute
+                        }
+                        BackendIdentity.Verification.Unavailable -> Unit
+                    }
+                    else -> Unit
+                }
+                try {
+                    Thread.sleep(POLL_INTERVAL_MS)
+                } catch (_: InterruptedException) {
                     return@execute
                 }
-                val state = NodeService.nodeState
-                if (state is NodeService.NodeState.Exited) {
-                    mainHandler.post { showFailure(getString(R.string.failure_backend_exited, state.detail)) }
-                    return@execute
-                }
-                Thread.sleep(POLL_INTERVAL_MS)
             }
+            if (Thread.currentThread().isInterrupted) return@execute
             DiagnosticLog.append(this, "node-service.log", "backend did not answer within ${STARTUP_TIMEOUT_MS}ms")
             mainHandler.post { showFailure(getString(R.string.failure_backend_timeout)) }
         }
     }
 
-    private fun isBackendUp(): Boolean {
-        val connection = URL(BACKEND_URL).openConnection() as HttpURLConnection
-        return try {
-            connection.connectTimeout = 500
-            connection.readTimeout = 500
-            connection.responseCode == 200
-        } catch (_: Exception) {
-            false
-        } finally {
-            connection.disconnect()
-        }
+    private fun showUnverifiedBackend() {
+        DiagnosticLog.append(this, "node-service.log", "backend startup proof did not match")
+        showFailure(getString(R.string.failure_backend_unverified, NodeService.PORT))
     }
 
     // A native screen that works without the WebView or the backend.
@@ -305,7 +376,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val BACKEND_ORIGIN = "http://127.0.0.1:${NodeService.PORT}"
+        private const val BACKEND_AUTHORITY = "127.0.0.1:${NodeService.PORT}"
+        private const val BACKEND_ORIGIN = "http://$BACKEND_AUTHORITY"
         private const val BACKEND_URL = "$BACKEND_ORIGIN/"
         private const val BRIDGE_NAME = "NarraeonAndroid"
         private const val EXPORT_LOGS_MESSAGE = "export-logs"

@@ -40,6 +40,7 @@ class NodeService : Service() {
                 val arguments = arrayOf("node", File(root, "node/server/mobile.js").path)
                 val environment = arrayOf(
                     "NARRAEON_PORT=$PORT",
+                    "NARRAEON_MOBILE_STARTUP_KEY=${backendIdentity.startupKey}",
                     "NARRAEON_STATIC_ROOT=${File(root, "web").path}",
                     "NARRAEON_DATA_ROOT=${File(filesDir, "data").path}",
                     "NARRAEON_CONFIG_ROOT=${File(filesDir, "config").path}",
@@ -170,6 +171,7 @@ class NodeService : Service() {
 
     companion object {
         const val PORT = 4317
+        internal val backendIdentity = BackendIdentity()
         private const val TAG = "NARRAEON-SERVICE"
         private const val ASSET_ROOT = "narraeon"
         private const val VERSION_FILE = "bundle-version.txt"

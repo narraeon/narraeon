@@ -7,6 +7,8 @@ import {
   startWebServer,
 } from "./startWebServer.ts";
 
+import { parseTrustedWebOrigins } from "./WebAccess.ts";
+
 const host = parseWebHost(process.env.NARRAEON_HOST);
 const port = parseWebPort(process.env.NARRAEON_PORT);
 const paths = resolveAppPaths(process.env);
@@ -15,6 +17,7 @@ const server = await startWebServer({
   staticRoot: resolve("dist/web"),
   host,
   port,
+  trustedOrigins: parseTrustedWebOrigins(process.env.NARRAEON_TRUSTED_ORIGINS),
 });
 
 installGracefulShutdown(server);
