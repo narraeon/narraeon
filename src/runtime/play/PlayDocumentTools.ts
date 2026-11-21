@@ -51,6 +51,7 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
+    editDetails?: string;
     sizeAdvice?: string;
   };
 }
@@ -475,11 +476,12 @@ function applyPlayCandidatePatch(
         "candidate",
       );
     const changed = revised.changes.length > 0;
-    const receipt = formatToolRevisionReceipt(
-      target.shortRef,
-      revised.changes,
-      revised.editOutcomes,
-    );
+    if (revised.changes.length > 1)
+      throw new Error(
+        "A world_patch revision must affect only its target document",
+      );
+    const editDetails = formatToolEditDetails(revised.editOutcomes);
+    const status = `@${target.shortRef} ${changed ? "pending write" : "unchanged"}`;
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     carryWriteAuthorizations(
@@ -507,8 +509,12 @@ function applyPlayCandidatePatch(
       }
     return {
       ok: true,
-      markdown: receipt,
-      candidateWrite: { shortRef: target.shortRef, changed },
+      markdown: editDetails === "" ? status : `${status} · ${editDetails}`,
+      candidateWrite: {
+        shortRef: target.shortRef,
+        changed,
+        ...(editDetails === "" ? {} : { editDetails }),
+      },
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
@@ -580,32 +586,20 @@ function authorizationsAfterEdits(
   return authorization;
 }
 
-function formatToolRevisionReceipt(
-  shortRef: string,
-  changes: readonly WorldDocumentRevisionChange[],
+function formatToolEditDetails(
   outcomes: readonly WorldDocumentEditOutcome[],
 ): string {
-  if (changes.length > 1)
-    throw new Error(
-      "A world_patch revision must affect only its target document",
-    );
-  const failed = outcomes.filter(({ status }) => status === "failed").length;
-  const parts = [
-    changes.length === 1
-      ? `@${shortRef} pending write`
-      : `@${shortRef} unchanged`,
-  ];
-  if (failed > 0)
-    parts.push(`${outcomes.length - failed}/${outcomes.length} edits applied`);
-  else if (outcomes.some(({ status }) => status === "no_op"))
-    parts.push(`${outcomes.length} edits applied`);
-  const notes = formatEditNotes(outcomes);
-  if (notes !== "") parts.push(notes);
-  if (failed > 0)
-    parts.push(
-      "applied edits are not resent; send again only the edits listed above",
-    );
-  return parts.join(" · ");
+  const applied = outcomes.filter(({ status }) => status === "applied").length;
+  if (applied === outcomes.length) return "";
+  return [
+    `${applied}/${outcomes.length} edits applied`,
+    formatEditNotes(outcomes),
+    outcomes.some(({ status }) => status === "failed")
+      ? "Resend only rejected edits if needed"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Lists only the edits that did not apply cleanly: failed ones and no-ops. */

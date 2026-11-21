@@ -6891,7 +6891,7 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
   expect(persisted).toMatchObject({ markdown: receipt.markdown });
 });
 
-test("超过建议体积的写入回执保留整理提示，且不附覆盖说明", async () => {
+test("部分成功的批量 patch 在下一次请求中保留失败原因和整理提示", async () => {
   const files = worldFiles();
   files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
     "时间: 黄昏\n";
@@ -6911,6 +6911,8 @@ test("超过建议体积的写入回执保留整理提示，且不附覆盖说�
               target: "@current-situation",
               edits: [
                 { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
+                { op: "append", locator: { yaml: ["时间"] }, value: "黎明" },
+                { op: "remove", locator: { yaml: ["已缺失"] } },
               ],
             },
           },
@@ -6919,7 +6921,7 @@ test("超过建议体积的写入回执保留整理提示，且不附覆盖说�
       { outcome: "response", text: "你一直等到午夜。" },
     ],
   });
-  await new PlayCallChain(worlds).start({
+  const play = await new PlayCallChain(worlds).start({
     worldId,
     chainId: "oversized-receipt",
     exchangeId: "first",
@@ -6933,12 +6935,28 @@ test("超过建议体积的写入回执保留整理提示，且不附覆盖说�
   expect(receipt).toMatchObject({ kind: "tool", toolCallId: "time" });
   if (receipt?.kind !== "tool")
     throw new Error("Missing committed write receipt");
+  expect(receipt.markdown).toContain("@current-situation write succeeded");
+  expect(receipt.markdown).toContain("1/3 edits applied");
+  expect(receipt.markdown).toContain(
+    "edit #2 (时间): YAML append target must be a sequence",
+  );
+  expect(receipt.markdown).toContain("edit #3 no-op: target absent");
   expect(receipt.markdown).toMatch(
-    /^@current-situation write succeeded\nMaintenance advice: body \d+ UTF-8 bytes, advisory limit 10; change [+-]?\d+\.$/u,
+    /Maintenance advice: body \d+ UTF-8 bytes, advisory limit 10; change [+-]?\d+\.$/u,
   );
   expect(receipt.markdown).not.toMatch(
     /fresh context|Node scopes|Summary:|catalog summary|Fresh-context coverage|暂时无法判定/u,
   );
+  const event = play.events.find(
+    (item) => item.kind === "tool_result" && item.callId === "time",
+  );
+  expect(
+    await worlds.playTimeline.readDetail(worldId, play.chainId, event!.id),
+  ).toMatchObject({ markdown: receipt.markdown });
+  const state = await worlds.readSurface(worldId, "state");
+  const situation = state.find(({ path }) => path === "current-situation.yaml");
+  expect(situation?.contents).toContain("时间: 午夜");
+  expect(situation?.contents).not.toContain("黎明");
 });
 
 test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", async () => {

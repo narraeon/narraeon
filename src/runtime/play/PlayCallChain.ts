@@ -3713,7 +3713,11 @@ function finalizeWriteReceipts(settlement: {
       candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
         ? `@${candidateWrite.shortRef} write succeeded`
         : `@${candidateWrite.shortRef} unchanged`;
-    const markdown = [status, candidateWrite.sizeAdvice]
+    const markdown = [
+      status,
+      candidateWrite.editDetails,
+      candidateWrite.sizeAdvice,
+    ]
       .filter(Boolean)
       .join("\n");
     completed.result.markdown = markdown;

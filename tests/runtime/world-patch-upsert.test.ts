@@ -353,16 +353,19 @@ describe("world_patch receipt", () => {
 
     expect(result.ok).toBe(true);
     expect(result.markdown).toContain("@qin pending write");
-    expect(result.markdown).toContain("4/5 edits applied");
+    expect(result.markdown).toContain("3/5 edits applied");
     expect(result.markdown).toContain(
       "edit #2 (relationship): YAML append target must be a sequence",
     );
     expect(result.markdown).toContain("edit #3 no-op: target absent");
-    expect(result.markdown).toContain("applied edits are not resent");
+    expect(result.markdown).toContain("Resend only rejected edits");
     expect(result.markdown).not.toContain("edit #1");
     expect(result.markdown).not.toContain("edit #4");
     expect(result.markdown).not.toContain("edit #5");
-    expect(result.candidateWrite).toEqual({ shortRef: "qin", changed: true });
+    expect(result.candidateWrite).toMatchObject({
+      shortRef: "qin",
+      changed: true,
+    });
   });
 
   test("a batch where no edit applies is a tool failure that names each edit", () => {
