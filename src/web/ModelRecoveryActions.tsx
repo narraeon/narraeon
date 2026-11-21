@@ -17,6 +17,7 @@ export function ModelRecoveryActions({
   disabled,
   onContinue,
   onResend,
+  resendLabel = "重新发送",
   onFreshContext,
   children,
 }: {
@@ -24,6 +25,7 @@ export function ModelRecoveryActions({
   disabled: boolean;
   onContinue?: (() => void) | undefined;
   onResend?: (() => void) | undefined;
+  resendLabel?: string;
   onFreshContext?: (() => void) | undefined;
   children?: React.ReactNode;
 }): React.JSX.Element | null {
@@ -48,7 +50,7 @@ export function ModelRecoveryActions({
       )}
       {onResend && (
         <button type="button" disabled={disabled} onClick={onResend}>
-          {uiText("重新发送")}
+          {uiText(resendLabel)}
         </button>
       )}
       {children}

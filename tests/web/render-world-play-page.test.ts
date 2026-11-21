@@ -666,6 +666,53 @@ describe("世界游玩页面", () => {
     },
   );
 
+  test("游玩暂停通知在轻量首屏显示，继续只发送一个空输入", async () => {
+    const paused = interruptedChainView();
+    paused.events = paused.events.filter((event) => event.kind === "player");
+    paused.lastFailureKind = "dispatch_budget";
+    paused.lastFailure = "Play paused after 64 model requests.";
+    const readView = {
+      ...worldView(null),
+      playTimeline: {
+        ...lightweightPlayTimeline(paused),
+        activeLastFailureKind: paused.lastFailureKind,
+      },
+    };
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read") return Promise.resolve(readView);
+      if (input.type === "artifacts.debug") return Promise.resolve([]);
+      if (input.type === "play.chain.append")
+        return Promise.resolve({
+          ...paused,
+          status: "ready",
+          canRetry: false,
+          lastFailure: null,
+          lastFailureKind: undefined,
+        });
+      return Promise.reject(new Error(`Unexpected request: ${input.type}`));
+    });
+    renderWorld({ request });
+    const resume = await screen.findByRole("button", { name: "继续生成" });
+    expect(
+      screen.getByText("游玩生成已暂停").closest('[role="status"]'),
+    ).toBeTruthy();
+    expect(
+      request.mock.calls.filter(
+        ([input]) => input.type === "play.chain.append",
+      ),
+    ).toHaveLength(0);
+    fireEvent.click(resume);
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(
+          ([input]) => input.type === "play.chain.append",
+        ),
+      ).toMatchObject([
+        [{ worldId: "world-one", chainId: paused.chainId, playerText: "" }],
+      ]),
+    );
+  });
+
   test.each([false, true])(
     "恢复按钮使用当前链，保留草稿并支持轻量首屏=%s",
     async (summaryOnly) => {

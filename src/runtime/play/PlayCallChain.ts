@@ -19,6 +19,7 @@ import {
   lastEndingCancelled,
   noContinuationEnding,
   PlayAdvanceLifecycle,
+  playDispatchLimit,
   settlementFailureEnding,
 } from "./PlayAdvanceLifecycle.ts";
 import {
@@ -2437,6 +2438,7 @@ export class PlayCallChain {
     session: PlayCallChainSession,
     advance: Extract<PlayAdvanceBase, { advanceKind: "response" }>,
     response: Awaited<ReturnType<ModelHost["exchange"]>>,
+    pauseAfterDispatch: boolean,
   ): Promise<ResponseSettlement> {
     const durable = durableModelResponse(response);
     const existing = session.events.find(({ id }) => id === advance.eventId);
@@ -2762,7 +2764,7 @@ export class PlayCallChain {
         session,
         {
           kind: "resumable",
-          reason: "tool_step_settled",
+          reason: pauseAfterDispatch ? "dispatch_budget" : "tool_step_settled",
           request: nextRequest,
         },
         advance,
@@ -2789,7 +2791,8 @@ export class PlayCallChain {
       modelHost.freezeRequest?.(firstRequest) ?? structuredClone(firstRequest);
     let attempt = firstAttempt;
     let correcting = false;
-    for (;;) {
+    for (let dispatch = 1; ; dispatch += 1) {
+      const pauseAfterDispatch = dispatch === playDispatchLimit;
       this.#setInvocationAbortable(session.chainId, true);
       if (signal.aborted)
         return this.#cancelBeforeProviderDispatch(
@@ -2990,12 +2993,18 @@ export class PlayCallChain {
               session,
               {
                 kind: "resumable",
-                reason: "response_correction",
+                reason: pauseAfterDispatch
+                  ? "dispatch_budget"
+                  : "response_correction",
                 request,
                 attempt: attempt - 1,
               },
               advance,
             );
+            if (pauseAfterDispatch) {
+              this.#notifySnapshot(observer, session);
+              return projectView(session);
+            }
             continue;
           }
         }
@@ -3016,7 +3025,12 @@ export class PlayCallChain {
       }
 
       try {
-        const settled = await this.#settleResponse(session, advance, response);
+        const settled = await this.#settleResponse(
+          session,
+          advance,
+          response,
+          pauseAfterDispatch,
+        );
 
         if (settled.kind === "terminal") {
           if (!settled.narrative) {
@@ -3070,6 +3084,7 @@ export class PlayCallChain {
           return projectView(session);
         }
         this.#notifySnapshot(observer, session);
+        if (pauseAfterDispatch) return projectView(session);
         correcting = false;
         request = settled.nextRequest;
         attempt = 1;

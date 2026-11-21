@@ -3230,7 +3230,7 @@ test("Provider failures without replay permission classify as provider_error; un
   );
 });
 
-test("all seven failure kinds round-trip through the context and timeline codecs", async () => {
+test("all play recovery reasons round-trip through the context and timeline codecs", async () => {
   const { worlds, worldId } = await createWorld("failure-kind-codecs");
   const result = await new PlayCallChain(worlds).start({
     worldId,
@@ -4917,6 +4917,146 @@ function playTrace(view: V1PlayCallChainView) {
     ]),
   };
 }
+
+test("游玩主链在 64 次请求后暂停，重启、继续和取消均保留已结算写入", async () => {
+  const { worlds, worldId, root } = await createWorld("play-dispatch-budget");
+  const modelHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "write-once",
+            name: "world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "门已经打开。",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      ...Array.from({ length: 63 }, (_, index) => ({
+        outcome: "response" as const,
+        toolCalls: [
+          {
+            id: `read-${index + 1}`,
+            name: "context_read",
+            arguments: { ref: "@current-situation" },
+          },
+        ],
+      })),
+      { outcome: "response", text: "你穿过门。" },
+    ],
+  });
+  const chainId = "bounded-play";
+  const first = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText: "打开门。",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelHost.binding(),
+    modelHost,
+  });
+  expect(modelHost.requests).toHaveLength(64);
+  expect(first).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+    lastFailureKind: "dispatch_budget",
+  });
+  expect(first.lastFailure).toContain("64");
+  expect(first.events.at(-1)).toMatchObject({
+    kind: "tool_result",
+    callId: "read-63",
+    ok: true,
+  });
+  const state = await worlds.readSurface(worldId, "state");
+  const situation = state.find(({ path }) => path === "current-situation.yaml");
+  expect(situation?.contents).toContain("门已经打开。");
+
+  const coldWorlds = new FileNativeWorldStore(root);
+  const coldChain = new PlayCallChain(coldWorlds);
+  expect(await coldWorlds.playTimeline.readPage(worldId, 40)).toMatchObject({
+    activeStatus: "interrupted",
+    activeCanRetry: true,
+    activeLastFailureKind: "dispatch_budget",
+  });
+  expect(await coldChain.inspectWorld(worldId)).toMatchObject({
+    lastFailureKind: "dispatch_budget",
+    parentHead: first.parentHead,
+  });
+  expect(coldChain.cancel({ worldId, chainId, exchangeId: "first" })).toEqual({
+    outcome: "not_running",
+  });
+  expect(modelHost.requests).toHaveLength(64);
+
+  let markStarted!: (request: ModelHostExchange) => void;
+  const started = new Promise<ModelHostExchange>((resolve) => {
+    markStarted = resolve;
+  });
+  const waitingHost: ModelHost = {
+    binding: modelBinding,
+    async exchange(request, observer) {
+      markStarted(request);
+      await new Promise<void>((resolve) =>
+        observer!.signal!.addEventListener("abort", () => resolve(), {
+          once: true,
+        }),
+      );
+      return { text: "取消后晚到的叙事。" };
+    },
+  };
+  const resumed = coldChain.append({
+    worldId,
+    chainId,
+    exchangeId: "resume",
+    playerText: "",
+    modelHost: waitingHost,
+  });
+  const resumedRequest = await started;
+  const receipts = resumedRequest.appended.filter(
+    (item) => item.kind === "tool",
+  );
+  expect(receipts).toHaveLength(64);
+  expect(receipts[0]).toMatchObject({
+    toolCallId: "write-once",
+    markdown: "@current-situation write succeeded",
+  });
+  expect(receipts.at(-1)).toMatchObject({ toolCallId: "read-63" });
+  expect(coldChain.cancel({ worldId, chainId, exchangeId: "resume" })).toEqual({
+    outcome: "cancellation_requested",
+  });
+  expect(await resumed).toMatchObject({
+    status: "interrupted",
+    canRetry: true,
+    parentHead: first.parentHead,
+  });
+  expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
+
+  const done = await coldChain.append({
+    worldId,
+    chainId,
+    exchangeId: "resume-after-cancel",
+    playerText: "",
+    modelHost,
+  });
+  expect(done.status).toBe("ready");
+  expect(modelHost.requests).toHaveLength(65);
+  expect(modelHost.requests.at(-1)?.appended).toEqual(resumedRequest.appended);
+  expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
+  const history = (await coldWorlds.recoverEndpoint(worldId)).history.map(
+    ({ exactText }) => exactText,
+  );
+  expect(history.slice(1)).toEqual(["打开门。", "你穿过门。"]);
+}, 90_000);
 
 test("玩家取消会终止当前 Provider 派发并保留已提交玩家原文", async () => {
   const { worlds, worldId, root } = await createWorld(

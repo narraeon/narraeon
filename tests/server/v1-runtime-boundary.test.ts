@@ -103,18 +103,26 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
       if (request.type === "play.chain.append")
         return Promise.resolve({
           protocol: v1Protocol,
-          result: {
-            status: "interrupted",
-            lastFailure: "The player cancelled model generation.",
-            lastCancelled: true,
-            events: [
-              {
-                id: 1,
-                kind: "cancellation",
-                message: "The player cancelled model generation.",
-              },
-            ],
-          },
+          result:
+            request.exchangeId === "budget-pause"
+              ? {
+                  ...playChainView("interrupted", ""),
+                  lastFailure: "Play paused after 64 model requests.",
+                  lastFailureKind: "dispatch_budget",
+                  canRetry: true,
+                }
+              : {
+                  status: "interrupted",
+                  lastFailure: "The player cancelled model generation.",
+                  lastCancelled: true,
+                  events: [
+                    {
+                      id: 1,
+                      kind: "cancellation",
+                      message: "The player cancelled model generation.",
+                    },
+                  ],
+                },
         });
       return Promise.resolve({ protocol: v1Protocol, result: null });
     },
@@ -190,6 +198,25 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     },
   });
   expect(cancelled.statusCode).toBe(200);
+  for (const accept of ["application/json", "application/x-ndjson"]) {
+    const paused = await server.inject({
+      method: "POST",
+      url: "/api/runtime/v1",
+      headers: { ...headers, accept },
+      payload: {
+        protocol: v1Protocol,
+        request: {
+          type: "play.chain.append",
+          worldId: "world-one",
+          chainId: "chain-one",
+          exchangeId: "budget-pause",
+          playerText: "",
+        },
+      },
+    });
+    expect(paused.statusCode).toBe(200);
+    expect(paused.body).toContain('"lastFailureKind":"dispatch_budget"');
+  }
   await server.close();
 
   const entries = output
@@ -198,10 +225,10 @@ test("进度轮询不写访问日志，调用链中断写出原始 Provider 原�
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   expect(entries.filter(({ msg }) => msg === "incoming request")).toHaveLength(
-    2,
+    4,
   );
   expect(entries.filter(({ msg }) => msg === "request completed")).toHaveLength(
-    2,
+    4,
   );
   const interruptions = entries.filter(
     ({ msg }) => msg === "play call interrupted",

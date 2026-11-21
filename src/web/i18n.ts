@@ -2710,6 +2710,10 @@ Object.assign(englishMessages, {
   "可以重新发送已保存的请求，不会重复提交玩家原文；请求使用当时冻结的配置。":
     "You can resend the saved request without submitting the player text again; it uses the original frozen settings.",
   重新发送: "Resend request",
+  继续生成: "Continue generating",
+  游玩生成已暂停: "Play generation paused",
+  "本次生成已达模型请求上限。已完成的工具结果已保存，可以从这里继续。":
+    "This run reached the model request limit. The completed tool results are saved, and you can continue from here.",
   "正在续写上次未完成的回复…": "Continuing the interrupted response…",
   通用续写指令: "Continuation instruction",
   续写: "Continue response",
