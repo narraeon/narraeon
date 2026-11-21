@@ -8,10 +8,15 @@ import {
 export class RetryableModelFailure extends ModelHostFailureError {
   readonly reason: ModelRetryEvidence["reason"];
   readonly retryAfterMs: number;
-  constructor(reason: ModelRetryEvidence["reason"], retryAfterMs = 0) {
+  readonly providerMessage: string | undefined;
+  constructor(
+    reason: ModelRetryEvidence["reason"],
+    retryAfterMs = 0,
+    providerMessage?: string,
+  ) {
     super(
       reason === "rate_limit"
-        ? "Provider temporarily rate limited the request"
+        ? (providerMessage ?? "Provider temporarily rate limited the request")
         : "Connection timed out before dispatch",
       {
         details: {
@@ -25,6 +30,7 @@ export class RetryableModelFailure extends ModelHostFailureError {
     );
     this.reason = reason;
     this.retryAfterMs = retryAfterMs;
+    this.providerMessage = providerMessage;
   }
 }
 
@@ -83,11 +89,13 @@ export async function withModelRetry<T>(
         1000 * 2 ** retry * (1 + (options.random ?? Math.random)() * 0.25),
         error.retryAfterMs,
       );
-      if (total + waitMs > 30_000)
-        throw new ModelHostFailureError(
+      if (total + waitMs > 30_000) {
+        const notice =
           error.retryAfterMs > 0
             ? `Automatic retry wait limit exceeded; provider recommends waiting ${Math.ceil(error.retryAfterMs / 1000)} seconds.`
-            : "Automatic retry wait limit exceeded. Please try again later.",
+            : "Automatic retry wait limit exceeded. Please try again later.";
+        throw new ModelHostFailureError(
+          [notice, error.providerMessage].filter(Boolean).join("\n"),
           {
             cause: error,
             details: {
@@ -97,6 +105,7 @@ export async function withModelRetry<T>(
             },
           },
         );
+      }
       if (
         options.deadline !== undefined &&
         (options.now ?? Date.now)() + waitMs >= options.deadline

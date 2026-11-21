@@ -797,7 +797,8 @@ export class FileNativeModelHost implements ModelHost {
             "Chat Completions",
           ),
         );
-        if (!response.ok) throw await providerError(response);
+        if (!response.ok)
+          throw await providerError(response, this.#connection.apiKey);
         if (isProviderEventStream(response)) {
           const streamed = await providerStreamResult(
             response,
@@ -966,7 +967,8 @@ export class FileNativeModelHost implements ModelHost {
             "Anthropic Messages",
           ),
         );
-        if (!response.ok) throw await providerError(response);
+        if (!response.ok)
+          throw await providerError(response, this.#connection.apiKey);
         if (isProviderEventStream(response)) {
           const streamed = await providerStreamResult(
             response,
@@ -2516,15 +2518,16 @@ async function googleInitialRejection(response: Response): Promise<Error> {
     ?.split(";", 1)[0]
     ?.trim()
     .toLowerCase();
-  const evidence = googleRejectionEvidence(
+  const rejection = googleRejectionEvidence(
     body,
     contentType === "application/json" ||
       contentType?.endsWith("+json") === true,
   );
-  if (evidence === null)
+  if (rejection === null)
     return new ModelHostOutcomeUnknownError(
       "Google Interactions request outcome could not be confirmed",
     );
+  const { evidence } = rejection;
   if (response.status === 429 && hardQuotaFailure(evidence))
     return new ModelHostFailureError(
       "Google Interactions hard quota exhausted",
@@ -2537,6 +2540,9 @@ async function googleInitialRejection(response: Response): Promise<Error> {
     return new RetryableModelFailure(
       "rate_limit",
       retryAfterMs(response.headers.get("retry-after")),
+      rejection.googleStatus === undefined
+        ? undefined
+        : `Google Interactions HTTP 429: ${rejection.googleStatus}`,
     );
   return isModelHostTokenLimitFailure(new ModelHostFailureError(evidence))
     ? new ModelHostFailureError("Google Interactions context limit exceeded", {
@@ -2556,12 +2562,12 @@ function discardGoogleErrorBody(response: Response): void {
 function googleRejectionEvidence(
   body: string,
   requireJson: boolean,
-): string | null {
+): { evidence: string; googleStatus?: string } | null {
   if (body.trim() === "") return null;
   try {
     const payload: unknown = JSON.parse(body);
     if (typeof payload === "string")
-      return payload.trim() === "" ? null : payload;
+      return payload.trim() === "" ? null : { evidence: payload };
     if (!isRecord(payload)) return null;
     const error = isRecord(payload.error) ? payload.error : {};
     const evidence = [
@@ -2574,13 +2580,17 @@ function googleRejectionEvidence(
     ]
       .filter((value): value is string => typeof value === "string")
       .join("\n");
-    return evidence.trim() === "" ? null : evidence;
+    if (evidence.trim() === "") return null;
+    // Google can echo opaque input in error.message. Only its recognized
+    // structured rate-limit status can leave this classification boundary.
+    return error.status === "RESOURCE_EXHAUSTED"
+      ? { evidence, googleStatus: error.status }
+      : { evidence };
   } catch {
-    // An unstructured error may itself be the Provider's rejection message.
     const trimmed = body.trimStart();
     return requireJson || trimmed.startsWith("{") || trimmed.startsWith("[")
       ? null
-      : body;
+      : { evidence: body };
   }
 }
 
@@ -2592,14 +2602,18 @@ function parseArguments(value: string): unknown {
   }
 }
 
-async function providerError(response: Response): Promise<Error> {
-  let text = "";
+async function providerError(
+  response: Response,
+  apiKey: string,
+): Promise<Error> {
+  let body = "";
   try {
-    text = (await response.text()).slice(0, 4096);
+    body = await response.text();
   } catch {
     // A non-2xx response is already a confirmed remote rejection. Preserve
     // that deterministic classification even if its error body is unreadable.
   }
+  const text = body.slice(0, 4096);
   await trace("provider_error", {
     status: response.status,
     statusText: response.statusText,
@@ -2613,15 +2627,68 @@ async function providerError(response: Response): Promise<Error> {
   if (
     response.status === 429 &&
     !isModelHostTokenLimitFailure(new ModelHostFailureError(text))
-  )
+  ) {
+    const diagnostic = providerRejectionText(
+      body,
+      apiKey,
+      response.headers.get("content-type"),
+    );
     return new RetryableModelFailure(
       "rate_limit",
       retryAfterMs(response.headers.get("retry-after")),
+      diagnostic ? `Provider request failed: 429 ${diagnostic}` : undefined,
     );
+  }
   return new ModelHostFailureError(
     `Provider request failed: ${response.status} ${text}`,
     { details: { httpStatus: response.status } },
   );
+}
+
+/** Keep the upstream rejection text, without projecting credentials or opaque fields. */
+function providerRejectionText(
+  body: string,
+  apiKey: string,
+  contentType: string | null,
+): string {
+  const redactKey = (value: string) =>
+    apiKey
+      ? value
+          .replaceAll(apiKey, "[redacted]")
+          .replaceAll(encodeURIComponent(apiKey), "[redacted]")
+      : value;
+  const text = body.trim();
+  // Plain text (including "[gateway] ...") and ordinary JSON keep the old
+  // diagnostic verbatim. Inspect structured data only if it may need masking.
+  const structured =
+    /(?:\/|\+)json(?:;|$)/iu.test(contentType ?? "") ||
+    /^(?:\{|\[\s*[{["]|")/u.test(text);
+  const privateField =
+    /(?:^|")(?:authorization|(?:x[-_](?:goog[-_])?)?api[-_]?key|signature|thought_?signature|encrypted_content|continuation_token|redacted_thinking)(?:"|$)/iu;
+  if (!structured || (!privateField.test(text) && !text.includes("\\")))
+    return redactKey(text).slice(0, 4096);
+  if (text.length > 64 * 1024) return "";
+  try {
+    const payload: unknown = JSON.parse(text);
+    let changed = false;
+    const safe = JSON.stringify(payload, (key, value: unknown) => {
+      if (
+        privateField.test(key) ||
+        (isRecord(value) && value.type === "redacted_thinking")
+      ) {
+        changed = true;
+        return "[redacted]";
+      }
+      if (typeof value !== "string") return value;
+      const clean = redactKey(value);
+      if (clean !== value) changed = true;
+      return clean;
+    });
+    return redactKey(changed ? safe : text).slice(0, 4096);
+  } catch {
+    // A malformed JSON envelope with private fields cannot safely be projected.
+    return "";
+  }
 }
 
 function responsesBootstrapMessage(
@@ -2831,7 +2898,8 @@ async function openAIResponsesRequest(
           "OpenAI Responses",
         ),
       );
-      if (!response.ok) throw await providerError(response);
+      if (!response.ok)
+        throw await providerError(response, input.connection.apiKey);
       const payload = isProviderEventStream(response)
         ? await providerStreamResult(
             response,

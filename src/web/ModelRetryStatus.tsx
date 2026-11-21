@@ -41,7 +41,7 @@ export function ModelRetryLimitNotice({
 }) {
   const seconds =
     /^Automatic retry wait limit exceeded; provider recommends waiting (\d+) seconds\.$/u.exec(
-      message ?? "",
+      message?.split("\n", 1)[0] ?? "",
     )?.[1];
   return seconds === undefined ? null : (
     <p>{uiText("服务商建议等待 {seconds} 秒后再试。", { seconds })}</p>

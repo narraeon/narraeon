@@ -63,7 +63,11 @@ test("Retry-After accepts seconds and HTTP dates and caps cumulative waits", asy
   const waits: number[] = [];
   const dispatch = vi.fn(async () => {
     await Promise.resolve();
-    throw new RetryableModelFailure("rate_limit", 16000);
+    throw new RetryableModelFailure(
+      "rate_limit",
+      16000,
+      `upstream refusal ${waits.length + 1}`,
+    );
   });
   await expect(
     withModelRetry(dispatch, {
@@ -72,7 +76,10 @@ test("Retry-After accepts seconds and HTTP dates and caps cumulative waits", asy
         waits.push(ms);
       },
     }),
-  ).rejects.toThrow("16 seconds");
+  ).rejects.toMatchObject({
+    message:
+      "Automatic retry wait limit exceeded; provider recommends waiting 16 seconds.\nupstream refusal 2",
+  });
   expect(waits).toEqual([16000]);
   expect(dispatch).toHaveBeenCalledTimes(2);
 });

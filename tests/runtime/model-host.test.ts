@@ -3288,6 +3288,72 @@ test.each([
 );
 
 test.each([
+  {
+    provider: "chat_completions",
+    body: '{"error":{"code":"minute_limit","message":"Account quota; key-sentinel"},"signature":"hidden"}',
+    diagnostic:
+      'Provider request failed: 429 {"error":{"code":"minute_limit","message":"Account quota; [redacted]"},"signature":"[redacted]"}',
+  },
+  {
+    provider: "anthropic_messages",
+    body: "[gateway] capacity unavailable for key-sentinel",
+    diagnostic:
+      "Provider request failed: 429 [gateway] capacity unavailable for [redacted]",
+  },
+  {
+    provider: "openai_responses",
+    body: '{"error":"heavy_traffic"}',
+    diagnostic: 'Provider request failed: 429 {"error":"heavy_traffic"}',
+  },
+  {
+    provider: "openai_responses",
+    body: "",
+    diagnostic: "Provider temporarily rate limited the request",
+  },
+  {
+    provider: "google_interactions",
+    body: '{"error":{"status":"RESOURCE_EXHAUSTED","message":"key-sentinel hidden"}}',
+    diagnostic: "Google Interactions HTTP 429: RESOURCE_EXHAUSTED",
+  },
+] as const)(
+  "surfaces only the latest permitted $provider rejection ($body)",
+  async ({ provider, body, diagnostic }) => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const host = new FileNativeModelHost(
+        {
+          provider,
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "key-sentinel",
+          modelId: "manual-model",
+          contextWindowTokens: 64000,
+          maxOutputTokens: 2048,
+        },
+        () => {
+          attempts++;
+          return Promise.resolve(
+            new Response(attempts < 4 ? "first rejection" : body, {
+              status: 429,
+            }),
+          );
+        },
+      );
+      const error = host
+        .exchange(
+          exchangeFor(provider, "manual-model", host.binding().cacheStrategy),
+        )
+        .catch((reason: unknown) => reason);
+      await vi.runAllTimersAsync();
+      expect(await error).toMatchObject({ message: diagnostic });
+      expect(attempts).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+test.each([
   "chat_completions",
   "openai_responses",
   "anthropic_messages",
