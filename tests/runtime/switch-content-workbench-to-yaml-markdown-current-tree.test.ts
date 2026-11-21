@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
+import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { createZip } from "../support/createZip.ts";
 
 const roots: string[] = [];
@@ -16,6 +17,38 @@ afterEach(async () => {
 });
 
 describe("YAML/Markdown 内容包当前树", () => {
+  test("工作区忽略包库根目录的系统文件，并保留损坏内容包诊断", async () => {
+    const root = await temporaryRoot();
+    const runtime = new V1Runtime({
+      dataRoot: root,
+      configRoot: join(root, "config"),
+    });
+    await runtime.initialize();
+    const workspace = new ContentWorkspace(root);
+    const created = await workspace.createCurrentTreeContentPackage();
+    const packages = join(root, "content", "packages");
+    await Promise.all(
+      [".DS_Store", "Thumbs.db", "desktop.ini"].map((name) =>
+        writeFile(join(packages, name), "system metadata"),
+      ),
+    );
+
+    await expect(
+      runtime.handle({ type: "workspace.read" }),
+    ).resolves.toMatchObject({
+      result: {
+        contentPackages: [
+          expect.objectContaining({ localId: created.localId }),
+        ],
+      },
+    });
+
+    await writeFile(join(packages, created.localId, "current-tree.json"), "{");
+    await expect(runtime.handle({ type: "workspace.read" })).rejects.toThrow(
+      "The content package's current tree is damaged",
+    );
+  });
+
   test("新建内容包直接得到可供 AI 扩展的最小有效树", async () => {
     const root = await temporaryRoot();
     const workspace = new ContentWorkspace(join(root, "data"));

@@ -290,7 +290,9 @@ export class CurrentTreeContentLibrary {
     for (const entry of entries.sort((left, right) =>
       compareStrings(left.name, right.name),
     )) {
-      if (!entry.isDirectory() || !localIdPattern.test(entry.name)) {
+      const isPackageId = localIdPattern.test(entry.name);
+      if (entry.isFile() && !isPackageId) continue;
+      if (!entry.isDirectory() || !isPackageId) {
         throw new CurrentTreeContentLibraryError(
           "The content-package library contains an unrecognized entry",
         );
