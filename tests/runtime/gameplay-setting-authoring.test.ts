@@ -195,6 +195,11 @@ test("跑团包的工具描述与运行时契约提及玩法文件，只说明�
       ({ name }) => name === "setting_write_file",
     );
     expect(write?.description).toContain("control/gameplay.json");
+    expect(write?.description).toContain(
+      locale === "zh-CN"
+        ? "只能修改跑团判定方案，玩法模式不可改"
+        : "only a tabletop resolution scheme may change",
+    );
     expect(settingImprovementRuntimeContract(locale, tabletop)).toContain(
       "control/gameplay.json",
     );

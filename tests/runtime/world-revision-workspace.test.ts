@@ -1714,6 +1714,50 @@ test("玩法身份在世界修订中只能保持不变，持久化的修订往�
   });
 });
 
+test.each([
+  [
+    "en",
+    "Replacing the existing control/gameplay.json is allowed only if both the gameplay mode and resolution scheme stay unchanged.",
+  ],
+  [
+    "zh-CN",
+    "替换既有 control/gameplay.json 时，玩法模式和判定方案必须保持不变。",
+  ],
+] as const)(
+  "%s world revision sends the fixed gameplay rule to the model",
+  async (locale, rule) => {
+    const { root, worldId, worlds, workspace } = await createdWorld([
+      ...minimalFileNativeContentScaffold(locale),
+      gameplayFile({ mode: "tabletop", scheme: "d20" }),
+    ]);
+    const { host, sent } = googleAuthoringHost([googleText("Done.")]);
+    const service = new WorldRevisionSession({
+      store: new FileNativeWorldRevisionStore(root),
+      workspace,
+      worlds,
+      compiler: new FileNativePromptCompiler({ locale }),
+      locale: () => locale,
+      bindModelHost: () => Promise.resolve(host),
+      bindExistingModelHost: () => Promise.resolve(host),
+      bindPlayPreset: () =>
+        Promise.resolve(builtinDefaultPlayPresetBinding(locale)),
+      preview: () => preview,
+    });
+    const result = await service.send({
+      worldId,
+      requestId: "tool-description",
+      message: "Inspect the resolution scheme.",
+      continuation: { kind: "fresh_context" },
+    });
+    expect(result.runStatus).toBe("ready");
+    const tools = sent[0]!.tools as { name: string; description: string }[];
+    const write = tools.find(
+      ({ name }) => name === "world_revision_write_file",
+    );
+    expect(write?.description).toContain(rule);
+  },
+);
+
 test("世界修订工具写入玩法文件时只接受模式与方案都不变的内容", () => {
   const files = [
     ...worldRevisionFiles(),
