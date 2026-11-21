@@ -54,10 +54,7 @@ import type {
   ModelHostExchange,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  settingImprovementPromptForBinding,
-  type PlayPresetBinding,
-} from "../play/FileNativePlayPresetStore.ts";
+import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type {
   FileNativePromptCompiler,
   PromptPreview,
@@ -83,7 +80,6 @@ import type {
 import {
   WorldRevisionAuthoringTransaction,
   inspectWorldRevisionFiles,
-  worldRevisionRuntimeContract,
   worldRevisionToolDefinitions,
 } from "./WorldRevisionAuthoringTransaction.ts";
 import type { WorldRevisionWorkspace } from "./WorldRevisionWorkspace.ts";
@@ -749,8 +745,6 @@ export class WorldRevisionSession {
       worldTitle:
         worlds.find((world) => world.worldId === worldId)?.title ?? worldId,
       gameplay,
-      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       modelPrompt,
@@ -847,8 +841,6 @@ export class WorldRevisionSession {
       epoch: { id: epoch.epochId, baseHead: epoch.baseHead },
       worldTitle,
       gameplay,
-      runtimeContract: worldRevisionRuntimeContract(locale, gameplay),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       tools,

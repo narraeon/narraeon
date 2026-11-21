@@ -88,7 +88,24 @@ export function authoringMechanics(
   const views = zh
     ? 'control/player-views.yaml 的 format 为 narraeon.player-views/v1；views 中每项有 id、title 和 items，items 中每项有 id、label、select。精确选择一个 YAML 字段使用 select: {document: "@ref", locator: {yaml: [字段名]}}；Markdown 小节使用 locator: {markdown: [标题]}。document 必须来自实际返回的引用，locator 必须对应已读正文；省略 locator 会展示整份文档，选择容器会递归展示子树。'
     : 'control/player-views.yaml uses format: narraeon.player-views/v1. Each views entry has id, title and items; each item has id, label and select. Select one YAML field with select: {document: "@ref", locator: {yaml: [field]}}; select a Markdown section with locator: {markdown: [heading]}. Use a returned document reference and a locator from the actual read body. Omitting locator displays the whole document; selecting a container recursively displays its subtree.';
-  return `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}\n\n${common}\n\n${boundary}\n\n${views}`;
+  const unicode = zh
+    ? "工具会拒绝写入含字面 \\uXXXX 的文本。若参数被重复转义，请直接发送 Unicode 字符。"
+    : "Writes containing literal \\uXXXX escapes are rejected. If tool arguments were double-escaped, resend the actual Unicode characters.";
+  const frame = zh
+    ? 'control/frame.yaml 的 instructions 每项可在 markdown 之外提供单行 turnGuide，也可只含 turnGuide。它们在世界占位处加入游玩本轮提示，建议只写一到两条本世界特有、容易遗漏的约束。frame.maintenance.documents 以 @短引用声明正文的建议 UTF-8 字节数，context 中的 slot 可用唯一稳定的 id 与 advisoryBytes 声明材料的建议字节数。超限只提示，不截断或拒绝写入。frame.maintenance.clock 以 {document: "@ref", locator: {yaml: [时间]}} 或精确的 Markdown locator 指定时钟来源，只在写入时记录实际读取到的值。'
+    : 'Each control/frame.yaml instructions entry may include a single-line turnGuide alongside markdown or on its own. These lines join the play turn guide at the world placeholder. Use one or two world-specific constraints that are easy to forget. frame.maintenance.documents maps @short-refs to advisory UTF-8 byte limits for document bodies. A context slot may set a unique stable id and advisoryBytes for its material. Exceeding a limit produces an advisory without truncation or write rejection. frame.maintenance.clock names an exact source such as {document: "@ref", locator: {yaml: [time]}} or a Markdown locator. It records the actual value at writes without inferring time.';
+  const followups = zh
+    ? "control/followups.yaml 使用 format: narraeon.package-followups/v1，followups 是有序数组。每项包含稳定 id、displayName、enabled、mount、prompt（role: author_instruction，markdown 路径相对 control/）、artifacts 和 maxArtifactBytes。停用仍保留定义及资源。后置请求在主叙事提交后生成界面产物，不写世界；脚本授权由用户在本地授予。"
+    : "control/followups.yaml uses format: narraeon.package-followups/v1 with an ordered followups array. Each entry has a stable id, displayName, enabled, mount, prompt (role: author_instruction, markdown path relative to control/), artifacts and maxArtifactBytes. Disabling an entry preserves its definition and resources. Follow-ups generate UI artifacts after the main narrative commits and do not write to the world. Script approval is local to the user.";
+  return [
+    `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}`,
+    common,
+    boundary,
+    unicode,
+    views,
+    frame,
+    followups,
+  ].join("\n\n");
 }
 
 export function defaultOrderedAuthorPrompts(): OrderedPlayPrompt[] {

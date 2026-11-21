@@ -29,10 +29,7 @@ import {
   FileNativePromptCompiler,
   type PromptCompilation,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
-import {
-  settingImprovementRuntimeContract,
-  settingImprovementToolDefinitions,
-} from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
 
 const fiction: Gameplay = { mode: "interactive-fiction" };
@@ -275,8 +272,6 @@ describe("tabletop-scoped prompts in authoring compilation", () => {
     const input = previewInputWithGameplay(gameplay);
     return compiler.compileSettingImprovement({
       contentPackageTitle: "Scope package",
-      runtimeContract: settingImprovementRuntimeContract("en", gameplay),
-      authorPrompt: "author",
       playPreset: binding,
       modelBinding: input.modelBinding,
       tools: settingImprovementToolDefinitions("en", gameplay),

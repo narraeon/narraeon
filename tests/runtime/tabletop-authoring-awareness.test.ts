@@ -16,7 +16,6 @@ import {
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import {
   SettingAuthoringTransaction,
-  settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
 } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
@@ -36,8 +35,6 @@ function compileSetting(
   return new FileNativePromptCompiler({ locale }).compileSettingImprovement({
     contentPackageTitle: "Authoring awareness",
     gameplay,
-    runtimeContract: settingImprovementRuntimeContract(locale, gameplay),
-    authorPrompt: "author",
     playPreset: builtinDefaultPlayPresetBinding(locale),
     modelBinding: input.modelBinding,
     tools: settingImprovementToolDefinitions(locale, gameplay),
@@ -53,8 +50,6 @@ function compileRevision(
     worldTitle: "Revision awareness",
     epoch: { id: "epoch-awareness", baseHead: "head-awareness" },
     gameplay,
-    runtimeContract: settingImprovementRuntimeContract(locale, gameplay),
-    authorPrompt: "author",
     playPreset: builtinDefaultPlayPresetBinding(locale),
     modelBinding: input.modelBinding,
     tools: settingImprovementToolDefinitions(locale, gameplay),

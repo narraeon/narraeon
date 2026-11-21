@@ -26,6 +26,7 @@ import {
 } from "../../src/runtime/model/ModelHost.ts";
 import {
   builtinDefaultPlayPresetBinding,
+  legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   revisionForPlayPresetFiles,
   presetHostBinding,
@@ -3236,6 +3237,21 @@ test("默认可继续精确历史上下文，显式全新上下文创建第二�
     "Fresh context",
   );
   expect(fresh.sessionId).not.toBe(first.sessionId);
+  const freshRequest = fixture.host.requests[1]!;
+  expect(freshRequest.appended).toEqual([
+    { kind: "user", text: "Fresh context" },
+  ]);
+  const material = freshRequest.bootstrap.provider.messages
+    .map(({ content }) => content)
+    .join("\n");
+  expect(material).toContain("narraeon.package-followups/v1");
+  expect(material).toContain("frame.maintenance.documents");
+  expect(material).toContain("frame.maintenance.clock");
+  expect(material).toContain(String.raw`\uXXXX`);
+  expect(material).toContain("turnGuide");
+  expect(
+    freshRequest.tools.some(({ name }) => name === "setting_write_file"),
+  ).toBe(true);
 
   const resumed = await fixture.session.send({
     packageId: fixture.packageId,
@@ -3267,6 +3283,35 @@ test("默认可继续精确历史上下文，显式全新上下文创建第二�
   await expect(
     fixture.session.readSession(fixture.packageId, fresh.sessionId),
   ).resolves.toMatchObject({ sessionId: fresh.sessionId });
+});
+
+test("fresh setting author request keeps the saved v1 author prompt", async () => {
+  const fixture = await createFixture([{ outcome: "response", text: "Done." }]);
+  const files = legacyDefaultPlayPresetFilesForLocale("en");
+  files["prompts/setting-improvement.md"] = "Use this saved author rule.";
+  const parsed = parsePlayPresetFiles(files);
+  if (parsed.kind !== "valid") throw parsed.error;
+  const preset = {
+    ...builtinDefaultPlayPresetBinding("en"),
+    revision: revisionForPlayPresetFiles(files),
+    definition: parsed.definition,
+    files,
+  };
+  expect(
+    await sendFresh(
+      serviceFor(fixture.root, fixture.content, fixture.host, preset),
+      fixture.packageId,
+      "legacy-preset",
+      "Inspect the package.",
+    ),
+  ).toMatchObject({ runStatus: "ready" });
+
+  const messages = fixture.host.requests[0]!.bootstrap.provider.messages.map(
+    ({ content }) => content,
+  ).join("\n");
+  expect(messages).toContain("Use this saved author rule.");
+  expect(messages).toContain("narraeon.package-followups/v1");
+  expect(messages).not.toContain("Recommended authoring method");
 });
 
 test("另一个对话改动当前树后，旧对话的读取授权失效并要求重新读取", async () => {

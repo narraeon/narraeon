@@ -3915,7 +3915,13 @@ test("world author rules refresh after restart without changing the active tool 
       if (!updated) {
         updated = true;
         const structure = toPlayPresetStructuredEditor(current.definition);
-        structure.authorPrompts!.unshift({
+        structure.authorPrompts = structure.authorPrompts!.map((entry) =>
+          entry.kind === "builtin" &&
+          ["author.guidance", "author.play-reference"].includes(entry.builtin)
+            ? { ...entry, enabled: false }
+            : entry,
+        );
+        structure.authorPrompts.unshift({
           id: "next",
           kind: "user",
           name: "Next",
@@ -3953,6 +3959,15 @@ test("world author rules refresh after restart without changing the active tool 
   });
   expect(first.runStatus).toBe("ready");
   expect(script.requests).toHaveLength(2);
+  const material = script.requests[0]!.bootstrap.provider.messages.map(
+    ({ content }) => content,
+  ).join("\n");
+  expect(material).toContain("narraeon.package-followups/v1");
+  expect(material).toContain("frame.maintenance.documents");
+  expect(material).toContain("frame.maintenance.clock");
+  expect(material).toContain(String.raw`\uXXXX`);
+  expect(material).toContain("turnGuide");
+  expect(material).toContain("Turn guide (per-send suffix)");
   expect(script.requests[1]!.bootstrap).toEqual(script.requests[0]!.bootstrap);
   expect(JSON.stringify(script.requests[1]!.bootstrap)).not.toContain(
     "NEXT_WORLD_AUTHOR_RULE",
@@ -3970,9 +3985,15 @@ test("world author rules refresh after restart without changing the active tool 
     continuation: { kind: "continue_context", sessionId: first.sessionId },
   });
   expect(second.runStatus).toBe("ready");
-  expect(JSON.stringify(script.requests[2]!.bootstrap)).toContain(
-    "NEXT_WORLD_AUTHOR_RULE",
+  const continuedMaterial = script.requests[2]!.bootstrap.provider.messages.map(
+    ({ content }) => content,
+  ).join("\n");
+  expect(continuedMaterial).toContain("NEXT_WORLD_AUTHOR_RULE");
+  expect(continuedMaterial.indexOf("NEXT_WORLD_AUTHOR_RULE")).toBeLessThan(
+    continuedMaterial.indexOf("narraeon.package-followups/v1"),
   );
+  expect(continuedMaterial).not.toContain("Recommended authoring method");
+  expect(continuedMaterial).not.toContain("Turn guide (per-send suffix)");
   expect(JSON.stringify(script.requests[2]!.bootstrap)).toContain(
     epoch!.epochId,
   );

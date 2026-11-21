@@ -511,8 +511,6 @@ test.each(["en", "zh-CN"] as const)(
     await store.select(preset.id);
     const compiler = new FileNativePromptCompiler({ locale });
     const common = {
-      runtimeContract: "AUTHOR_MECHANICS",
-      authorPrompt: "AUTHOR_POLICY",
       playPreset: await store.bindCurrent(),
       modelBinding: {
         provider: "chat_completions" as const,
@@ -687,8 +685,6 @@ test("disabled author recommendations do not fall back and author saves preserve
   const compilation = new FileNativePromptCompiler().compileSettingImprovement({
     gameplay: { mode: "interactive-fiction" },
     contentPackageTitle: "Test",
-    runtimeContract: "NOT_A_FALLBACK",
-    authorPrompt: "NOT_A_FALLBACK",
     playPreset: binding,
     modelBinding: {
       provider: "chat_completions",
@@ -700,7 +696,6 @@ test("disabled author recommendations do not fall back and author saves preserve
   });
   const encoded = JSON.stringify(compilation.provider);
   expect(encoded).toContain("MY_FIXED_AUTHOR_TEXT");
-  expect(encoded).not.toContain("NOT_A_FALLBACK");
   expect(encoded).not.toContain("Recommended setting-improvement method");
   expect(encoded).not.toContain("Future play semantics");
   const removed = {

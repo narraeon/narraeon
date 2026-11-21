@@ -48,10 +48,7 @@ import type {
   ModelHostBinding,
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
-import {
-  settingImprovementPromptForBinding,
-  type PlayPresetBinding,
-} from "../play/FileNativePlayPresetStore.ts";
+import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import type {
   FileNativePromptCompiler,
   PromptPreview,
@@ -77,7 +74,6 @@ import {
 } from "./FileNativeSettingImprovementStore.ts";
 import {
   SettingAuthoringTransaction,
-  settingImprovementRuntimeContract,
   settingImprovementToolDefinitions,
   authoringPreloadAuthorization,
   buildAuthoringPreload,
@@ -732,11 +728,6 @@ export class SettingImprovementSession {
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       gameplay: package_.gameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        package_.gameplay,
-      ),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       modelPrompt,
@@ -818,11 +809,6 @@ export class SettingImprovementSession {
     const bootstrap = this.#compiler.compileSettingImprovement({
       contentPackageTitle: package_.title,
       gameplay: package_.gameplay,
-      runtimeContract: settingImprovementRuntimeContract(
-        locale,
-        package_.gameplay,
-      ),
-      authorPrompt: settingImprovementPromptForBinding(playPreset, locale),
       playPreset,
       modelBinding,
       tools,
