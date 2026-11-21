@@ -7031,13 +7031,16 @@ test("已提交写入回执报告下次真实目录覆盖并回显更新后的�
   expect(persisted).toMatchObject({ markdown: receipt.markdown });
 });
 
-test("部分成功的批量 patch 在下一次请求中保留失败原因和整理提示", async () => {
+test("部分成功的批量 patch 在下一次请求中保留失败原因、纠偏、别名和整理提示", async () => {
   const files = worldFiles();
   files.find(({ path }) => path === "world/current-situation.yaml")!.contents +=
     "时间: 黄昏\n";
   files.find(({ path }) => path === "control/frame.yaml")!.contents +=
     "maintenance:\n  documents:\n    '@current-situation': 10\n  clock:\n    document: '@current-situation'\n    locator: { yaml: [时间] }\n";
-  const { worlds, worldId } = await createWorld("oversized-receipt", files);
+  const { worlds, worldId, root } = await createWorld(
+    "oversized-receipt",
+    files,
+  );
   const host = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
@@ -7046,14 +7049,14 @@ test("部分成功的批量 patch 在下一次请求中保留失败原因和整�
         toolCalls: [
           {
             id: "time",
-            name: "world_patch",
+            name: "proxy_world_patch",
             arguments: {
               target: "@current-situation",
-              edits: [
+              edits: JSON.stringify([
                 { op: "replace", locator: { yaml: ["时间"] }, value: "午夜" },
                 { op: "append", locator: { yaml: ["时间"] }, value: "黎明" },
                 { op: "remove", locator: { yaml: ["已缺失"] } },
-              ],
+              ]),
             },
           },
         ],
@@ -7081,17 +7084,27 @@ test("部分成功的批量 patch 在下一次请求中保留失败原因和整�
     "edit #2 (时间): YAML append target must be a sequence",
   );
   expect(receipt.markdown).toContain("edit #3 no-op: target absent");
+  expect(receipt.markdown).toContain(
+    'these arguments arrived as JSON strings and were parsed for this call: "edits"',
+  );
+  expect(receipt.markdown).toContain(
+    '"proxy_world_patch" is not a declared tool; it was executed as "world_patch"',
+  );
   expect(receipt.markdown).toMatch(
-    /Maintenance advice: body \d+ UTF-8 bytes, advisory limit 10; change [+-]?\d+\.$/u,
+    /^Maintenance advice: body \d+ UTF-8 bytes, advisory limit 10; change [+-]?\d+\.$/mu,
   );
   expect(receipt.markdown).not.toMatch(
-    /fresh context|Node scopes|Summary:|catalog summary|Fresh-context coverage|暂时无法判定/u,
+    /pending|fresh context|Node scopes|Summary:|catalog summary|Fresh-context coverage|暂时无法判定/u,
   );
   const event = play.events.find(
     (item) => item.kind === "tool_result" && item.callId === "time",
   );
   expect(
-    await worlds.playTimeline.readDetail(worldId, play.chainId, event!.id),
+    await new FileNativeWorldStore(root).playTimeline.readDetail(
+      worldId,
+      play.chainId,
+      event!.id,
+    ),
   ).toMatchObject({ markdown: receipt.markdown });
   const state = await worlds.readSurface(worldId, "state");
   const situation = state.find(({ path }) => path === "current-situation.yaml");
@@ -7728,7 +7741,7 @@ test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", as
   });
 });
 
-test("world_retire 提交退役状态并让后续全新上下文停止注入 catalog 条目", async () => {
+test("world_retire 的退役和恢复回执对应已提交状态", async () => {
   const packageFiles = [
     ...worldFiles().map((file) =>
       file.path === "control/frame.yaml"
@@ -7755,7 +7768,7 @@ test("world_retire 提交退役状态并让后续全新上下文停止注入 cat
 `,
     },
   ];
-  const { worlds, worldId } = await createWorld(
+  const { worlds, worldId, root } = await createWorld(
     "play-chain-retire-document",
     packageFiles,
   );
@@ -7775,6 +7788,16 @@ test("world_retire 提交退役状态并让后续全新上下文停止注入 cat
       {
         outcome: "response",
         toolCalls: [
+          {
+            id: "initial-retirement",
+            name: "world_retire",
+            arguments: { target: "@veteran", retired: true },
+          },
+          {
+            id: "superseded-restoration",
+            name: "world_retire",
+            arguments: { target: "@veteran", retired: false },
+          },
           {
             id: "retire-veteran",
             name: "world_retire",
@@ -7809,15 +7832,60 @@ test("world_retire 提交退役状态并让后续全新上下文停止注入 cat
   expect(stored).toContain("retired: true");
   expect(stored).toContain("守卫北门");
 
+  const retirement = sent(modelHost.requests[2]!).at(-1);
+  expect(sent(modelHost.requests[2]!)).toContainEqual({
+    kind: "tool",
+    toolCallId: "superseded-restoration",
+    markdown: "@veteran restoration superseded",
+  });
+  expect(retirement).toMatchObject({
+    kind: "tool",
+    toolCallId: "retire-veteran",
+    markdown: "@veteran retired",
+  });
+  const retireEvent = retired.events.find(
+    (event) =>
+      event.kind === "tool_result" && event.callId === "retire-veteran",
+  );
+  const coldWorlds = new FileNativeWorldStore(root);
+  expect(
+    await coldWorlds.playTimeline.readDetail(
+      worldId,
+      retired.chainId,
+      retireEvent!.id,
+    ),
+  ).toMatchObject({ markdown: "@veteran retired" });
+
   const freshHost = new ScriptedModelHost({
     binding: modelBinding(),
-    steps: [{ outcome: "response", text: "The square is quiet now." }],
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          { id: "read", name: "context_read", arguments: { ref: "@veteran" } },
+        ],
+      },
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "restore-veteran",
+            name: "proxy_world_retire",
+            arguments: { target: "@veteran", retired: false },
+          },
+        ],
+      },
+      {
+        outcome: "response",
+        text: "The old guard steps back into the square.",
+      },
+    ],
   });
-  await new PlayCallChain(worlds).start({
+  const restored = await new PlayCallChain(coldWorlds).start({
     worldId,
     chainId: "play-chain-after-retirement-contract",
     exchangeId: "play-chain-after-retirement-player",
-    playerText: "I look across the square.",
+    playerText: "Ask the old guard to return.",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
     modelBinding: modelBinding(),
@@ -7826,6 +7894,34 @@ test("world_retire 提交退役状态并让后续全新上下文停止注入 cat
   expect(
     JSON.stringify(freshHost.requests[0]?.bootstrap.logicalMessages),
   ).not.toContain("退役守卫 [ref: @veteran]");
+  const restoration = sent(freshHost.requests[2]!).at(-1);
+  expect(restoration).toMatchObject({
+    kind: "tool",
+    toolCallId: "restore-veteran",
+  });
+  if (restoration?.kind !== "tool")
+    throw new Error("Missing restoration receipt");
+  expect(restoration.markdown).toMatch(/^@veteran restored\n/u);
+  expect(restoration.markdown).toContain(
+    '"proxy_world_retire" is not a declared tool; it was executed as "world_retire"',
+  );
+  expect(restoration.markdown).not.toContain("pending");
+  const restoreEvent = restored.events.find(
+    (event) =>
+      event.kind === "tool_result" && event.callId === "restore-veteran",
+  );
+  expect(
+    await new FileNativeWorldStore(root).playTimeline.readDetail(
+      worldId,
+      restored.chainId,
+      restoreEvent!.id,
+    ),
+  ).toMatchObject({ markdown: restoration.markdown });
+  const restoredFile = (await coldWorlds.readSurface(worldId, "state")).find(
+    ({ path }) => path === "characters/veteran.yaml",
+  );
+  expect(restoredFile?.contents).not.toContain("retired: true");
+  expect(restoredFile?.contents).toContain("守卫北门");
 });
 
 test("游玩调用链可在 frame 声明的空 catalog 中创建首份文档", async () => {
@@ -13820,7 +13916,20 @@ test("a replayed alias call is identified by its executed name, not the model's 
             arguments: {},
           },
           // The same ID under a different executed tool is still a conflict.
-          { id: "other", name: "margin_state_list", arguments: {} },
+          {
+            id: "other",
+            name: "margin_world_patch",
+            arguments: {
+              target: "@current-situation",
+              edits: [
+                {
+                  op: "replace",
+                  locator: { yaml: ["情况"] },
+                  value: "门已打开。",
+                },
+              ],
+            },
+          },
           {
             id: "other",
             name: "mcp__paddle_steel__want_context_search",
@@ -13856,7 +13965,8 @@ test("a replayed alias call is identified by its executed name, not the model's 
     replayed: true,
     ok: (results("dup")[0] as { ok: boolean }).ok,
   });
-  expect(results("other")[1]).toMatchObject({ ok: false, replayed: true });
+  const rejected = results("other")[1]!;
+  expect(rejected).toMatchObject({ ok: false, replayed: true });
   const toolMessages = sent(modelHost.requests[1]!).filter(
     (item) => item.kind === "tool",
   ) as { toolCallId: string; markdown: string; isError?: boolean }[];
@@ -13864,7 +13974,11 @@ test("a replayed alias call is identified by its executed name, not the model's 
   expect(dup).toHaveLength(2);
   expect(dup[1]!.markdown).toBe(dup[0]!.markdown);
   const other = toolMessages.filter((item) => item.toolCallId === "other");
+  expect(other[0]?.markdown).toContain("@current-situation write succeeded");
   expect(other[1]!.markdown).toContain("already bound to another tool name");
+  expect(
+    await worlds.playTimeline.readDetail(worldId, view.chainId, rejected.id),
+  ).toMatchObject({ ok: false, markdown: other[1]!.markdown });
 });
 
 test("a name that matches no provided tool is refused with the tools this request provides", async () => {

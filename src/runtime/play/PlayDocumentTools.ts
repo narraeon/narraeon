@@ -51,9 +51,20 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   candidateWrite?: {
     shortRef: string;
     changed: boolean;
+    retired?: boolean;
     editDetails?: string;
     sizeAdvice?: string;
+    notes?: string[];
   };
+}
+
+export function appendPlayToolNote(
+  result: PlayDocumentToolResult,
+  note: string,
+): void {
+  result.markdown += `\n\n${note}`;
+  if (result.candidateWrite !== undefined)
+    (result.candidateWrite.notes ??= []).push(note);
 }
 
 class PlayDocumentToolFailure extends Error {
@@ -94,6 +105,41 @@ export class FileNativePlayDocuments {
 
   get committedSnapshot(): WorldDocumentStore {
     return this.#committedSnapshot;
+  }
+
+  settledWriteReceipt(
+    write: NonNullable<PlayDocumentToolResult["candidateWrite"]>,
+    committed: boolean,
+  ): string {
+    let status = "unchanged";
+    if (write.changed && committed) {
+      if (write.retired === undefined) {
+        status = "write succeeded";
+      } else {
+        // A later tool in the same response can reverse a candidate retirement.
+        const before =
+          documentDescriptorByRef(this.committedSnapshot, write.shortRef)
+            ?.retired === true;
+        const after =
+          documentDescriptorByRef(this.snapshot, write.shortRef)?.retired ===
+          true;
+        if (before !== after) {
+          if (write.retired === after) status = after ? "retired" : "restored";
+          else
+            status = write.retired
+              ? "retirement superseded"
+              : "restoration superseded";
+        }
+      }
+    }
+    const summary = [
+      `@${write.shortRef} ${status}`,
+      write.editDetails,
+      write.sizeAdvice,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return [summary, ...(write.notes ?? [])].join("\n\n");
   }
 
   /**
@@ -143,15 +189,12 @@ export class FileNativePlayDocuments {
       history,
       options,
     );
-    if (repaired.coerced.length === 0 || result.markdown === undefined)
-      return result;
-    return {
-      ...result,
-      markdown: `${result.markdown}\n\n${renderCoercionNote(
-        repaired.coerced,
-        options.locale ?? "en",
-      )}`,
-    };
+    if (repaired.coerced.length > 0)
+      appendPlayToolNote(
+        result,
+        renderCoercionNote(repaired.coerced, options.locale ?? "en"),
+      );
+    return result;
   }
 
   #dispatch(
@@ -668,7 +711,11 @@ function applyPlayCandidateRetirement(
     markdown: changed
       ? `@${target.shortRef} pending ${args.retired ? "retirement" : "restoration"}`
       : `@${target.shortRef} unchanged`,
-    candidateWrite: { shortRef: target.shortRef, changed },
+    candidateWrite: {
+      shortRef: target.shortRef,
+      changed,
+      retired: args.retired,
+    },
   };
 }
 

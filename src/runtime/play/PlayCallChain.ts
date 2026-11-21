@@ -125,6 +125,7 @@ import {
   type PlayFollowupOutcome,
 } from "./PlayFollowupRequests.ts";
 import {
+  appendPlayToolNote,
   FileNativePlayDocuments,
   fingerprintControl,
   type PlayDocumentToolResult,
@@ -2712,6 +2713,7 @@ export class PlayCallChain {
     }
 
     finalizeWriteReceipts({
+      documents: session.documents,
       stateChanges,
       completedTools,
       trailingEvents,
@@ -3718,6 +3720,7 @@ function durableModelResponse(
  * then drops the candidate write. Receipts state what the commit made true.
  */
 function finalizeWriteReceipts(settlement: {
+  documents: FileNativePlayDocuments;
   stateChanges: FileNativeStateChange[];
   completedTools: PersistedCompletedToolCall[];
   trailingEvents: V1PlayCallChainEvent[];
@@ -3730,29 +3733,22 @@ function finalizeWriteReceipts(settlement: {
   for (const completed of settlement.completedTools) {
     const candidateWrite = completed.result.candidateWrite;
     if (!completed.result.ok || candidateWrite === undefined) continue;
-    const status =
-      candidateWrite.changed && committedWriteRefs.has(candidateWrite.shortRef)
-        ? `@${candidateWrite.shortRef} write succeeded`
-        : `@${candidateWrite.shortRef} unchanged`;
-    const markdown = [
-      status,
-      candidateWrite.editDetails,
-      candidateWrite.sizeAdvice,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const markdown = settlement.documents.settledWriteReceipt(
+      candidateWrite,
+      committedWriteRefs.has(candidateWrite.shortRef),
+    );
     completed.result.markdown = markdown;
     delete completed.result.candidateWrite;
     const callId = completed.key.slice(completed.key.indexOf(":") + 1);
     markdownByCall.set(callId, markdown);
   }
   for (const event of settlement.trailingEvents) {
-    if (event.kind !== "tool_result") continue;
+    if (event.kind !== "tool_result" || !event.ok) continue;
     const markdown = markdownByCall.get(event.callId);
     if (markdown !== undefined) event.markdown = markdown;
   }
   for (const item of settlement.transcriptAppend) {
-    if (item.kind !== "tool") continue;
+    if (item.kind !== "tool" || item.isError === true) continue;
     const markdown = markdownByCall.get(item.toolCallId);
     if (markdown !== undefined) item.markdown = markdown;
   }
@@ -3874,14 +3870,10 @@ function prepareTool(
       };
     }
     if (resolved.kind === "alias")
-      result = {
-        ...result,
-        markdown: `${result.markdown}\n\n${renderToolAliasNote(
-          call.name,
-          executedName,
-          locale,
-        )}`,
-      };
+      appendPlayToolNote(
+        result,
+        renderToolAliasNote(call.name, executedName, locale),
+      );
     working.set(key, {
       key,
       name: executedName,
