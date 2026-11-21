@@ -12,6 +12,7 @@ import {
   retargetRequestForRetry,
 } from "../model/AssistantPrefill.ts";
 import { projectLegacyModelBindingFailure } from "./LegacyModelBindingFailure.ts";
+import { playRequestSuffix } from "./PlayRequestContext.ts";
 import {
   dispatchFailureEnding,
   emptyResponseEnding,
@@ -1376,17 +1377,16 @@ export class PlayCallChain {
       throw PlayCallChainError.requiresFreshContext(
         "The saved native continuation is incompatible; start a fresh context.",
       );
-    const savedPrefix = source.lastRequest.appended.filter(
-      (item) => item.kind !== "runtime_notice" || item.notice !== "turn_guide",
-    );
+    // Include the target while reconstructing its input: a blank-input
+    // continuation notice belongs to that response, along with its prompt.
     if (
-      !isDeepStrictEqual(
+      playRequestSuffix(
+        source.lastRequest,
         transcriptThroughEvents(
           source.transcript,
-          source.events.slice(0, index),
-        ),
-        savedPrefix,
-      )
+          source.events.slice(0, index + 1),
+        ).slice(0, -1),
+      ) === null
     )
       throw new PlayCallChainError(
         "The saved narrative request does not match its timeline; no changes were made.",
@@ -1450,6 +1450,10 @@ export class PlayCallChain {
           "The saved narrative request is unavailable.",
         );
       const events = source.events.slice(0, index);
+      const transcript = transcriptThroughEvents(
+        source.transcript,
+        source.events.slice(0, index + 1),
+      ).slice(0, -1);
       const baseline = await this.#worlds.recoverEndpoint(
         intent.worldId,
         source.baselineHead,
@@ -1478,6 +1482,7 @@ export class PlayCallChain {
       request.operationId = `narrative-only:${intent.operationId}`;
       const revised: PersistedPlayCallChain = {
         ...trace,
+        transcript,
         schemaVersion: 3,
         kind: "play_call_chain",
         worldId: intent.worldId,

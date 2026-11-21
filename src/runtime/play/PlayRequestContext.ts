@@ -57,12 +57,11 @@ export function logicalBootstrapDigest(bootstrap: PromptCompilation): string {
   ]);
 }
 
-export function captureRequestContext(
-  request: ModelHostExchange,
-  transcript: ModelHostAppendItem[],
-  attempt: number,
+export function playRequestSuffix(
+  request: Pick<ModelHostExchange, "appended">,
+  transcript: readonly ModelHostAppendItem[],
   includeFollowupPrompt = false,
-): PlayRequestContextEvidence | null {
+) {
   if (
     !isDeepStrictEqual(request.appended.slice(0, transcript.length), transcript)
   )
@@ -79,6 +78,22 @@ export function captureRequestContext(
     )
   )
     return null;
+  return { suffix, followupPrompt };
+}
+
+export function captureRequestContext(
+  request: ModelHostExchange,
+  transcript: ModelHostAppendItem[],
+  attempt: number,
+  includeFollowupPrompt = false,
+): PlayRequestContextEvidence | null {
+  const boundary = playRequestSuffix(
+    request,
+    transcript,
+    includeFollowupPrompt,
+  );
+  if (boundary === null) return null;
+  const { suffix, followupPrompt } = boundary;
   return {
     version: 1,
     exchange: request.exchange ?? 1,

@@ -14210,111 +14210,218 @@ test("Responses completed without output does not promote tentative text and can
   ).toContain("Final answer");
 });
 
-test("重启后只重新生成最后叙事并保留已结算工具", async () => {
-  const { worlds, worldId, root } = await createWorld("narrative-only");
-  const initialHost = new ScriptedModelHost({
+test.each([false, true])(
+  "重启后只重新生成最后叙事并保留已结算工具（格式纠错 %s）",
+  async (corrected) => {
+    const { worlds, worldId, root } = await createWorld("narrative-only");
+    const initialHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "patch",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "replace",
+                    locator: { yaml: ["情况"] },
+                    value: "门已经打开。",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        ...(corrected
+          ? [
+              {
+                outcome: "response" as const,
+                toolCalls: [{ id: "", name: "world_patch", arguments: {} }],
+              },
+            ]
+          : []),
+        { outcome: "response", text: "旧叙事。" },
+      ],
+    });
+    const initial = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId: "narrative-only",
+      exchangeId: "first",
+      playerText: "打开门。",
+      turnNote: "保持叙事简短。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: initialHost,
+    });
+    expect(initial.status).toBe("ready");
+    if (corrected)
+      expect(initialHost.requests.at(-1)?.appended).toContainEqual(
+        expect.objectContaining({
+          kind: "runtime_notice",
+          notice: "response_correction",
+        }),
+      );
+    const narrative = initial.events.findLast(
+      (event) =>
+        event.kind === "assistant" && event.responseKind === "narrative",
+    );
+    if (narrative?.kind !== "assistant") throw new Error("Missing narrative");
+    const state = await worlds.readSurface(worldId, "state");
+    const coldWorlds = new FileNativeWorldStore(root);
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [{ outcome: "response", text: "新叙事。" }],
+    });
+    const chain = new PlayCallChain(coldWorlds);
+    const archived = vi
+      .spyOn(coldWorlds, "archiveNeedsFreshContext")
+      .mockResolvedValue(true);
+    await expect(
+      chain.regenerateNarrative({
+        operationId: "archive-block",
+        worldId,
+        chainId: initial.chainId,
+        eventId: narrative.id,
+        modelHost: host,
+      }),
+    ).rejects.toThrow(/imported|fresh context/i);
+    expect(await coldWorlds.currentHead(worldId)).toBe(initial.parentHead);
+    expect(
+      (await coldWorlds.playTimeline.readCurrent(worldId))?.value.chainId,
+    ).toBe(initial.chainId);
+    archived.mockRestore();
+    if (corrected) {
+      const readContext = coldWorlds.playTimeline.readContext.bind(
+        coldWorlds.playTimeline,
+      );
+      const mismatched = vi
+        .spyOn(coldWorlds.playTimeline, "readContext")
+        .mockImplementation(async (...args) => {
+          const loaded = await readContext(...args);
+          const player = loaded?.value.lastRequest?.appended.find(
+            (item) => item.kind === "player",
+          );
+          if (player?.kind === "player") player.text = "一条不同的行动。";
+          return loaded;
+        });
+      await expect(
+        chain.regenerateNarrative({
+          operationId: "mismatched",
+          worldId,
+          chainId: initial.chainId,
+          eventId: narrative.id,
+          modelHost: host,
+        }),
+      ).rejects.toThrow(/does not match its timeline/u);
+      mismatched.mockRestore();
+      expect(await coldWorlds.currentHead(worldId)).toBe(initial.parentHead);
+      expect(host.requests).toHaveLength(0);
+    }
+    const result = await chain.regenerateNarrative({
+      operationId: "regenerate",
+      worldId,
+      chainId: initial.chainId,
+      eventId: narrative.id,
+      modelHost: host,
+    });
+    expect(result.status).toBe("ready");
+    expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
+    expect(
+      host.requests[0]?.appended.some((item) => item.kind === "tool"),
+    ).toBe(true);
+    expect(
+      result.events.filter((event) => event.kind === "tool_result"),
+    ).toHaveLength(1);
+    const history = (await coldWorlds.recoverEndpoint(worldId)).history.map(
+      ({ exactText }) => exactText,
+    );
+    expect(history.filter((text) => text === "打开门。")).toHaveLength(1);
+    expect(history).toContain("新叙事。");
+    expect(history).not.toContain("旧叙事。");
+    const repeated = await chain.regenerateNarrative({
+      operationId: "regenerate",
+      worldId,
+      chainId: initial.chainId,
+      eventId: narrative.id,
+      modelHost: host,
+    });
+    expect(repeated.parentHead).toBe(result.parentHead);
+    await expect(
+      chain.regenerateNarrative({
+        operationId: "stale",
+        worldId,
+        chainId: initial.chainId,
+        eventId: narrative.id,
+        modelHost: host,
+      }),
+    ).rejects.toThrow(/stale|unavailable/i);
+    expect(await coldWorlds.currentHead(worldId)).toBe(result.parentHead);
+    expect(host.requests).toHaveLength(1);
+  },
+);
+
+test("可重生经格式纠错的空输入续写，并保留其续写上下文", async () => {
+  const { worlds, worldId } = await createWorld("corrected-continuation");
+  const chain = new PlayCallChain(worlds);
+  const modelHost = new ScriptedModelHost({
     binding: modelBinding(),
     steps: [
+      { outcome: "response", text: "开门。" },
       {
         outcome: "response",
-        toolCalls: [
-          {
-            id: "patch",
-            name: "world_patch",
-            arguments: {
-              target: "@current-situation",
-              edits: [
-                {
-                  op: "replace",
-                  locator: { yaml: ["情况"] },
-                  value: "门已经打开。",
-                },
-              ],
-            },
-          },
-        ],
+        toolCalls: [{ id: "", name: "world_patch", arguments: {} }],
       },
-      { outcome: "response", text: "旧叙事。" },
+      { outcome: "response", text: "门后有一条长廊。" },
+      { outcome: "response", text: "门后是一间教室。" },
+      { outcome: "response", text: "门后是一间图书馆。" },
     ],
   });
-  const initial = await new PlayCallChain(worlds).start({
+  const first = await chain.start({
     worldId,
-    chainId: "narrative-only",
+    chainId: "corrected-continuation",
     exchangeId: "first",
-    playerText: "打开门。",
+    playerText: "推门。",
     hostBinding: hostBinding(),
     playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost: initialHost,
+    modelBinding: modelHost.binding(),
+    modelHost,
   });
-  const narrative = initial.events.findLast(
-    (event) => event.kind === "assistant" && event.responseKind === "narrative",
-  );
-  if (narrative?.kind !== "assistant") throw new Error("Missing narrative");
-  const state = await worlds.readSurface(worldId, "state");
-  const coldWorlds = new FileNativeWorldStore(root);
-  const host = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [{ outcome: "response", text: "新叙事。" }],
-  });
-  const chain = new PlayCallChain(coldWorlds);
-  const archived = vi
-    .spyOn(coldWorlds, "archiveNeedsFreshContext")
-    .mockResolvedValue(true);
-  await expect(
-    chain.regenerateNarrative({
-      operationId: "archive-block",
-      worldId,
-      chainId: initial.chainId,
-      eventId: narrative.id,
-      modelHost: host,
-    }),
-  ).rejects.toThrow(/imported|fresh context/i);
-  expect(await coldWorlds.currentHead(worldId)).toBe(initial.parentHead);
-  expect(
-    (await coldWorlds.playTimeline.readCurrent(worldId))?.value.chainId,
-  ).toBe(initial.chainId);
-  archived.mockRestore();
-  const result = await chain.regenerateNarrative({
-    operationId: "regenerate",
+  let view = await chain.append({
     worldId,
-    chainId: initial.chainId,
-    eventId: narrative.id,
-    modelHost: host,
+    chainId: first.chainId,
+    exchangeId: "continue",
+    playerText: "",
+    modelHost,
   });
-  expect(result.status).toBe("ready");
-  expect(await coldWorlds.readSurface(worldId, "state")).toEqual(state);
-  expect(host.requests[0]?.appended.some((item) => item.kind === "tool")).toBe(
-    true,
-  );
-  expect(
-    result.events.filter((event) => event.kind === "tool_result"),
-  ).toHaveLength(1);
-  const history = (await coldWorlds.recoverEndpoint(worldId)).history.map(
+  for (const operationId of ["regenerate-once", "regenerate-again"]) {
+    const narrative = view.events.findLast(
+      (event) =>
+        event.kind === "assistant" && event.responseKind === "narrative",
+    );
+    view = await chain.regenerateNarrative({
+      operationId,
+      worldId,
+      chainId: view.chainId,
+      eventId: narrative!.id,
+      modelHost,
+    });
+    expect(view.status).toBe("ready");
+    expect(modelHost.requests.at(-1)?.appended).toContainEqual(
+      expect.objectContaining({
+        kind: "runtime_notice",
+        notice: "continuation",
+      }),
+    );
+  }
+  const history = (await worlds.recoverEndpoint(worldId)).history.map(
     ({ exactText }) => exactText,
   );
-  expect(history.filter((text) => text === "打开门。")).toHaveLength(1);
-  expect(history).toContain("新叙事。");
-  expect(history).not.toContain("旧叙事。");
-  const repeated = await chain.regenerateNarrative({
-    operationId: "regenerate",
-    worldId,
-    chainId: initial.chainId,
-    eventId: narrative.id,
-    modelHost: host,
-  });
-  expect(repeated.parentHead).toBe(result.parentHead);
-  await expect(
-    chain.regenerateNarrative({
-      operationId: "stale",
-      worldId,
-      chainId: initial.chainId,
-      eventId: narrative.id,
-      modelHost: host,
-    }),
-  ).rejects.toThrow(/stale|unavailable/i);
-  expect(await coldWorlds.currentHead(worldId)).toBe(result.parentHead);
-  expect(host.requests).toHaveLength(1);
+  expect(history.slice(-3)).toEqual(["推门。", "开门。", "门后是一间图书馆。"]);
 });
 
 test("只重新生成叙事时拒绝工具调用并能在重启后重试", async () => {
