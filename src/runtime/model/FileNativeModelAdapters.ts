@@ -5,6 +5,14 @@ import {
   hardQuotaFailure,
   provenConnectTimeout,
 } from "./ModelRetry.ts";
+import {
+  fetchModelService,
+  ModelServiceRedirectError,
+} from "./fetchModelService.ts";
+import {
+  providerRejectionText,
+  readProviderRejectionBody,
+} from "./ProviderRejection.ts";
 import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
   equalModelHostBinding,
@@ -780,25 +788,24 @@ export class FileNativeModelHost implements ModelHost {
       this.#failureLog,
       capture,
       async (observe) => {
-        const response = observe(
-          await dispatchProviderRequest(
-            this.#fetch,
-            url,
-            {
-              method: "POST",
-              headers: {
-                Accept: "text/event-stream",
-                Authorization: `Bearer ${this.#connection.apiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: bodyJson,
-              ...(signal === undefined ? {} : { signal }),
+        const received = await dispatchProviderRequest(
+          this.#fetch,
+          url,
+          {
+            method: "POST",
+            headers: {
+              Accept: "text/event-stream",
+              Authorization: `Bearer ${this.#connection.apiKey}`,
+              "Content-Type": "application/json",
             },
-            "Chat Completions",
-          ),
+            body: bodyJson,
+            ...(signal === undefined ? {} : { signal }),
+          },
+          "Chat Completions",
         );
-        if (!response.ok)
-          throw await providerError(response, this.#connection.apiKey);
+        if (!received.ok)
+          throw await providerError(received, this.#connection.apiKey, capture);
+        const response = observe(received);
         if (isProviderEventStream(response)) {
           const streamed = await providerStreamResult(
             response,
@@ -949,26 +956,25 @@ export class FileNativeModelHost implements ModelHost {
       this.#failureLog,
       capture,
       async (observe) => {
-        const response = observe(
-          await dispatchProviderRequest(
-            this.#fetch,
-            url,
-            {
-              method: "POST",
-              headers: {
-                Accept: "text/event-stream",
-                "anthropic-version": "2023-06-01",
-                "x-api-key": this.#connection.apiKey,
-                "Content-Type": "application/json",
-              },
-              body: bodyJson,
-              ...(signal === undefined ? {} : { signal }),
+        const received = await dispatchProviderRequest(
+          this.#fetch,
+          url,
+          {
+            method: "POST",
+            headers: {
+              Accept: "text/event-stream",
+              "anthropic-version": "2023-06-01",
+              "x-api-key": this.#connection.apiKey,
+              "Content-Type": "application/json",
             },
-            "Anthropic Messages",
-          ),
+            body: bodyJson,
+            ...(signal === undefined ? {} : { signal }),
+          },
+          "Anthropic Messages",
         );
-        if (!response.ok)
-          throw await providerError(response, this.#connection.apiKey);
+        if (!received.ok)
+          throw await providerError(received, this.#connection.apiKey, capture);
+        const response = observe(received);
         if (isProviderEventStream(response)) {
           const streamed = await providerStreamResult(
             response,
@@ -2482,37 +2488,11 @@ async function googleInitialRejection(response: Response): Promise<Error> {
       "Google Interactions request outcome could not be confirmed",
     );
   }
-  let body = "";
-  if (response.body !== null) {
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let complete = false;
-    let bytes = 0;
-    try {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          complete = true;
-          body += decoder.decode();
-          break;
-        }
-        bytes += chunk.value.byteLength;
-        if (bytes > 64 * 1024) break;
-        body += decoder.decode(chunk.value, { stream: true });
-      }
-    } catch {
-      return new ModelHostOutcomeUnknownError(
-        "Google Interactions request outcome could not be confirmed",
-      );
-    } finally {
-      if (!complete) void reader.cancel().catch(() => undefined);
-      reader.releaseLock();
-    }
-    if (!complete)
-      return new ModelHostOutcomeUnknownError(
-        "Google Interactions request outcome could not be confirmed",
-      );
-  }
+  const body = await readProviderRejectionBody(response);
+  if (body === null)
+    return new ModelHostOutcomeUnknownError(
+      "Google Interactions request outcome could not be confirmed",
+    );
   const contentType = response.headers
     .get("content-type")
     ?.split(";", 1)[0]
@@ -2605,90 +2585,49 @@ function parseArguments(value: string): unknown {
 async function providerError(
   response: Response,
   apiKey: string,
+  capture: AiExchangeCapture | undefined,
 ): Promise<Error> {
-  let body = "";
-  try {
-    body = await response.text();
-  } catch {
-    // A non-2xx response is already a confirmed remote rejection. Preserve
-    // that deterministic classification even if its error body is unreadable.
-  }
-  const text = body.slice(0, 4096);
+  const body = await readProviderRejectionBody(response);
+  const contentType = response.headers.get("content-type");
+  const diagnostic = providerRejectionText(body ?? "", apiKey, contentType);
+  const statusText = providerRejectionText(response.statusText, apiKey, null);
   await trace("provider_error", {
     status: response.status,
-    statusText: response.statusText,
-    body: text,
+    statusText,
+    body: diagnostic,
   });
-  if (response.status === 429 && hardQuotaFailure(text))
+  capture?.captureRejection({
+    status: response.status,
+    statusText,
+    contentType:
+      contentType === null
+        ? null
+        : providerRejectionText(contentType, apiKey, null),
+    body: diagnostic,
+    bodyComplete: body !== null,
+  });
+  // Classify the rejection without persisting the upstream's raw evidence.
+  const evidence = body?.slice(0, 4096) ?? "";
+  if (response.status === 429 && hardQuotaFailure(evidence))
     return new ModelHostFailureError(
       "Provider hard quota or balance exhausted",
       { details: { code: "hard_quota_exhausted", httpStatus: 429 } },
     );
+  const message = ["Provider request failed:", response.status, diagnostic]
+    .filter(Boolean)
+    .join(" ");
   if (
     response.status === 429 &&
-    !isModelHostTokenLimitFailure(new ModelHostFailureError(text))
-  ) {
-    const diagnostic = providerRejectionText(
-      body,
-      apiKey,
-      response.headers.get("content-type"),
-    );
+    !isModelHostTokenLimitFailure(new ModelHostFailureError(evidence))
+  )
     return new RetryableModelFailure(
       "rate_limit",
       retryAfterMs(response.headers.get("retry-after")),
-      diagnostic ? `Provider request failed: 429 ${diagnostic}` : undefined,
+      diagnostic === "" ? undefined : message,
     );
-  }
-  return new ModelHostFailureError(
-    `Provider request failed: ${response.status} ${text}`,
-    { details: { httpStatus: response.status } },
-  );
-}
-
-/** Keep the upstream rejection text, without projecting credentials or opaque fields. */
-function providerRejectionText(
-  body: string,
-  apiKey: string,
-  contentType: string | null,
-): string {
-  const redactKey = (value: string) =>
-    apiKey
-      ? value
-          .replaceAll(apiKey, "[redacted]")
-          .replaceAll(encodeURIComponent(apiKey), "[redacted]")
-      : value;
-  const text = body.trim();
-  // Plain text (including "[gateway] ...") and ordinary JSON keep the old
-  // diagnostic verbatim. Inspect structured data only if it may need masking.
-  const structured =
-    /(?:\/|\+)json(?:;|$)/iu.test(contentType ?? "") ||
-    /^(?:\{|\[\s*[{["]|")/u.test(text);
-  const privateField =
-    /(?:^|")(?:authorization|(?:x[-_](?:goog[-_])?)?api[-_]?key|signature|thought_?signature|encrypted_content|continuation_token|redacted_thinking)(?:"|$)/iu;
-  if (!structured || (!privateField.test(text) && !text.includes("\\")))
-    return redactKey(text).slice(0, 4096);
-  if (text.length > 64 * 1024) return "";
-  try {
-    const payload: unknown = JSON.parse(text);
-    let changed = false;
-    const safe = JSON.stringify(payload, (key, value: unknown) => {
-      if (
-        privateField.test(key) ||
-        (isRecord(value) && value.type === "redacted_thinking")
-      ) {
-        changed = true;
-        return "[redacted]";
-      }
-      if (typeof value !== "string") return value;
-      const clean = redactKey(value);
-      if (clean !== value) changed = true;
-      return clean;
-    });
-    return redactKey(changed ? safe : text).slice(0, 4096);
-  } catch {
-    // A malformed JSON envelope with private fields cannot safely be projected.
-    return "";
-  }
+  return new ModelHostFailureError(message, {
+    details: { httpStatus: response.status },
+  });
 }
 
 function responsesBootstrapMessage(
@@ -2881,25 +2820,24 @@ async function openAIResponsesRequest(
     input.failureLog,
     capture,
     async (observe) => {
-      const response = observe(
-        await dispatchProviderRequest(
-          input.fetchImplementation,
-          url,
-          {
-            method: "POST",
-            headers: {
-              Accept: "text/event-stream",
-              Authorization: `Bearer ${input.connection.apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: bodyJson,
-            ...(input.signal === undefined ? {} : { signal: input.signal }),
+      const received = await dispatchProviderRequest(
+        input.fetchImplementation,
+        url,
+        {
+          method: "POST",
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${input.connection.apiKey}`,
+            "Content-Type": "application/json",
           },
-          "OpenAI Responses",
-        ),
+          body: bodyJson,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        },
+        "OpenAI Responses",
       );
-      if (!response.ok)
-        throw await providerError(response, input.connection.apiKey);
+      if (!received.ok)
+        throw await providerError(received, input.connection.apiKey, capture);
+      const response = observe(received);
       const payload = isProviderEventStream(response)
         ? await providerStreamResult(
             response,
@@ -3319,9 +3257,15 @@ async function dispatchProviderRequest(
   label: string,
 ): Promise<Response> {
   try {
-    return await fetchImplementation(url, init);
+    return await (init.redirect === "error"
+      ? fetchImplementation(url, init)
+      : fetchModelService(fetchImplementation, url, init));
   } catch (error: unknown) {
     if (init.signal?.aborted === true) throw cancelledModelRequest(error);
+    if (error instanceof ModelServiceRedirectError)
+      throw new ModelHostFailureError(error.message, {
+        details: { httpStatus: error.httpStatus },
+      });
     if (provenConnectTimeout(error))
       throw new RetryableModelFailure("connect_timeout");
     throw new ModelHostOutcomeUnknownError(

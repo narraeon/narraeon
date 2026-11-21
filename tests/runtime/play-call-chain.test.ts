@@ -262,6 +262,94 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
   expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
 });
 
+test("Google CLIProxyAPI 主请求和后置预览在重读时保留合法头名称", async () => {
+  const { host } = googleAuthoringHost(
+    [
+      googleSignedText("The door opens."),
+      googleTools([
+        {
+          id: "panel",
+          name: "artifact_emit",
+          arguments: { output: "status_bar", payload: { hp: 9 } },
+        },
+      ]),
+      googleTools([
+        {
+          id: "options",
+          name: "artifact_emit",
+          arguments: { output: "options", payload: { first: "Follow" } },
+        },
+      ]),
+    ],
+    undefined,
+    { dialect: "cliproxyapi" },
+  );
+  const modelBinding = host.binding();
+  const chainId = "google-cliproxy-followup-encoding";
+  const { worlds, root, worldId } = await createWorld(
+    chainId,
+    undefined,
+    modelBinding,
+  );
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText: "Open.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding,
+    modelHost: host,
+  });
+
+  const cold = new FileNativeWorldStore(root);
+  const main = await cold.playTimeline.readInitialEncoding(worldId, chainId);
+  expect(main?.headerNames).toEqual([
+    "Accept",
+    "x-goog-api-key",
+    "Content-Type",
+    "X-Session-Id",
+  ]);
+  const followup = view.events.find((event) => event.kind === "followup")!;
+  const runtime = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await runtime.initialize();
+  const detail = await runtime.handle({
+    type: "play.timeline.detail",
+    worldId,
+    chainId,
+    eventId: followup.id,
+  });
+  expect(detail).toMatchObject({
+    result: {
+      requestPreview: {
+        status: "completed",
+        wireRequest: {
+          headerNames: main?.headerNames,
+          redactedProviderContinuation: true,
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(detail)).not.toContain("synthetic-signature-secret");
+
+  await expect(
+    cold.playTimeline.recordFollowupEncoding(
+      worldId,
+      chainId,
+      1,
+      "unexpected-header",
+      { ...main!, headerNames: [...main!.headerNames.slice(0, 3), "X-Other"] },
+    ),
+  ).resolves.toBe(false);
+});
+
 test("Google 后置请求使用冻结主链并恢复多个产物", async () => {
   const logRoot = await mkdtemp(join(tmpdir(), "google-followup-log-"));
   roots.push(logRoot);
@@ -9758,6 +9846,108 @@ test("完整响应若缺失原生续传载荷会保留叙事，但立即终止�
     ),
   ).toContain("The visible scene still settles once.");
 });
+
+test.each([400, 429])(
+  "HTTP %i 错误在游玩调用详情和失败日志中保留诊断并遮蔽敏感字段",
+  async (status) => {
+    const connection = {
+      provider: "chat_completions" as const,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "synthetic/key",
+      modelId: "manual-model",
+      contextWindowTokens: 32_000,
+      maxOutputTokens: 2_000,
+    };
+    const cleanBody = {
+      error: {
+        message: "Request rejected for [redacted] or [redacted]",
+        authorization: "[redacted]",
+        thoughtSignature: "[redacted]",
+        encrypted_content: "[redacted]",
+      },
+    };
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "Request rejected for synthetic/key or synthetic%2Fkey",
+            authorization: "Bearer synthetic-authorization",
+            thoughtSignature: "synthetic-signature",
+            encrypted_content: "synthetic-encrypted-state",
+          },
+        }),
+        {
+          status,
+          headers: {
+            "content-type": "application/json",
+            "retry-after": "60",
+          },
+        },
+      ),
+    );
+    const binding = new FileNativeModelHost(connection).binding();
+    const { worlds, worldId, root } = await createWorld(
+      `play-http-rejection-${status}`,
+      undefined,
+      binding,
+    );
+    const logRoot = join(root, "logs", "ai-failures");
+    const failureLog = new FileNativeAiFailureLog(logRoot);
+    const host = new FileNativeModelHost(connection, fetch_, failureLog);
+    const chainId = `play-http-rejection-${status}`;
+    const view = await new PlayCallChain(worlds).start({
+      worldId,
+      chainId,
+      exchangeId: "first",
+      playerText: "Open the door.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: binding,
+      modelHost: host,
+    });
+    const errorText = `Provider request failed: ${status} ${JSON.stringify(cleanBody)}`;
+    expect(fetch_).toHaveBeenCalledTimes(1);
+    expect(view.lastFailure).toContain(errorText);
+
+    const runtime = new V1Runtime({
+      dataRoot: root,
+      configRoot: join(root, "config"),
+    });
+    await runtime.initialize();
+    const failure = view.events.find((event) => event.kind === "failure")!;
+    const detail = await runtime.handle({
+      type: "play.timeline.detail",
+      worldId,
+      chainId,
+      eventId: failure.id,
+    });
+    expect(JSON.stringify(detail)).toContain("Request rejected for [redacted]");
+    const files = (await readdir(logRoot)).filter((name) =>
+      name.endsWith(".jsonl"),
+    );
+    expect(files).toHaveLength(1);
+    const log = await readFile(join(logRoot, files[0]!), "utf8");
+    const entries = log
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const entry = entries.find(({ type }) => type === "exchange");
+    expect(entry?.exchange).toMatchObject({
+      response: {
+        status,
+        body: JSON.stringify(cleanBody),
+        bodyComplete: true,
+      },
+    });
+    for (const evidence of [
+      JSON.stringify(view),
+      JSON.stringify(detail),
+      log,
+    ]) {
+      expect(evidence).not.toMatch(/synthetic(?:[/%-])/u);
+    }
+  },
+);
 
 test("AI 工具被 Runtime 拒绝时保存产生该调用的原始交换与 reasoning", async () => {
   const { worlds, worldId, root } = await createWorld("play-tool-failure-log");

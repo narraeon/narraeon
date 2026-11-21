@@ -506,7 +506,7 @@ test("三种协议只暴露各自真实支持的 Effort、Thinking 和返回内�
   );
 });
 
-test("已有配置改变协议和端点后仍可沿用本机 API Key", () => {
+test("已有配置可以更改协议，更换来源时须重新填写 API Key", () => {
   const library = modelLibrary();
   render(
     createElement(ModelConnectionScreen, {
@@ -527,21 +527,23 @@ test("已有配置改变协议和端点后仍可沿用本机 API Key", () => {
   fireEvent.change(screen.getByLabelText("协议适配器"), {
     target: { value: "openai_responses" },
   });
+  const key = screen.getByLabelText<HTMLInputElement>("API Key");
+  const pull = screen.getByRole<HTMLButtonElement>("button", {
+    name: "从端点拉取模型",
+  });
+  expect(key.required).toBe(false);
+  expect(pull.disabled).toBe(false);
+  expect(key.placeholder).toBe("留空以沿用本机保存的现有凭据");
+
+  fireEvent.change(key, { target: { value: "draft-secret" } });
   fireEvent.change(screen.getByLabelText("Base URL"), {
     target: { value: "https://new-endpoint.invalid/v1" },
   });
-
-  expect(screen.getByLabelText<HTMLInputElement>("API Key").required).toBe(
-    false,
-  );
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", {
-      name: "从端点拉取模型",
-    }).disabled,
-  ).toBe(false);
-  expect(screen.getByLabelText("API Key").getAttribute("placeholder")).toBe(
-    "留空以沿用本机保存的现有凭据",
-  );
+  expect(key.value).toBe("");
+  expect(key.required).toBe(true);
+  expect(pull.disabled).toBe(true);
+  fireEvent.change(key, { target: { value: "new-secret" } });
+  expect(pull.disabled).toBe(false);
 });
 
 test("CLIProxyAPI 模型后缀控制 Thinking 时仍可独立配置返回内容", () => {

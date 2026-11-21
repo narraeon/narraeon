@@ -742,7 +742,7 @@ test("旧 Anthropic 配置无损迁移为独立 Thinking 模式", async () => {
   ]);
 });
 
-test("模型列表在协议和端点改变后仍复用已有配置的本机凭据", async () => {
+test("模型列表仅在同一来源复用已有配置的本机凭据", async () => {
   const root = await temporaryRoot();
   const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
     Promise.resolve(
@@ -784,19 +784,25 @@ test("模型列表在协议和端点改变后仍复用已有配置的本机凭�
     Authorization: "Bearer stored-secret",
   });
 
+  const changedAddress = {
+    connectionId: saved.activeConnectionId!,
+    provider: "anthropic_messages" as const,
+    baseUrl: "https://other.invalid/v1",
+  };
+  await expect(store.listModels(changedAddress)).rejects.toThrow(
+    "Changing the model service origin requires an API key",
+  );
+  expect(fetch_).toHaveBeenCalledTimes(1);
+
   await expect(
-    store.listModels({
-      connectionId: saved.activeConnectionId!,
-      provider: "anthropic_messages",
-      baseUrl: "https://other.invalid/v1",
-    }),
+    store.listModels({ ...changedAddress, apiKey: "new-secret" }),
   ).resolves.toEqual({ models: ["a-model", "z-model"] });
   expect((fetch_.mock.calls[1]?.[0] as URL).toString()).toBe(
     "https://other.invalid/v1/models?limit=1000",
   );
   expect(fetch_.mock.calls[1]?.[1]?.headers).toEqual({
     "anthropic-version": "2023-06-01",
-    "x-api-key": "stored-secret",
+    "x-api-key": "new-secret",
   });
   expect(fetch_).toHaveBeenCalledTimes(2);
 });
@@ -832,7 +838,7 @@ test("Google 模型列表使用已存凭据逐页读取原生资源名", async (
   await expect(
     store.listModels({
       provider: "google_interactions",
-      baseUrl: "https://provider.invalid/v1beta",
+      baseUrl: "https://generativelanguage.googleapis.com:443/v1beta/",
       connectionId: saved.activeConnectionId!,
     }),
   ).resolves.toEqual({ models: ["gemini-a", "gemini-b"] });
@@ -871,7 +877,27 @@ test.each([
   ).rejects.toThrow(message);
 });
 
-test("编辑已有配置时协议或端点变化均复用本机凭据", async () => {
+test("模型列表错误保留普通文本说明并遮蔽已知凭据和敏感字段", async () => {
+  const store = new ModelConnectionStore(await temporaryRoot(), () =>
+    Promise.resolve(
+      new Response(
+        "Model list denied for list-key\nAuthorization: Bearer mock-token",
+        { status: 403 },
+      ),
+    ),
+  );
+  await expect(
+    store.listModels({
+      provider: "anthropic_messages",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "list-key",
+    }),
+  ).rejects.toThrow(
+    "Failed to fetch model list: 403 Model list denied for [redacted]\nAuthorization: [redacted]",
+  );
+});
+
+test("编辑已有配置时仅在同一来源复用本机凭据", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);
   const saved = await store.save({
@@ -902,21 +928,26 @@ test("编辑已有配置时协议或端点变化均复用本机凭据", async ()
     baseUrl: "https://old.invalid/v1",
     apiKey: "old-secret",
   });
-  await expect(
-    store.save({
-      connectionId,
-      name: "新端点",
-      presetId: "custom",
-      provider: "openai_responses",
-      baseUrl: "https://new.invalid/v1",
-      modelId: "model",
-      contextWindowTokens: 32_000,
-      maxOutputTokens: 2_000,
-    }),
-  ).resolves.toMatchObject({ activeConnectionId: connectionId });
+  for (const baseUrl of [
+    "https://new.invalid/v1",
+    "https://old.invalid:8443/v1",
+    "http://old.invalid/v1",
+  ]) {
+    await expect(
+      store.save({
+        connectionId,
+        name: "新端点",
+        presetId: "custom",
+        provider: "openai_responses",
+        baseUrl,
+        modelId: "model",
+        contextWindowTokens: 32_000,
+        maxOutputTokens: 2_000,
+      }),
+    ).rejects.toThrow("Changing the model service origin requires an API key");
+  }
   await expect(store.bind()).resolves.toMatchObject({
-    provider: "openai_responses",
-    baseUrl: "https://new.invalid/v1",
+    baseUrl: "https://old.invalid/v1",
     apiKey: "old-secret",
   });
   await expect(
@@ -933,6 +964,33 @@ test("编辑已有配置时协议或端点变化均复用本机凭据", async ()
     }),
   ).resolves.toMatchObject({ activeConnectionId: connectionId });
   await expect(store.bind()).resolves.toMatchObject({ apiKey: "new-secret" });
+});
+
+test("Anthropic 模型列表仅跟随同源重定向", async () => {
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      Response.redirect("https://provider.invalid/api/models"),
+    )
+    .mockResolvedValueOnce(Response.json({ data: [{ id: "claude-test" }] }))
+    .mockResolvedValueOnce(Response.redirect("https://other.invalid/models"));
+  const store = new ModelConnectionStore(await temporaryRoot(), fetch_);
+  const input = {
+    provider: "anthropic_messages" as const,
+    baseUrl: "https://provider.invalid/v1",
+    apiKey: "synthetic-key",
+  };
+  await expect(store.listModels(input)).resolves.toEqual({
+    models: ["claude-test"],
+  });
+  const [target, options] = fetch_.mock.calls[1]!;
+  expect(target).toEqual(new URL("https://provider.invalid/api/models"));
+  expect(options).toMatchObject({
+    redirect: "manual",
+    headers: { "x-api-key": "synthetic-key" },
+  });
+  await expect(store.listModels(input)).rejects.toThrow("redirect");
+  expect(fetch_).toHaveBeenCalledTimes(3);
 });
 
 test("Anthropic 模型列表使用原生 models 接口和请求头", async () => {

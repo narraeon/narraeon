@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import {
   hasCLIProxyThinkingSuffix,
+  isSameModelServiceOrigin,
   modelReasoningPolicyIssue,
   modelProviderPresets,
   responsesConnectionCapabilities,
@@ -38,6 +39,11 @@ import {
   ModelHostBindingMismatchError,
   type ModelHostBinding,
 } from "./ModelHost.ts";
+import { fetchModelService } from "./fetchModelService.ts";
+import {
+  providerRejectionText,
+  readProviderRejectionBody,
+} from "./ProviderRejection.ts";
 
 const libraryFileName = "model-connections-v1.json";
 const maxModelListBytes = 1024 * 1024;
@@ -228,9 +234,7 @@ export class ModelConnectionStore {
       );
       if (stored === undefined)
         throw new Error("Model configuration not found");
-      // A saved connection owns its credential across later protocol and
-      // endpoint edits; an explicit key in this request still takes precedence.
-      apiKey = stored.apiKey;
+      apiKey = savedApiKeyForOrigin(stored, baseUrl);
     }
     if (apiKey === undefined)
       throw new Error("Fetching the model list requires an API key");
@@ -249,13 +253,11 @@ export class ModelConnectionStore {
     const ids = new Set<string>();
     const seenTokens = new Set<string>();
     for (;;) {
-      const response = await this.#fetch(new URL(url), {
-        method: "GET",
-        headers,
-        signal,
-        ...(google ? { redirect: "error" as const } : {}),
-      });
-      const payload = await readModelListPage(response);
+      const options = { method: "GET", headers, signal };
+      const response = await (google
+        ? this.#fetch(new URL(url), { ...options, redirect: "error" })
+        : fetchModelService(this.#fetch, new URL(url), options));
+      const payload = await readModelListPage(response, apiKey);
       const field = google ? "models" : "data";
       const entries =
         google && payload.models === undefined ? [] : payload[field];
@@ -406,9 +408,11 @@ function normalizeSaveInput(
     maxOutputTokens: input.maxOutputTokens,
   });
   const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
-  // Credential reuse follows the saved configuration identity, not its current
-  // protocol or endpoint fields.
-  const apiKey = explicitApiKey ?? existing?.apiKey;
+  const apiKey =
+    explicitApiKey ??
+    (existing === undefined
+      ? undefined
+      : savedApiKeyForOrigin(existing, baseUrl));
   if (apiKey === undefined)
     throw new Error("A new model configuration requires an API key");
   validatePresetBinding(presetId, provider, baseUrl);
@@ -760,6 +764,15 @@ function normalizeBaseUrl(value: string): string {
   return url.toString().replace(/\/$/u, "");
 }
 
+function savedApiKeyForOrigin(
+  connection: StoredModelConnection,
+  baseUrl: string,
+): string {
+  if (!isSameModelServiceOrigin(connection.baseUrl, baseUrl))
+    throw new Error("Changing the model service origin requires an API key");
+  return connection.apiKey;
+}
+
 function normalizeOptionalApiKey(value: unknown): string | undefined {
   if (value === undefined || value === "") return undefined;
   return requiredTrimmed(value, "API Key", 16_384);
@@ -805,8 +818,21 @@ function googleModelResourceId(name: unknown): string | undefined {
 
 async function readModelListPage(
   response: Response,
+  apiKey: string,
 ): Promise<Record<string, unknown>> {
-  if (!response.ok) throw await providerListError(response);
+  if (!response.ok) {
+    const body = await readProviderRejectionBody(response);
+    const diagnostic = providerRejectionText(
+      body ?? "",
+      apiKey,
+      response.headers.get("content-type"),
+    );
+    throw new Error(
+      ["Failed to fetch model list:", response.status, diagnostic]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxModelListBytes)
     throw new Error("Provider model-list response exceeds the 1 MiB limit");
@@ -822,11 +848,6 @@ async function readModelListPage(
   if (!isRecord(payload))
     throw new Error("Provider model-list response must be an object");
   return payload;
-}
-
-async function providerListError(response: Response): Promise<Error> {
-  const text = (await response.text()).slice(0, 4096);
-  return new Error(`Failed to fetch model list: ${response.status} ${text}`);
 }
 
 function verifyPrivateMode(mode: number): void {

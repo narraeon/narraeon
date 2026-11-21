@@ -37,6 +37,49 @@ const binding: ModelHostBinding = {
   protocolConfigFingerprint: "sha256:protocol",
 };
 
+test.each([
+  "chat_completions",
+  "openai_responses",
+  "anthropic_messages",
+] as const)("%s 仅在同一来源重定向模型请求", async (provider) => {
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      Response.redirect("https://provider.invalid/proxy", 307),
+    )
+    .mockResolvedValueOnce(
+      Response.redirect("https://other.invalid/new-service", 307),
+    );
+  const host = new FileNativeModelHost(
+    {
+      provider,
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "synthetic-key",
+      modelId: "manual-model",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    },
+    fetch_,
+  );
+  await expect(
+    host.exchange(
+      exchangeFor(provider, "manual-model", host.binding().cacheStrategy),
+    ),
+  ).rejects.toThrow("redirect");
+  expect(fetch_).toHaveBeenCalledTimes(2);
+  const [, first] = fetch_.mock.calls[0]!;
+  expect(fetch_).toHaveBeenNthCalledWith(
+    2,
+    new URL("https://provider.invalid/proxy"),
+    expect.objectContaining({
+      body: first?.body,
+      headers: first?.headers,
+      method: "POST",
+      redirect: "manual",
+    }),
+  );
+});
+
 test("Google 诊断接受根端点并遮蔽 URL 路径中的凭据", () => {
   const request = exchangeFor(
     "google_interactions",
