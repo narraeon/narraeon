@@ -1,4 +1,5 @@
 import { registerConversationStream } from "./ConversationStream.ts";
+import { checkWebAccess } from "./WebAccess.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
@@ -80,6 +81,7 @@ export async function createServer(input: {
   runtime: V1Runtime;
   staticRoot: string;
   port: number;
+  trustedOrigins?: readonly string[];
   logger?: boolean;
   logStream?: Writable;
 }): Promise<FastifyInstance> {
@@ -105,6 +107,10 @@ export async function createServer(input: {
               : { stream: input.logStream }),
           },
   });
+  server.addHook(
+    "onRequest",
+    checkWebAccess(input.port, input.trustedOrigins ?? []),
+  );
   const html = await readFile(join(input.staticRoot, "index.html"), "utf8");
   const logRuntimeRequest: preHandlerHookHandler = (request, _reply, done) => {
     if (!isPollingRequest(request))

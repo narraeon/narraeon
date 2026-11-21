@@ -16,6 +16,7 @@ export interface StartWebServerInput {
   staticRoot: string;
   host: WebHost;
   port: number;
+  trustedOrigins?: readonly string[];
   logger?: boolean;
 }
 
@@ -30,6 +31,9 @@ export async function startWebServer(
       runtime,
       staticRoot: input.staticRoot,
       port: input.port,
+      ...(input.trustedOrigins === undefined
+        ? {}
+        : { trustedOrigins: input.trustedOrigins }),
       ...(input.logger === undefined ? {} : { logger: input.logger }),
     });
     await server.listen({ host: input.host, port: input.port });

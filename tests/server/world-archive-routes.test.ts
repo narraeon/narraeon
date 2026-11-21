@@ -44,6 +44,7 @@ async function exportArchiveId(
   operationId: string,
 ): Promise<string> {
   const exported = await server.inject({
+    authority: "127.0.0.1:3000",
     method: "POST",
     url: "/api/runtime/v1",
     payload: {
@@ -79,13 +80,13 @@ test("归档下载检查不消耗备份，备份不存在时返回错误码", as
     );
 
     const check = await server.inject(
-      `/api/runtime/v1/world-archives/${archiveId}/check`,
+      `http://127.0.0.1:3000/api/runtime/v1/world-archives/${archiveId}/check`,
     );
     expect(check.statusCode).toBe(204);
     expect(check.body).toBe("");
 
     const absent = await server.inject(
-      "/api/runtime/v1/world-archives/absent/check",
+      "http://127.0.0.1:3000/api/runtime/v1/world-archives/absent/check",
     );
     expect(absent.statusCode).toBe(404);
     expect(absent.json<{ error: { code: string } }>().error.code).toBe(
@@ -93,7 +94,7 @@ test("归档下载检查不消耗备份，备份不存在时返回错误码", as
     );
 
     const download = await server.inject(
-      `/api/runtime/v1/world-archives/${archiveId}`,
+      `http://127.0.0.1:3000/api/runtime/v1/world-archives/${archiveId}`,
     );
     expect(download.statusCode).toBe(200);
     expect(download.headers["content-type"]).toBe("application/zip");
@@ -105,7 +106,9 @@ test("归档下载检查不消耗备份，备份不存在时返回错误码", as
 test("归档下载失败写入 runtime-errors 日志", async () => {
   const { fixture, server, logRoot } = await setup();
   try {
-    await server.inject("/api/runtime/v1/world-archives/absent");
+    await server.inject(
+      "http://127.0.0.1:3000/api/runtime/v1/world-archives/absent",
+    );
     const archiveId = await exportArchiveId(
       server,
       fixture.worldId,
@@ -116,7 +119,7 @@ test("归档下载失败写入 runtime-errors 日志", async () => {
       "not json",
     );
     const broken = await server.inject(
-      `/api/runtime/v1/world-archives/${archiveId}`,
+      `http://127.0.0.1:3000/api/runtime/v1/world-archives/${archiveId}`,
     );
     expect(broken.statusCode).toBe(500);
 
@@ -148,6 +151,7 @@ test("归档上传失败写入 runtime-errors 日志", async () => {
       new WorldArchiveError("limit_exceeded", "The archive is too large"),
     );
     const rejected = await server.inject({
+      authority: "127.0.0.1:3000",
       method: "POST",
       url: "/api/runtime/v1/world-archives",
       headers: { "content-type": "application/zip" },
