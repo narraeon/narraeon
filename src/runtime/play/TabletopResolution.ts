@@ -407,6 +407,7 @@ export function resolutionMarkdown(
         : `Calculation: ${receipt.selected} ${signed(receipt.modifier)} = ${receipt.total}; ${receipt.total} ${compared} ${receipt.difficulty}; margin ${signed(receipt.margin)}`,
     );
   } else if (receipt.kind === "d100") {
+    const compared = receipt.selected <= receipt.target ? "<=" : ">";
     const net = receipt.bonusDice - receipt.penaltyDice;
     const pool =
       net === 0
@@ -430,8 +431,8 @@ export function resolutionMarkdown(
         ? `完整结果：${list(receipt.candidates)}；取值：${receipt.selected}`
         : `Complete results: ${list(receipt.candidates)}; selected: ${receipt.selected}`,
       zh
-        ? `计算：${receipt.selected} <= ${receipt.target}；差值 ${signed(receipt.margin)}`
-        : `Calculation: ${receipt.selected} <= ${receipt.target}; margin ${signed(receipt.margin)}`,
+        ? `计算：${receipt.selected} ${compared} ${receipt.target}；差值 ${signed(receipt.margin)}`
+        : `Calculation: ${receipt.selected} ${compared} ${receipt.target}; margin ${signed(receipt.margin)}`,
     );
   } else if (receipt.kind === "bag") {
     const tokens = receipt.tokens
