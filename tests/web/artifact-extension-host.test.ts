@@ -240,6 +240,37 @@ describe("ArtifactExtensionHost pipeline", () => {
       }),
     ).toThrow("content marker");
   });
+
+  test.each(["text/plain", "text/html"] as const)(
+    "document renderer preserves dollar sequences in %s and JSON payloads",
+    (contentType) => {
+      const text = "$& / $` / $' / $$ / $1";
+      const payload = { text: `${text} <note>` };
+      const source = buildDocumentSrcDoc(
+        contentType === "text/plain" ? `<note>${text}` : `<span>${text}</span>`,
+        contentType,
+        {
+          mode: "document",
+          document:
+            "<main><!-- narraeon:content --></main><!-- narraeon:payload -->",
+          scripts: [],
+          assets: [],
+          trustedLocalCode: false,
+        },
+        payload,
+      );
+      const page = new DOMParser().parseFromString(source, "text/html");
+
+      expect(page.querySelector("main")?.textContent).toBe(
+        contentType === "text/plain" ? `<note>${text}` : text,
+      );
+      const json = page.querySelector(
+        'script[type="application/json"][data-narraeon-payload]',
+      )?.textContent;
+      expect(json).toContain("\\u003cnote>");
+      expect(JSON.parse(json!)).toEqual(payload);
+    },
+  );
 });
 
 test("document 与 app 都应用 CSS 资源，样式不能结束 style 注入 HTML", () => {

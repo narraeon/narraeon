@@ -2026,8 +2026,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   修改: "Edit",
   修改后的行动: "Edited action",
   修改后如何继续: "How to continue after editing",
-  "修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧 Authority 记录仍可恢复。":
-    "The edit is saved directly in the current world. The original message and later content leave the current timeline, while the old Authority records remain recoverable.",
+  "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。":
+    "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
   沿原上下文继续: "Continue the original context",
   "保留修改点以前的模型对话和原生续传。":
     "Keep model messages and provider-native continuation before the edit.",

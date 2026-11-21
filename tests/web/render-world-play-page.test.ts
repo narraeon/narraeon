@@ -40,6 +40,7 @@ import {
 } from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 import { App } from "../../src/web/App.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
 import {
   RuntimeRequestError,
   type RuntimeClient,
@@ -56,11 +57,50 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  setWebLocale("zh-CN");
   window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("世界游玩页面", () => {
+  test.each([
+    {
+      locale: "zh-CN" as const,
+      edit: "修改",
+      warning:
+        "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
+    },
+    {
+      locale: "en" as const,
+      edit: "Edit",
+      warning:
+        "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
+    },
+  ])(
+    "warns before saving a player-message edit in $locale",
+    async ({ locale, edit, warning }) => {
+      setWebLocale(locale);
+      const chain = playChainView("original", "first", "Open the door.");
+      const request = vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (input.type === "world.play-decorations.read")
+          return Promise.resolve(
+            playDecorations(null, chain.worldId, chain.parentHead),
+          );
+        return Promise.reject(new Error(input.type));
+      });
+      renderWorld({ request });
+
+      fireEvent.click(await screen.findByRole("button", { name: edit }));
+
+      expect(screen.getByText(warning)).toBeTruthy();
+      expect(request).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "play.chain.revise-player" }),
+      );
+    },
+  );
+
   test("missing saved request opens a new input without resending or issuing an action", async () => {
     const chain = {
       ...interruptedChainView(),
@@ -379,7 +419,7 @@ describe("世界游玩页面", () => {
     ).toHaveLength(1);
   });
 
-  test("an older interrupted observation cannot replace a newer ready timeline", async () => {
+  test("repeated older observations verify once and keep the newer timeline", async () => {
     const stale = interruptedChainView();
     const view = {
       ...worldView(null),
@@ -443,6 +483,13 @@ describe("世界游玩页面", () => {
       await receiving;
     });
     expect(screen.queryByRole("alert", { name: "模型调用失败" })).toBeNull();
+    await act(async () => {
+      await receive(
+        { kind: "play", value: { ...stale, updatedAt: stale.updatedAt + 1 } },
+        true,
+      );
+    });
+    expect(reads).toBe(2);
     expect(screen.getByText("Current accepted reply.")).toBeTruthy();
   });
 
@@ -6685,91 +6732,232 @@ test("a confirmed play receipt keeps the timeline fallback usable when world rea
   ).toHaveLength(1);
 });
 
-test("newer native SSE snapshots stay visible while an earlier snapshot's world hydration is blocked", async () => {
-  class NativeSource extends EventTarget {
-    static CLOSED = 2;
-    static instances: NativeSource[] = [];
-    readyState = 1;
-    onopen: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    constructor() {
-      super();
-      NativeSource.instances.push(this);
-    }
-    close(): void {
-      this.readyState = 2;
-    }
-    snapshot(sequence: number, chain: V1PlayCallChainView): void {
-      this.dispatchEvent(
-        new MessageEvent("observation", {
-          lastEventId: `live:${sequence}`,
-          data: JSON.stringify({
-            protocol: v1Protocol,
-            update: { kind: "snapshot", value: { kind: "play", value: chain } },
-          }),
-        }),
-      );
-    }
-  }
-  vi.stubGlobal("EventSource", NativeSource);
-  const ready = playChainView(
-    "nonblocking-hydration",
-    "native-exchange",
-    "Look outside.",
-  );
+test("streaming text stays visible while slow world hydration uses one read", async () => {
+  const initial = playChainView("live-chain", "live-exchange", "Look outside.");
   const running: V1PlayCallChainView = {
-    ...ready,
+    ...initial,
     status: "running",
-    activeInvocation: createObservedProgress(
-      "nonblocking-hydration",
-      "native-exchange",
-    ),
-    events: ready.events.filter((event) => event.kind === "player"),
+    activeInvocation: createObservedProgress(initial.chainId, "live-exchange"),
+    events: initial.events.map((event) => {
+      if (event.kind !== "assistant") return event;
+      const pending: typeof event = {
+        ...event,
+        status: "streaming",
+        responseKind: "pending",
+        text: "Look",
+      };
+      delete pending.committedHead;
+      return pending;
+    }),
   };
-  let reads = 0;
-  let release!: () => void;
+  const projection = {
+    ...worldView(null),
+    head: running.parentHead,
+    playTimeline: lightweightPlayTimeline(running),
+  };
+  const beforeRun = lightweightPlayTimeline({
+    ...initial,
+    events: initial.events.filter((event) => event.kind === "player"),
+  });
+  const slowRead = Promise.withResolvers<typeof projection>();
+  let receive!: Parameters<ObserveConversation>[1];
+  let connect!: NonNullable<Parameters<ObserveConversation>[2]>;
   const request = vi.fn((input: V1Request): Promise<unknown> => {
     if (input.type === "world.read") {
-      reads++;
-      if (reads === 1)
-        return Promise.resolve({
-          ...worldView(null),
-          head: running.parentHead,
-          playTimeline: lightweightPlayTimeline(running),
-        });
-      if (reads === 2)
-        return new Promise((resolve) => {
-          release = () => resolve(worldView(running));
-        });
-      return Promise.resolve(worldView(ready));
+      if (worldReads() === 1)
+        return Promise.resolve({ ...projection, playTimeline: beforeRun });
+      if (worldReads() === 2) return slowRead.promise;
+      return Promise.resolve(projection);
     }
     if (input.type === "world.play-decorations.read")
       return Promise.resolve({ artifacts: [], debug: [] });
     return Promise.reject(new Error(input.type));
   });
-  renderWorld({ request, observeConversation });
+  const worldReads = () =>
+    request.mock.calls.filter(([input]) => input.type === "world.read").length;
+  renderWorld({
+    request,
+    observeConversation: (_target, callback, connection) => {
+      receive = callback;
+      connect = connection!;
+      return () => undefined;
+    },
+  });
   await screen.findByLabelText("你的行动");
-  const source = NativeSource.instances[0]!;
-  act(() => source.snapshot(1, running));
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  try {
-    act(() => source.snapshot(2, ready));
-    await screen.findByText("Alex opens the door and lets you go first.");
-    expect(screen.queryByRole("button", { name: "取消生成" })).toBeNull();
-  } finally {
-    await act(async () => {
-      release();
-      await Promise.resolve();
-    });
-  }
-  fireEvent.change(screen.getByLabelText("你的行动"), {
-    target: { value: "Keep going." },
+
+  const publish = (text: string) => {
+    const value = {
+      ...running,
+      events: running.events.map((event) =>
+        event.kind === "assistant" ? { ...event, text } : event,
+      ),
+    };
+    act(() => void receive({ kind: "play", value }, true));
+    expect(screen.getByText(text)).toBeTruthy();
+  };
+  publish("Look");
+  await waitFor(() => expect(worldReads()).toBe(2));
+  publish("Look at the courtyard");
+  publish("Look at the courtyard from the window");
+
+  await act(() => {
+    slowRead.resolve(projection);
+    return slowRead.promise;
   });
   expect(
-    screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
-      .disabled,
-  ).toBe(false);
+    screen.getByText("Look at the courtyard from the window"),
+  ).toBeTruthy();
+  publish("Look at the courtyard from the window before sunset.");
+  expect(worldReads()).toBe(2);
+
+  act(() => connect("reconnecting"));
+  await waitFor(() => expect(worldReads()).toBe(3));
+  act(() => connect("connected"));
+  publish("Look at the courtyard from the window before sunset. It is empty.");
+  await waitFor(() => expect(worldReads()).toBe(4));
+  expect(
+    screen.getByText(
+      "Look at the courtyard from the window before sunset. It is empty.",
+    ),
+  ).toBeTruthy();
 });
+
+test.each(["endpoint", "status", "invocation"])(
+  "a native SSE %s change revalidates a blocked world read",
+  async (change) => {
+    class NativeSource extends EventTarget {
+      static CLOSED = 2;
+      static instances: NativeSource[] = [];
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        super();
+        NativeSource.instances.push(this);
+      }
+      close(): void {
+        this.readyState = 2;
+      }
+      snapshot(sequence: number, chain: V1PlayCallChainView): void {
+        this.dispatchEvent(
+          new MessageEvent("observation", {
+            lastEventId: `live:${sequence}`,
+            data: JSON.stringify({
+              protocol: v1Protocol,
+              update: {
+                kind: "snapshot",
+                value: { kind: "play", value: chain },
+              },
+            }),
+          }),
+        );
+      }
+    }
+    vi.stubGlobal("EventSource", NativeSource);
+    const ready = playChainView(
+      "nonblocking-hydration",
+      "native-exchange",
+      "Look outside.",
+    );
+    const activeInvocation = createObservedProgress(
+      ready.chainId,
+      "native-exchange",
+    );
+    const running: V1PlayCallChainView = {
+      ...ready,
+      status: "running",
+      activeInvocation,
+      events: ready.events.filter((event) => event.kind === "player"),
+    };
+    const next: V1PlayCallChainView =
+      change === "invocation"
+        ? {
+            ...running,
+            activeInvocation: createObservedProgress(
+              ready.chainId,
+              "next-exchange",
+            ),
+          }
+        : change === "endpoint"
+          ? {
+              ...ready,
+              parentHead: "commit:9",
+              status: "running",
+              activeInvocation,
+            }
+          : ready;
+    let reads = 0;
+    let release!: () => void;
+    const request = vi.fn((input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read") {
+        reads++;
+        if (reads === 1)
+          return Promise.resolve({
+            ...worldView(null),
+            head: running.parentHead,
+            playTimeline: lightweightPlayTimeline(running),
+          });
+        if (reads === 2)
+          return new Promise((resolve) => {
+            release = () => resolve(worldView(running));
+          });
+        return Promise.resolve(worldView(next));
+      }
+      if (input.type === "world.play-decorations.read")
+        return Promise.resolve({ artifacts: [], debug: [] });
+      if (input.type === "play.chain.cancel")
+        return Promise.resolve({ outcome: "cancellation_requested" });
+      if (input.type === "play.chain.inspect") return Promise.resolve(null);
+      return Promise.reject(new Error(input.type));
+    });
+    renderWorld({ request, observeConversation });
+    await screen.findByLabelText("你的行动");
+    const source = NativeSource.instances[0]!;
+    act(() => source.snapshot(1, running));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    try {
+      await act(() => {
+        source.snapshot(2, next);
+        return Promise.resolve();
+      });
+      if (change !== "invocation") {
+        await screen.findByText("Alex opens the door and lets you go first.");
+        expect(
+          screen.queryByRole("button", { name: "取消生成" }) !== null,
+        ).toBe(change === "endpoint");
+      }
+    } finally {
+      await act(async () => {
+        release();
+        await Promise.resolve();
+      });
+    }
+    expect(reads).toBe(3);
+    if (change === "invocation") {
+      await act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "取消生成" }));
+        return Promise.resolve();
+      });
+      expect(request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "play.chain.cancel",
+          exchangeId: "next-exchange",
+        }),
+      );
+      return;
+    }
+    expect(
+      screen.getByText("Alex opens the door and lets you go first."),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("你的行动"), {
+      target: { value: "Keep going." },
+    });
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
+        .disabled,
+    ).toBe(change === "endpoint");
+  },
+);
 
 test.each([
   "initial-retry",

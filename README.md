@@ -95,7 +95,7 @@ node dist/node/cli/main.js web
    control/player-views.yaml  persistent information shown beside the story
    ```
 
-4. **Edit or improve the setting.** You can edit files directly, or ask the model to create a visible plan and an isolated candidate. AI changes are not applied until you review and accept the complete file diff.
+4. **Edit or improve the setting.** Edit files directly, or ask the model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
 5. **Review the play preset.** The built-in preset is ready to use and follows the selected language. Presets hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
 6. **Create a world.** A usable content package can be copied into a new independent world. Later edits to the source package do not alter worlds that already exist.
 
@@ -121,7 +121,7 @@ The call-chain panel keeps the actual request history for inspection: player mes
 
 | Action                              | Result                                                                                                                                                                                 |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Edit a committed player message** | Stays in the current world. Narraeon appends a timeline revision from that message's logical parent and continues from the replacement text. Old Authority records remain recoverable. |
+| **Edit a committed player message** | Rewinds the current world to just before the original message and continues from the replacement text. The earlier history is kept. The original message and all later story, model conversation, and artifacts are permanently deleted from this world. |
 | **Create a fork**                   | Copies the selected Authority prefix into a new independent world. The source world is unchanged, and both worlds can continue separately.                                             |
 | **Continuity correction**           | Applies an explicit out-of-story correction to current documents as a new commit without pretending the correction happened inside the narrative.                                      |
 
@@ -129,7 +129,7 @@ The call-chain panel keeps the actual request history for inspection: player mes
 
 A content package is editable before play. You can keep several packages, copy them, export them as ZIP files, or import packages without overwriting an existing local identity.
 
-AI setting improvement operates only on a package candidate. In the plan-first path, the model reads the selected material and proposes a visible creation plan before writing. You can also explicitly skip the plan. In both cases, the result must pass file, reference, control, player-view, and real Prompt Preview checks before it can be applied as one atomic package update. Existing worlds are never changed by package improvement.
+In setting improvement, ask the model to discuss a plan or to edit the package directly. The Runtime executes calls from each complete tool response in order and publishes all successful changes together to the current package. The conversation shows the file diffs and the results of checks such as reference validation and Prompt Preview. Creating a world gives it its own copy of the package files.
 
 For a detailed Chinese authoring guide, see [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md).
 

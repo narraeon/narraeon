@@ -37,9 +37,9 @@ content-package/
     rules/cultivation.md
     rules/favorability.md
   control/
-    prompt/frame.yaml
-    prompt/blocks/world-style.md
-    prompt/blocks/state-maintenance.md
+    frame.yaml
+    blocks/world-style.md
+    blocks/state-maintenance.md
     player-views.yaml
 ```
 
@@ -90,7 +90,7 @@ content-package/opening.md -> world/history 的 genesis 第一条主持原文
 
 开场与世界文档应停在同一时点。除持续事实外，当前情境还应保留仍待回应的具体请求、邀请或动作及说话者；原话决定含义时保存必要原话，使首次“好”“我摇头”有明确对象，不必复制整篇开场。
 
-创建世界时，Runtime 会逐字把它写成第一条已提交 narrator 历史消息。它不会伪造一条玩家“开始游戏”，也不会让模型临场改写；生产游玩的全新上下文也不会把玩家已经看到的 genesis 再发给模型。之后修改源内容包的开场白不会改变既有世界；从旧端点创建分叉时继承现有历史，不再增加第二份开场白。
+创建世界时，Runtime 将作者写好的开场白逐字保存为第一条已提交的主持原文。只有在故事逻辑起点开始首次游玩时，初始模型上下文才会放入一次完整开场白，并注明玩家已读。后续新开的上下文可以用历史工具按需读取开场白。编辑源内容包的开场白只会影响此后从该包创建的世界，分叉则继承所选端点的既有历史。
 
 ## 3. 一份文档承担一个自然职责
 

@@ -434,7 +434,7 @@ export function buildDocumentTemplateSrcDoc(input: {
       : input.contentType === "text/markdown"
         ? input.content
         : `<pre>${escapeHtml(input.content)}</pre>`;
-  let output = input.template.replace(contentMarker, contentMarkup);
+  let output = input.template.replace(contentMarker, () => contentMarkup);
   if (output.includes(payloadMarker)) {
     const serialized = JSON.stringify(input.payload ?? null).replace(
       /</gu,
@@ -442,7 +442,8 @@ export function buildDocumentTemplateSrcDoc(input: {
     );
     output = output.replace(
       payloadMarker,
-      `<script type="application/json" data-narraeon-payload>${serialized}</script>`,
+      () =>
+        `<script type="application/json" data-narraeon-payload>${serialized}</script>`,
     );
   }
   return output;
