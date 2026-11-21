@@ -29,6 +29,7 @@ export default defineConfig({
             NARRAEON_DATA_ROOT: dataRoot,
             NARRAEON_LOG_ROOT: logRoot,
             NARRAEON_PORT: String(port),
+            NARRAEON_TRUSTED_ORIGINS: "http://narraeon.test",
             NODE_ENV: "test",
           },
           url: `http://127.0.0.1:${port}/health`,

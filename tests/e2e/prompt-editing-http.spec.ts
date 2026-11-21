@@ -35,6 +35,8 @@ for (const tab of ["游玩", "设定完善"]) {
       await page.route(`${origin}/**`, async (route) => {
         const response = await route.fetch({
           url: route.request().url().replace(origin, baseURL!),
+          // Preserve the public authority as a configured reverse proxy would.
+          headers: { ...route.request().headers(), host: new URL(origin).host },
         });
         await route.fulfill({ response });
       });
