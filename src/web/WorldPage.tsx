@@ -3340,7 +3340,7 @@ function TimelineEvent({
               </label>
               <p>
                 {uiText(
-                  "修改会直接保存在当前世界；这条原提交及其后的内容会离开当前时间线，但旧 Authority 记录仍可恢复。",
+                  "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
                 )}
               </p>
               <fieldset className="history-player-edit-continuation">

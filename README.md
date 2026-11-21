@@ -121,7 +121,7 @@ The call-chain panel keeps the actual request history for inspection: player mes
 
 | Action                              | Result                                                                                                                                                                                 |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Edit a committed player message** | Stays in the current world. Narraeon appends a timeline revision from that message's logical parent and continues from the replacement text. Old Authority records remain recoverable. |
+| **Edit a committed player message** | Rewinds the current world to just before the original message and continues from the replacement text. The earlier history is kept. The original message and all later story, model conversation, and artifacts are permanently deleted from this world. |
 | **Create a fork**                   | Copies the selected Authority prefix into a new independent world. The source world is unchanged, and both worlds can continue separately.                                             |
 | **Continuity correction**           | Applies an explicit out-of-story correction to current documents as a new commit without pretending the correction happened inside the narrative.                                      |
 

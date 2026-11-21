@@ -40,6 +40,7 @@ import {
 } from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
 import { App } from "../../src/web/App.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
 import {
   RuntimeRequestError,
   type RuntimeClient,
@@ -56,11 +57,50 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  setWebLocale("zh-CN");
   window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
 describe("世界游玩页面", () => {
+  test.each([
+    {
+      locale: "zh-CN" as const,
+      edit: "修改",
+      warning:
+        "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
+    },
+    {
+      locale: "en" as const,
+      edit: "Edit",
+      warning:
+        "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
+    },
+  ])(
+    "warns before saving a player-message edit in $locale",
+    async ({ locale, edit, warning }) => {
+      setWebLocale(locale);
+      const chain = playChainView("original", "first", "Open the door.");
+      const request = vi.fn((input: V1Request): Promise<unknown> => {
+        if (input.type === "world.read")
+          return Promise.resolve(worldView(chain));
+        if (input.type === "world.play-decorations.read")
+          return Promise.resolve(
+            playDecorations(null, chain.worldId, chain.parentHead),
+          );
+        return Promise.reject(new Error(input.type));
+      });
+      renderWorld({ request });
+
+      fireEvent.click(await screen.findByRole("button", { name: edit }));
+
+      expect(screen.getByText(warning)).toBeTruthy();
+      expect(request).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "play.chain.revise-player" }),
+      );
+    },
+  );
+
   test("missing saved request opens a new input without resending or issuing an action", async () => {
     const chain = {
       ...interruptedChainView(),
