@@ -17,11 +17,15 @@ import {
   resolutionToolDefinition,
 } from "../../src/runtime/play/TabletopResolution.ts";
 import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
-import { tabletopWorldRulesBlock } from "../../src/runtime/play/TabletopRules.ts";
+import {
+  tabletopAuthoringRulesBlock,
+  tabletopWorldRulesBlock,
+} from "../../src/runtime/play/TabletopRules.ts";
 
 const fiction: Gameplay = { mode: "interactive-fiction" };
 const schemes: ResolutionScheme[] = ["d20", "d100", "bag"];
 const rulesSource = "runtime:world-placeholder/gameplay";
+const fallbackSource = "runtime:tabletop-continuation-fallback";
 
 function legacyBinding(locale: AppLocale): PlayPresetBinding {
   const files = legacyDefaultPlayPresetFilesForLocale(locale);
@@ -47,6 +51,30 @@ function rulesBlocks(
   );
 }
 
+function fallbackBlocks(
+  messages: { role: string; blocks: { source: string; markdown: string }[] }[],
+) {
+  return messages.flatMap(({ role, blocks }) =>
+    blocks
+      .filter(({ source }) => source === fallbackSource)
+      .map((block) => ({ role, ...block })),
+  );
+}
+
+function bindingWithTabletopEnabled(
+  locale: AppLocale,
+  enabled: boolean,
+): PlayPresetBinding {
+  const binding = builtinDefaultPlayPresetBinding(locale);
+  binding.definition.playPrompts = binding.definition.playPrompts!.map(
+    (entry) =>
+      entry.kind === "builtin" && entry.builtin === "play.tabletop"
+        ? { ...entry, enabled }
+        : entry,
+  );
+  return binding;
+}
+
 describe("tabletop world rules at the world placeholder", () => {
   for (const locale of ["en", "zh-CN"] as const)
     for (const scheme of schemes) {
@@ -65,17 +93,30 @@ describe("tabletop world rules at the world placeholder", () => {
           const blocks = rulesBlocks(bootstrap.logicalMessages);
           expect(blocks).toHaveLength(1);
           expect(blocks[0]!.role).toBe("world_context");
+          expect(fallbackBlocks(bootstrap.logicalMessages)).toEqual([]);
+          const checkToolName = resolutionCheckToolForScheme(scheme);
           const tool = resolutionToolDefinition(
-            resolutionCheckToolForScheme(scheme),
+            checkToolName,
             locale,
           ).description;
-          expect(blocks[0]!.markdown).toContain(tool);
+          expect(blocks[0]!.markdown).toContain(checkToolName);
+          expect(blocks[0]!.markdown).toContain("roll_dice");
+          expect(blocks[0]!.markdown).toContain("calculate");
           expect(blocks[0]!.markdown).toContain(
             locale === "zh-CN" ? "绑定契约" : "Binding contract",
           );
-          expect(JSON.stringify(bootstrap.provider).split(tool)).toHaveLength(
-            2,
+          expect(blocks[0]!.markdown).toContain(
+            locale === "zh-CN"
+              ? "缺少判定依据时先读取相关角色或状态文档"
+              : "read relevant character or state documents first when check inputs are missing",
           );
+          // Play prompts refer to the attached tool definitions instead of
+          // pasting the check tool's full description a second time.
+          expect(blocks[0]!.markdown).not.toContain(tool);
+          expect(
+            bootstrap.tools.find(({ name }) => name === checkToolName)
+              ?.description,
+          ).toBe(tool);
         },
       );
     }
@@ -133,9 +174,10 @@ describe("tabletop world rules at the world placeholder", () => {
     expect(rules[0]!.markdown).toEqual(
       rulesBlocks(fresh.logicalMessages)[0]!.markdown,
     );
+    expect(fallbackBlocks(continued.logicalMessages)).toEqual([]);
   });
 
-  test("a context frozen before tabletop existed gets the send's tools but no frozen rules block", () => {
+  test("a context frozen before tabletop existed gets the send's tools, no frozen rules block, and one runtime fallback", () => {
     const compiler = new FileNativePromptCompiler();
     const binding = builtinDefaultPlayPresetBinding("en");
     const frozenFiction = compiler.compilePlayCallChain(
@@ -155,6 +197,133 @@ describe("tabletop world rules at the world placeholder", () => {
     // Rules are frozen material; tools follow the world on every send.
     expect(rulesBlocks(resumed.logicalMessages)).toEqual([]);
     expect(resumed.tools.map(({ name }) => name)).toContain("percentile_check");
+    expect(fallbackBlocks(resumed.logicalMessages)).toHaveLength(1);
+  });
+
+  for (const locale of ["en", "zh-CN"] as const)
+    for (const scheme of ["d100", "bag"] as const)
+      for (const playTabletopEnabled of [true, false] as const) {
+        test(`legacy continuation fallback stays active and idempotent across two turns (${locale}, ${scheme}, play.tabletop=${playTabletopEnabled}) (#246)`, () => {
+          const compiler = new FileNativePromptCompiler({ locale });
+          const binding = bindingWithTabletopEnabled(
+            locale,
+            playTabletopEnabled,
+          );
+          const frozenFiction = compiler.compilePlayCallChain(
+            previewInputWithGameplay(fiction, { locale }),
+            binding,
+          ).bootstrap;
+
+          const turn1 = compiler.compilePlayCallChain(
+            {
+              ...previewInputWithGameplay(
+                { mode: "tabletop", scheme },
+                { locale, playerInputPlacement: "append" },
+              ),
+              frozenWorldContext: frozenFiction,
+            },
+            binding,
+          ).bootstrap;
+          const turn2 = compiler.compilePlayCallChain(
+            {
+              ...previewInputWithGameplay(
+                { mode: "tabletop", scheme },
+                { locale, playerInputPlacement: "append" },
+              ),
+              frozenWorldContext: turn1,
+            },
+            binding,
+          ).bootstrap;
+
+          for (const resumed of [turn1, turn2]) {
+            expect(rulesBlocks(resumed.logicalMessages)).toEqual([]);
+            const fallbacks = fallbackBlocks(resumed.logicalMessages);
+            expect(fallbacks).toHaveLength(1);
+            expect(fallbacks[0]!.role).toBe("runtime_system");
+            expect(fallbacks[0]!.markdown).toContain(
+              locale === "zh-CN"
+                ? "不得为同一行动重掷"
+                : "never reroll the same action",
+            );
+            expect(fallbacks[0]!.markdown).toContain(
+              locale === "zh-CN"
+                ? "缺少判定依据时先读取相关角色或状态文档"
+                : "read relevant character or state documents first when check inputs are missing",
+            );
+            if (scheme === "bag")
+              expect(fallbacks[0]!.markdown).toContain(
+                locale === "zh-CN"
+                  ? "混乱袋必须读取"
+                  : "A chaos bag defined in the world documents must be read",
+              );
+            const providerText = JSON.stringify(resumed.provider);
+            const marker =
+              locale === "zh-CN"
+                ? "跑团续玩判定底线"
+                : "Tabletop continuation binding rules";
+            expect(providerText.split(marker)).toHaveLength(2);
+          }
+        });
+      }
+
+  test("legacy frozen context using legacy history tools without a check tool does not inject a tabletop fallback (#246)", () => {
+    const compiler = new FileNativePromptCompiler({ locale: "en" });
+    const binding = bindingWithTabletopEnabled("en", false);
+    const frozenFiction = compiler.compilePlayCallChain(
+      previewInputWithGameplay(fiction, { locale: "en" }),
+      binding,
+    ).bootstrap;
+    const legacyToolUniverse = [
+      {
+        name: "context_list",
+        description: "Legacy context list tool.",
+        inputSchema: {
+          type: "object",
+          properties: { source: { enum: ["state", "history"] } },
+          required: ["source"],
+        },
+      },
+      ...frozenFiction.tools.filter(({ name }) => name !== "state_list"),
+    ];
+    const legacyFrozen = {
+      ...frozenFiction,
+      tools: legacyToolUniverse,
+      toolUniverse: legacyToolUniverse,
+    };
+
+    const resumed = compiler.compilePlayCallChain(
+      {
+        ...previewInputWithGameplay(
+          { mode: "tabletop", scheme: "d100" },
+          { locale: "en", playerInputPlacement: "append" },
+        ),
+        frozenWorldContext: legacyFrozen,
+      },
+      binding,
+    ).bootstrap;
+
+    expect(resumed.tools.map(({ name }) => name)).not.toContain(
+      "percentile_check",
+    );
+    expect(rulesBlocks(resumed.logicalMessages)).toEqual([]);
+    expect(fallbackBlocks(resumed.logicalMessages)).toEqual([]);
+  });
+
+  test("authoring tabletop rules blocks retain full check tool descriptions because resolution tools are not attached (#246)", () => {
+    for (const locale of ["en", "zh-CN"] as const)
+      for (const scheme of schemes)
+        for (const target of ["setting", "world-revision"] as const) {
+          const block = tabletopAuthoringRulesBlock(
+            { mode: "tabletop", scheme },
+            target,
+            locale,
+          );
+          const expectedRules = resolutionToolDefinition(
+            resolutionCheckToolForScheme(scheme),
+            locale,
+          ).description;
+          expect(block.markdown).toContain(expectedRules);
+        }
   });
 });
 

@@ -22,16 +22,14 @@ export function tabletopSchemeRules(
 }
 
 /**
- * Runtime-owned rules at the world placeholder of a tabletop world. The block
- * is world-derived and carries no preset state, so a scheme never requires a
- * preset change.
+ * Minimal mechanical binding contract shared by fresh tabletop worlds and
+ * legacy frozen-context continuations whose frozen world context lacks a
+ * world-derived rules block.
  */
-export function tabletopWorldRulesBlock(
+function tabletopBindingContract(
   gameplay: TabletopGameplay,
   locale: AppLocale,
-): { source: string; markdown: string } {
-  const label = gameplayLabel(gameplay, locale);
-  const rules = tabletopSchemeRules(gameplay, locale);
+): string {
   // Only the bag scheme has a world-defined token list; other schemes never mention one.
   const bagLine =
     gameplay.scheme !== "bag"
@@ -39,53 +37,81 @@ export function tabletopWorldRulesBlock(
       : locale === "zh-CN"
         ? "- 世界文档中定义的混乱袋必须读取，并原样提供其当前标记清单；袋的变化由你在世界文档中维护。\n"
         : "- A chaos bag defined in the world documents must be read and supplied exactly as its current token list. You maintain the bag's changes in the world documents.\n";
-  const markdown =
-    locale === "zh-CN"
-      ? `# 跑团判定规则
-
-本世界是跑团世界，判定方案为 ${label}。以下规则由 Runtime 固定，随本世界的玩法身份生效。
-
-## 判定工具
-
-${rules}
-
-## 辅助工具
-
-- roll_dice：辅助数值掷骰，用于伤害、数量等，不重新裁决已确定的行动成败。
-- calculate：对两个数执行加减乘除，不产生随机数，不修改世界。
-
-## 绑定契约
-
-- 调用判定工具时，在参数中写明行动目标及本方案要求的数值；只有有成败不确定性或对抗的行动才需要判定。
+  return locale === "zh-CN"
+    ? `- 已有材料足够时直接使用，缺少判定依据时先读取相关角色或状态文档，再在参数中写明行动目标及本方案要求的数值；只有有成败不确定性或对抗的行动才需要判定。
 - 必须先调用判定工具并取得回执，再叙述结果。
 - 判定成功必须实现已声明的目标，失败则不实现，不论情节是否看似合理。
 - 大成功与大失败按工具的固定规则兑现，不能由叙述改写。
 - 取得回执后不得更改该行动的目标或判定数值，也不得为同一行动重掷。
-- 辅助掷骰与算术只决定伤害、数量等数值，不能推翻已经结算的判定。
+- 辅助掷骰（roll_dice）与算术（calculate）只决定伤害、数量等数值，不能推翻已经结算的判定。
 ${bagLine}- 参数不合法属于工具错误，不等于行动失败；修正参数后重新调用即可。`
-      : `# Tabletop resolution rules
-
-This world is tabletop, with resolution scheme ${label}. The Runtime-fixed rules below apply because of this world's gameplay identity.
-
-## Check tool
-
-${rules}
-
-## Auxiliary tools
-
-- roll_dice: auxiliary numeric dice for damage, quantities and similar values. It never re-decides a resolved action.
-- calculate: add, subtract, multiply or divide two numbers. It draws no randomness and changes no world state.
-
-## Binding contract
-
-- When calling the check tool, supply the action's goal and the scheme's required numeric inputs in the arguments. Only actions with uncertain success or opposition need a check.
+    : `- Use available materials when sufficient; read relevant character or state documents first when check inputs are missing, then supply the action's goal and the scheme's required numeric inputs in the arguments. Only actions with uncertain success or opposition need a check.
 - Call the check tool and receive its receipt before narrating the outcome.
 - A success must fulfil the declared goal and a failure must not, regardless of whether the story seems plausible.
 - Critical outcomes follow the tool's fixed rules and cannot be rewritten by narration.
 - After a draw, never change that action's goal or check inputs, and never reroll the same action.
-- Auxiliary dice and arithmetic decide numeric values such as damage or quantities; they never reverse a resolved check.
+- Auxiliary dice (roll_dice) and arithmetic (calculate) decide numeric values such as damage or quantities; they never reverse a resolved check.
 ${bagLine}- Invalid arguments are tool errors, not failed actions; correct the arguments and call the tool again.`;
+}
+
+/**
+ * Runtime-owned rules at the world placeholder of a tabletop world. The block
+ * is world-derived and carries no preset state, so a scheme never requires a
+ * preset change. Exact per-tool mechanics live in the attached tool
+ * definitions so play prompts do not repeat them verbatim.
+ */
+export function tabletopWorldRulesBlock(
+  gameplay: TabletopGameplay,
+  locale: AppLocale,
+): { source: string; markdown: string } {
+  const label = gameplayLabel(gameplay, locale);
+  const checkTool = resolutionCheckToolForScheme(gameplay.scheme);
+  const contract = tabletopBindingContract(gameplay, locale);
+  const markdown =
+    locale === "zh-CN"
+      ? `# 跑团判定规则
+
+本世界是跑团世界，判定方案为 ${label}。使用随附的 \`${checkTool}\` 执行行动判定，辅以 \`roll_dice\` 与 \`calculate\` 处理伤害、数量等数值；各工具的数值细则以随附工具定义为准。
+
+## 绑定契约
+
+${contract}`
+      : `# Tabletop resolution rules
+
+This world is tabletop, with resolution scheme ${label}. Use the attached \`${checkTool}\` tool for action checks, with \`roll_dice\` and \`calculate\` for auxiliary numeric values; follow the attached tool definitions for exact rules.
+
+## Binding contract
+
+${contract}`;
   return { source: "runtime:world-placeholder/gameplay", markdown };
+}
+
+/**
+ * Runtime-owned minimal fallback injected into runtime_system when continuing a
+ * tabletop world on a legacy frozen context that lacks the world-placeholder
+ * gameplay rules block, provided the active tool set actually exposes the
+ * scheme's check tool. Independent of optional play.tabletop.
+ */
+export function tabletopContinuationFallbackBlock(
+  gameplay: TabletopGameplay,
+  locale: AppLocale,
+): { source: string; markdown: string } {
+  const label = gameplayLabel(gameplay, locale);
+  const checkTool = resolutionCheckToolForScheme(gameplay.scheme);
+  const contract = tabletopBindingContract(gameplay, locale);
+  const markdown =
+    locale === "zh-CN"
+      ? `# 跑团续玩判定底线
+
+本世界是跑团世界（方案：${label}，判定工具：\`${checkTool}\`）。以下最小绑定契约由 Runtime 固定生效：
+
+${contract}`
+      : `# Tabletop continuation binding rules
+
+This world is tabletop (scheme: ${label}, check tool: \`${checkTool}\`). The Runtime-fixed binding contract below applies:
+
+${contract}`;
+  return { source: "runtime:tabletop-continuation-fallback", markdown };
 }
 
 /**

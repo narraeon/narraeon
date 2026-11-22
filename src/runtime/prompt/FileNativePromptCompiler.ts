@@ -82,10 +82,14 @@ import {
   type RegisteredRuntimeToolName,
   type RuntimeToolDefinitionStrategy,
 } from "./FileNativeToolRegistry.ts";
-import { resolutionToolNames } from "../play/TabletopResolution.ts";
+import {
+  resolutionCheckToolForScheme,
+  resolutionToolNames,
+} from "../play/TabletopResolution.ts";
 import { readGameplay, type Gameplay } from "../../protocol/gameplay.ts";
 import {
   tabletopAuthoringRulesBlock,
+  tabletopContinuationFallbackBlock,
   tabletopWorldRulesBlock,
 } from "../play/TabletopRules.ts";
 import type {
@@ -869,7 +873,7 @@ export class FileNativePromptCompiler {
             binding,
           )
         : presetCompilation.bootstrap.logicalMessages;
-    const selectedMessages =
+    const historyAdaptedMessages =
       frozenTools !== undefined && hasLegacyHistoryTools(frozenTools)
         ? initialMessages.map((message) => {
             if (message.role !== "runtime_system") return message;
@@ -883,6 +887,41 @@ export class FileNativePromptCompiler {
             return { ...message, blocks, markdown: joinBlocks(blocks) };
           })
         : initialMessages;
+    const gameplay = playGameplay(input.world.documentSnapshot);
+    const frozenHasGameplayRules =
+      input.frozenWorldContext?.logicalMessages
+        .filter(({ role }) => role === "world_context")
+        .flatMap(({ blocks }) => blocks)
+        .some(
+          ({ source }) => source === "runtime:world-placeholder/gameplay",
+        ) ?? false;
+    const needsTabletopContinuationFallback =
+      gameplay.mode === "tabletop" &&
+      input.frozenWorldContext !== undefined &&
+      !frozenHasGameplayRules &&
+      mainTools.some(
+        ({ name }) => name === resolutionCheckToolForScheme(gameplay.scheme),
+      );
+    let fallbackAdded = false;
+    const selectedMessages = needsTabletopContinuationFallback
+      ? historyAdaptedMessages.map((message) => {
+          if (fallbackAdded || message.role !== "runtime_system")
+            return message;
+          fallbackAdded = true;
+          if (
+            message.blocks.some(
+              ({ source }) =>
+                source === "runtime:tabletop-continuation-fallback",
+            )
+          )
+            return message;
+          const blocks = [
+            ...message.blocks,
+            tabletopContinuationFallbackBlock(gameplay, this.#locale),
+          ];
+          return { ...message, blocks, markdown: joinBlocks(blocks) };
+        })
+      : historyAdaptedMessages;
     // Instructions keep author order; initial reads follow as protocol tool results.
     const logicalMessages = [
       ...selectedMessages.filter(
