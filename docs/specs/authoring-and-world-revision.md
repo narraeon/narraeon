@@ -52,11 +52,11 @@ Narraeon 不为内容包增设主角绑定字段或人物字段 schema，而是�
 
 ### 3.2 工具全集、读取授权与 `setting_patch` 规则
 
-AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `setting_create` / `setting_write` / `setting_patch` / `setting_move` / `setting_delete`）操作内容包：
+AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `setting_create` / `setting_write_file` / `setting_patch` / `setting_move` / `setting_delete`）操作内容包：
 
 - **Revision 级写前读取授权**：修改或删除既有文件前必须先完整读取；由 AI 本次新建或已成功修改过的完整文件视为已读。读取授权严格绑定产生它的精确当前树 revision；其他对话或手动编辑发布新树后旧授权立即失效，必须重新读取。
 - **`setting_patch` 单操作语义（与游玩 `world_patch` 严格区分）**：
-  - `setting_patch` 单次工具调用**只接收单个 `op`**（`add`、`replace`、`append`、`remove`、`set_metadata`），**不接受 `edits` 数组**（`SettingAuthoringTransaction.ts:436`）。
+  - `setting_patch` 单次工具调用**只接收单个 `op`**（`add`、`replace`、`append`、`remove`、`set_metadata`），**不接受 `edits` 数组**（`SettingAuthoringTransaction.ts:436`）；其中 `op: "set_metadata"` 只传需改动的 `title`、`summary` 或 `aliases`（至少一项），省略字段由 Runtime 保留。
   - 批量修改通过模型在**同一完整响应中连续发出多条工具调用**完成，由 Runtime 顺序执行并在响应结束时统一原子发布。
   - 路径不存在时的写入规则与游玩 `world_patch` 共用：`add` 与 `replace` 均为 upsert（缺失父级 map 自动创建，数组下标越界追加至末尾），`remove` 删除已存在路径、不存在时为 no-op 并在回执中注明；YAML locator 支持 map key 与从 `0` 开始的数组下标。
 - **新建、移动、物理删除与字符安全**：

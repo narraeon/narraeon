@@ -341,7 +341,7 @@ context:
 - 精确 YAML／Markdown 节点；
 - 精确 YAML 节点中显式 `$ref` 的一层目标；
 - 精确目录的有界 catalog；
-- 精确历史消息；
+- 近期已提交历史（`{ kind: history, recent: 1–32 }`；精确历史消息引用请放进附加材料清单）；
 - 当前端点的附加材料清单。
 
 不能写“与秦龙有敌意的人”“跟玩家行动相关的规则”“最近一万 token 历史”等语义 query。Runtime 没有能力判断这些概念；需要临时资料时由游玩 AI 使用 list、字面 search 和精确 read。
@@ -433,7 +433,7 @@ AI 设定完善面向内容包当前树，不修改运行中世界（运行中�
 - 设定完善 `setting_patch` 与游玩 `world_patch` 共用路径写入规则：修改前必须先读取目标；`add` 与 `replace` 均为 upsert（缺失的父级 map 自动创建，数组下标越界时追加至末尾），`remove` 删除已存在路径、不存在时为 no-op 并在回执中注明。因此修改前仍须按已读到的准确字段名操作，「穿着」这类拼写不一致会静默新增为第二个字段。
 - **注意两者在参数与批量语义上的区别**：
   - 设定完善 **`setting_patch`** 单次调用**只接收单个 `op`**（不接受 `edits` 数组），多处修改通过同一响应连续发出多条工具调用并在响应结束统一原子发布（权威规则见 [设定完善规格 §3.2](specs/authoring-and-world-revision.md#32-工具全集读取授权与-setting_patch-规则)）。
-  - 游玩 **`world_patch`** 单次调用接收 **1–32 条 `edits`**，整批先通过写入授权前置检查（任一越权则整次拒绝），再逐条处理并报告结果（权威规则见 [游玩调用链规格 §2.4](specs/play-history-and-world-lifecycle.md#24-world_patchworld_createworld_retireset_metadata-与回执)）。
+  - 游玩 **`world_patch`** 单次调用接收 **1–32 条 `edits`**，整批先通过写入授权前置检查（任一越权则整次拒绝），再逐条处理并报告结果（权威规则见 [游玩调用链规格 §2.4](specs/play-history-and-world-lifecycle.md#24-world_patchworld_createworld_retire-与回执)）。
 
 ### 发现路径、注入权重与职责分离
 

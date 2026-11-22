@@ -101,7 +101,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 
 - **单调用链与两动作**（[ADR-0030](adr/0030-production-play-is-one-model-directed-call-chain.md)）：生产游玩只有一套模型／工具循环，「全新上下文」与「追加上下文」（含空输入重试／续写）均为单次动作。无整链事务——玩家原文、有实际变化的工具步骤、终态无工具非空叙事各自推进轮账本，后续失败不回滚已成立前序步骤；含工具调用响应的 text 只作工具中间步留轨迹与续传，绝不晋升故事。
 - **三种机械读取面**：`state_list`（含空 catalog 目录 `@dir-*` 句柄）、`context_search`（当前状态字面搜索）、`context_read`（精确全文／节点读取），以及当前时间线专用的 `history_list`／`history_search`／`history_read`（签名游标，[ADR-0040](adr/0040-history-navigation-shares-an-ordered-snapshot.md)）。
-- **写前精读授权与写工具**：游玩读授权仅存内存，重启或回退时从 bootstrap 按保留对话重放成功 `context_read` 并重解析当前快照，提交时逐文件校验前像哈希（[ADR-0044](adr/0044-runtime-is-single-process-and-recovers-by-retry.md)）。写工具为 `world_patch`（1–32 `edits` 整批通过授权检查后逐条处理）、`world_create`、`set_metadata` 与可恢复退役 `world_retire`（不物理删文档）。
+- **写前精读授权与写工具**：游玩读授权仅存内存，续发保留既有精读与写后授权而不重绑初始 bootstrap，重启或回退时从 bootstrap 按保留对话重放成功 `context_read` 并重解析当前快照，提交时逐文件校验前像哈希（[ADR-0044](adr/0044-runtime-is-single-process-and-recovers-by-retry.md)）。顶层文档写工具为 `world_patch`（1–32 `edits` 整批通过授权检查后逐条处理，含 `op: "set_metadata"` 元数据更新）、`world_create` 与可恢复退役 `world_retire`（不物理删文档；另有 `world_checkpoint`）。
 - **检查点**（[ADR-0039](adr/0039-narrative-checkpoints-bound-complete-history-replay.md)）：`world_checkpoint {}` 仅在随后非空无工具正文提交后生效，作为新上下文完整补入边界后已提交原文与浏览器本地预选新上下文的依据，不自动切换或认证事件结束。
 
 ### 5.2 不透明续传、预算与容错边界

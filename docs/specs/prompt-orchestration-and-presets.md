@@ -129,7 +129,7 @@ Runtime 必选机械说明只解释当前请求真实存在的机械契约，严
   - `node`：精确 YAML 路径或 Markdown 标题路径节点（持久 locator 不得依赖易漂移的数组下标）；
   - `reference_targets`：精确 YAML 节点中显式 `$ref` 的一层目标（有界 `maxEntries`）；
   - `catalog`：相对 `world/`／`state/` 真实目录的直接子文档索引（`title`、`summary`、`@ref`），有界 `maxEntries`；默认 `required: true`（至少一份直接子文档），允许空占位目录显式标注 `required: false`；
-  - `history` / `recent`：精确历史消息或近期历史选择；
+  - `history`：近期历史槽（`kind` 仅限 `history`，不存在 `kind: recent`），只接受可选整数 `recent`（范围 `1–32`，例如 `{ kind: history, recent: 2 }`），不支持在历史槽中指定单条历史消息（精确历史消息引用走 `additional_materials` 附加材料清单）；
   - `current_situation` 与 `additional_materials`。
 - **去重与重叠**：固定 `document` 与 `reference_targets` 等 slot 若选到同一整份文档，编译器保留首次出现位置并仅注入一次；整份文档与其中节点等范围重叠直接拒绝。
 

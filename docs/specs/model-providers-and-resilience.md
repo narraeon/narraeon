@@ -118,8 +118,10 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立配置意图：
 
 - Runtime 不把字节估计伪装成 token 命中，必须持久投影 Provider 实际报告的 7 项用量：
   `input`、`uncached input`、`cache read`、`cache write`、`reasoning`、`output`、`total`。
-- 每项分别保留 provenance（`provider` / `derived` / `unavailable`）；未报告字段显示为「未报告」而非 `0`，实际零值保持为 `0`。
-- `cache read` 与 `cache write` 是 `input` 的构成，`reasoning` 已包含在 `output` 中，界面不得重复相加。
+- 每项分别保留 provenance（`ModelUsageField`：`provider` / `derived_provider_fields` / `unavailable`）；未报告字段显示为「未报告」而非 `0`，实际零值保持为 `0`。
+- **计量语义区分**：
+  - 常规协议下，`cache read` 与 `cache write` 属于 `input` 的构成，`reasoning` 已包含在 `output` 中，界面不得重复相加。
+  - **Google Interactions（`accounting: "google_interactions"`）** 的输入、输出、思考（`total_thought_tokens`）、缓存与合计直接采用 Provider 实报字段，**各项包含关系不作推断**；界面直接显示「推理」「输出」，不标注「输出内／含推理」。
 
 ## 6. 步数上限、格式自纠、自动退避与中断恢复
 
