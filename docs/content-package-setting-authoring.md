@@ -341,7 +341,7 @@ context:
 - 精确 YAML／Markdown 节点；
 - 精确 YAML 节点中显式 `$ref` 的一层目标；
 - 精确目录的有界 catalog；
-- 近期已提交历史（`{ kind: history, recent: 1–32 }`；精确历史消息引用请放进附加材料清单）；
+- 近期已提交历史（如 `{ kind: history, recent: 2 }`，`recent` 为可选整数、可取 1 到 32；精确历史消息引用请放进附加材料清单）；
 - 当前端点的附加材料清单。
 
 不能写“与秦龙有敌意的人”“跟玩家行动相关的规则”“最近一万 token 历史”等语义 query。Runtime 没有能力判断这些概念；需要临时资料时由游玩 AI 使用 list、字面 search 和精确 read。
