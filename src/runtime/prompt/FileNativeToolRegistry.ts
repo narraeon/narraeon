@@ -447,7 +447,7 @@ const toolDescriptions: Record<
 - Metadata: use set_metadata for stale title, summary, or aliases with only changed fields (at least one); omitted fields are preserved.
 - YAML: locator:{yaml:[...]} addresses map keys or zero-based array indexes. add/replace are upserts (creating missing parent maps; index at/past end appends); append adds to an existing sequence's end; remove deletes an exact target (missing target is a no-op reported in receipt). Reference a whole document only as {$ref:"@short-ref"} from a Runtime result (never invent document ids); otherwise use plain text or world_create first.
 - Markdown: locators exclude the # title. replace_section must start with the matching heading level/name and adds it if absent; add_section adds a child under locator, or a top-level section at the end via {"op":"add_section","locator":{"markdown":[]},"markdown":"## Clues\\nSilver key"}; replace_preamble edits between # and the first ##; replace_body replaces the body while keeping the original # heading.
-- Validation & settlement: batch-validated first (authorization and basic shape; any failure rejects the whole batch with zero writes), then each edit settles independently (failed edits skip while others apply; resend only listed failures). Body is not echoed; re-read with context_read only if later decisions need exact serialized body or metadata.`,
+- Validation & settlement: target, edits array, write authorization, and $ref handle syntax are checked first (failure rejects the call with zero writes); after that, each edit settles independently (an invalid or failed individual edit is skipped while others apply; follow the receipt and resend only listed failures). Body is not echoed; re-read with context_read only if later decisions need exact serialized body or metadata.`,
     world_create:
       'Create a document in a Runtime-known state directory. parent must be an @dir-* from the initial index or state_list (@dir-/ for root; empty frozen-frame catalog directories stay usable; unknown directories are rejected). refHint is a suggested lowercase ASCII short-reference hint (not a world/ path); use the @short-ref returned by Runtime. Reference whole documents in YAML only as {$ref:"@short-ref"} from a Runtime result (never invent document ids).',
     world_retire:
@@ -476,7 +476,7 @@ const toolDescriptions: Record<
 - 元数据：title/summary/aliases 过时时用 set_metadata，仅传变更字段（至少一项），未传字段保留。
 - YAML：locator:{yaml:[...]} 用 map key 或 0 起数组下标；add/replace 均为 upsert（自动建缺失父 map，下标越界追加）；append 追加到既有 sequence 末尾；remove 删精确位置，目标不存在为 no-op（回执注明）。整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）；无句柄时写普通文本或先 world_create。
 - Markdown：locator 不含 # 标题；replace_section 须以同级同名标题开头，不存在时在父级下新增；add_section 在 locator 下加子节，正文末尾新增顶层节用 {"op":"add_section","locator":{"markdown":[]},"markdown":"## 线索\\n银钥匙"}；replace_preamble 改 # 与首个 ## 间文字；replace_body 替换正文并保留原 # 标题。
-- 校验与结算：先整批校验（写入授权与基本参数/形态，任一项不通过则整批拒绝、零写入），通过后逐条独立结算（失败跳过、其余生效；回执列失败项时仅补发失败项）。不回显正文，仅后续依赖精确正文或元数据时再 context_read。`,
+- 校验与结算：先校验 target、edits 数组、写入授权与 $ref 形态（不通过则本次调用拒绝、零写入）；通过后逐条独立结算（单条 edit 格式或执行失败会跳过、其余照常生效；以回执为准，回执列失败项时仅补发失败项）。不回显正文，仅后续依赖精确正文或元数据时再 context_read。`,
     world_create:
       '在 Runtime 已知状态目录中新建文档。parent 须为初始索引或 state_list 返回的 @dir-*（根目录 @dir-/，冻结 frame 的空 catalog 目录可用，未知目录被拒）。refHint 是创建时建议的小写 ASCII 短引用（非 world/ 路径），后续以 Runtime 返回的 @短引用 为准。YAML 整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）。',
     world_retire:

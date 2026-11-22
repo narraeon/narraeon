@@ -2801,21 +2801,35 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
         .join("\n");
       expect(patch?.description).toContain('"locator":{"markdown":[]}');
       if (locale === "zh-CN") {
-        expect(patch?.description).toContain("先整批校验");
+        expect(patch?.description).toContain(
+          "先校验 target、edits 数组、写入授权与 $ref 形态",
+        );
         expect(patch?.description).toContain("零写入");
-        expect(patch?.description).toContain("逐条独立结算");
+        expect(patch?.description).toContain("单条 edit 格式或执行失败会跳过");
         expect(patch?.description).toContain("仅补发失败项");
         expect(create?.description).toContain("建议的小写 ASCII 短引用");
         expect(create?.description).toContain("以 Runtime 返回的 @短引用 为准");
-        expect(runtimeText).toContain("单次 world_patch 先整批校验");
+        expect(runtimeText).toContain(
+          "单次 world_patch 先校验目标、edits 数组、写入授权与 $ref 形态",
+        );
+        expect(runtimeText).toContain("单条 edit 格式或执行失败会被跳过");
       } else {
-        expect(patch?.description).toContain("batch-validated first");
+        expect(patch?.description).toContain(
+          "target, edits array, write authorization, and $ref handle syntax are checked first",
+        );
         expect(patch?.description).toContain("zero writes");
-        expect(patch?.description).toContain("settles independently");
+        expect(patch?.description).toContain(
+          "an invalid or failed individual edit is skipped while others apply",
+        );
         expect(patch?.description).toContain("resend only listed failures");
         expect(create?.description).toContain("short-reference hint");
         expect(create?.description).toContain("returned by Runtime");
-        expect(runtimeText).toContain("A single world_patch validates");
+        expect(runtimeText).toContain(
+          "A single world_patch first checks target, the edits array, write authorization, and $ref handle syntax",
+        );
+        expect(runtimeText).toContain(
+          "an invalid or failed individual edit is skipped while others apply",
+        );
       }
     },
   );
