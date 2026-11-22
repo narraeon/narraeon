@@ -1954,10 +1954,20 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
   expect(stored).not.toHaveProperty("review");
   expect(stored.playPreset).toMatchObject({ id: "builtin-default" });
 
-  const currentTreeBoundary = stored.bootstrap.logicalMessages
-    .flatMap(({ blocks }) => blocks)
-    .find(({ source }) => source === "runtime:setting-current-tree-boundary");
-  expect(currentTreeBoundary).toBeDefined();
+  const bootstrapBlocks = stored.bootstrap.logicalMessages.flatMap(
+    ({ blocks }) => blocks,
+  );
+  expect(
+    bootstrapBlocks.find(
+      ({ source }) => source === "runtime:setting-current-tree-boundary",
+    ),
+  ).toBeUndefined();
+  const mechanicsBlock = bootstrapBlocks.find(
+    ({ source }) => source === "runtime:builtin/setting-improvement",
+  );
+  expect(mechanicsBlock?.markdown).toContain(
+    "publish atomically to the current tree when the complete response settles, with no Apply step",
+  );
   const frozenBootstrap = structuredClone(stored.bootstrap);
   await fixture.content.renameCurrentTreeContentPackage(
     fixture.packageId,

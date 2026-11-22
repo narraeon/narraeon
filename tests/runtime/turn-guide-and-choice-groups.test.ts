@@ -784,6 +784,39 @@ describe("restructure migration", () => {
   });
 });
 
+describe("Batch 1 prompt cleanup invariants (#245)", () => {
+  for (const locale of ["en", "zh-CN"] as const) {
+    test(`every builtin turnGuide stays within the soft limit (${locale})`, () => {
+      for (const item of builtinPlayPrompts(locale)) {
+        if (item.turnGuide === undefined) continue;
+        expect(turnGuideWarnings([{ text: item.turnGuide }]), item.id).toEqual(
+          [],
+        );
+      }
+    });
+
+    test(`option-group blocks omit self-referential replacement lines and preserve ownership/C4 invariants (${locale})`, () => {
+      const catalog = builtinPlayPrompts(locale);
+      for (const item of catalog.filter((entry) => entry.group !== undefined)) {
+        expect(item.body, item.id).not.toMatch(
+          /本块启用时取代|When this block is enabled it replaces/u,
+        );
+      }
+      const ownership = catalog.find((entry) => entry.id === "play.ownership")!;
+      expect(ownership.body).toContain(
+        locale === "zh-CN"
+          ? "写入玩家角色的感情时，只记录玩家已表达的内容。"
+          : "When recording the player character's feelings, write only what the player has expressed.",
+      );
+      const saveTiming = catalog.find(
+        (entry) => entry.id === "play.save-timing",
+      )!;
+      // C4: English save-timing keeps the exact Runtime-captured top-level key `背景`.
+      expect(saveTiming.body).toContain("`背景`");
+    });
+  }
+});
+
 function id(value: string): string {
   return value;
 }

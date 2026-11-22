@@ -162,22 +162,24 @@ test.each([
 test.each([
   {
     locale: "en" as const,
-    continuation:
-      "If further reads, adjudication or writes are needed, continue calling tools",
-    finish: "When ready to finish",
+    sameSubmission: "subsequent steps remain in the same player submission",
+    continuation: /(?:continue|keep) calling tools/u,
+    finish:
+      "present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state",
     header: "when writing the final prose",
     obsolete: "Do not reply to this notice; write the prose",
   },
   {
     locale: "zh-CN" as const,
-    continuation: "若还需读取、判定或写回，可继续调用工具",
-    finish: "准备结束时",
+    sameSubmission: "后续仍属同一次玩家提交",
+    continuation: /继续调用工具/u,
+    finish: "呈现本轮尚未展示的内容",
     header: "撰写最终正文时遵循以下要求",
     obsolete: "不要回应本提示，直接写正文",
   },
 ])(
   "$locale: 当前与旧编排允许工具结算后继续",
-  ({ locale, continuation, finish, header, obsolete }) => {
+  ({ locale, sameSubmission, continuation, finish, header, obsolete }) => {
     const compiler = new FileNativePromptCompiler({ locale });
     const request = input({ playerInputPlacement: "append" });
     const current = builtinDefaultPlayPresetBinding(locale);
@@ -193,7 +195,8 @@ test.each([
       const text = bootstrap.logicalMessages
         .map(({ markdown }) => markdown)
         .join("\n");
-      expect(text).toContain(continuation);
+      expect(text).toContain(sameSubmission);
+      expect(text).toMatch(continuation);
       expect(text).toContain(finish);
       expect(text).not.toContain(obsolete);
       if (bootstrap.turnGuide)

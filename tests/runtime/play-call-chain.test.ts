@@ -13183,7 +13183,7 @@ views:
       ({ markdown }) => markdown,
     ).join("\n");
     expect(mechanical).toContain(
-      "If further reads, adjudication or writes are needed, continue calling tools",
+      "subsequent steps remain in the same player submission, and you may keep calling tools without repeating succeeded writes",
     );
     const historyNotice = sent(host.requests[1]!).find(
       (item) => item.kind === "runtime_notice" && item.notice === "tool_step",
@@ -13193,7 +13193,7 @@ views:
       if (historyNotice?.kind !== "runtime_notice")
         throw new Error("Expected settlement notice");
       expect(historyNotice.text).toContain(
-        "If further reads, adjudication or writes are needed, continue calling tools",
+        "Call more tools if needed (do not repeat succeeded writes)",
       );
     } else {
       expect(historyNotice).toBeUndefined();
@@ -13206,7 +13206,7 @@ views:
     if (settlement?.kind !== "runtime_notice")
       throw new Error("Expected settlement notice");
     expect(settlement.text).toContain(
-      "If further reads, adjudication or writes are needed, continue calling tools",
+      "Call more tools if needed (do not repeat succeeded writes)",
     );
     const guide = host.requests[2]!.appended.at(-1);
     expect(guide).toMatchObject({

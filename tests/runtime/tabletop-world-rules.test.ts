@@ -187,3 +187,36 @@ describe("the chaos-bag sentence belongs to the bag scheme only", () => {
       });
   }
 });
+
+describe("tabletop compiled builtin prompts are genre-neutral and scheme-agnostic (#245)", () => {
+  for (const locale of ["en", "zh-CN"] as const) {
+    test(`d100 compiled builtin blocks and turnGuide avoid novel-only wording and difficulty parameter instructions (${locale})`, () => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const binding = builtinDefaultPlayPresetBinding(locale);
+      const compiled = compiler.compilePlayCallChain(
+        previewInputWithGameplay({ mode: "tabletop", scheme: "d100" }),
+        binding,
+      ).bootstrap;
+      const builtinText = [
+        ...compiled.logicalMessages
+          .flatMap(({ blocks }) => blocks)
+          .filter(({ source }) => source.startsWith("runtime:"))
+          .map(({ markdown }) => markdown),
+        compiled.turnGuide?.text ?? "",
+      ].join("\n\n");
+      expect(builtinText).not.toMatch(
+        /互动式小说|小说正文|小说形式|interactive novel|novel's prose|prose of the novel|novel form/iu,
+      );
+      const percentile = compiled.tools.find(
+        ({ name }) => name === "percentile_check",
+      )!;
+      expect(percentile.inputSchema).toMatchObject({
+        required: ["goal", "target"],
+      });
+      const worldRules = rulesBlocks(compiled.logicalMessages)[0]!.markdown;
+      expect(worldRules).not.toMatch(
+        /先声明行动目标、所用数值与难度|declare the action's goal, the inputs and the difficulty/u,
+      );
+    });
+  }
+});

@@ -109,8 +109,8 @@ export function toolStepNotice(
     notice: "tool_step",
     text:
       locale === "zh-CN"
-        ? "[Runtime 结算提示]\n上一响应调用了工具，其中的文字尚未作为最终故事展示或提交。工具已按回执结算，后续仍属同一次玩家提交；若还需读取、判定或写回，可继续调用工具，不重复已成功的写入。准备结束时，根据回执用非空无工具最终正文呈现本轮尚未展示的内容，并与已提交状态一致。工具结算不扩大叙事范围。"
-        : "[Runtime settlement]\nThe previous response called tools, so its text has not yet been displayed or committed as final story. The tools have settled as their receipts state; subsequent steps remain in the same player submission. If further reads, adjudication or writes are needed, continue calling tools; do not repeat successful writes. When ready to finish, use the receipts to present this turn’s still-unshown content in nonempty tool-free final prose consistent with committed state. Settlement does not expand the narrative scope.",
+        ? "[Runtime 结算提示]\n上一响应的文字尚未展示或提交，工具已按回执结算。若还需读取、判定或写入可继续调用（勿重复已成功写入）；否则依据回执输出本轮尚未展示的最终正文，不扩大叙事范围。"
+        : "[Runtime settlement]\nThe previous response's text is not shown or committed; tools settled per their receipts. Call more tools if needed (do not repeat succeeded writes), or output this turn's unshown final prose without expanding scope.",
   };
 }
 

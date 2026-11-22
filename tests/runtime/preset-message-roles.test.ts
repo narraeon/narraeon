@@ -254,7 +254,7 @@ test("merges only adjacent prefix messages, persists on save/import, and changes
     "user",
   ]);
   expect(after.provider.messages[1]!.content).toBe(
-    "# Author instruction\n\nEXAMPLE_USER_ONE\n\n# Author instruction\n\nEXAMPLE_USER_TWO",
+    "# Author instruction\n\nEXAMPLE_USER_ONE\n\nEXAMPLE_USER_TWO",
   );
   expect(after.cache.stablePrefixFingerprint).not.toBe(
     before.cache.stablePrefixFingerprint,
@@ -281,6 +281,64 @@ test("merges only adjacent prefix messages, persists on save/import, and changes
     compile(await reopened.bindRevision(imported.preset.id)).provider,
   ).toEqual(after.provider);
   expect(compile(binding).provider).toEqual(before.provider);
+
+  // When merging is off, consecutive system author blocks share one heading,
+  // while separate user/assistant preset messages each keep their own marker.
+  const beforeSystemText = before.provider.messages
+    .filter(({ role }) => role === "system")
+    .map(({ content }) => String(content))
+    .join("\n\n");
+  expect(beforeSystemText.match(/^# Author instruction$/gmu)).toHaveLength(1);
+  const beforeNonSystem = before.provider.messages.filter(
+    ({ role }) => role !== "system",
+  );
+  expect(beforeNonSystem).toEqual([
+    { role: "user", content: "# Author instruction\n\nEXAMPLE_USER_ONE" },
+    { role: "user", content: "# Author instruction\n\nEXAMPLE_USER_TWO" },
+    {
+      role: "assistant",
+      content: "# Author instruction\n\nEXAMPLE_ASSISTANT",
+    },
+    { role: "user", content: "# Author instruction\n\nLAST_USER" },
+  ]);
+
+  const anthropicBefore = compile(binding, "anthropic_messages");
+  const anthropicSystemText = (anthropicBefore.provider.system ?? [])
+    .map(({ text }) => text)
+    .join("\n\n");
+  expect(anthropicSystemText.match(/^# Author instruction$/gmu)).toHaveLength(
+    1,
+  );
+  expect(anthropicBefore.provider.messages).toEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "# Author instruction\n\nEXAMPLE_USER_ONE" },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "# Author instruction\n\nEXAMPLE_USER_TWO" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "# Author instruction\n\nEXAMPLE_ASSISTANT" },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "# Author instruction\n\nLAST_USER",
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+    },
+  ]);
 });
 
 test("old v2 presets retain the combined System prefix when optional fields are absent", async () => {

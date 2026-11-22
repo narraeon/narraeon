@@ -192,7 +192,7 @@ export function builtinPlayPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
         action:
           "Show positions, movement, what lands and established costs; wounds and fatigue accumulate according to facts.",
         literary:
-          "Leave emotion unstated but outcomes clear; images must match elapsed time.",
+          "Imply emotion, make outcomes clear, and let imagery reflect the time that has actually passed.",
       };
   return [
     {
@@ -209,7 +209,7 @@ export function builtinPlayPrompts(locale: AppLocale): BuiltinPlayPrompt[] {
 
 world_patch 的 YAML locator 可以包含 map key 和从零开始的数组下标；add 与 replace 是 upsert，无论目标是否存在都写入，下标达到或超过长度时追加；remove 删除一个精确位置，目标不存在时为无操作。每条 edit 独立结算：失败的 edit 被跳过，其余照常生效；回执列出失败项时，已生效的 edit 不要重发，只补发列出的 edit。未提供的元数据保持原值。world_retire 从目录注入中退役文档，文档仍可读取、引用和恢复。工具响应的成功状态变化与后续最终叙事分别提交，后续失败不回滚已提交变化。成功写入回执表示当前值已改变；以真实回执的结算状态为准，模型文字不能提交世界。
 
-包含工具调用的响应属于中间步，其中的文字尚未展示或提交为最终叙事。工具结果只结算本次调用，后续仍属同一次玩家提交；若还需读取、判定或写回，可继续调用工具，不重复已成功的写入。准备结束时，根据回执用非空无工具最终正文呈现本轮尚未展示的内容，并与已提交状态一致；工具结算不扩大叙事范围。Runtime 提交最终正文并结束循环。world_checkpoint 登记历史重放边界并向玩家建议从此开始全新上下文；在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文；界面预选下一次全新上下文，玩家可以取消预选。全新上下文完整补入边界后的已提交玩家原文与最终叙事，非空时替代 frame 的 recent；为空时沿用 frame 的 recent 声明，可以带入检查点所在正文。两种选择都排除开场白、工具和推理；故事起点已展示的开场白另行提供。何时登记由检查点政策块规定。
+包含工具调用的响应属于中间步，其中的文字尚未展示或提交为最终叙事；后续仍属同一次玩家提交，可继续调用工具但勿重复已成功写入。结束时根据成功回执，用非空且无工具调用的最终正文呈现本轮尚未展示的内容并与已提交状态一致；工具结算不扩大叙事范围。Runtime 提交最终正文并结束循环。world_checkpoint 登记历史重放边界并向玩家建议从此开始全新上下文；在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文；界面预选下一次全新上下文，玩家可以取消预选。全新上下文完整补入边界后的已提交玩家原文与最终叙事，非空时替代 frame 的 recent；为空时沿用 frame 的 recent 声明，可以带入检查点所在正文。两种选择都排除开场白、工具和推理；故事起点已展示的开场白另行提供。何时登记由检查点政策块规定。
 
 ${historyUseGuidance(locale)}`
         : `# Tools and response settlement
@@ -218,7 +218,7 @@ Use only attached tools. The main call chain may not call artifact_emit or artif
 
 YAML world_patch locators accept map keys and zero-based array indexes; add and replace are upserts that write whether or not the target exists, and an index past the end appends; remove deletes one exact location and is a no-op when it is absent. Each edit settles on its own: a failed edit is skipped and the others still apply, so when a receipt lists failed edits, send again only those. Omitted metadata remains unchanged. world_retire removes a document from catalog injection while keeping it readable, referenceable and restorable. Successful tool-response state changes and later final narrative commit separately; later failure does not roll back committed changes. Successful write receipts change current values; the actual receipt determines settlement, not model prose.
 
-Responses containing tool calls are intermediate steps; their text has not yet been displayed or committed as final narrative. Tool results settle only those calls; subsequent steps remain in the same player submission. If further reads, adjudication or writes are needed, continue calling tools; do not repeat successful writes. When ready to finish, use the receipts to present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state. Settlement does not expand the narrative scope. Runtime commits the final prose and ends the loop. world_checkpoint registers the history-replay boundary and suggests a fresh context from that point to the player; it takes effect after the subsequent nonempty tool-free final prose successfully commits, including that prose, and further tool calls may follow registration. Registration neither ends an in-world event nor switches context; the interface preselects a fresh context for the next send, and the player can cancel the preselection. A fresh context replays all committed player originals and final narratives after the boundary; nonempty replay replaces the frame's recent selection. When it is empty, the frame's recent declaration applies and may include the checkpoint narrative. Both selections exclude the opening, tools and reasoning; the already displayed opening is supplied separately at the story origin. The checkpoint policy block decides when to register.
+Responses containing tool calls are intermediate steps whose text is neither displayed nor committed as final narrative; subsequent steps remain in the same player submission, and you may keep calling tools without repeating succeeded writes. To finish, use the receipts to present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state; settlement does not expand narrative scope. Runtime commits the final prose and ends the loop. world_checkpoint registers the history-replay boundary and suggests a fresh context from that point to the player; it takes effect after the subsequent nonempty tool-free final prose successfully commits, including that prose, and further tool calls may follow registration. Registration neither ends an in-world event nor switches context; the interface preselects a fresh context for the next send, and the player can cancel the preselection. A fresh context replays all committed player originals and final narratives after the boundary; nonempty replay replaces the frame's recent selection. When it is empty, the frame's recent declaration applies and may include the checkpoint narrative. Both selections exclude the opening, tools and reasoning; the already displayed opening is supplied separately at the story origin. The checkpoint policy block decides when to register.
 
 ${historyUseGuidance(locale)}`,
     },
@@ -250,7 +250,7 @@ ${historyUseGuidance(locale)}`,
       group: "continue",
       turnGuide: zh
         ? "本轮有新动作或台词时，在最终正文开头演出；同次已发起的两者都在首个世界回应前出现，不重演旧输入。"
-        : "Stage newly initiated action and dialogue before the first world response in final prose; no replay of old input.",
+        : "Open with this turn's new action or dialogue. If both are given, stage both before the world responds. Skip old input.",
     }),
     block("continue-advance", {
       category: "choice",
@@ -264,7 +264,7 @@ ${historyUseGuidance(locale)}`,
       group: "agency",
       turnGuide: zh
         ? "可以补连带动作和寒暄；目标、立场、承诺、给予或接受、关系与风险的选择只能来自玩家原文。"
-        : "Fill in supporting actions and small talk; goals, stance, promises, giving, accepting and risk choices are the player's.",
+        : "Fill in minor steps and greetings. Players choose goals, stance, promises, what to give or accept, ties and risks.",
     }),
     block("agency-strict", {
       category: "choice",
@@ -292,7 +292,7 @@ ${historyUseGuidance(locale)}`,
       group: "stop",
       turnGuide: zh
         ? "接住普通往来，推进到自然段落；在玩家保留的判断、回应或关键决定前停，换场景也停。"
-        : "Carry ordinary exchanges to a natural pause; stop before reserved judgments, replies or key choices, or at a scene change.",
+        : "Carry routine exchanges to a natural pause. Stop for a reserved reply, judgment or key decision, or on a scene change.",
     }),
     // Independent policies: each rule lives in exactly one block.
     block("prose", { category: "policy" }),
@@ -306,14 +306,14 @@ ${historyUseGuidance(locale)}`,
     block("output", {
       category: "policy",
       turnGuide: zh
-        ? "只写小说正文，无标题、清单、幕后说明；“资料／搜索／句柄／Runtime”等内部词不进正文。"
-        : "Only the novel's prose: no headings, lists or backstage notes; words like records, search, handle or Runtime stay out.",
+        ? "世界内叙事只写故事正文，无标题、清单、幕后说明；“资料／搜索／句柄／Runtime”等内部词不进正文。"
+        : "Use only story prose in-world: no headings, lists or backstage notes; keep records, search, handle and Runtime out.",
     }),
     block("facts", {
       category: "policy",
       turnGuide: zh
-        ? "尝试不自动成功，声称不自动成真，遵守裁决。已有材料明确写出角色曾收到某项交代，且这项交代影响眼下行动时，把玩家尚未读到的必要内容写进正文。其余场景按玩家当前行动自然推进。"
-        : "Keep rulings; attempts and claims are no proof. If a prior instruction is established and matters now, tell what is new.",
+        ? "尝试不自动成功，声称不自动成真，遵守裁决。已有材料明确写出的角色已知前提影响眼下行动而玩家未读到时，写进正文。"
+        : "Keep rulings; attempts and claims are no proof. State established character-known premises needed now if still unread.",
     }),
     block("npc", { category: "policy" }),
     block("save-timing", {

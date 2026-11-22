@@ -353,7 +353,7 @@ test.each(["en", "zh-CN"] as const)(
       );
       if (name === "continue-stage")
         expect(preview.compilation.turnGuide?.text).toContain(
-          locale === "zh-CN" ? "同次已发起" : "newly initiated",
+          locale === "zh-CN" ? "同次已发起" : "new action or dialogue",
         );
       expect(
         builtinPlayPrompts(locale).find(({ id }) => id === `play.${name}`)

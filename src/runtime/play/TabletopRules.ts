@@ -56,11 +56,11 @@ ${rules}
 
 ## 绑定契约
 
-- 调用判定工具前，先声明行动目标、所用数值与难度；只有有成败不确定性或对抗的行动才需要判定。
+- 调用判定工具时，在参数中写明行动目标及本方案要求的数值；只有有成败不确定性或对抗的行动才需要判定。
 - 必须先调用判定工具并取得回执，再叙述结果。
 - 判定成功必须实现已声明的目标，失败则不实现，不论情节是否看似合理。
 - 大成功与大失败按工具的固定规则兑现，不能由叙述改写。
-- 掷骰之后不得更改该行动的目标或难度，也不得为同一行动重掷。
+- 取得回执后不得更改该行动的目标或判定数值，也不得为同一行动重掷。
 - 辅助掷骰与算术只决定伤害、数量等数值，不能推翻已经结算的判定。
 ${bagLine}- 参数不合法属于工具错误，不等于行动失败；修正参数后重新调用即可。`
       : `# Tabletop resolution rules
@@ -78,11 +78,11 @@ ${rules}
 
 ## Binding contract
 
-- Before calling the check tool, declare the action's goal, the inputs and the difficulty. Only actions with uncertain success or opposition need a check.
+- When calling the check tool, supply the action's goal and the scheme's required numeric inputs in the arguments. Only actions with uncertain success or opposition need a check.
 - Call the check tool and receive its receipt before narrating the outcome.
 - A success must fulfil the declared goal and a failure must not, regardless of whether the story seems plausible.
 - Critical outcomes follow the tool's fixed rules and cannot be rewritten by narration.
-- After a draw, never change that action's goal or difficulty, and never reroll the same action.
+- After a draw, never change that action's goal or check inputs, and never reroll the same action.
 - Auxiliary dice and arithmetic decide numeric values such as damage or quantities; they never reverse a resolved check.
 ${bagLine}- Invalid arguments are tool errors, not failed actions; correct the arguments and call the tool again.`;
   return { source: "runtime:world-placeholder/gameplay", markdown };
