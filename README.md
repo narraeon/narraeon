@@ -193,11 +193,13 @@ npm run test:package
 
 `npm run test:package` creates a real npm tarball, installs it in a temporary directory outside the repository, and verifies the packaged CLI, health endpoint, home page, and repeated-start behavior.
 
-Project contracts and architecture:
+Project contracts, architecture, and guides:
 
 - [GLOSSARY.md](GLOSSARY.md) — domain vocabulary
-- [docs/product-foundation.md](docs/product-foundation.md) — current V1 product contract
+- [docs/product-foundation.md](docs/product-foundation.md) — top-level V1 product and architectural constitution
+- [docs/specs/](docs/specs/) — topic-level authoritative engineering, protocol, storage, and UI specs (indexed in `docs/product-foundation.md`)
 - [docs/adr/](docs/adr/) — architectural decisions
+- [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md) & [docs/world-state-maintenance.md](docs/world-state-maintenance.md) — author tutorials and real-model evaluation guides (Chinese)
 
 ## License
 

@@ -14,7 +14,7 @@ This repo uses a single-context domain-doc layout: `GLOSSARY.md` and `docs/adr/`
 
 ### Product baseline
 
-Before planning or implementing V1, read `GLOSSARY.md`, `docs/product-foundation.md`, and the current GitHub issue. Repository documents define the current product and architectural contract; the issue defines the work and its acceptance state.
+Before planning or implementing V1, read `GLOSSARY.md`, `docs/product-foundation.md`, the relevant topic spec under `docs/specs/` (indexed at the end of `docs/product-foundation.md`), and the current GitHub issue. Repository documents (`docs/product-foundation.md` and `docs/specs/`) define the current product and architectural contract; maintained guides (`docs/content-package-setting-authoring.md`, `docs/world-state-maintenance.md`) provide author tutorials and real-model evaluation guides; the issue defines the work and its acceptance state.
 
 ### Workflow
 
