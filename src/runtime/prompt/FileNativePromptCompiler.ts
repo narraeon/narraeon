@@ -908,13 +908,6 @@ export class FileNativePromptCompiler {
           if (fallbackAdded || message.role !== "runtime_system")
             return message;
           fallbackAdded = true;
-          if (
-            message.blocks.some(
-              ({ source }) =>
-                source === "runtime:tabletop-continuation-fallback",
-            )
-          )
-            return message;
           const blocks = [
             ...message.blocks,
             tabletopContinuationFallbackBlock(gameplay, this.#locale),

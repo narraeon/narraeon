@@ -242,6 +242,21 @@ describe("tabletop world rules at the world placeholder", () => {
             expect(fallbacks[0]!.role).toBe("runtime_system");
             expect(fallbacks[0]!.markdown).toContain(
               locale === "zh-CN"
+                ? "必须先调用判定工具并取得回执，再叙述结果"
+                : "Call the check tool and receive its receipt before narrating the outcome",
+            );
+            expect(fallbacks[0]!.markdown).toContain(
+              locale === "zh-CN"
+                ? "判定成功必须实现已声明的目标，失败则不实现"
+                : "A success must fulfil the declared goal and a failure must not",
+            );
+            expect(fallbacks[0]!.markdown).toContain(
+              locale === "zh-CN"
+                ? "大成功与大失败按工具的固定规则兑现"
+                : "Critical outcomes follow the tool's fixed rules",
+            );
+            expect(fallbacks[0]!.markdown).toContain(
+              locale === "zh-CN"
                 ? "不得为同一行动重掷"
                 : "never reroll the same action",
             );
