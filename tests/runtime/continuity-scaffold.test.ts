@@ -27,6 +27,46 @@ for (const locale of ["en", "zh-CN"] as const) {
                 : []),
             ];
       expect(inspectContentPackageCurrentTree(files).issues).toEqual([]);
+      const worldBlock =
+        files.find(({ path }) => path === "control/blocks/world.md")
+          ?.contents ?? "";
+      if (locale === "zh-CN") {
+        expect(worldBlock).not.toContain("叙事提交前");
+        expect(worldBlock).toContain("## 连续性文档与保存位置");
+        expect(worldBlock).toContain("持续变化需要保存时");
+        expect(worldBlock).toContain("@pending-matters 的「未了事项」");
+        expect(worldBlock).toContain(
+          'context_read({ref: "@relationships#/人物/人物键"})',
+        );
+        expect(worldBlock).toContain(
+          'context_read({ref: "@important-events#/事件/事件键"})',
+        );
+        expect(worldBlock).toContain("新增键前先读父映射");
+        expect(worldBlock).toContain(
+          "人物文档的「认知」段只记影响该人物行动的内容",
+        );
+      } else {
+        expect(worldBlock).not.toContain("Before submitting narration");
+        expect(worldBlock).toContain(
+          "## Continuity documents and save locations",
+        );
+        expect(worldBlock).toContain("When a lasting change needs to be saved");
+        expect(worldBlock).toContain(
+          "In @pending-matters, the pending mapping",
+        );
+        expect(worldBlock).toContain(
+          'context_read({ref: "@relationships#/people/person-key"})',
+        );
+        expect(worldBlock).toContain(
+          'context_read({ref: "@important-events#/events/event-key"})',
+        );
+        expect(worldBlock).toContain(
+          "read the parent mapping before adding keys",
+        );
+        expect(worldBlock).toContain(
+          "A character document's Knowledge section records only what affects that character's actions",
+        );
+      }
       const events = locale === "en" ? "events" : "事件";
       const people = locale === "en" ? "people" : "人物";
       const pending = locale === "en" ? "pending" : "未了事项";
