@@ -31,7 +31,8 @@ GitHub shares one number space across issues and PRs. Check the item type when r
 ## Repository boundary
 
 - `GLOSSARY.md` contains only the current domain glossary.
-- `docs/product-foundation.md` and maintained guides contain current product contracts.
+- `docs/product-foundation.md` and `docs/specs/` contain the authoritative current product, protocol, storage, concurrency, and UI contracts.
+- Maintained guides (`docs/content-package-setting-authoring.md`, `docs/world-state-maintenance.md`, `docs/sillytavern-macro-notes.md`) contain author tutorials, writing examples, and real-model evaluation guides, and link back to `docs/specs/` instead of duplicating contracts.
 - `docs/adr/` contains concise current architectural decisions and their rationale, not implementation progress or experiment transcripts.
 - GitHub Issues contain work with a lifecycle: proposals, research, tasks, bugs, migrations, and acceptance.
 - Raw traces, screenshots, generated reports, and large evidence bundles belong in CI artifacts or a local archive; issues contain their conclusion and a link.

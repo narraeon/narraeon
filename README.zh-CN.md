@@ -178,11 +178,13 @@ npm run test:package
 
 `npm run test:package` 会生成真实 npm tarball，在仓库外的临时目录安装，再检查发布版 CLI、健康端点、首页和重复启动行为。
 
-项目契约与架构文档：
+项目契约、架构与作者指南：
 
 - [GLOSSARY.md](GLOSSARY.md) —— 领域词汇
-- [docs/product-foundation.md](docs/product-foundation.md) —— 当前 V1 产品契约
+- [docs/product-foundation.md](docs/product-foundation.md) —— 顶层 V1 产品与架构宪法
+- [docs/specs/](docs/specs/) —— 按子系统划分的权威工程、协议、存储与界面专题规格（完整导航见 `docs/product-foundation.md`）
 - [docs/adr/](docs/adr/) —— 架构决策
+- [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md) 与 [docs/world-state-maintenance.md](docs/world-state-maintenance.md) —— 作者创作教程、状态维护实践与实模验证指南
 
 ## License
 
