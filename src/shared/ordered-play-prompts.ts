@@ -250,7 +250,7 @@ ${historyUseGuidance(locale)}`,
       group: "continue",
       turnGuide: zh
         ? "本轮有新动作或台词时，在最终正文开头演出；同次已发起的两者都在首个世界回应前出现，不重演旧输入。"
-        : "Open with this turn's new action or dialogue. If both are given, stage both before the world responds. Skip old input.",
+        : "Stage new action or dialogue first; if both are given, stage both before the first world response. Skip old input.",
     }),
     block("continue-advance", {
       category: "choice",
