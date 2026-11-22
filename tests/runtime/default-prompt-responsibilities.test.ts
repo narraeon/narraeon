@@ -237,12 +237,8 @@ describe("旧格式默认提示词职责", () => {
           "未提供的元数据字段",
           "不要只为照抄未改变的元数据而读取",
         ],
-        patch: [
-          "只提供需要改变的 title、summary 或 aliases",
-          "至少提供一项",
-          "未提供的字段由 Runtime 从当前候选文档保留",
-        ],
-        read: ["set_metadata 可以只提交需要改变的字段"],
+        patch: ["仅传变更字段（至少一项）", "未传字段保留"],
+        read: ["YAML 正文不含 $document 头"],
         absent: [
           "已注入全文",
           "context_read 只会原样返回你已经看到的字节",
@@ -259,11 +255,10 @@ describe("旧格式默认提示词职责", () => {
           "do not read merely to copy unchanged metadata",
         ],
         patch: [
-          "include only the title, summary, or aliases that must change",
-          "At least one is required",
-          "Runtime preserves omitted fields from the current candidate document",
+          "with only changed fields (at least one)",
+          "omitted fields are preserved",
         ],
-        read: ["set_metadata may include only the fields that must change"],
+        read: ["YAML bodies omit $document"],
         absent: [
           "full text injected",
           "context_read would return the same bytes",

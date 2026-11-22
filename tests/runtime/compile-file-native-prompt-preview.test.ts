@@ -1,3 +1,4 @@
+import { fictionGameplay } from "../../src/protocol/gameplay.ts";
 import { playerInputText } from "../../src/shared/turn-guide.ts";
 import { describe, expect, test } from "vitest";
 
@@ -15,6 +16,7 @@ import {
   FileNativePromptCompiler,
   type FileNativePromptInput,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import { worldRevisionToolDefinitions } from "../../src/runtime/world-revision/WorldRevisionAuthoringTransaction.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 test.each([
@@ -406,8 +408,8 @@ test.each([
     expect(encoded).toContain(deferral);
     expect(checkpointTool.description).toContain(
       locale === "zh-CN"
-        ? "整理与归并不需要调用本工具"
-        : "Consolidation and maintenance do not require this tool",
+        ? "整理归并无需调用"
+        : "Consolidation does not need this tool",
     );
     expect(checkpointTool.inputSchema).toEqual({
       type: "object",
@@ -1380,10 +1382,12 @@ context:
       },
     });
     expect(historyList?.description).toContain(
-      "Historical background describes the captured state, not current world state",
+      "Historical background reflects capture-time state only, not current world state",
     );
     expect(
-      historyList?.description?.match(/does not certify facts/gu),
+      historyList?.description?.match(
+        /neither certifies facts nor grants character knowledge/gu,
+      ),
     ).toHaveLength(1);
     expect(contextRead?.inputSchema).toEqual({
       type: "object",
@@ -1394,7 +1398,7 @@ context:
       },
     });
     expect(contextRead?.description).toContain(
-      "Results are never truncated or paginated",
+      "without truncation or pagination",
     );
     expect(JSON.stringify([stateList, historyList])).not.toMatch(
       /"(?:oneOf|allOf|anyOf)"/u,
@@ -1402,16 +1406,16 @@ context:
 
     const patch = compiled.tools.find(({ name }) => name === "world_patch");
     expect(patch?.description).toContain(
-      "A Markdown locator excludes the document level-one heading",
+      "Markdown: locators exclude the # title",
     );
     expect(patch?.description).toContain("set_metadata");
     expect(patch?.description).toContain('{$ref:"@short-ref"}');
-    expect(patch?.description).toContain("Never invent a document id");
-    expect(patch?.description).toContain("ordinary text");
+    expect(patch?.description).toContain("never invent document ids");
+    expect(patch?.description).toContain("plain text");
     expect(patch?.description).toContain("world_create");
     const create = compiled.tools.find(({ name }) => name === "world_create");
     expect(create?.description).toContain('{$ref:"@short-ref"}');
-    expect(create?.description).toContain("Never invent a document id");
+    expect(create?.description).toContain("never invent document ids");
     expect(
       (
         create?.inputSchema as {
@@ -1423,23 +1427,20 @@ context:
       "Only Runtime can formally write an operation into the world",
     );
     expect(patch?.description).toContain("replace_body");
-    expect(patch?.description).toContain("use append");
+    expect(patch?.description).toContain("append adds to an existing sequence");
     expect(patch?.description).toContain("remove");
     expect(patch?.description).toContain("zero-based array index");
-    expect(patch?.description).toContain(
-      "Success reports whether the document changed",
-    );
-    expect(patch?.description).toContain("does not echo the body");
-    expect(patch?.description).toContain("Call context_read again only when");
+    expect(patch?.description).toContain("Body is not echoed");
+    expect(patch?.description).toContain("re-read with context_read only if");
     expect(stateList?.description).toContain("@dir-/");
     expect(stateList?.description).toContain("state directory");
     expect(stateList?.description).toContain(
-      "remain listed and usable when empty",
+      "Empty catalog directories declared by the frozen frame stay usable",
     );
     expect(historyList?.description).toContain("oldest to newest");
-    expect(historyList?.description).toContain("committed history");
+    expect(historyList?.description).toContain("committed timeline history");
     expect(create?.description).toContain("state_list");
-    expect(create?.description).toContain("unknown directory is rejected");
+    expect(create?.description).toContain("unknown directories are rejected");
     expect(create?.description).not.toContain("context_list");
     expect(compiled.tools.map(({ name }) => name)).toContain("world_retire");
 
@@ -1449,7 +1450,7 @@ context:
     );
     expect(chinese[0]?.description).toContain("状态目录");
     expect(chinese[0]?.description).toContain("@dir-*");
-    expect(chinese[0]?.description).toContain("即使为空");
+    expect(chinese[0]?.description).toContain("空 catalog 目录仍可用");
     expect(chinese[1]?.description).toContain("已提交历史");
     expect(chinese[1]?.description).toContain("由旧到新");
   });
@@ -2711,4 +2712,138 @@ test("提示编译接受显式单文档和含 YAML 指示符的注释，拒绝�
   expect(() =>
     compiler.inspectWorldMaterials(world("extra: [*missing]")),
   ).toThrowError(expect.objectContaining({ code: "unsafe_yaml" }));
+});
+
+describe("Batch 2B mechanics, history and shared tool description contracts (#247)", () => {
+  test.each(["zh-CN", "en"] as const)(
+    "%s production world revision preserves shared history_* guardrails without loading historyUseGuidance",
+    (locale) => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const preset = builtinDefaultPlayPresetBinding(locale);
+      const compiled = compiler.compileWorldRevision({
+        gameplay: fictionGameplay,
+        worldTitle: "Revision Guardrail Check",
+        epoch: { id: "epoch-247", baseHead: "head-247" },
+        playPreset: preset,
+        modelBinding: input().modelBinding,
+        tools: worldRevisionToolDefinitions(locale, fictionGameplay),
+      });
+      const historyList = compiled.tools.find(
+        ({ name }) => name === "history_list",
+      )?.description;
+      const historySearch = compiled.tools.find(
+        ({ name }) => name === "history_search",
+      )?.description;
+      const historyRead = compiled.tools.find(
+        ({ name }) => name === "history_read",
+      )?.description;
+
+      expect(historyList).toBeDefined();
+      expect(historySearch).toBeDefined();
+      expect(historyRead).toBeDefined();
+
+      if (locale === "zh-CN") {
+        expect(historyList).toContain("Authority 接受顺序");
+        expect(historyList).toContain("历史背景仅说明采集时刻状态");
+        expect(historyList).toContain("不认证事实或授予角色知识");
+        expect(historyList).toContain("{cursor}");
+        expect(historyList).toContain("history_changed");
+        expect(historySearch).toContain("零命中不证明事件未发生");
+        expect(historySearch).toContain("after 须早于 before");
+        expect(historySearch).toContain("{cursor}");
+        expect(historySearch).toContain("history_changed");
+        expect(historyRead).toContain("无摘要、无截断、无正文分页");
+        expect(historyRead).toContain("两模式互斥");
+        expect(historyRead).toContain("计数单位为消息而非回合");
+      } else {
+        expect(historyList).toContain("Authority acceptance order");
+        expect(historyList).toContain(
+          "Historical background reflects capture-time state only",
+        );
+        expect(historyList).toContain(
+          "neither certifies facts nor grants character knowledge",
+        );
+        expect(historyList).toContain("{cursor}");
+        expect(historyList).toContain("history_changed");
+        expect(historySearch).toContain(
+          "Zero matches do not prove an event never happened",
+        );
+        expect(historySearch).toContain("after must precede before");
+        expect(historySearch).toContain("{cursor}");
+        expect(historySearch).toContain("history_changed");
+        expect(historyRead).toContain(
+          "without summaries, truncation or body pagination",
+        );
+        expect(historyRead).toContain("mutually exclusive");
+        expect(historyRead).toContain("Counts are messages, not turns");
+      }
+    },
+  );
+
+  test.each(["zh-CN", "en"] as const)(
+    "%s world_patch description states two-phase batch validation/settlement and valid top-level add_section shape",
+    (locale) => {
+      const patch = fileNativeToolsForNames(["world_patch"], locale)[0]!
+        .description;
+      expect(patch).toContain('"locator":{"markdown":[]}');
+      if (locale === "zh-CN") {
+        expect(patch).toContain("先整批校验");
+        expect(patch).toContain("零写入");
+        expect(patch).toContain("逐条独立结算");
+        expect(patch).toContain("仅补发失败项");
+      } else {
+        expect(patch).toContain("batch-validated first");
+        expect(patch).toContain("zero writes");
+        expect(patch).toContain("settles independently");
+        expect(patch).toContain("resend only listed failures");
+      }
+    },
+  );
+
+  test.each(["zh-CN", "en"] as const)(
+    "%s legacy frozen history tools still swap structured historyUseGuidance cleanly",
+    (locale) => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const preset = builtinDefaultPlayPresetBinding(locale);
+      const baseRequest = input({ playerInputPlacement: "append" });
+      const fresh = compiler.compilePlayCallChain(
+        baseRequest,
+        preset,
+      ).bootstrap;
+      const legacyTools = [
+        {
+          name: "context_list",
+          description: "Legacy context list tool.",
+          inputSchema: {
+            type: "object",
+            properties: { source: { enum: ["state", "history"] } },
+            required: ["source"],
+          },
+        },
+        ...fresh.tools.filter(({ name }) => name !== "state_list"),
+      ];
+      const resumed = compiler.compilePlayCallChain(
+        {
+          ...baseRequest,
+          frozenWorldContext: {
+            ...fresh,
+            tools: legacyTools,
+            toolUniverse: legacyTools,
+          },
+        },
+        preset,
+      ).bootstrap;
+      const runtimeText = resumed.logicalMessages
+        .filter(({ role }) => role === "runtime_system")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      expect(runtimeText).not.toContain("history_read {latest:4}");
+      expect(runtimeText).not.toContain("history_search queries");
+      expect(runtimeText).toContain(
+        locale === "zh-CN"
+          ? "仅用本会话冻结的旧工具定义查读最近原文"
+          : "use only this session's frozen legacy tool definitions for recent originals",
+      );
+    },
+  );
 });
