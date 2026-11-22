@@ -341,6 +341,124 @@ test("merges only adjacent prefix messages, persists on save/import, and changes
   ]);
 });
 
+test("deduplicates repeated # Author instruction headings across consecutive system author instructions with merge off, merge on, and Anthropic (#245)", async () => {
+  const { store, preset, structure, binding } = await fixture();
+  const baseSystemPrompts = structure.playPrompts!.filter(
+    (entry) => entry.kind !== "user",
+  );
+  const worldIndex = baseSystemPrompts.findIndex(
+    (entry) => entry.kind === "world",
+  );
+  structure.playPrompts = [
+    ...baseSystemPrompts.slice(0, worldIndex),
+    prompt("SYSTEM_AUTHOR_ONE", "system"),
+    prompt("SYSTEM_AUTHOR_TWO", "system"),
+    ...baseSystemPrompts.slice(worldIndex),
+    prompt("EXAMPLE_USER_ONE", "user"),
+    prompt("EXAMPLE_USER_TWO", "user"),
+  ];
+  structure.mergeConsecutiveMessages = false;
+  await store.save({
+    presetId: preset.id,
+    name: preset.name,
+    files: binding.files,
+    structure,
+  });
+  await store.select(preset.id);
+  const unmergedBinding = await store.bindRevision(preset.id);
+
+  // Merge OFF (chat_completions): two distinct consecutive system author bodies
+  // keep their order while emitting # Author instruction only once; separate
+  // user preset messages each keep their own heading.
+  const unmerged = compile(unmergedBinding, "chat_completions");
+  const unmergedSystem = unmerged.provider.messages
+    .filter(({ role }) => role === "system")
+    .map(({ content }) => String(content));
+  const unmergedSystemJoined = unmergedSystem.join("\n\n");
+  expect(unmergedSystemJoined).toContain("SYSTEM_AUTHOR_ONE");
+  expect(unmergedSystemJoined).toContain("SYSTEM_AUTHOR_TWO");
+  expect(unmergedSystemJoined.indexOf("SYSTEM_AUTHOR_ONE")).toBeLessThan(
+    unmergedSystemJoined.indexOf("SYSTEM_AUTHOR_TWO"),
+  );
+  expect(unmergedSystemJoined.match(/^# Author instruction$/gmu)).toHaveLength(
+    1,
+  );
+  expect(
+    unmergedSystem.find((text) => text.includes("SYSTEM_AUTHOR_ONE")),
+  ).toContain("# Author instruction");
+  expect(
+    unmergedSystem.find((text) => text.includes("SYSTEM_AUTHOR_TWO")),
+  ).not.toContain("# Author instruction");
+  expect(
+    unmerged.provider.messages.filter(
+      ({ role, content }) =>
+        role === "user" && String(content).includes("EXAMPLE_USER_"),
+    ),
+  ).toEqual([
+    { role: "user", content: "# Author instruction\n\nEXAMPLE_USER_ONE" },
+    { role: "user", content: "# Author instruction\n\nEXAMPLE_USER_TWO" },
+  ]);
+
+  // Anthropic (merge OFF): system blocks preserve both bodies in order with one heading.
+  const anthropicUnmerged = compile(unmergedBinding, "anthropic_messages");
+  const anthropicUnmergedSystem = (anthropicUnmerged.provider.system ?? [])
+    .map(({ text }) => text)
+    .join("\n\n");
+  expect(anthropicUnmergedSystem).toContain("SYSTEM_AUTHOR_ONE");
+  expect(anthropicUnmergedSystem).toContain("SYSTEM_AUTHOR_TWO");
+  expect(anthropicUnmergedSystem.indexOf("SYSTEM_AUTHOR_ONE")).toBeLessThan(
+    anthropicUnmergedSystem.indexOf("SYSTEM_AUTHOR_TWO"),
+  );
+  expect(
+    anthropicUnmergedSystem.match(/^# Author instruction$/gmu),
+  ).toHaveLength(1);
+
+  // Merge ON (chat_completions + Anthropic): both system bodies stay in order
+  // with one heading, and adjacent user preset messages merge under one heading.
+  structure.mergeConsecutiveMessages = true;
+  await store.save({
+    presetId: preset.id,
+    name: preset.name,
+    files: unmergedBinding.files,
+    structure,
+  });
+  await store.select(preset.id);
+  const mergedBinding = await store.bindRevision(preset.id);
+  const merged = compile(mergedBinding, "chat_completions");
+  const mergedSystemJoined = merged.provider.messages
+    .filter(({ role }) => role === "system")
+    .map(({ content }) => String(content))
+    .join("\n\n");
+  expect(mergedSystemJoined).toContain("SYSTEM_AUTHOR_ONE");
+  expect(mergedSystemJoined).toContain("SYSTEM_AUTHOR_TWO");
+  expect(mergedSystemJoined.indexOf("SYSTEM_AUTHOR_ONE")).toBeLessThan(
+    mergedSystemJoined.indexOf("SYSTEM_AUTHOR_TWO"),
+  );
+  expect(mergedSystemJoined.match(/^# Author instruction$/gmu)).toHaveLength(1);
+  expect(
+    merged.provider.messages.find(
+      ({ role, content }) =>
+        role === "user" && String(content).includes("EXAMPLE_USER_ONE"),
+    ),
+  ).toEqual({
+    role: "user",
+    content: "# Author instruction\n\nEXAMPLE_USER_ONE\n\nEXAMPLE_USER_TWO",
+  });
+
+  const anthropicMerged = compile(mergedBinding, "anthropic_messages");
+  const anthropicMergedSystem = (anthropicMerged.provider.system ?? [])
+    .map(({ text }) => text)
+    .join("\n\n");
+  expect(anthropicMergedSystem).toContain("SYSTEM_AUTHOR_ONE");
+  expect(anthropicMergedSystem).toContain("SYSTEM_AUTHOR_TWO");
+  expect(anthropicMergedSystem.indexOf("SYSTEM_AUTHOR_ONE")).toBeLessThan(
+    anthropicMergedSystem.indexOf("SYSTEM_AUTHOR_TWO"),
+  );
+  expect(anthropicMergedSystem.match(/^# Author instruction$/gmu)).toHaveLength(
+    1,
+  );
+});
+
 test("old v2 presets retain the combined System prefix when optional fields are absent", async () => {
   const { binding } = await fixture();
   const raw = parseDocument(binding.files["preset.yaml"]!);

@@ -245,8 +245,6 @@ export interface WorldRevisionPromptInput {
 interface AuthoringConversationPromptInput {
   target: "setting" | "world-revision";
   identity: { source: string; markdown: string };
-  /** Null when the target's mechanics already state the boundary. */
-  boundary: { source: string; markdown: string } | null;
   runtimeSource: string;
   gameplay: Gameplay;
   playPreset: PlayPresetBinding;
@@ -470,7 +468,6 @@ export class FileNativePromptCompiler {
           this.#locale,
         ),
       },
-      boundary: null,
       runtimeSource: "runtime:builtin/setting-improvement",
       target: "setting",
       gameplay: input.gameplay,
@@ -496,7 +493,6 @@ export class FileNativePromptCompiler {
             ? `\n\nEpoch: ${input.epoch.id}\nBase: ${input.epoch.baseHead}`
             : ""),
       },
-      boundary: null,
       runtimeSource: "runtime:builtin/world-revision",
       target: "world-revision",
       gameplay: input.gameplay,
@@ -560,7 +556,6 @@ export class FileNativePromptCompiler {
       if (builtin?.id === "author.target")
         blocks = [
           input.identity,
-          ...(input.boundary === null ? [] : [input.boundary]),
           ...(input.gameplay.mode === "tabletop"
             ? [
                 tabletopAuthoringRulesBlock(

@@ -217,6 +217,15 @@ describe("tabletop compiled builtin prompts are genre-neutral and scheme-agnosti
       expect(worldRules).not.toMatch(
         /先声明行动目标、所用数值与难度|declare the action's goal, the inputs and the difficulty/u,
       );
+      const tabletopGuide = compiled.logicalMessages
+        .flatMap(({ blocks }) => blocks)
+        .find(
+          ({ source }) => source === "runtime:ordered/play.tabletop",
+        )?.markdown;
+      expect(tabletopGuide).toBeDefined();
+      expect(tabletopGuide).not.toMatch(
+        /确定修正与难度|明确行动目标、属性修正和难度|declare the goal, modifiers and difficulty/u,
+      );
     });
   }
 });
