@@ -438,7 +438,7 @@ const toolDescriptions: Record<
     history_search:
       "Search committed timeline originals literally using nonempty queries (no query alias or semantic filters; match defaults to any, all applies within one message). NFKC-normalized and case-insensitive by default (duplicates collapse). Zero matches do not prove an event never happened. after/before exclude timeline bounds regardless of order (after must precede before). Returns up to 3 excerpts, match counts and full length; read context with history_read. Continue with {cursor} alone; rerun after history_changed.",
     history_read:
-      "Read complete committed timeline originals without summaries, truncation or body pagination. {latest:N} and {ref,before,after} are mutually exclusive (refs from injections or tools work directly). Windows are oldest to newest including the anchor; earlier/later sit just outside and can anchor the next read without overlap. Boundaries and empty history are normal. Counts are messages, not turns; large windows can be big.",
+      "Read complete committed timeline originals without summaries, truncation or body pagination. {latest:N} (1–21) and {ref,before,after} (defaults 0, before+after<=20) are mutually exclusive; refs from injections or tools work directly. Windows are oldest to newest including the anchor; earlier/later sit just outside and can anchor the next read without overlap. Boundaries and empty history are normal. Counts are messages, not turns; large windows can be big.",
     context_search:
       "Search literal text in state documents (source=state; use history_search for history). Zero matches do not prove a fact is absent; never recount searches in player-visible prose. within accepts only Runtime-returned @document or @dir-* handles.",
     context_read:
@@ -449,7 +449,7 @@ const toolDescriptions: Record<
 - Markdown: locators exclude the # title. replace_section must start with the matching heading level/name and adds it if absent; add_section adds a child under locator, or a top-level section at the end via {"op":"add_section","locator":{"markdown":[]},"markdown":"## Clues\\nSilver key"}; replace_preamble edits between # and the first ##; replace_body replaces the body while keeping the original # heading.
 - Validation & settlement: batch-validated first (authorization and basic shape; any failure rejects the whole batch with zero writes), then each edit settles independently (failed edits skip while others apply; resend only listed failures). Body is not echoed; re-read with context_read only if later decisions need exact serialized body or metadata.`,
     world_create:
-      'Create a document in a Runtime-known state directory. parent must be an @dir-* from the initial index or state_list (@dir-/ for root; empty frozen-frame catalog directories stay usable; unknown directories are rejected). refHint is a lowercase ASCII short ref, not a world/ path. Reference whole documents in YAML only as {$ref:"@short-ref"} from a Runtime result (never invent document ids).',
+      'Create a document in a Runtime-known state directory. parent must be an @dir-* from the initial index or state_list (@dir-/ for root; empty frozen-frame catalog directories stay usable; unknown directories are rejected). refHint is a suggested lowercase ASCII short-reference hint (not a world/ path); use the @short-ref returned by Runtime. Reference whole documents in YAML only as {$ref:"@short-ref"} from a Runtime result (never invent document ids).',
     world_retire:
       "Retire or restore an authorized state document (target is an @short-ref). retired:true removes it from future frame catalog injection while keeping it listed, searchable, readable, referenceable and restorable; retired:false restores it. Does not affect explicit full-document slots; use world_patch for ordinary edits.",
     artifact_emit:
@@ -467,7 +467,7 @@ const toolDescriptions: Record<
     history_search:
       "字面搜索当前时间线已提交原文（queries 为非空字面词，不接受 query 别名或语义筛选；match 默认 any，all 限于同一消息）。始终 NFKC 规范化且默认不区分大小写（重复词合并）。零命中不证明事件未发生。after/before 按时间线先后排除边界且 after 须早于 before。每项返回最多 3 个片段、命中数与原文长度，前后文用 history_read。续页只传 {cursor}；history_changed 须重新查询。",
     history_read:
-      "完整读取当前时间线已提交原文，无摘要、无截断、无正文分页。{latest:N} 与 {ref,before,after} 两模式互斥（注入或工具返回的 ref 可直接使用）。窗口由旧到新且含锚点；earlier/later 为紧邻窗口外句柄，可作下一次 ref 避免重读；边界与空历史正常。计数单位为消息而非回合，大窗口输出可能很大。",
+      "完整读取当前时间线已提交原文，无摘要、无截断、无正文分页。{latest:N}（1–21）与 {ref,before,after}（before/after 默认 0 且合计<=20）两模式互斥，注入或工具返回的 ref 可直接使用。窗口由旧到新且含锚点；earlier/later 为紧邻窗口外句柄，可作下一次 ref 避免重读；边界与空历史正常。计数单位为消息而非回合，大窗口输出可能很大。",
     context_search:
       "在状态文档原文字面搜索（source 固定为 state；历史用 history_search）。0 命中不证明事实不存在；玩家可见叙事不得复述搜索过程。within 只接受 Runtime 返回的 @文档或 @dir-* 句柄。",
     context_read:
@@ -478,7 +478,7 @@ const toolDescriptions: Record<
 - Markdown：locator 不含 # 标题；replace_section 须以同级同名标题开头，不存在时在父级下新增；add_section 在 locator 下加子节，正文末尾新增顶层节用 {"op":"add_section","locator":{"markdown":[]},"markdown":"## 线索\\n银钥匙"}；replace_preamble 改 # 与首个 ## 间文字；replace_body 替换正文并保留原 # 标题。
 - 校验与结算：先整批校验（写入授权与基本参数/形态，任一项不通过则整批拒绝、零写入），通过后逐条独立结算（失败跳过、其余生效；回执列失败项时仅补发失败项）。不回显正文，仅后续依赖精确正文或元数据时再 context_read。`,
     world_create:
-      '在 Runtime 已知状态目录中新建文档。parent 须为初始索引或 state_list 返回的 @dir-*（根目录 @dir-/，冻结 frame 的空 catalog 目录可用，未知目录被拒）。refHint 为小写 ASCII 短引用，非 world/ 路径。YAML 整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）。',
+      '在 Runtime 已知状态目录中新建文档。parent 须为初始索引或 state_list 返回的 @dir-*（根目录 @dir-/，冻结 frame 的空 catalog 目录可用，未知目录被拒）。refHint 是创建时建议的小写 ASCII 短引用（非 world/ 路径），后续以 Runtime 返回的 @短引用 为准。YAML 整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）。',
     world_retire:
       "退役或恢复已获写入资格的精确状态文档（target 为 @短引用）。retired:true 移出后续 frame catalog 注入但保留可列、可搜、可读、可引用与可恢复；retired:false 恢复参与。不影响显式全文注入，普通字段变化用 world_patch。",
     artifact_emit:

@@ -2754,6 +2754,7 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
         expect(historySearch).toContain("history_changed");
         expect(historyRead).toContain("无摘要、无截断、无正文分页");
         expect(historyRead).toContain("两模式互斥");
+        expect(historyRead).toContain("合计<=20");
         expect(historyRead).toContain("计数单位为消息而非回合");
       } else {
         expect(historyList).toContain("Authority acceptance order");
@@ -2775,27 +2776,46 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
           "without summaries, truncation or body pagination",
         );
         expect(historyRead).toContain("mutually exclusive");
+        expect(historyRead).toContain("before+after<=20");
         expect(historyRead).toContain("Counts are messages, not turns");
       }
     },
   );
 
   test.each(["zh-CN", "en"] as const)(
-    "%s world_patch description states two-phase batch validation/settlement and valid top-level add_section shape",
+    "%s world_patch, world_create and play.mechanics preserve batch scope, refHint semantics and valid top-level add_section shape",
     (locale) => {
-      const patch = fileNativeToolsForNames(["world_patch"], locale)[0]!
-        .description;
-      expect(patch).toContain('"locator":{"markdown":[]}');
+      const [patch, create] = fileNativeToolsForNames(
+        ["world_patch", "world_create"],
+        locale,
+      );
+      const compiled = new FileNativePromptCompiler({
+        locale,
+      }).compilePlayCallChain(
+        input({ playerInputPlacement: "append" }),
+        builtinDefaultPlayPresetBinding(locale),
+      ).bootstrap;
+      const runtimeText = compiled.logicalMessages
+        .filter(({ role }) => role === "runtime_system")
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      expect(patch?.description).toContain('"locator":{"markdown":[]}');
       if (locale === "zh-CN") {
-        expect(patch).toContain("先整批校验");
-        expect(patch).toContain("零写入");
-        expect(patch).toContain("逐条独立结算");
-        expect(patch).toContain("仅补发失败项");
+        expect(patch?.description).toContain("先整批校验");
+        expect(patch?.description).toContain("零写入");
+        expect(patch?.description).toContain("逐条独立结算");
+        expect(patch?.description).toContain("仅补发失败项");
+        expect(create?.description).toContain("建议的小写 ASCII 短引用");
+        expect(create?.description).toContain("以 Runtime 返回的 @短引用 为准");
+        expect(runtimeText).toContain("单次 world_patch 先整批校验");
       } else {
-        expect(patch).toContain("batch-validated first");
-        expect(patch).toContain("zero writes");
-        expect(patch).toContain("settles independently");
-        expect(patch).toContain("resend only listed failures");
+        expect(patch?.description).toContain("batch-validated first");
+        expect(patch?.description).toContain("zero writes");
+        expect(patch?.description).toContain("settles independently");
+        expect(patch?.description).toContain("resend only listed failures");
+        expect(create?.description).toContain("short-reference hint");
+        expect(create?.description).toContain("returned by Runtime");
+        expect(runtimeText).toContain("A single world_patch validates");
       }
     },
   );
