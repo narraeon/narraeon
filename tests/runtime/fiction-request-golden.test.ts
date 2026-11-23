@@ -352,11 +352,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "78a228b4c5a016c489f24f48e10634be19387c420fd1ca39572a3a4734174291",
   "revision/en":
-    "19332aefeb9b5f8f57a897c3e364deaaaf3981e96afade3fe48ad5fad51290eb",
+    "c072d1d08cecfe6bfcc7d41bcdd6a023270e13a99a7793115d7e7af77d43e3fc",
   "revision/zh-CN":
-    "72efa3700e5285b2cce88667d5fe173d90e2a6012021f8730b9ffcdb5f9deb41",
+    "b9a27de0d690f2916c66be4708aef3917a1e783d58de075bf2bf3d1aeb97d35f",
   "setting/en":
-    "696219c15788eab6d005fdcc98f108fdb8b94e283763daf2fc846d9e3c3816b3",
+    "3b29fe3990e7bccbfb47773a894558b2d0cacab45dffa29a064635592c8cd267",
   "setting/zh-CN":
-    "178ee037ac6097d0b3b116e4aaf26adc6c16260a6c74988e4a0ed3a6b49ae8d0",
+    "f708ff7ed25fc855f1e49840713e28e20cd9e1034ac9c033ab0ccd101d82e7b9",
 };

@@ -402,8 +402,8 @@ ${historyUseGuidance(locale)}`,
     block("save-timing", {
       category: "policy",
       authorSummary: zh
-        ? "玩家视图绑定值变化、采用顶层「背景」节点时的定位值变化以及原文未记录的隐蔽进展须在本轮终态叙事前写回，其余持续结果可择机归并；当前明确修订优先于旧叙事。无需在控制块重复保存时机。"
-        : "Writes changed player-view bindings, top-level background locator changes (when adopted), and unrecorded off-screen/hidden outcomes before final prose, consolidating other durable outcomes later; explicit revisions override old prose. Do not repeat save-timing rules in control blocks.",
+        ? "玩家视图绑定值变化、采用顶层 `背景` 节点时的定位值变化以及原文未记录的隐蔽进展须在本轮终态叙事前写回，其余持续结果可择机归并；当前明确修订优先于旧叙事。无需在控制块重复保存时机。"
+        : "Writes changed player-view bindings, locator changes on the exact top-level `背景` field (when adopted), and unrecorded off-screen/hidden outcomes before final prose, consolidating other durable outcomes later; explicit revisions override old prose. Do not repeat save-timing rules in control blocks.",
       turnGuide: zh
         ? "玩家视图里的值若因本轮变化，先用工具写回再写最终正文。"
         : "If a player-view value changed this turn, write it back with a tool before the final prose.",
@@ -423,8 +423,8 @@ ${historyUseGuidance(locale)}`,
     block("checkpoint-policy", {
       category: "policy",
       authorSummary: zh
-        ? "仅在事件自然间隙或场景转换且已保存后续所需结果后才登记 world_checkpoint，不为登记压缩过程或中断持续活动；玩家明确要求在此收尾时照办。"
-        : "Registers world_checkpoint only at natural event gaps or scene shifts after saving durable outcomes, never compressing ongoing activities to reach a gap; honors explicit player wrap-up requests.",
+        ? "仅在前一事件已结束、进入事件间隙且已保存后续所需结果后才登记 world_checkpoint，不为登记压缩过程或中断持续活动；玩家明确要求在此收尾时照办。"
+        : "Registers world_checkpoint only after the previous event has ended and entered an event gap with durable outcomes saved, never compressing ongoing activities to reach a gap; honors explicit player wrap-up requests.",
     }),
     // Stackable styles ship disabled.
     ...Object.keys(host)
@@ -444,8 +444,8 @@ ${historyUseGuidance(locale)}`,
       name: zh ? "跑团主持" : "Tabletop GM",
       body: tabletopPlayBody(locale),
       authorSummary: zh
-        ? "跑团主持边界：仅在成败不确定且有意义后果时先调当前方案判定工具并完整兑现回执（不重掷、不泄露骰点或工具机制）；数值取自文档，缺失前先读取或按方案建档，不要在世界指令中重复通用判定流程。"
-        : "Tabletop GM boundary: invokes the active resolution tool only for uncertain, consequential actions and honors its receipt fully (no rerolls or leaked dice/mechanics); reads document stats first before deriving inputs; do not duplicate generic resolution procedures in world instructions.",
+        ? "跑团主持边界：仅在成败不确定且有意义后果时先调当前方案判定工具并完整兑现回执，不重掷；已有材料足够时直接使用，缺少判定依据时再读取相关人物或状态，不要在世界指令中重复通用判定流程。"
+        : "Tabletop GM boundary: invokes the active resolution tool only for uncertain, consequential actions and honors its receipt fully without rerolls; uses loaded materials when sufficient and reads relevant character or state documents when check inputs are missing; do not duplicate generic resolution procedures in world instructions.",
       required: false,
       category: "policy",
       gameplay: "tabletop",

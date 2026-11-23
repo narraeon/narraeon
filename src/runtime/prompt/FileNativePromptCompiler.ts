@@ -1552,7 +1552,11 @@ function settingImprovementPresetReference(
             return [];
           if (entry.kind === "user")
             return [
-              { source: `preset:prompt/${entry.id}`, markdown: entry.body },
+              {
+                source: `preset:prompt/${entry.id}`,
+                markdown: entry.body,
+                verbatim: true,
+              },
             ];
           const builtin = builtinPlayPrompts(locale).find(
             (item) => item.id === entry.builtin,
@@ -1676,7 +1680,7 @@ function settingImprovementPresetReference(
 function settingImprovementReferenceGroup(
   heading: string,
   explanation: string,
-  blocks: { source: string; markdown: string }[],
+  blocks: { source: string; markdown: string; verbatim?: boolean }[],
 ): string | null {
   if (blocks.length === 0) return null;
   return [
@@ -1685,7 +1689,8 @@ function settingImprovementReferenceGroup(
     explanation,
     "",
     ...blocks.map(
-      ({ source, markdown }) => `### ${source}\n\n${markdown.trim()}\n\n---`,
+      ({ source, markdown, verbatim }) =>
+        `### ${source}\n\n${verbatim ? markdown : markdown.trim()}\n\n---`,
     ),
   ]
     .join("\n")

@@ -756,6 +756,30 @@ test.each(["zh-CN", "en"] as const)(
     expect(
       catalog.find((item) => item.id === "play.model-prompt")?.authorSummary,
     ).toBeUndefined();
+
+    // Critical authoring boundary invariants preserved in summaries:
+    const saveTiming = catalog.find(
+      (item) => item.id === "play.save-timing",
+    )!.authorSummary!;
+    expect(saveTiming).toContain("`背景`");
+    const tabletop = catalog.find(
+      (item) => item.id === "play.tabletop",
+    )!.authorSummary!;
+    expect(tabletop).not.toContain("不泄露骰点");
+    expect(tabletop).not.toContain("leaked dice");
+    expect(tabletop).toContain(
+      locale === "zh-CN"
+        ? "已有材料足够时直接使用"
+        : "uses loaded materials when sufficient",
+    );
+    const checkpoint = catalog.find(
+      (item) => item.id === "play.checkpoint-policy",
+    )!.authorSummary!;
+    expect(checkpoint).toContain(
+      locale === "zh-CN"
+        ? "前一事件已结束、进入事件间隙"
+        : "previous event has ended and entered an event gap",
+    );
   },
 );
 
@@ -774,7 +798,8 @@ test.each(["zh-CN", "en"] as const)(
     };
 
     const customCloneBody =
-      "# Cloned Agency & Person\n\nKEEP_CLONE_VERBATIM: mention world/ and opening.md explicitly without filtering.";
+      "    indented_code_line()\n\n# Cloned Agency & Person\n\nKEEP_CLONE_VERBATIM: mention world/ and opening.md explicitly without filtering.  ";
+    const expectedVerbatimSection = `### preset:prompt/cloned-agency-person\n\n${customCloneBody}\n\n---`;
     const customTurnGuideOverride = "CUSTOM_ENDING_OVERRIDE_LINE";
     const modifiedPlayPrompts = defaultOrderedPlayPrompts().flatMap((entry) => {
       if (entry.kind === "builtin" && entry.builtin === "play.person-second") {
@@ -837,9 +862,8 @@ test.each(["zh-CN", "en"] as const)(
     expect(settingRef).not.toContain("play.agency-default");
     expect(settingRef).not.toContain("play.tabletop");
 
-    // User clone block stays verbatim in arranged order (after continue-stage, before stop-beat).
-    expect(settingRef).toContain("### preset:prompt/cloned-agency-person");
-    expect(settingRef).toContain(customCloneBody);
+    // User clone block stays verbatim (including leading 4-space indent & trailing whitespace) in arranged order.
+    expect(settingRef).toContain(expectedVerbatimSection);
     expect(
       settingRef.indexOf("### preset:builtin/play.continue-stage"),
     ).toBeLessThan(
@@ -881,7 +905,7 @@ test.each(["zh-CN", "en"] as const)(
     expect(revRef).toContain("### preset:builtin/play.tabletop");
     expect(revRef).toContain(tabletop.authorSummary!);
     expect(revRef).not.toContain(tabletop.body.trim());
-    expect(revRef).toContain(customCloneBody);
+    expect(revRef).toContain(expectedVerbatimSection);
 
     // Legacy v1 preset (no playPrompts) keeps verbatim legacy host expansion.
     const legacyFiles = legacyDefaultPlayPresetFilesForLocale(locale);
