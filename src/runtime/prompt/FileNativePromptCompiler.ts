@@ -1562,7 +1562,7 @@ function settingImprovementPresetReference(
             : [
                 {
                   source: `preset:builtin/${entry.builtin}`,
-                  markdown: builtin.body,
+                  markdown: builtin.authorSummary ?? builtin.body,
                 },
               ];
         });
@@ -1607,10 +1607,16 @@ function settingImprovementPresetReference(
     locale === "zh-CN"
       ? `# ${revision ? "继续游玩" : "创建后游玩"}语义边界（只读参考）`
       : `# ${revision ? "Continued" : "Post-creation"} play semantics (read-only reference)`;
+  const summaryNote =
+    ordered === undefined
+      ? ""
+      : locale === "zh-CN"
+        ? "（内置块以边界摘要呈现，自定义／克隆块保留原文）"
+        : " (built-in blocks shown as boundary summaries, custom/cloned blocks verbatim)";
   const explanation =
     locale === "zh-CN"
-      ? `以下是当前预设实际启用的游玩作者语义，用于核对兼容性、重复规则和概念权重；未启用的政策不视为已有保证。不要模仿这些块的句式、节奏或镜头写入 ${revision ? "state/" : "world/"}，也不要把跨世界规则复制进 control/。需要配合时，表达最少的当前事实、稳定不变量或本世界特有的控制约束。本轮用于${revision ? "运行中世界的讨论与修订，保留当前时点已演变的事实；应用后继续游玩" : "内容包讨论与当前树编辑；创建世界后开始游玩"}。此参考不要求本轮生成玩家故事。`
-      : `These are the current preset's enabled play-author semantics, used to check compatibility, duplicate rules and conceptual weight. Disabled policies are not guarantees. Do not imitate their sentences, pacing or staged gestures in ${revision ? "state/" : "world/"}, or copy cross-world rules into control/. Express the minimum current facts, stable invariants or world-specific constraints needed. This conversation ${revision ? "discusses and revises a running world at its evolved current time; play continues after Apply" : "discusses and edits the content package; play begins after world creation"}. This reference does not request a player story in this conversation.`;
+      ? `以下是当前预设实际启用的游玩作者语义${summaryNote}，用于核对兼容性、重复规则和概念权重；未启用的政策不视为已有保证。不要模仿这些块的句式、节奏或镜头写入 ${revision ? "state/" : "world/"}，也不要把跨世界规则复制进 control/。需要配合时，表达最少的当前事实、稳定不变量或本世界特有的控制约束。本轮用于${revision ? "运行中世界的讨论与修订，保留当前时点已演变的事实；应用后继续游玩" : "内容包讨论与当前树编辑；创建世界后开始游玩"}。此参考不要求本轮生成玩家故事。`
+      : `These are the current preset's enabled play-author semantics${summaryNote}, used to check compatibility, duplicate rules and conceptual weight. Disabled policies are not guarantees. Do not imitate their sentences, pacing or staged gestures in ${revision ? "state/" : "world/"}, or copy cross-world rules into control/. Express the minimum current facts, stable invariants or world-specific constraints needed. This conversation ${revision ? "discusses and revises a running world at its evolved current time; play continues after Apply" : "discusses and edits the content package; play begins after world creation"}. This reference does not request a player story in this conversation.`;
   const none =
     locale === "zh-CN"
       ? "（当前预设没有启用主持或叙事作者块。）"

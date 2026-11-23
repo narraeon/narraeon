@@ -81,6 +81,10 @@ import { settingImprovementToolDefinitions } from "../../src/runtime/setting/Set
  * history-use-guidance, and shortens base tool descriptions while preserving
  * world-revision shared history_* guardrails. The 72 play bootstrap/chain/preview
  * digests moved; the four authoring digests (setting/*, revision/*) remain unchanged.
+ * Batch 3A authoring play-reference summarization (#248) renders enabled built-in
+ * play blocks inside author.play-reference as concise boundary summaries while
+ * keeping user/cloned blocks and active turn guides verbatim. Only the four
+ * authoring digests (setting/*, revision/*) moved; all 72 play digests remain unchanged.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -348,11 +352,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "78a228b4c5a016c489f24f48e10634be19387c420fd1ca39572a3a4734174291",
   "revision/en":
-    "210062d7f27f32cd66bc449c2ac34432f8e1268bd49b723fc2474a468708175b",
+    "19332aefeb9b5f8f57a897c3e364deaaaf3981e96afade3fe48ad5fad51290eb",
   "revision/zh-CN":
-    "f0175d427a23f2a02d16783a73c8fef987369250ada1154a344aa17456df0349",
+    "72efa3700e5285b2cce88667d5fe173d90e2a6012021f8730b9ffcdb5f9deb41",
   "setting/en":
-    "084835b327e5228a11cd77a0d17361924c416ee46fee9f3cf114b0ae8ac9c939",
+    "696219c15788eab6d005fdcc98f108fdb8b94e283763daf2fc846d9e3c3816b3",
   "setting/zh-CN":
-    "c9717e4594108c8e2062276872026a1d082ba6fe7deafe2bbac904e739620707",
+    "178ee037ac6097d0b3b116e4aaf26adc6c16260a6c74988e4a0ed3a6b49ae8d0",
 };

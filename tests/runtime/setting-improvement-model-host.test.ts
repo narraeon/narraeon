@@ -115,20 +115,21 @@ test.each([
     expect(serialized).toContain(
       "frame 选定材料仅在全新游玩上下文中作为初始工具结果提供",
     );
-    expect(serialized).toContain("保存时机与整理");
-    expect(serialized).toContain("输出边界");
+    expect(serialized).toContain("世界内回复只输出故事正文");
+    expect(serialized).toContain("preset:builtin/play.save-timing");
+    expect(serialized).toContain("玩家视图绑定值变化");
     // Blocks follow the preset's list order: the output block precedes the
     // state-maintenance blocks, and the per-send turn guide closes the group.
     expect(serialized.indexOf("游玩作者语义（编排顺序）")).toBeLessThan(
       serialized.indexOf("preset:builtin/play.output"),
     );
     expect(serialized.indexOf("preset:builtin/play.output")).toBeLessThan(
-      serialized.indexOf("输出边界"),
+      serialized.indexOf("世界内回复只输出故事正文"),
     );
-    expect(serialized.indexOf("输出边界")).toBeLessThan(
-      serialized.indexOf("保存时机与整理"),
+    expect(serialized.indexOf("世界内回复只输出故事正文")).toBeLessThan(
+      serialized.indexOf("preset:builtin/play.save-timing"),
     );
-    expect(serialized.indexOf("保存时机与整理")).toBeLessThan(
+    expect(serialized.indexOf("preset:builtin/play.save-timing")).toBeLessThan(
       serialized.indexOf(
         provider === "openai_responses"
           ? "本轮提示（游玩请求）"

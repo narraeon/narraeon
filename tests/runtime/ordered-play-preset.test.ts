@@ -311,8 +311,14 @@ test.each([
 import {
   legacyDefaultPlayPresetFilesForLocale,
   applyPlayPresetStructuredEditor,
+  builtinDefaultPlayPresetBinding,
+  parsePlayPresetFiles,
+  type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
-import { builtinPlayPrompts } from "../../src/shared/ordered-play-prompts.ts";
+import {
+  builtinPlayPrompts,
+  defaultOrderedPlayPrompts,
+} from "../../src/shared/ordered-play-prompts.ts";
 import { builtinAuthorPrompts } from "../../src/shared/ordered-author-prompts.ts";
 test("legacy migration retains disabled copies and resources while frozen requests remain unchanged", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-migrate-"));
@@ -722,3 +728,187 @@ test("disabled author recommendations do not fall back and author saves preserve
     }),
   ).rejects.toThrow("cannot be deleted");
 });
+
+test.each(["zh-CN", "en"] as const)(
+  "%s builtin play catalog equips all 27 non-required, non-dynamic blocks with concise, path-neutral authorSummary (#248)",
+  (locale) => {
+    const catalog = builtinPlayPrompts(locale);
+    const summarizable = catalog.filter(
+      (item) => !item.required && item.dynamic !== "model-prompt",
+    );
+    expect(catalog).toHaveLength(29);
+    expect(summarizable).toHaveLength(27);
+    for (const item of summarizable) {
+      expect(
+        item.authorSummary?.trim().length ?? 0,
+        `${locale} ${item.id} missing authorSummary`,
+      ).toBeGreaterThan(0);
+      expect(
+        Buffer.byteLength(item.authorSummary!, "utf8"),
+        `${locale} ${item.id} authorSummary should be shorter than full body`,
+      ).toBeLessThan(Buffer.byteLength(item.body, "utf8"));
+      expect(item.authorSummary).not.toContain("world/");
+      expect(item.authorSummary).not.toContain("opening.md");
+    }
+    expect(
+      catalog.find((item) => item.id === "play.mechanics")?.authorSummary,
+    ).toBeUndefined();
+    expect(
+      catalog.find((item) => item.id === "play.model-prompt")?.authorSummary,
+    ).toBeUndefined();
+  },
+);
+
+test.each(["zh-CN", "en"] as const)(
+  "%s author.play-reference summarizes enabled builtins, keeps user clones & turn-guide overrides/clears, and preserves legacy v1 verbatim (#248)",
+  (locale) => {
+    const compiler = new FileNativePromptCompiler({ locale });
+    const baseBinding = builtinDefaultPlayPresetBinding(locale);
+    const catalog = builtinPlayPrompts(locale);
+    const modelBinding = {
+      provider: "openai_responses" as const,
+      dialect: "standard" as const,
+      modelId: "test-model",
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 4096,
+    };
+
+    const customCloneBody =
+      "# Cloned Agency & Person\n\nKEEP_CLONE_VERBATIM: mention world/ and opening.md explicitly without filtering.";
+    const customTurnGuideOverride = "CUSTOM_ENDING_OVERRIDE_LINE";
+    const modifiedPlayPrompts = defaultOrderedPlayPrompts().flatMap((entry) => {
+      if (entry.kind === "builtin" && entry.builtin === "play.person-second") {
+        return [{ ...entry, enabled: false }];
+      }
+      if (entry.kind === "builtin" && entry.builtin === "play.agency-default") {
+        return [
+          { ...entry, enabled: false },
+          {
+            id: "cloned-agency-person",
+            kind: "user" as const,
+            name: "Cloned Agency & Person",
+            enabled: true,
+            body: customCloneBody,
+            turnGuide: "CLONE_TURN_GUIDE_LINE",
+          },
+        ];
+      }
+      if (entry.kind === "builtin" && entry.builtin === "play.ending") {
+        return [{ ...entry, turnGuide: customTurnGuideOverride }];
+      }
+      if (entry.kind === "builtin" && entry.builtin === "play.output") {
+        return [{ ...entry, turnGuide: "" }];
+      }
+      return [entry];
+    });
+
+    const customBinding: PlayPresetBinding = {
+      ...baseBinding,
+      definition: {
+        ...baseBinding.definition,
+        playPrompts: modifiedPlayPrompts,
+      },
+    };
+
+    const settingCompiled = compiler.compileSettingImprovement({
+      gameplay: { mode: "interactive-fiction" },
+      contentPackageTitle: "Test Package",
+      playPreset: customBinding,
+      modelBinding,
+      tools: [],
+    });
+    const settingRef = settingCompiled.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .find(
+        ({ source }) => source === "play-preset:author-reference",
+      )!.markdown;
+
+    // Enabled builtins render concise authorSummary, not full multi-paragraph body.
+    const facts = catalog.find((item) => item.id === "play.facts")!;
+    const ownership = catalog.find((item) => item.id === "play.ownership")!;
+    expect(settingRef).toContain("### preset:builtin/play.facts");
+    expect(settingRef).toContain(facts.authorSummary!);
+    expect(settingRef).not.toContain(facts.body.trim());
+    expect(settingRef).toContain(ownership.authorSummary!);
+    expect(settingRef).not.toContain(ownership.body.trim());
+
+    // Disabled builtins and out-of-scope tabletop builtins stay completely absent.
+    expect(settingRef).not.toContain("play.person-second");
+    expect(settingRef).not.toContain("play.agency-default");
+    expect(settingRef).not.toContain("play.tabletop");
+
+    // User clone block stays verbatim in arranged order (after continue-stage, before stop-beat).
+    expect(settingRef).toContain("### preset:prompt/cloned-agency-person");
+    expect(settingRef).toContain(customCloneBody);
+    expect(
+      settingRef.indexOf("### preset:builtin/play.continue-stage"),
+    ).toBeLessThan(
+      settingRef.indexOf("### preset:prompt/cloned-agency-person"),
+    );
+    expect(
+      settingRef.indexOf("### preset:prompt/cloned-agency-person"),
+    ).toBeLessThan(settingRef.indexOf("### preset:builtin/play.stop-beat"));
+
+    // Turn-guide section preserves default lines, user clone line, builtin override, and empty-string clear.
+    const factsGuide = facts.turnGuide!;
+    const outputGuide = catalog.find(
+      (item) => item.id === "play.output",
+    )!.turnGuide!;
+    const endingGuide = catalog.find(
+      (item) => item.id === "play.ending",
+    )!.turnGuide!;
+    expect(settingRef).toContain(factsGuide);
+    expect(settingRef).toContain("CLONE_TURN_GUIDE_LINE");
+    expect(settingRef).toContain(customTurnGuideOverride);
+    expect(settingRef).not.toContain(endingGuide);
+    expect(settingRef).not.toContain(outputGuide);
+
+    // World revision keeps user block verbatim (even mentioning world/ and opening.md), while tabletop summary appears only in tabletop mode.
+    const revisionTabletop = compiler.compileWorldRevision({
+      gameplay: { mode: "tabletop", scheme: "d20" },
+      worldTitle: "Revision World",
+      epoch: { id: "epoch-248", baseHead: "head-248" },
+      playPreset: customBinding,
+      modelBinding,
+      tools: [],
+    });
+    const revRef = revisionTabletop.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .find(
+        ({ source }) => source === "play-preset:author-reference",
+      )!.markdown;
+    const tabletop = catalog.find((item) => item.id === "play.tabletop")!;
+    expect(revRef).toContain("### preset:builtin/play.tabletop");
+    expect(revRef).toContain(tabletop.authorSummary!);
+    expect(revRef).not.toContain(tabletop.body.trim());
+    expect(revRef).toContain(customCloneBody);
+
+    // Legacy v1 preset (no playPrompts) keeps verbatim legacy host expansion.
+    const legacyFiles = legacyDefaultPlayPresetFilesForLocale(locale);
+    const parsedLegacy = parsePlayPresetFiles(legacyFiles);
+    if (parsedLegacy.kind !== "valid") throw parsedLegacy.error;
+    const legacyBinding: PlayPresetBinding = {
+      id: "legacy-v1-check",
+      name: "Legacy v1",
+      revision: "rev-legacy",
+      definition: parsedLegacy.definition,
+      files: legacyFiles,
+      scriptsEnabled: true,
+    };
+    const legacyCompiled = compiler.compileSettingImprovement({
+      gameplay: { mode: "interactive-fiction" },
+      contentPackageTitle: "Legacy Package",
+      playPreset: legacyBinding,
+      modelBinding,
+      tools: [],
+    });
+    const legacyRef = legacyCompiled.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .find(
+        ({ source }) => source === "play-preset:author-reference",
+      )!.markdown;
+    expect(legacyRef).toContain(legacyFiles["blocks/facts.md"]!.trim());
+    expect(legacyRef).not.toContain("边界摘要");
+    expect(legacyRef).not.toContain("boundary summaries");
+  },
+);
