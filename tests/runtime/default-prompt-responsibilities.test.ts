@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "../../src/runtime/content/FileNativeContentTree.ts";
 import {
+  builtinDefaultPlayPresetBinding as orderedDefaultPlayPresetBinding,
   legacyDefaultPlayPresetFilesForLocale,
   parsePlayPresetFiles,
   presetHostBinding,
@@ -528,4 +529,185 @@ test("new shipped templates persist app references instead of editable copies of
     expect(files["prompts/narrate.md"]).toBeUndefined();
     expect(files["prompts/setting-improvement.md"]).toBeUndefined();
   }
+});
+
+describe("Batch 3B refined policy block independence with adjacent blocks disabled (#249)", () => {
+  test.each(["zh-CN", "en"] as const)(
+    "%s each of the 6 refined policy blocks preserves its own boundaries on its own source when adjacent optional blocks are disabled or swapped",
+    (locale) => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const compileBlock = (
+        targetId: string,
+        disabled: readonly string[],
+        enabled: readonly string[] = [],
+      ) => {
+        const binding = orderedDefaultPlayPresetBinding(locale);
+        binding.definition.playPrompts = binding.definition.playPrompts!.map(
+          (entry) => {
+            if (entry.kind !== "builtin") return entry;
+            if (disabled.includes(entry.builtin))
+              return { ...entry, enabled: false };
+            if (enabled.includes(entry.builtin))
+              return { ...entry, enabled: true };
+            return entry;
+          },
+        );
+        const compiled = compiler.compilePlayCallChain(
+          createMinimalFileNativePreviewInput({
+            provider: "chat_completions",
+            modelId: `b3b-${locale}-${targetId}`,
+            contextWindowTokens: 128_000,
+            maxOutputTokens: 4096,
+            playerInput:
+              locale === "zh-CN"
+                ? "我推门看看院子。"
+                : "I open the door to check the yard.",
+            playerInputPlacement: "append",
+            locale,
+          }),
+          binding,
+        ).bootstrap;
+        const block = compiled.logicalMessages
+          .flatMap(({ blocks }) => blocks)
+          .find(({ source }) => source === `runtime:ordered/${targetId}`);
+        expect(block, `missing ${targetId} block`).toBeDefined();
+        return block!.markdown;
+      };
+
+      const saveTiming = compileBlock("play.save-timing", [
+        "play.ownership",
+        "play.situation",
+        "play.checkpoint-policy",
+      ]);
+      const checkpoint = compileBlock(
+        "play.checkpoint-policy",
+        ["play.save-timing", "play.stop-beat"],
+        ["play.stop-scene"],
+      );
+      const output = compileBlock(
+        "play.output",
+        ["play.save-timing", "play.situation", "play.stop-beat"],
+        ["play.stop-scene"],
+      );
+      const facts = compileBlock("play.facts", [
+        "play.output",
+        "play.ownership",
+        "play.save-timing",
+      ]);
+      const ownership = compileBlock("play.ownership", [
+        "play.save-timing",
+        "play.situation",
+        "play.agency-default",
+        "play.agency-strict",
+        "play.agency-open",
+      ]);
+      const prose = compileBlock("play.prose", ["play.output", "play.scene"]);
+
+      // Exact top-level `背景` YAML key must survive in BOTH locales on save-timing itself.
+      expect(saveTiming).toContain("`背景`");
+
+      if (locale === "zh-CN") {
+        expect(saveTiming).toContain("玩家视图绑定的当前值变化");
+        expect(saveTiming).toContain("随时可在当轮直接归并");
+        expect(saveTiming).toContain("暂时离场不等于退役");
+        expect(saveTiming).toContain("当前明确修订优先于旧叙事");
+
+        expect(checkpoint).toContain("world_checkpoint 只用于事件之间的间隙");
+        expect(checkpoint).toContain("追逐穿过街道仍是同一场活动");
+        expect(checkpoint).toContain("持续活动尚在进行");
+        expect(checkpoint).toContain("整理随时可做，不等于检查点");
+
+        expect(output).toContain("世界内叙事只写故事正文");
+        expect(output).toContain("不要求把允许的场面写得潦草");
+        expect(output).toContain("界面数值不能代替事件表现");
+        expect(output).toContain("补录旧结果、去重和整理不要求再次演出");
+        expect(output).toContain("仅含世界外查询或维护时");
+
+        expect(facts).toContain(
+          "缺少裁决所需事实时，先经目录、字面搜索与精确读取取得",
+        );
+        expect(facts).toContain("搜索未命中不证明事实不存在");
+        expect(facts).toContain("状态正文、工具读取与写回回执本身不算交代");
+        expect(facts).toContain("角色未知的幕后事实仍须发现");
+
+        expect(ownership).toContain("当前事实归自然所有者");
+        expect(ownership).toContain(
+          "写入玩家角色的感情时，只记录玩家已表达的内容",
+        );
+        expect(ownership).toContain("事件按事情划分、不按回合建档");
+        expect(ownership).toContain("不必再造一份逐轮日志");
+        expect(ownership).toContain("summary 是目录简介");
+
+        expect(prose).toContain(
+          "玩家主动托付推断时，直接告诉玩家可知的结果，保持证据支持的确定程度；只有玩家表示要说出口时，才写成角色对话",
+        );
+        expect(prose).toContain("详写几秒不等于推进整场活动");
+        expect(prose).toContain("一个抬手可以写三行，两小时赶路也可以写一句");
+      } else {
+        expect(saveTiming).toContain(
+          "Write changed current values bound by player views",
+        );
+        expect(saveTiming).toContain("exact top-level `背景` field");
+        expect(saveTiming).toContain("Consolidation can happen at any time");
+        expect(saveTiming).toContain("Temporary absence is not retirement");
+        expect(saveTiming).toContain(
+          "current explicit revisions override older narrative",
+        );
+
+        expect(checkpoint).toContain(
+          "Use world_checkpoint only for gaps between events",
+        );
+        expect(checkpoint).toContain(
+          "a chase across another street is still one activity",
+        );
+        expect(checkpoint).toContain("While an activity is still ongoing");
+        expect(checkpoint).toContain(
+          "Consolidation can happen at any time; it is not a checkpoint",
+        );
+
+        expect(output).toContain("In-world narrative uses only story prose");
+        expect(output).toContain(
+          "stopping limits advancement, not the care given to the allowed scene",
+        );
+        expect(output).toContain(
+          "Interface values do not replace dramatization",
+        );
+        expect(output).toContain(
+          "Delayed recording, deduplication and maintenance need not be re-performed",
+        );
+        expect(output).toContain(
+          "For purely out-of-world inquiry or maintenance",
+        );
+
+        expect(facts).toContain("When facts needed for a ruling are missing");
+        expect(facts).toContain("Zero search matches do not prove absence");
+        expect(facts).toContain(
+          "state bodies, tool reads and write receipts alone are not disclosure",
+        );
+        expect(facts).toContain(
+          "backstage facts unknown to the character still require discovery",
+        );
+
+        expect(ownership).toContain(
+          "Give current facts to their natural owners",
+        );
+        expect(ownership).toContain(
+          "When recording the player character's feelings, write only what the player has expressed",
+        );
+        expect(ownership).toContain(
+          "Group events by what happened, not by turn",
+        );
+        expect(ownership).toContain("do not create a second turn-by-turn log");
+        expect(ownership).toContain("summary is a catalog identifier");
+
+        expect(prose).toContain(
+          "When the player delegates an inference, tell the player what can be known at the certainty supported by the evidence. Only turn that inference into character dialogue when the player expresses an intent to say it aloud.",
+        );
+        expect(prose).toContain(
+          "detailing a few seconds does not advance an entire activity",
+        );
+        expect(prose).toContain("Raising a hand may take three lines");
+      }
+    },
+  );
 });

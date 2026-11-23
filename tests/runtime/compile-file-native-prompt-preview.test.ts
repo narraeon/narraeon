@@ -86,12 +86,12 @@ test.each([
   {
     locale: "zh-CN" as const,
     policy: [
-      "事件结束不意味着无话可接",
+      "事件结束不等于无话可接",
       "对话、交易、冲突或活动自然结束",
       "地点改变、时间推进、在场者更换",
-      "不必依赖前一阶段的全部过程",
+      "不必依赖前一阶段全部过程",
       "给出关键回应",
-      "不要为了登记而加快节奏",
+      "不为登记加速",
       "再提交最终正文",
     ],
     ending: "不必再添一句话或一个动作来等玩家接续",
@@ -106,13 +106,13 @@ test.each([
   {
     locale: "en" as const,
     policy: [
-      "An event can end while leaving room to reply",
+      "An event ending still leaves room to reply",
       "conversation, transaction, conflict or activity naturally ends",
-      "a change of location, passage of time or change of participants",
-      "without depending on the previous phase's entire process",
-      "give a key response",
-      "Do not accelerate pace",
-      "then submit the final prose",
+      "Location changes, time passage and participant changes",
+      "does not rely on the entire prior process",
+      "key response",
+      "never speed up",
+      "before final prose",
     ],
     ending: "without adding another line or action to invite continuation",
     mechanics: [

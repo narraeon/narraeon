@@ -278,7 +278,9 @@ test.each(["en", "zh-CN"] as const)(
             "style-noir": ["可感知的细节"],
             "style-action": ["已经成立的代价"],
             "style-literary": ["实际经过的时间"],
-            "save-timing": ["下面各项分别规定保存时机"],
+            "save-timing": [
+              "本轮必写项用工具写回，可从原文恢复的其余持续结果择机归并",
+            ],
             situation: ["移出当前待办或标为过去", "不推测玩家的长期偏好"],
             "person-third": ["直接引语保留说话者的人称"],
           }
@@ -319,7 +321,7 @@ test.each(["en", "zh-CN"] as const)(
             "style-action": ["established costs"],
             "style-literary": ["time that actually elapsed"],
             "save-timing": [
-              "The items below each specify their own save timing",
+              "writing due items this turn and consolidating recoverable outcomes later",
             ],
             situation: [
               "remove them from current pending work or mark them as past",
