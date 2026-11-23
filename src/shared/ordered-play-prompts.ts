@@ -411,8 +411,8 @@ ${historyUseGuidance(locale)}`,
     block("ownership", {
       category: "policy",
       authorSummary: zh
-        ? "当前事实归自然所有者，认知／态度归各自主体，重要事件集中保存并以引用关联（事件不作滚动状态表）；summary 只作简短目录识别，不复述具体状态或经过。"
-        : "Stores current facts on natural owners, knowledge/attitudes on their holders, and major events centrally by reference (not as rolling state tables); keeps summary as a brief catalog identifier rather than a state or event recap.",
+        ? "当前事实归自然所有者，认知／态度归各自主体，写入玩家角色的感情时只记录玩家已表达的内容；重要事件集中保存并以引用关联（事件不作滚动状态表）；summary 只作简短目录识别，不复述具体状态或经过。"
+        : "Stores current facts on natural owners, knowledge/attitudes on their holders (recording only player-expressed feelings for the player character), and major events centrally by reference (not as rolling state tables); keeps summary as a brief catalog identifier rather than a state or event recap.",
     }),
     block("situation", {
       category: "policy",

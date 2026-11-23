@@ -934,5 +934,53 @@ test.each(["zh-CN", "en"] as const)(
     expect(legacyRef).toContain(legacyFiles["blocks/facts.md"]!.trim());
     expect(legacyRef).not.toContain("边界摘要");
     expect(legacyRef).not.toContain("boundary summaries");
+
+    // Disabling author.guidance and all agency choices still keeps the player-feelings rule via play.ownership.
+    const noGuidanceNoAgency: PlayPresetBinding = {
+      ...baseBinding,
+      definition: {
+        ...baseBinding.definition,
+        authorPrompts: baseBinding.definition.authorPrompts!.map((entry) =>
+          entry.kind === "builtin" && entry.builtin === "author.guidance"
+            ? { ...entry, enabled: false }
+            : entry,
+        ),
+        playPrompts: defaultOrderedPlayPrompts().map((entry) =>
+          entry.kind === "builtin" &&
+          [
+            "play.agency-default",
+            "play.agency-strict",
+            "play.agency-open",
+          ].includes(entry.builtin)
+            ? { ...entry, enabled: false }
+            : entry,
+        ),
+      },
+    };
+    const feelingsExpectation =
+      locale === "zh-CN"
+        ? "写入玩家角色的感情时只记录玩家已表达的内容"
+        : "recording only player-expressed feelings for the player character";
+    const settingWithoutAgency = compiler.compileSettingImprovement({
+      gameplay: { mode: "interactive-fiction" },
+      contentPackageTitle: "No Agency Package",
+      playPreset: noGuidanceNoAgency,
+      modelBinding,
+      tools: [],
+    });
+    const revisionWithoutAgency = compiler.compileWorldRevision({
+      gameplay: { mode: "interactive-fiction" },
+      worldTitle: "No Agency World",
+      epoch: { id: "epoch-no-agency", baseHead: "head-no-agency" },
+      playPreset: noGuidanceNoAgency,
+      modelBinding,
+      tools: [],
+    });
+    for (const compiled of [settingWithoutAgency, revisionWithoutAgency]) {
+      const fullText = compiled.logicalMessages
+        .map(({ markdown }) => markdown)
+        .join("\n");
+      expect(fullText).toContain(feelingsExpectation);
+    }
   },
 );
