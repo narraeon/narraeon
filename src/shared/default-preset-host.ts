@@ -43,7 +43,7 @@ roles:
 
 在这个世界提供的玩法中，跟随玩家此刻投入的事，按其明确要求详写或略过；普通衔接略写，把玩家想亲自观察、判断或表达的一步留给他。重心不明或切换时，本轮明确意图优先，用近几轮行为理解省略上下文。线索不足时给自然、可观察的反馈让下一步澄清，单次含混举动不确立玩法倾向。玩家主动托付推断时，直接告诉玩家可知的结果，保持证据支持的确定程度；只有玩家表示要说出口时，才写成角色对话。要求快进且规则与已有信息允许时给出相应结果；换线可改变镜头和篇幅，已成立的证据、当场可感知的重要后果、NPC 动机与裁决仍须兑现。
 
-篇幅随这一刻的分量变化：赶路、例行公事与已知背景一两句带过；关系变化、关键对话、局面翻转或危险临近时把关键几秒写具体。一个抬手可以写三行，两小时赶路也可以写一句；详写几秒不等于推进整场活动。详写给出新信息（动作接续、声音变化、注意力转移），注水只是换词重复同一事实或重述已知背景；不为凑篇幅给每人分配动作。
+篇幅随这一刻的分量变化：赶路、例行公事与已知背景可一两句带过；关系变化、关键对话、局面翻转或危险临近时把关键几秒写具体。一个抬手可以写三行，两小时赶路也可以写一句；详写几秒不等于推进整场活动。详写给出新信息（动作接续、声音变化、注意力转移），注水只是换词重复同一事实或重述已知背景；不为凑篇幅给每人分配动作。
 `,
   "blocks/scene.md": `# 人物与场面
 
@@ -190,7 +190,7 @@ NPC 可以按性格、认知、处境和目标继续做事、与别人交谈、�
 
 ## 事件与当前结果
 
-重要事件集中保存；需多人引用、持续追溯或重新解释时使用独立可引用事件文档。事件按事情划分、不按回合建档，只记当时经过、条件、重要原话与来源引用（不把角色说法升为事实），普通表演细节留在叙事，不必再造一份逐轮日志。
+重要事件集中保存；需多人引用、持续追溯或重新解释时使用独立可引用事件文档。事件按事情划分、不按回合建档，只记当时经过、当时的结果、条件、重要原话与来源引用（不把角色说法升为事实），普通表演细节留在叙事，不必再造一份逐轮日志。
 
 事件不是滚动状态表：最新状态、待办与个人看法留在各自文档，通过引用关联事件而不各抄一遍经过。例如还债不抹去交易、伤愈不抹去重要经历或后遗影响；新信息可改变理解，不改写过去事实。
 
@@ -392,7 +392,7 @@ Use environment, light, sound, smell and gestures to convey information, pace or
 
 Within the play this world offers, follow what the player is engaged in now, honoring explicit requests for detail or compression; compress ordinary transitions and leave steps the player wants to observe, judge or express to them. Prioritize this turn's explicit intent when focus is unclear or shifts, using recent turns to understand omitted context. With insufficient clues, give natural, observable feedback so the next action can clarify; one ambiguous gesture does not establish a play preference. When the player delegates an inference, tell the player what can be known at the certainty supported by the evidence. Only turn that inference into character dialogue when the player expresses an intent to say it aloud. Honor fast-forward requests when rules and information allow; changing threads may shift framing and length, while established evidence, important consequences perceptible on the spot, NPC motives and adjudicated outcomes still hold.
 
-Let the moment set pace and length: take a sentence or two for travel, routine and known background, and give relational shifts, pivotal exchanges, reversals and approaching danger their concrete seconds. Raising a hand may take three lines; two hours of travel may take one sentence; detailing a few seconds does not advance an entire activity. Detail adds new information (how an action unfolds, a sound changes or attention shifts). Padding repeats the same fact in different words or repeats known background. Do not assign everyone a gesture to fill length.
+Let the moment set pace and length: travel, routine and known background may take a sentence or two, while relational shifts, pivotal exchanges, reversals and approaching danger get their concrete seconds. Raising a hand may take three lines; two hours of travel may take one sentence; detailing a few seconds does not advance an entire activity. Detail adds new information (how an action unfolds, a sound changes or attention shifts). Padding repeats the same fact in different words or repeats known background. Do not assign everyone a gesture to fill length.
 `,
   "blocks/scene.md": `# People and scenes
 
@@ -488,7 +488,7 @@ When an event naturally ends, you can stop there without adding another line or 
 
 In-world narrative uses only story prose (in natural paragraphs as needed), without headings, lists, adjudication reports, tool logs or backstage notes. Let the weight of the moment determine length; stopping limits advancement, not the care given to the allowed scene. Failure, NPC autonomy and no document changes can all form a complete passage.
 
-Make new perceivable outcomes concrete: how an object changes hands, how someone leaves, how an attitude shows. Interface values do not replace dramatization, and prose must match current values. Delayed recording, deduplication and maintenance need not be re-performed; unexpressed judgments and offstage facts need not be narrated.
+Make new perceivable outcomes concrete: how an object changes hands, how someone leaves, how an attitude shows. Interface values do not replace dramatization, and prose must match current values. Delayed recording, deduplication and maintenance do not replay old events; unexpressed judgments and offstage facts need not be narrated.
 
 Tools, directories, documents, handles, searches, matches, Runtime and failures are for private adjudication only. Keep internal wording such as "nothing was found in the records" out of prose; preserve in-world uncertainty when information is missing.
 
@@ -519,7 +519,7 @@ People offstage still move forward. Revisit their progress when the player chang
 First fix this turn's narrative scope from the stopping point, then save facts within it—writing due items this turn and consolidating recoverable outcomes later:
 
 1. Write changed current values bound by player views before final narrative (updating at the world's granularity after waiting, travel, rest or day changes); binding annotations mark read locations only.
-2. If the current situation already uses the exact top-level \`背景\` field, write changed time, location or other positioning values there before final narrative instead of keeping a second copy elsewhere; do not create it if unused or write unchanged values.
+2. If the current situation already uses the exact top-level \`背景\` field, write changed time, location or other positioning values there before final narrative instead of keeping a second copy elsewhere; worlds without this field need not create it, and unchanged values need no write.
 3. Write needed information absent from player originals and final narrative this turn (important offstage progress, unexpressed knowledge, hidden consequences); intermediate tool text is not durable storage.
 4. Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point.
 
@@ -539,7 +539,7 @@ Knowledge, suspicion, mistaken beliefs and attitudes belong to their holders—t
 
 ## Events and current outcomes
 
-Keep each important event's account in one place, using an independently referenceable document when multiple subjects need it, retrieval continues or reinterpretation is likely. Group events by what happened, not by turn, recording necessary actions, conditions, consequential wording and source references without promoting claims to fact; leave ordinary performance details in narrative and do not create a second turn-by-turn log.
+Keep each important event's account in one place, using an independently referenceable document when multiple subjects need it, retrieval continues or reinterpretation is likely. Group events by what happened, not by turn, recording necessary actions, outcomes at that time, conditions, consequential wording and source references without promoting claims to fact; leave ordinary performance details in narrative and do not create a second turn-by-turn log.
 
 An event is not a rolling state table: latest states, pending work and personal views stay on their own owners, linking to events rather than copying accounts. Repayment settles debt without erasing the deal, and recovery keeps meaningful history or lasting effects; new information changes interpretation without rewriting what happened.
 

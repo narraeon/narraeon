@@ -607,7 +607,19 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
       expect(saveTiming).toContain("`背景`");
 
       if (locale === "zh-CN") {
-        expect(saveTiming).toContain("玩家视图绑定的当前值变化");
+        expect(saveTiming).toContain(
+          "玩家视图绑定的当前值变化，本轮终态叙事前写回",
+        );
+        expect(saveTiming).toContain(
+          "当前情境已采用顶层 `背景` 时，时间、地点等定位值变化应在终态叙事前写回该节点",
+        );
+        expect(saveTiming).toContain("未采用不必创建");
+        expect(saveTiming).toContain(
+          "玩家原文与最终叙事未记录的必要信息（如重要场外进展、未表露认知、隐蔽后果）当轮写回",
+        );
+        expect(saveTiming).toContain(
+          "其余可从玩家原文和最终叙事恢复的持续结果，允许在事件收尾或合适的中间整理点归并",
+        );
         expect(saveTiming).toContain("随时可在当轮直接归并");
         expect(saveTiming).toContain("暂时离场不等于退役");
         expect(saveTiming).toContain("当前明确修订优先于旧叙事");
@@ -635,19 +647,32 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
           "写入玩家角色的感情时，只记录玩家已表达的内容",
         );
         expect(ownership).toContain("事件按事情划分、不按回合建档");
+        expect(ownership).toContain("当时的结果");
         expect(ownership).toContain("不必再造一份逐轮日志");
         expect(ownership).toContain("summary 是目录简介");
 
         expect(prose).toContain(
           "玩家主动托付推断时，直接告诉玩家可知的结果，保持证据支持的确定程度；只有玩家表示要说出口时，才写成角色对话",
         );
+        expect(prose).toContain("赶路、例行公事与已知背景可一两句带过");
         expect(prose).toContain("详写几秒不等于推进整场活动");
         expect(prose).toContain("一个抬手可以写三行，两小时赶路也可以写一句");
       } else {
         expect(saveTiming).toContain(
-          "Write changed current values bound by player views",
+          "Write changed current values bound by player views before final narrative",
         );
-        expect(saveTiming).toContain("exact top-level `背景` field");
+        expect(saveTiming).toContain(
+          "exact top-level `背景` field, write changed time, location or other positioning values there before final narrative",
+        );
+        expect(saveTiming).toContain(
+          "worlds without this field need not create it",
+        );
+        expect(saveTiming).toContain(
+          "Write needed information absent from player originals and final narrative this turn",
+        );
+        expect(saveTiming).toContain(
+          "Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point",
+        );
         expect(saveTiming).toContain("Consolidation can happen at any time");
         expect(saveTiming).toContain("Temporary absence is not retirement");
         expect(saveTiming).toContain(
@@ -673,7 +698,7 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
           "Interface values do not replace dramatization",
         );
         expect(output).toContain(
-          "Delayed recording, deduplication and maintenance need not be re-performed",
+          "Delayed recording, deduplication and maintenance do not replay old events",
         );
         expect(output).toContain(
           "For purely out-of-world inquiry or maintenance",
@@ -697,11 +722,15 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
         expect(ownership).toContain(
           "Group events by what happened, not by turn",
         );
+        expect(ownership).toContain("outcomes at that time");
         expect(ownership).toContain("do not create a second turn-by-turn log");
         expect(ownership).toContain("summary is a catalog identifier");
 
         expect(prose).toContain(
           "When the player delegates an inference, tell the player what can be known at the certainty supported by the evidence. Only turn that inference into character dialogue when the player expresses an intent to say it aloud.",
+        );
+        expect(prose).toContain(
+          "travel, routine and known background may take a sentence or two",
         );
         expect(prose).toContain(
           "detailing a few seconds does not advance an entire activity",
