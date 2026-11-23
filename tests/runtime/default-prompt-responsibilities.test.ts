@@ -626,21 +626,34 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
 
         expect(checkpoint).toContain("world_checkpoint 只用于事件之间的间隙");
         expect(checkpoint).toContain("追逐穿过街道仍是同一场活动");
-        expect(checkpoint).toContain("持续活动尚在进行");
+        expect(checkpoint).toContain(
+          "持续活动尚在进行，或当前事情还等着玩家作出决定、给出关键回应时，不因普通停笔或整理完成而登记",
+        );
         expect(checkpoint).toContain("整理随时可做，不等于检查点");
 
         expect(output).toContain("世界内叙事只写故事正文");
         expect(output).toContain("不要求把允许的场面写得潦草");
         expect(output).toContain("界面数值不能代替事件表现");
         expect(output).toContain("补录旧结果、去重和整理不要求再次演出");
-        expect(output).toContain("仅含世界外查询或维护时");
+        expect(output).toContain('正文不得出现"没搜到／没找到资料"等内部措辞');
+        expect(output).toContain(
+          "仅含世界外查询或维护时，简洁回答或说明整理结果，不添加动作、对话或时间推进",
+        );
 
         expect(facts).toContain(
           "缺少裁决所需事实时，先经目录、字面搜索与精确读取取得",
         );
         expect(facts).toContain("搜索未命中不证明事实不存在");
+        expect(facts).toContain(
+          "在可见正文说清足以行动的前提：要做什么及必要的对象、去处或条件",
+        );
         expect(facts).toContain("状态正文、工具读取与写回回执本身不算交代");
-        expect(facts).toContain("角色未知的幕后事实仍须发现");
+        expect(facts).toContain(
+          "角色未知的幕后事实仍须发现，不直接揭露谜底与无关秘密",
+        );
+        expect(facts).toContain(
+          "无任务不造任务；已交代且未变的内容不逐轮提醒，也不为此逐轮翻查历史",
+        );
 
         expect(ownership).toContain("当前事实归自然所有者");
         expect(ownership).toContain(
@@ -685,7 +698,9 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
         expect(checkpoint).toContain(
           "a chase across another street is still one activity",
         );
-        expect(checkpoint).toContain("While an activity is still ongoing");
+        expect(checkpoint).toContain(
+          "While an activity is still ongoing, or the current event awaits a player decision or key response, do not register merely because you stop writing or finish consolidation",
+        );
         expect(checkpoint).toContain(
           "Consolidation can happen at any time; it is not a checkpoint",
         );
@@ -701,16 +716,25 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
           "Delayed recording, deduplication and maintenance do not replay old events",
         );
         expect(output).toContain(
-          "For purely out-of-world inquiry or maintenance",
+          'Keep internal wording such as "nothing was found in the records" out of prose',
+        );
+        expect(output).toContain(
+          "For purely out-of-world inquiry or maintenance, answer or report consolidation briefly without adding actions, dialogue or time passage",
         );
 
         expect(facts).toContain("When facts needed for a ruling are missing");
         expect(facts).toContain("Zero search matches do not prove absence");
         expect(facts).toContain(
+          "disclose actionable premises in visible prose through speech, observable objects or grounded memories even if the player did not ask: what can be done and the necessary person, place or conditions",
+        );
+        expect(facts).toContain(
           "state bodies, tool reads and write receipts alone are not disclosure",
         );
         expect(facts).toContain(
-          "backstage facts unknown to the character still require discovery",
+          "backstage facts unknown to the character still require discovery without revealing solutions or unrelated secrets",
+        );
+        expect(facts).toContain(
+          "Do not invent tasks, repeat unchanged disclosed information, or routinely search history for it each turn",
         );
 
         expect(ownership).toContain(
