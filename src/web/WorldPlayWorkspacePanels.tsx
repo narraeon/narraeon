@@ -1,6 +1,13 @@
 import { WorldPromptDiagnosticsPanel } from "./WorldPromptDiagnosticsPanel.tsx";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
-import { useMemo, useState, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEventHandler,
+  type ReactNode,
+} from "react";
 
 import {
   defaultAppReadingPreferences,
@@ -154,7 +161,7 @@ export function AiReadingRail({
   reading: V1PlayContextReadingView | null;
   loading: boolean;
   documents: readonly ContentTreeFile[];
-  onOpenFull: () => void;
+  onOpenFull: MouseEventHandler<HTMLButtonElement>;
 }): React.JSX.Element {
   if (loading && reading === null)
     return <p role="status">{uiText("正在核对 Runtime 读取记录…")}</p>;
@@ -216,36 +223,112 @@ export function AiReadingDialog({
   syncNotice,
   reading,
   documents,
+  feedback,
   onClose,
 }: {
   syncNotice?: ReactNode;
   reading: V1PlayContextReadingView | null;
   documents: readonly ContentTreeFile[];
+  feedback: ReactNode;
   onClose: () => void;
 }): React.JSX.Element {
-  useAndroidBack(true, onClose);
   return (
-    <div className="world-dialog-scrim">
-      <section
-        className="world-workbench-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ai-reading-audit-title"
-      >
+    <WorldPlayDialog
+      className="world-workbench-dialog"
+      titleId="ai-reading-audit-title"
+      heading={
+        <>
+          <span>{uiText("Runtime 证据")}</span>
+          <h2 id="ai-reading-audit-title">{uiText("AI 如何读取")}</h2>
+          <p>{uiText("这里只查看上下文证据，不会开启修订或锁定世界。")}</p>
+        </>
+      }
+      feedback={feedback}
+      onClose={onClose}
+    >
+      {syncNotice}
+      <AiReadingAudit reading={reading} documents={documents} />
+    </WorldPlayDialog>
+  );
+}
+
+function WorldPlayDialog({
+  children,
+  className,
+  titleId,
+  heading,
+  feedback,
+  onClose,
+}: {
+  children: ReactNode;
+  className: string;
+  titleId: string;
+  heading: ReactNode;
+  feedback: ReactNode;
+  onClose: () => void;
+}): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const tabBoundary = useRef<HTMLSpanElement>(null);
+  const movingBackward = useRef(false);
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  useAndroidBack(true, onClose);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="world-dialog-scrim"
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        if (event.target !== event.currentTarget || event.defaultPrevented)
+          return;
+        event.preventDefault();
+        onClose();
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.key === "Tab" &&
+          event.shiftKey &&
+          event.target === closeButton.current &&
+          !event.defaultPrevented
+        ) {
+          // Start the browser's backward Tab at the end so it can find the
+          // last available control, including inside expanded disclosures.
+          movingBackward.current = true;
+          tabBoundary.current?.focus({ preventScroll: true });
+          movingBackward.current = false;
+        }
+      }}
+    >
+      <div className={className}>
         <header>
-          <div>
-            <span>{uiText("Runtime 证据")}</span>
-            <h2 id="ai-reading-audit-title">{uiText("AI 如何读取")}</h2>
-            <p>{uiText("这里只查看上下文证据，不会开启修订或锁定世界。")}</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label={uiText("关闭")}>
+          <div>{heading}</div>
+          <button
+            ref={closeButton}
+            type="button"
+            onClick={onClose}
+            aria-label={uiText("关闭")}
+          >
             ×
           </button>
         </header>
-        {syncNotice}
-        <AiReadingAudit reading={reading} documents={documents} />
-      </section>
-    </div>
+        {children}
+      </div>
+      {feedback}
+      <span
+        ref={tabBoundary}
+        className="visually-hidden"
+        tabIndex={0}
+        onFocus={() => {
+          if (!movingBackward.current) closeButton.current?.focus();
+        }}
+      />
+    </dialog>
   );
 }
 
@@ -643,6 +726,7 @@ export function WorldManagementDialog({
   syncNotice,
   worldBackupExport,
   packageScriptPermission,
+  feedback,
   world,
   worldTitle,
   worldNameDraft,
@@ -666,6 +750,7 @@ export function WorldManagementDialog({
   syncNotice?: ReactNode;
   worldBackupExport?: ReactNode;
   packageScriptPermission?: ReactNode;
+  feedback: ReactNode;
   world: { worldId: string; head: string; runtime: unknown };
   worldTitle: string;
   worldNameDraft: string;
@@ -686,199 +771,189 @@ export function WorldManagementDialog({
   modelConfigured: boolean;
   revisionLocked: boolean;
 }): React.JSX.Element {
-  useAndroidBack(true, onClose);
   return (
-    <div className="world-dialog-scrim">
-      <section
-        className="world-management-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="world-management-title"
-      >
-        <header>
-          <div>
-            <h2 id="world-management-title">{uiText("世界管理")}</h2>
-            <p>{uiText("管理名称、分叉、控制文件与 Runtime 诊断。")}</p>
+    <WorldPlayDialog
+      className="world-management-dialog"
+      titleId="world-management-title"
+      heading={
+        <>
+          <h2 id="world-management-title">{uiText("世界管理")}</h2>
+          <p>{uiText("管理名称、分叉、控制文件与 Runtime 诊断。")}</p>
+        </>
+      }
+      feedback={feedback}
+      onClose={onClose}
+    >
+      <div className="world-management-body">
+        {syncNotice}
+        <details className="world-permission-disclosure">
+          <summary>{uiText("内容包脚本权限")}</summary>
+          {packageScriptPermission}
+        </details>
+        {revisionLocked ? (
+          <p className="setting-improvement-warning" role="status">
+            {uiText(
+              "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。",
+            )}
+          </p>
+        ) : null}
+        <article className="manage-card world-name-card">
+          <div className="manage-card-copy">
+            <h3>{uiText("世界名称")}</h3>
+            <p>{uiText("只改变工作区显示名称，不改变故事与状态。")}</p>
           </div>
-          <button type="button" onClick={onClose} aria-label={uiText("关闭")}>
-            ×
-          </button>
-        </header>
-        <div className="world-management-body">
-          {syncNotice}
-          <details className="world-permission-disclosure">
-            <summary>{uiText("内容包脚本权限")}</summary>
-            {packageScriptPermission}
-          </details>
-          {revisionLocked ? (
-            <p className="setting-improvement-warning" role="status">
-              {uiText(
-                "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。",
-              )}
-            </p>
-          ) : null}
-          <article className="manage-card world-name-card">
-            <div className="manage-card-copy">
-              <h3>{uiText("世界名称")}</h3>
-              <p>{uiText("只改变工作区显示名称，不改变故事与状态。")}</p>
-            </div>
-            <form
-              className="world-name-editor"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onRename();
-              }}
-            >
-              <label>
-                <span className="visually-hidden">
-                  {uiText("世界显示名称")}
-                </span>
-                <input
-                  maxLength={160}
-                  value={worldNameDraft}
-                  onChange={(event) =>
-                    setWorldNameDraft(event.currentTarget.value)
-                  }
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={
-                  pending !== null ||
-                  worldNameDraft.trim() === "" ||
-                  worldNameDraft.trim() === worldTitle
+          <form
+            className="world-name-editor"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onRename();
+            }}
+          >
+            <label>
+              <span className="visually-hidden">{uiText("世界显示名称")}</span>
+              <input
+                maxLength={160}
+                value={worldNameDraft}
+                onChange={(event) =>
+                  setWorldNameDraft(event.currentTarget.value)
                 }
-              >
-                {uiText("保存名称")}
-              </button>
-            </form>
-          </article>
-          <article className="manage-card">
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={
+                pending !== null ||
+                worldNameDraft.trim() === "" ||
+                worldNameDraft.trim() === worldTitle
+              }
+            >
+              {uiText("保存名称")}
+            </button>
+          </form>
+        </article>
+        <article className="manage-card">
+          <div className="manage-card-copy">
+            <h3>{uiText("导出故事")}</h3>
+            <p>{uiText("下载当前时间线的开场白、玩家原文与主持正文。")}</p>
+          </div>
+          <div className="button-row">
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={() => onExportStory("markdown")}
+            >
+              {uiText("导出 Markdown")}
+            </button>
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={() => onExportStory("text")}
+            >
+              {uiText("导出纯文本")}
+            </button>
+          </div>
+        </article>
+        <article className="manage-card derive-card">
+          <div>
+            <h3>{uiText("从当前端点创建分叉")}</h3>
+            <p>{uiText("创建一个拥有独立状态与时间线的新世界。")}</p>
+          </div>
+          <button
+            type="button"
+            disabled={
+              pending !== null || activeStatus === "running" || revisionLocked
+            }
+            onClick={onDerive}
+          >
+            {uiText("创建分叉")}
+          </button>
+        </article>
+        {worldBackupExport}
+        <details className="manage-disclosure">
+          <summary>{uiText("世界控制 · 高级编辑")}</summary>
+          <article className="manage-card control-card">
             <div className="manage-card-copy">
-              <h3>{uiText("导出故事")}</h3>
-              <p>{uiText("下载当前时间线的开场白、玩家原文与主持正文。")}</p>
+              <h3>{uiText("世界控制")}</h3>
+              <p>
+                {uiText("控制草稿必须经过真实 Prompt Preview 后整批应用。")}
+              </p>
             </div>
+            <span className="control-draft-state">
+              {controlDirty
+                ? uiText("有尚未预览的修改")
+                : uiText("当前已应用控制")}
+            </span>
+            <label>
+              {uiText("世界控制文件（JSON）")}
+              <textarea
+                rows={18}
+                value={controlFiles}
+                disabled={revisionLocked}
+                onChange={(event) => onControlFiles(event.currentTarget.value)}
+              />
+            </label>
             <div className="button-row">
               <button
                 type="button"
-                disabled={pending !== null}
-                onClick={() => onExportStory("markdown")}
+                disabled={
+                  pending !== null || !modelConfigured || revisionLocked
+                }
+                onClick={onPreviewControl}
               >
-                {uiText("导出 Markdown")}
+                {uiText("预览世界控制")}
               </button>
               <button
                 type="button"
-                disabled={pending !== null}
-                onClick={() => onExportStory("text")}
+                disabled={
+                  pending !== null ||
+                  controlPreview === null ||
+                  activeStatus === "running" ||
+                  revisionLocked
+                }
+                onClick={onApplyControl}
               >
-                {uiText("导出纯文本")}
+                {uiText("整批应用世界控制")}
               </button>
-            </div>
-          </article>
-          <article className="manage-card derive-card">
-            <div>
-              <h3>{uiText("从当前端点创建分叉")}</h3>
-              <p>{uiText("创建一个拥有独立状态与时间线的新世界。")}</p>
-            </div>
-            <button
-              type="button"
-              disabled={
-                pending !== null || activeStatus === "running" || revisionLocked
-              }
-              onClick={onDerive}
-            >
-              {uiText("创建分叉")}
-            </button>
-          </article>
-          {worldBackupExport}
-          <details className="manage-disclosure">
-            <summary>{uiText("世界控制 · 高级编辑")}</summary>
-            <article className="manage-card control-card">
-              <div className="manage-card-copy">
-                <h3>{uiText("世界控制")}</h3>
-                <p>
-                  {uiText("控制草稿必须经过真实 Prompt Preview 后整批应用。")}
-                </p>
-              </div>
-              <span className="control-draft-state">
-                {controlDirty
-                  ? uiText("有尚未预览的修改")
-                  : uiText("当前已应用控制")}
-              </span>
-              <label>
-                {uiText("世界控制文件（JSON）")}
-                <textarea
-                  rows={18}
-                  value={controlFiles}
-                  disabled={revisionLocked}
-                  onChange={(event) =>
-                    onControlFiles(event.currentTarget.value)
-                  }
-                />
-              </label>
-              <div className="button-row">
+              {controlDirty && (
                 <button
                   type="button"
-                  disabled={
-                    pending !== null || !modelConfigured || revisionLocked
-                  }
-                  onClick={onPreviewControl}
+                  className="secondary-button"
+                  disabled={pending !== null}
+                  onClick={onResetControl}
                 >
-                  {uiText("预览世界控制")}
+                  {uiText("放弃控制修改")}
                 </button>
-                <button
-                  type="button"
-                  disabled={
-                    pending !== null ||
-                    controlPreview === null ||
-                    activeStatus === "running" ||
-                    revisionLocked
-                  }
-                  onClick={onApplyControl}
-                >
-                  {uiText("整批应用世界控制")}
-                </button>
-                {controlDirty && (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={pending !== null}
-                    onClick={onResetControl}
-                  >
-                    {uiText("放弃控制修改")}
-                  </button>
-                )}
-              </div>
-              {controlPreview === null ? null : (
-                <details className="technical-details">
-                  <summary>{uiText("查看真实提示词预览结果")}</summary>
-                  <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
-                </details>
               )}
-            </article>
-          </details>
-          <details className="manage-disclosure">
-            <summary>{uiText("运行详情")}</summary>
-            <article className="manage-card runtime-card">
-              <h3>{uiText("运行详情")}</h3>
-              <dl className="runtime-summary">
-                <div>
-                  <dt>{uiText("当前端点")}</dt>
-                  <dd>{world.head}</dd>
-                </div>
-                <div>
-                  <dt>{uiText("世界 ID")}</dt>
-                  <dd>{world.worldId}</dd>
-                </div>
-              </dl>
+            </div>
+            {controlPreview === null ? null : (
               <details className="technical-details">
-                <summary>{uiText("查看 Runtime 原始诊断")}</summary>
-                <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
+                <summary>{uiText("查看真实提示词预览结果")}</summary>
+                <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
               </details>
-            </article>
-          </details>
-        </div>
-      </section>
-    </div>
+            )}
+          </article>
+        </details>
+        <details className="manage-disclosure">
+          <summary>{uiText("运行详情")}</summary>
+          <article className="manage-card runtime-card">
+            <h3>{uiText("运行详情")}</h3>
+            <dl className="runtime-summary">
+              <div>
+                <dt>{uiText("当前端点")}</dt>
+                <dd>{world.head}</dd>
+              </div>
+              <div>
+                <dt>{uiText("世界 ID")}</dt>
+                <dd>{world.worldId}</dd>
+              </div>
+            </dl>
+            <details className="technical-details">
+              <summary>{uiText("查看 Runtime 原始诊断")}</summary>
+              <pre>{JSON.stringify(world.runtime, null, 2)}</pre>
+            </details>
+          </article>
+        </details>
+      </div>
+    </WorldPlayDialog>
   );
 }

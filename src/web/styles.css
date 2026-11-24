@@ -9110,6 +9110,26 @@ summary:focus-visible {
   background: rgb(37 49 59 / 18%);
 }
 
+dialog.world-dialog-scrim {
+  position: fixed;
+  inset: var(--workspace-header-height) 0 0;
+  width: 100%;
+  height: calc(100% - var(--workspace-header-height));
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  color: inherit;
+}
+
+dialog.world-dialog-scrim:not([open]) {
+  display: none;
+}
+
+dialog.world-dialog-scrim::backdrop {
+  background: transparent;
+}
+
 .world-workbench-dialog,
 .world-management-dialog {
   display: grid;
