@@ -194,6 +194,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".model-active-summary")).toContainText("备用模型");
   await expect(page.getByLabel("配置名称")).toHaveValue("备用模型（副本）");
   await expect(page.getByLabel("API Key")).toHaveValue("");
+  await page.getByText("高级协议选项", { exact: true }).click();
   await page.getByLabel("协议适配器").selectOption("openai_responses");
   await page.getByLabel("Base URL").fill(`${providerUrl}/alternate`);
   await expect(page.getByLabel("API Key")).not.toHaveAttribute("required", "");
