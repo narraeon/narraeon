@@ -10,7 +10,8 @@ import {
 
 function binding() {
   const files = structuredClone(defaultPlayPresetFiles);
-  files["preset.yaml"] = `format: narraeon.play-preset/v1
+  files["orchestration.yaml"] = `format: narraeon.orchestration/v1
+playPrompts: {}
 name: player-view-panel
 callChain: call-chain.yaml
 mounts: []
@@ -186,7 +187,8 @@ describe("player-view-backed panel projector", () => {
     const base = structuredClone(defaultPlayPresetFiles);
     const parsed = parsePlayPresetFiles(base);
     expect(parsed.kind).toBe("valid");
-    base["preset.yaml"] = `format: narraeon.play-preset/v1
+    base["orchestration.yaml"] = `format: narraeon.orchestration/v1
+playPrompts: {}
 name: invalid-panel
 callChain: call-chain.yaml
 playerViewPanels:

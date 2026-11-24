@@ -33,7 +33,7 @@ export function WorldExtensionMenu({
     }
   };
   const sources = {
-    preset: uiText("玩法预设"),
+    preset: uiText("编排方案"),
     package: uiText("内容包"),
     builtin: uiText("系统示例"),
     world: uiText("世界"),

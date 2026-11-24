@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
@@ -63,7 +64,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     });
     await runtime(page, { type: "play.select", presetId: created.preset.id });
     await page.reload();
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page.getByRole("button", { name: "新增提示词", exact: true }).click();
     await page
       .getByLabel("提示词名称", { exact: true })
@@ -148,7 +149,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       .click();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     const library = await runtime<FileNativePlayPresetLibrary>(page, {
       type: "play.read",
@@ -173,7 +174,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       followup.artifacts[1]!.renderer,
     );
     await page.reload();
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page
       .getByRole("list", { name: "后置请求" })
       .getByRole("button", { name: /A45 多产物/ })
@@ -239,7 +240,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await page.getByLabel("启用 A45 多产物 副本", { exact: true }).uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     const clonedLibrary = await runtime<FileNativePlayPresetLibrary>(page, {
       type: "play.read",
@@ -256,20 +257,25 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       saved.files[followup.artifacts[0]!.renderer!],
     );
     // Export and re-import through the actual browser file controls.
-    await page.getByText("预设操作", { exact: true }).click();
+    await page.getByText("编排方案操作", { exact: true }).click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("button", { name: "导出预设", exact: true }).click(),
+      page.getByRole("button", { name: "导出编排方案", exact: true }).click(),
     ]);
+    expect(download.suggestedFilename()).toMatch(/\.orchestration\.json$/u);
     const portable = await readFile(await download.path());
-    await page.getByText("预设操作", { exact: true }).click();
-    await page.getByText("预设管理", { exact: true }).click();
-    await page.getByLabel("选择要导入的预设").setInputFiles({
-      name: "A45-import.play-preset.json",
+    expect(JSON.parse(portable.toString("utf8"))).toContainEqual({
+      path: "orchestration.yaml",
+      contents: expect.stringContaining("format: narraeon.orchestration/v1"),
+    });
+    await page.getByText("编排方案操作", { exact: true }).click();
+    await page.getByText("编排方案管理", { exact: true }).click();
+    await page.getByLabel("选择要导入的编排方案").setInputFiles({
+      name: "A45-import.orchestration.json",
       mimeType: "application/json",
       buffer: portable,
     });
-    await expect(page.getByText(/预设已导入为独立副本/)).toBeVisible();
+    await expect(page.getByText(/编排方案已导入为独立副本/)).toBeVisible();
     const imported = (
       await runtime<FileNativePlayPresetLibrary>(page, { type: "play.read" })
     ).presets.find(
@@ -376,6 +382,51 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await new Promise<void>((resolve) => provider.close(() => resolve()));
   }
 });
+test("旧便携文件后缀导入后创建独立的编排方案", async ({ page }) => {
+  const fixture = JSON.parse(
+    gunzipSync(
+      await readFile(
+        new URL(
+          "../fixtures/orchestrations-v090-preview3.json.gz",
+          import.meta.url,
+        ),
+      ),
+    ).toString("utf8"),
+  ) as { current: { files: Record<string, string> } };
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  const before = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  await page.goto("/#/orchestrations");
+  await page.getByText("编排方案管理", { exact: true }).click();
+  await page.getByLabel("选择要导入的编排方案").setInputFiles({
+    name: "旧方案.play-preset.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify(
+        Object.entries(fixture.current.files).map(([path, contents]) => ({
+          path,
+          contents,
+        })),
+      ),
+    ),
+  });
+  await expect(page.getByText(/编排方案已导入为独立副本/u)).toBeVisible();
+  const after = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  expect(after.currentPresetId).toBe(before.currentPresetId);
+  const copy = after.presets.find(({ name }) => name === "旧方案");
+  expect(copy?.files["orchestration.yaml"]).toContain(
+    "narraeon.orchestration/v1",
+  );
+  expect(copy?.files["assets/v3-extra.txt"]).toBe(
+    fixture.current.files["assets/v3-extra.txt"],
+  );
+  expect(copy?.scriptsEnabled).toBe(false);
+});
+
 async function runtime<T = unknown>(
   page: Page,
   request: V1Request,

@@ -80,9 +80,9 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(models.locator(".config-header .eyebrow")).toHaveText(
       t("工作区设置", "Workspace settings"),
     );
-    await page.goto("/#/presets");
+    await page.goto("/#/orchestrations");
     const presets = page.getByRole("region", {
-      name: t("玩法预设工作台", "Play presets"),
+      name: t("编排方案工作台", "Orchestrations"),
     });
     await expect(presets).toBeVisible();
     await expect(presets.locator(".play-preset-header .eyebrow")).toHaveText(

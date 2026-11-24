@@ -296,7 +296,7 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
     await expect(fallback).toBeVisible();
     await expect(
       page.getByText(
-        "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+        "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
         { exact: true },
       ),
     ).toBeVisible();

@@ -11155,7 +11155,7 @@ test("后置结算通知可读取同端点产物，失败和冷 Runtime 恢复�
 
 /** Two follow-ups on top of the shipped default call chain. */
 function followupPlayPreset(multipleOutputs = false): PlayPresetBinding {
-  const files = structuredClone(defaultPlayPresetFiles);
+  const files = legacyDefaultPlayPresetFilesForLocale("en");
   files["preset.yaml"] = `format: narraeon.play-preset/v1
 name: followup-test
 callChain: call-chain.yaml

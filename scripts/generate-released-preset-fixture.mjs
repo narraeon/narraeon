@@ -264,6 +264,31 @@ await chains.start({
   modelBinding: modelBinding(),
   modelHost: host,
 });
+const retryWorld = await worlds.createFromContentPackage({
+  operationId: "released-retry-create",
+  sourcePackageId: "released-package",
+  packageFiles: worldFiles(),
+  prompt: { hostBinding: hostBinding(), modelBinding: modelBinding() },
+});
+const retryWorldId = retryWorld.world.worldId;
+const retryHost = new ScriptedModelHost({
+  binding: modelBinding(),
+  steps: [
+    { outcome: "failure", message: "Released provider rejected the request." },
+  ],
+});
+const interrupted = await chains.start({
+  worldId: retryWorldId,
+  chainId: "released-retry-chain",
+  exchangeId: "released-retry-send",
+  playerText: "Retry the released player input.\n",
+  hostBinding: hostBinding(),
+  playPreset: binding,
+  modelBinding: modelBinding(),
+  modelHost: retryHost,
+});
+if (interrupted.status !== "interrupted" || !interrupted.canRetry)
+  throw new Error("The release did not retain a retryable request");
 const filesOut = {};
 async function collect(dir, prefix = "") {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -286,6 +311,8 @@ await writeFile(
         head: await worlds.currentHead(worldId),
         endpoint: await worlds.recoverEndpoint(worldId),
         requests: host.requests,
+        retryWorldId,
+        retryRequest: retryHost.requests[0],
         artifacts: await artifacts.readActiveProjection(worldId),
         files: filesOut,
       },

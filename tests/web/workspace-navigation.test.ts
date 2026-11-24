@@ -29,13 +29,13 @@ function delayedPresetCopyFixture() {
   const original = request.getMockImplementation()!;
   const base: PlayPresetScreenPreset = {
     id: "preset-first",
-    name: "第一份预设",
+    name: "第一份编排方案",
     revision: "rev-original",
     files: structuredClone(firstPartyActionChoicesPresetFiles),
     validation: { status: "valid" },
   };
-  const other = { ...base, id: "preset-other", name: "第二份预设" };
-  const copied = { ...base, id: "preset-copy", name: "复制的预设" };
+  const other = { ...base, id: "preset-other", name: "第二份编排方案" };
+  const copied = { ...base, id: "preset-copy", name: "复制的编排方案" };
   let library = { currentPresetId: base.id, presets: [base, other] };
   const delivered = Promise.withResolvers<void>();
   request.mockImplementation(async (input) => {
@@ -60,7 +60,7 @@ function delayedPresetCopyFixture() {
 }
 
 test.each(["model-draft", "reopened-presets"])(
-  "离开预设页面后迟到的复制回执不能导航或覆盖当前选择：%s",
+  "离开编排方案页面后迟到的复制回执不能导航或覆盖当前选择：%s",
   async (destination) => {
     const scenario = delayedPresetCopyFixture();
     render(createElement(App, { client: scenario.client }));
@@ -68,12 +68,12 @@ test.each(["model-draft", "reopened-presets"])(
     const presets = () =>
       within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
         "button",
-        { name: "预设" },
+        { name: "编排方案" },
       );
     fireEvent.click(presets());
-    expect(window.location.hash).toBe(`#/presets/${scenario.firstId}`);
-    fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
-    fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+    expect(window.location.hash).toBe(`#/orchestrations/${scenario.firstId}`);
+    fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "复制为新编排方案" }));
     await waitFor(() =>
       expect(scenario.request).toHaveBeenCalledWith(
         expect.objectContaining({ type: "play.copy" }),
@@ -86,7 +86,7 @@ test.each(["model-draft", "reopened-presets"])(
       });
     } else {
       fireEvent.click(presets());
-      fireEvent.change(screen.getByLabelText("切换预设"), {
+      fireEvent.change(screen.getByLabelText("切换编排方案"), {
         target: { value: scenario.otherId },
       });
     }
@@ -103,35 +103,35 @@ test.each(["model-draft", "reopened-presets"])(
         "新的模型草稿",
       );
       expect(
-        screen.queryByRole("heading", { name: "玩法预设工作台" }),
+        screen.queryByRole("heading", { name: "编排方案工作台" }),
       ).toBeNull();
     } else {
-      expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
-        scenario.otherId,
-      );
-      expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+      expect(
+        screen.getByLabelText<HTMLSelectElement>("切换编排方案").value,
+      ).toBe(scenario.otherId);
+      expect(window.location.hash).toBe(`#/orchestrations/${scenario.otherId}`);
     }
   },
 );
 
-test("当前预设页面的选择和有效复制回调仍替换 URL", async () => {
+test("当前编排方案页面的选择和有效复制回调仍替换 URL", async () => {
   const scenario = delayedPresetCopyFixture();
   render(createElement(App, { client: scenario.client }));
   await screen.findByRole("heading", { name: "世界工作区" });
   fireEvent.click(
     within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
       "button",
-      { name: "预设" },
+      { name: "编排方案" },
     ),
   );
   const historyLength = window.history.length;
-  fireEvent.change(screen.getByLabelText("切换预设"), {
+  fireEvent.change(screen.getByLabelText("切换编排方案"), {
     target: { value: scenario.otherId },
   });
-  expect(window.location.hash).toBe(`#/presets/${scenario.otherId}`);
+  expect(window.location.hash).toBe(`#/orchestrations/${scenario.otherId}`);
   expect(window.history.length).toBe(historyLength);
-  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: "复制为新预设" }));
+  fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "复制为新编排方案" }));
   await waitFor(() =>
     expect(scenario.request).toHaveBeenCalledWith(
       expect.objectContaining({ type: "play.copy" }),
@@ -141,12 +141,12 @@ test("当前预设页面的选择和有效复制回调仍替换 URL", async () =
     scenario.finishCopy();
     await Promise.resolve();
   });
-  expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+  expect(screen.getByLabelText<HTMLSelectElement>("切换编排方案").value).toBe(
     scenario.copyId,
   );
-  expect(window.location.hash).toBe(`#/presets/${scenario.copyId}`);
+  expect(window.location.hash).toBe(`#/orchestrations/${scenario.copyId}`);
   expect(window.history.length).toBe(historyLength);
-  expect(screen.getByText("已复制为独立预设。")).toBeTruthy();
+  expect(screen.getByText("已复制为独立编排方案。")).toBeTruthy();
 });
 
 test("启动恢复指定内容包，读取地址不会创建新的内容包", async () => {
@@ -165,7 +165,7 @@ test.each([
   ["#/content/deleted", "找不到该内容包。"],
   ["#/content/%E0%A4%A", "找不到该内容包。"],
   ["#/world/deleted", "找不到该世界。"],
-  ["#/presets/deleted", "找不到该预设。"],
+  ["#/orchestrations/deleted", "找不到该编排方案。"],
   ["#/unknown", "找不到该页面。"],
 ])("无效书签 %s 返回首页并显示通知", async (hash, message) => {
   window.history.replaceState(null, "", hash);
@@ -581,7 +581,7 @@ test.each(["receipt", "lost receipt", "rejection"])(
 );
 
 test.each(["model", "preset"])(
-  "模型切换与预设删除提示可以各自关闭（先关闭 %s）",
+  "模型切换与编排方案删除提示可以各自关闭（先关闭 %s）",
   async (first) => {
     const { client, request } = fixture();
     const original = request.getMockImplementation()!;
@@ -624,7 +624,7 @@ test.each(["model", "preset"])(
         return model;
       }
       if (input.type === "play.delete") {
-        presets = [{ ...preset, id: "default", name: "默认预设" }];
+        presets = [{ ...preset, id: "default", name: "默认编排方案" }];
         return { currentPresetId: "default", deleted: true };
       }
       if (input.type === "play.read") return library();
@@ -638,18 +638,18 @@ test.each(["model", "preset"])(
     fireEvent.click(screen.getByRole("button", { name: "切换到此配置" }));
     const messages = {
       model: "已切换当前模型配置；Runtime 不会自动故障转移。",
-      preset: "玩法预设已删除；删空后会自动重建默认预设。",
+      preset: "编排方案已删除；删空后会自动重建默认编排方案。",
     };
     await screen.findByText(messages.model);
     expect(within(modelButton).getByText("另一配置")).toBeTruthy();
     fireEvent.click(
       within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
         "button",
-        { name: "预设" },
+        { name: "编排方案" },
       ),
     );
-    fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除预设" }));
+    fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除编排方案" }));
     await screen.findByText(messages.preset);
     const callsBeforeClosing = request.mock.calls.length;
     const order = first === "model" ? ["model", "preset"] : ["preset", "model"];
@@ -664,7 +664,7 @@ test.each(["model", "preset"])(
     expect(document.querySelector(".workspace-feedback")).toBeNull();
     expect(document.querySelector(".play-preset-feedback")).toBeNull();
     expect(request.mock.calls).toHaveLength(callsBeforeClosing);
-    expect(screen.getByLabelText("切换预设")).toHaveProperty(
+    expect(screen.getByLabelText("切换编排方案")).toHaveProperty(
       "value",
       "default",
     );

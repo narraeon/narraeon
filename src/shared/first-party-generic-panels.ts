@@ -1,5 +1,11 @@
+import { stringify } from "yaml";
+import { defaultFollowupItems } from "./ordered-followups.ts";
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
+import {
+  applicationPresetFilesForLocale,
+  orchestrationFormat,
+  orchestrationManifest,
+} from "./application-preset-files.ts";
 
 /**
  * Ordinary copyable examples for the generic artifact seam. Runtime does not
@@ -14,7 +20,7 @@ export function firstPartyGenericPanelsPresetFilesForLocale(
     locale === "zh-CN" ? "通用 HTML 面板" : "Generic HTML panel";
   return {
     ...applicationPresetFilesForLocale(locale),
-    "preset.yaml": `format: narraeon.play-preset/v3
+    [orchestrationManifest]: `format: ${orchestrationFormat}
 name: generic-panels-recommended
 callChain: call-chain.yaml
 playPrompts: {}
@@ -29,9 +35,9 @@ extensions:
   - scripts/generic-html.js
   - assets/generic-html.css
 `,
-    "call-chain.yaml": `format: narraeon.play-call-chain/v1
+    "call-chain.yaml": `format: narraeon.play-call-chain/v2
 narrative: []
-followups:
+${stringify({ followupItems: defaultFollowupItems([{ id: "publish_panels" }]) })}followups:
   - id: publish_panels
     displayName: ${displayName}
     prompt:

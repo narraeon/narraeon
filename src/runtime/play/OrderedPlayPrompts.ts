@@ -15,7 +15,6 @@ import {
   promptGroups,
   type OrderedPlayPrompt,
   type BuiltinPlayPrompt,
-  type PromptGroup,
 } from "../../shared/ordered-play-prompts.ts";
 
 const promptName = /^[^\r\n\0]{1,160}$/u;
@@ -392,18 +391,6 @@ export function parsePromptArrangement(
   );
 }
 
-/** A choice group's entries: the first member enabled, the rest disabled. */
-function groupPromptEntries(group: PromptGroup): OrderedPlayPrompt[] {
-  return builtinPlayPrompts("en")
-    .filter((item) => item.group === group)
-    .map(({ id }, index) => ({
-      id,
-      kind: "builtin",
-      builtin: id,
-      enabled: index === 0,
-    }));
-}
-
 /** Recognized v1 content becomes user text, never a locked builtin inferred from a path. */
 export function migrateLegacyPlayPrompts(
   files: Record<string, string>,
@@ -531,33 +518,14 @@ export function migrateLegacyPlayPrompts(
       path.endsWith(".md")
     )
       add(path, false);
-  // Converted presets gain the choice-group builtins and then the tabletop
-  // builtin just before the world placeholder. The legacy block copies keep
-  // their own wording as user text; the current builtins arrive beside them.
+  // Legacy user text already owns the author policies. Offer current policy
+  // blocks as disabled choices so converting never adds a second copy.
   const worldIndex = entries.findIndex((entry) => entry.kind === "world");
   entries.splice(
     worldIndex,
     0,
-    ...promptGroups.flatMap((group) => groupPromptEntries(group)),
-    {
-      id: "play.tabletop",
-      kind: "builtin",
-      builtin: "play.tabletop",
-      enabled: true,
-    },
-  );
-  const listed = new Set(
-    entries.flatMap((entry) =>
-      entry.kind === "builtin" ? [entry.builtin] : [],
-    ),
-  );
-  entries.splice(
-    entries.findIndex(
-      (entry) => entry.kind === "builtin" && entry.builtin === "play.tabletop",
-    ),
-    0,
     ...builtinPlayPrompts("en")
-      .filter((item) => !listed.has(item.id) && item.dynamic !== "model-prompt")
+      .filter((item) => !item.required && item.dynamic !== "model-prompt")
       .map((item) => ({
         id: item.id,
         kind: "builtin" as const,

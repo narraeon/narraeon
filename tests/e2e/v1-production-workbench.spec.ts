@@ -141,7 +141,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("heading", { name: "世界工作区" })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
-  for (const name of ["内容编辑", "预设", "新建世界", "提示词预览"])
+  for (const name of ["内容编辑", "编排方案", "新建世界", "提示词预览"])
     await expect(
       page.locator(".workspace-navigation").getByRole("button", { name }),
     ).toBeVisible();
@@ -214,13 +214,15 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".model-active-summary")).toContainText("默认模型");
   await page.getByRole("button", { name: "返回工作区" }).click();
 
-  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "编排方案", exact: true }).click();
   await expect(
-    page.getByRole("combobox", { name: "切换预设", exact: true }),
+    page.getByRole("combobox", { name: "切换编排方案", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("list", { name: "提示词顺序" })).toBeVisible();
-  await expect(page.getByLabel("预设编辑器")).toContainText("完整内容包提示");
-  await expect(page.getByLabel("预设编辑器")).toContainText("回复完成后");
+  await expect(page.getByLabel("编排方案编辑器")).toContainText(
+    "完整内容包提示",
+  );
+  await expect(page.getByLabel("编排方案编辑器")).toContainText("回复完成后");
   await page.getByRole("button", { name: "新增提示词", exact: true }).click();
   await page.getByLabel("提示词名称", { exact: true }).fill("Before world");
   await page
@@ -275,10 +277,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("tab", { name: /^游玩/u }).click();
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await page
-    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .getByRole("button", { name: "应用为当前编排方案", exact: true })
     .click();
   await page.reload();
-  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "编排方案", exact: true }).click();
   await page.getByRole("button", { name: "Before world", exact: true }).click();
   await expect(page.getByLabel("提示词正文", { exact: true })).toHaveValue(
     "ORDERED_BEFORE_WORLD",
@@ -974,14 +976,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ]);
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "预设", exact: true }).click();
+  await page.getByRole("button", { name: "编排方案", exact: true }).click();
   await page.getByRole("button", { name: "Before world", exact: true }).click();
   await page
     .getByLabel("提示词正文", { exact: true })
     .fill("LIVE_NEXT_SEND_RULE");
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await page
-    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .getByRole("button", { name: "应用为当前编排方案", exact: true })
     .click();
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page
@@ -989,7 +991,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .click();
   await expect(
     page.getByText(
-      "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+      "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
       { exact: true },
     ),
   ).toBeVisible();

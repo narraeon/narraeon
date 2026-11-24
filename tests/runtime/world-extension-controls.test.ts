@@ -312,7 +312,10 @@ test("纯界面关闭抑制 fallback，重开读取当前字段；同端点通�
   const store = new FileNativePlayPresetStore(options.configRoot);
   const preset = await store.bindCurrent();
   const files = { ...preset.files };
-  const manifest = parse(files["preset.yaml"]!) as Record<string, unknown>;
+  const manifest = parse(files["orchestration.yaml"]!) as Record<
+    string,
+    unknown
+  >;
   manifest.playerViewPanels = [
     {
       id: "current",
@@ -330,7 +333,7 @@ test("纯界面关闭抑制 fallback，重开读取当前字段；同端点通�
       },
     },
   ];
-  files["preset.yaml"] = stringify(manifest);
+  files["orchestration.yaml"] = stringify(manifest);
   await store.save({ presetId: preset.id, name: preset.name, files });
   await store.select(preset.id);
   expect((await store.bindCurrent()).definition.playerViewPanels).toHaveLength(

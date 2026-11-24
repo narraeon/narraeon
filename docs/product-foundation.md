@@ -4,9 +4,6 @@ Narraeon 是一个本地优先的开放式角色扮演工作区，核心定位�
 
 本文件是 V1 产品的顶层架构宪法，只定义产品原则、核心不变量、边界划分与导航索引。协议编码、存储布局、并发细节与前端同步契约收敛于 [`docs/specs/`](specs/) 下的六篇专题规格；作者写作实践与实模评测位于维护中的指南；实施进度、缺陷、研究与验收状态由 GitHub Issues 跟踪，不在本文件维护第二份状态。
 
-> [!NOTE]
-> **术语过渡说明**：本文件及配套规格统一使用规范术语 **「编排方案」**（合并原「主持预设」与「玩法预设」）。当前代码、界面路由（`#/presets`）与磁盘格式（`narraeon.play-preset/v3`）暂仍沿用「预设」旧称，全面迁移由 GitHub Issue `#243` 实施。
-
 ---
 
 ## 1. 产品定位与核心原则
@@ -27,7 +24,7 @@ Narraeon 是一个本地优先的开放式角色扮演工作区，核心定位�
 普通工作区保留四个内容任务入口：
 
 1. **内容编辑**：编辑内容包当前树中的 YAML／Markdown 设定与控制资产，并进行设定完善对话。
-2. **编排方案**（当前路由 `#/presets`）：管理跨世界复用的游玩编排、作者编排、后置请求与纯界面扩展。
+2. **编排方案**（路由 `#/orchestrations`）：管理跨世界复用的游玩编排、作者编排、后置请求与纯界面扩展。
 3. **新建世界**：从可用内容包机械复制创建独立世界（可选应用级主角模板并经显式世界修订定制主角）。
 4. **提示词预览**：调用真实生产编译器，只读检查逻辑 role、Markdown、工具、材料、Provider 参数与缓存边界。
 
@@ -78,7 +75,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 
 提示词按各层的**实际作用域与写入能力**分三层（[ADR-0029](adr/0029-author-prompt-layers-split-by-capability.md)）：
 
-1. **编排方案（外层跨世界框架）**：承载游玩编排（`playPrompts`）、作者编排（`authorPrompts`）、后置请求编排与纯界面扩展；设定完善与游玩 AI 均不可改。采用叠加格式（当前 `narraeon.play-preset/v3`，#243 前暂沿用）：系统正文与默认顺序归应用目录，用户文件只存用户正文与覆盖；不绑定玩法模式或判定方案。
+1. **编排方案（外层跨世界框架）**：承载游玩编排（`playPrompts`）、作者编排（`authorPrompts`）、后置请求编排与纯界面扩展；设定完善与游玩 AI 均不可改。采用叠加格式（`orchestration.yaml` 中的 `narraeon.orchestration/v1`）：系统正文与默认顺序归应用目录，用户文件只存用户正文与覆盖；不绑定玩法模式或判定方案。
 2. **世界提示框架（内层本世界框架）**：位于 `control/frame.yaml` 与 `control/blocks/*.md`，承载本世界特有规则、保存位置约定、确定性材料 slot（恰含一个 `current_situation` 与一个 `additional_materials`）及可选 `maintenance` 建议体积与时钟声明；严禁内嵌状态实际值或语义查询。
 3. **Runtime 必选机械说明**：应用内置、固定 `System` 且不可停用，仅解释当前请求真实工具与句柄、读取覆盖与写入资格、patch／元数据／退役语义、回执含义、工具中间步与终态提交规则、检查点边界与历史工具使用约定；绝不在机械层暗加作者语义。
 
@@ -91,7 +88,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 - **本轮提示（`turn_guide`）**：游玩主链每次派发按序拼装启用条目的尾部行（内置默认／覆盖、用户块、独立尾部条目、世界 `instructions[].turnGuide`）并末尾接玩家单行「本轮临时要求」（`player:turn`），带固定 Runtime 抬头发送；仅属本次派发与冻结请求，不入 transcript、Authority 或历史。
 - **逻辑 Role 与 Prompt Preview**：编译产出稳定逻辑 role（`runtime_system`、`author_instruction`、`world_context`、`player_input`、`assistant`、`tool`），正文用 Markdown，条目可自选 `System`／`User`／`Assistant` 发送角色与相邻合并开关。Prompt Preview 必须复用真实编译器与协议编码器，展示脱敏真实请求与 DTO 泄漏扫描，不调模型、不改世界。
 
-分版本迁移（v1 只读不转、显式保存转 v3 vs v2 初始化／导入原子转 v3）、旧四块退役映射与维护 schema 见 [`docs/specs/prompt-orchestration-and-presets.md`](specs/prompt-orchestration-and-presets.md)。
+本地库 `file-native-orchestrations.json`、便携导出 `.orchestration.json`、旧 v1–v3 一次性迁移、旧四块退役映射与维护 schema 见 [`docs/specs/prompt-orchestration-and-presets.md`](specs/prompt-orchestration-and-presets.md)。
 
 ---
 
@@ -168,7 +165,7 @@ Runtime 是唯一提交者（[ADR-0001](adr/0001-runtime-is-the-sole-committer.m
 | 专题规格 | 对应代码模块 | 核心契约范围 |
 | --- | --- | --- |
 | [模型 Provider 协议、容错与可观测性](specs/model-providers-and-resilience.md) | `runtime/model/`、`runtime/play/` | 四协议编码、不透明续传、三正交推理意图、参数／后缀修复、`allowed_tools`、缓存与 7 项 usage、64 步暂停、429 退避、续写矩阵、Prompt Preview 与「AI 读取」 |
-| [提示词编排、编排方案与世界控制框架](specs/prompt-orchestration-and-presets.md) | `runtime/prompt/`、`runtime/config/` | `narraeon.play-preset/v3` 叠加与种子所有权、旧四块退役映射、v1 vs v2 迁移时机、`playPrompts`/`authorPrompts`、选项组与本轮提示、`frame.yaml` 与 `maintenance` schema、SillyTavern 导入 |
+| [提示词编排、编排方案与世界控制框架](specs/prompt-orchestration-and-presets.md) | `runtime/prompt/`、`runtime/config/` | `narraeon.orchestration/v1` 叠加与种子所有权、旧四块退役映射、旧库迁移、`playPrompts`/`authorPrompts`、选项组与本轮提示、`frame.yaml` 与 `maintenance` schema、SillyTavern 导入 |
 | [游玩调用链、历史导航与世界生命周期](specs/play-history-and-world-lifecycle.md) | `runtime/play/`、`history/`、`world/`、`archive/` | 调用链时序、内存精读授权与重启重放、`world_patch`（1–32 `edits`）、`history_*` 与 `背景`、检查点、跑团内存种子与重掷、四类去重、三种世界外修改对照、世界归档与故事导出 |
 | [玩法扩展、后置请求、玩家视图与产物持久化](specs/extensions-and-player-views.md) | `runtime/artifact/`、`runtime/extension/` | 后置编排与 `followups.yaml`、`extension-controls.json`、来源脚本授权、世界目录产物与 `forkArtifactClosure` 分叉发布（含旧迁移）、资源闭包与正则／JSON 校验、玩家视图与预览 |
 | [内容包创作、主角模板、设定完善与世界修订](specs/authoring-and-world-revision.md) | `runtime/content/`、`setting/`、`world-revision/`、`authoring/`、`config/` | 内容包身份／ZIP／脚手架／示例、应用级主角模板（`protagonist-templates-v1.json`）定制契约、设定完善当前树事务与 `setting_patch`（单 `op`）、游玩读取覆盖、世界修订独占 epoch 与跨 epoch 会话 |

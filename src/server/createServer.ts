@@ -15,11 +15,11 @@ import Fastify, {
   type preHandlerHookHandler,
 } from "fastify";
 
-import { maxPortableContentArchiveBase64Characters } from "../protocol/contentTree.ts";
 import {
   parseV1Envelope,
   V1ProtocolError,
   v1Protocol,
+  v1RuntimeRequestBodyLimit,
   type V1PlayCallChainStreamFrame,
   type V1PlayCallChainView,
   type V1Request,
@@ -29,8 +29,6 @@ import type { PlayCallChainObserver } from "../runtime/play/PlayCallChain.ts";
 import { WorldArchiveError } from "../runtime/archive/WorldArchiveZip.ts";
 import type { Readable } from "node:stream";
 
-const runtimeRequestBodyLimit =
-  maxPortableContentArchiveBase64Characters + 64 * 1024;
 const playCallChainStreamContentType = "application/x-ndjson";
 
 class RuntimeLogController extends LogController {
@@ -275,7 +273,7 @@ export async function createServer(input: {
   server.post(
     "/api/runtime/v1",
     {
-      bodyLimit: runtimeRequestBodyLimit,
+      bodyLimit: v1RuntimeRequestBodyLimit,
       preHandler: [logRuntimeRequest],
     },
     async (request, reply) => {

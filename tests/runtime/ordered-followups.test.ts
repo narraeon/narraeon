@@ -1,3 +1,4 @@
+import { parseDocument } from "yaml";
 import { firstPartyStatusPanelPresetFilesForLocale } from "../../src/shared/first-party-player-view.ts";
 import { validPlayFollowup } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
 import { buildPlayPresetWorkbenchSnapshot } from "../../src/runtime/play/PlayPresetWorkbench.ts";
@@ -173,14 +174,18 @@ test("已迁移预设拒绝原始保存降级删除系统示例，重启和导�
       structure,
     });
     await store.select(created.preset.id);
+    const legacy = parseDocument(
+      firstPartyActionChoicesPresetFiles["call-chain.yaml"]!,
+    );
+    legacy.set("format", "narraeon.play-call-chain/v1");
+    legacy.delete("followupItems");
     await expect(
       store.save({
         presetId: created.preset.id,
         name: created.preset.name,
         files: {
           ...(saved.preset.draft?.files ?? saved.preset.files),
-          "call-chain.yaml":
-            firstPartyActionChoicesPresetFiles["call-chain.yaml"]!,
+          "call-chain.yaml": legacy.toString(),
         },
       }),
     ).rejects.toThrow();

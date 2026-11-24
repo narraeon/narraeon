@@ -1,13 +1,17 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
 import { stringify } from "yaml";
+import { defaultFollowupItems } from "./ordered-followups.ts";
+
+export const orchestrationManifest = "orchestration.yaml";
+export const orchestrationFormat = "narraeon.orchestration/v1";
 
 /** App-owned defaults contain declarations, never copies of the prompt catalog. */
 export function applicationPresetFilesForLocale(
   locale: AppLocale,
 ): Record<string, string> {
   return {
-    "preset.yaml": stringify({
-      format: "narraeon.play-preset/v3",
+    [orchestrationManifest]: stringify({
+      format: orchestrationFormat,
       name: locale === "zh-CN" ? "系统推荐" : "System recommended",
       callChain: "call-chain.yaml",
       playPrompts: {},
@@ -16,8 +20,12 @@ export function applicationPresetFilesForLocale(
       mounts: [],
       extensions: [],
     }),
-    "call-chain.yaml":
-      "format: narraeon.play-call-chain/v1\nnarrative: []\nfollowups: []\n",
+    "call-chain.yaml": stringify({
+      format: "narraeon.play-call-chain/v2",
+      narrative: [],
+      followups: [],
+      followupItems: defaultFollowupItems([]),
+    }),
     "frame.yaml": `format: narraeon.host-frame/v1
 roles:
   runtime_system:

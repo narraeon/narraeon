@@ -59,7 +59,7 @@ function errorMessage(message: string): string {
   const translations: Record<string, string> = {
     st_invalid_json: uiText("JSON 格式无效"),
     st_legacy_prompt_format_is_unsupported: uiText("不支持旧版提示格式"),
-    st_unsupported_preset_format: uiText("不支持此预设格式"),
+    st_unsupported_preset_format: uiText("不支持此 SillyTavern 预设格式"),
     st_expected_object: uiText("需要对象"),
     st_expected_array: uiText("需要数组"),
     st_expected_string: uiText("需要字符串"),
@@ -450,7 +450,7 @@ export function SillyTavernImport({
               <>
                 <div className="st-import-fields">
                   <label>
-                    {uiText("新预设名称")}
+                    {uiText("新编排方案名称")}
                     <input
                       disabled={busy}
                       value={name}
@@ -848,7 +848,7 @@ export function SillyTavernImport({
                     <button type="button" onClick={() => setShowResult(false)}>
                       {uiText("返回来源")}
                     </button>
-                    <h3>{uiText("目标预设")}</h3>
+                    <h3>{uiText("目标编排方案")}</h3>
                     <ul>
                       {preview.target.map((item, index) => (
                         <li key={index}>

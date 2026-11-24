@@ -65,25 +65,26 @@ for (const locale of ["zh-CN", "en"] as const)
     const text =
       locale === "en"
         ? {
-            preset: "Presets",
-            manage: "Manage presets",
+            preset: "Orchestrations",
+            manage: "Manage orchestrations",
             file: "Choose SillyTavern JSON file",
             wizard: "SillyTavern import wizard",
             preview: "Conversion preview",
             cancel: "Cancel",
             import: "Import independent copy",
-            status: "SillyTavern preset imported as an independent copy",
+            status:
+              "Imported an independent orchestration from the SillyTavern preset",
             unordered: "Unordered prompts",
           }
         : {
-            preset: "预设",
-            manage: "预设管理",
+            preset: "编排方案",
+            manage: "编排方案管理",
             file: "选择 SillyTavern JSON 文件",
             wizard: "SillyTavern 导入向导",
             preview: "转换预览",
             cancel: "取消",
             import: "导入独立副本",
-            status: "SillyTavern 预设已导入为独立副本",
+            status: "已从 SillyTavern 预设导入独立编排方案",
             unordered: "未编排提示",
           };
     test(`SillyTavern file selection, review, cancel and import (${locale}, ${mobile ? "mobile" : "desktop"})`, async ({
@@ -224,7 +225,9 @@ for (const locale of ["zh-CN", "en"] as const)
         })
         .click();
       await wizard
-        .getByLabel(locale === "en" ? "New preset name" : "新预设名称")
+        .getByLabel(
+          locale === "en" ? "New orchestration name" : "新编排方案名称",
+        )
         .fill("changed");
       await expect(
         wizard.getByRole("button", { name: text.import }),
@@ -264,6 +267,10 @@ for (const locale of ["zh-CN", "en"] as const)
       )!;
       expect(imported.name).toBe("silly");
       expect(imported.scriptsEnabled).toBe(false);
+      expect(imported.files["orchestration.yaml"]).toContain(
+        "narraeon.orchestration/v1",
+      );
+      expect(imported.files["preset.yaml"]).toBeUndefined();
       expect(JSON.stringify(imported.files)).toContain("Plain original");
       expect(JSON.stringify(imported.files)).toContain("Hello {{char}}");
       expect(JSON.stringify(imported.files)).toContain("Unordered original");
@@ -283,8 +290,8 @@ for (const mobile of [false, true]) {
     await page.goto("/");
     await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
     if (mobile) await page.getByRole("button", { name: "切换页面" }).click();
-    await page.getByRole("button", { name: "预设", exact: true }).click();
-    await page.getByText("预设管理", { exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await page.getByText("编排方案管理", { exact: true }).click();
     const macroSource = {
       prompts: [
         {

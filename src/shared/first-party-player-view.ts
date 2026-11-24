@@ -1,5 +1,9 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
+import {
+  applicationPresetFilesForLocale,
+  orchestrationFormat,
+  orchestrationManifest,
+} from "./application-preset-files.ts";
 
 /**
  * Ordinary, copyable player-view panel assets. Runtime understands only the
@@ -17,7 +21,7 @@ export function firstPartyStatusPanelPresetFilesForLocale(
     locale === "zh-CN" ? " 项视图诊断" : " player-view diagnostics";
   return {
     ...applicationPresetFilesForLocale(locale),
-    "preset.yaml": `format: narraeon.play-preset/v3
+    [orchestrationManifest]: `format: ${orchestrationFormat}
 name: status-panel-recommended
 callChain: call-chain.yaml
 playPrompts: {}
@@ -50,10 +54,6 @@ extensions:
   - renderers/player-view-status.html
   - scripts/player-view-status.js
   - assets/player-view-status.css
-`,
-    "call-chain.yaml": `format: narraeon.play-call-chain/v1
-narrative: []
-followups: []
 `,
 
     "renderers/player-view-status.html": `<!doctype html>

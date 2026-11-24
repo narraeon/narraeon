@@ -27,9 +27,12 @@ test("Runtime 的预览校验原因保留到当前输入修复", async () => {
     request: <T>() =>
       invalid
         ? Promise.reject(
-            new RuntimeRequestError("预设引用的文件不存在：blocks/missing.md", {
-              protocolCode: "preset_invalid",
-            }),
+            new RuntimeRequestError(
+              "编排方案引用的文件不存在：blocks/missing.md",
+              {
+                protocolCode: "preset_invalid",
+              },
+            ),
           )
         : Promise.resolve(previewFixture() as T),
   };
@@ -51,20 +54,20 @@ test("Runtime 的预览校验原因保留到当前输入修复", async () => {
     }),
   );
   fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
-  await screen.findByText("预设引用的文件不存在：blocks/missing.md");
+  await screen.findByText("编排方案引用的文件不存在：blocks/missing.md");
   invalid = false;
   fireEvent.change(screen.getByLabelText("预览玩家输入"), {
     target: { value: "修复后的预览输入" },
   });
   expect(
-    screen.queryByText("预设引用的文件不存在：blocks/missing.md"),
+    screen.queryByText("编排方案引用的文件不存在：blocks/missing.md"),
   ).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "生成真实预览" }));
   await screen.findByRole("heading", { name: "编译通过" });
 });
 
 test.each(["success", "failure"])(
-  "切换预设后丢弃旧预览的迟到 %s，返回旧预设也不复活旧结果",
+  "切换编排方案后丢弃旧预览的迟到 %s，返回旧编排方案也不复活旧结果",
   async (outcome) => {
     const deferred = Promise.withResolvers<PromptPreviewData>();
     const started = Promise.withResolvers<void>();
@@ -78,7 +81,7 @@ test.each(["success", "failure"])(
     library.presets.push({
       ...library.presets[0]!,
       id: "second",
-      name: "另一份预设",
+      name: "另一份编排方案",
     });
     const component = (presetId: string) =>
       createElement(PromptPreviewScreen, {
@@ -462,7 +465,7 @@ function presetLibrary() {
     presets: [
       {
         id: "preset-current",
-        name: "克制预设",
+        name: "克制编排方案",
         revision: "rev-1",
         files: {},
         validation: { status: "valid" as const },

@@ -1,4 +1,8 @@
-import { applicationPresetFilesForLocale } from "../../shared/application-preset-files.ts";
+import {
+  applicationPresetFilesForLocale,
+  orchestrationFormat,
+  orchestrationManifest,
+} from "../../shared/application-preset-files.ts";
 import {
   parseDisplayRegex,
   DisplayRegexError,
@@ -39,11 +43,11 @@ import {
   retiredBuiltinReplacements,
 } from "../../shared/prompt-arrangement.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument, visit, isAlias } from "yaml";
+import { parseDocument, visit, isAlias, isScalar } from "yaml";
 
 import {
   defaultPortableContentTreeLimits,
@@ -65,6 +69,7 @@ import {
   type PlayPresetPromptRole,
 } from "../../shared/play-preset-prompt-roles.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import { v1Protocol, v1RuntimeRequestBodyLimit } from "../../protocol/v1.ts";
 export type PlayPresetArtifactStrategy =
   "append" | "replace" | "upsert" | "transient" | "hidden";
 
@@ -234,7 +239,8 @@ export interface PlayPresetDefinition {
   format:
     | "narraeon.play-preset/v1"
     | "narraeon.play-preset/v2"
-    | "narraeon.play-preset/v3";
+    | "narraeon.play-preset/v3"
+    | typeof orchestrationFormat;
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
   mergeConsecutiveMessages?: boolean;
@@ -253,7 +259,7 @@ export interface PlayPresetDefinition {
 
 /**
  * The frame plus its block library, projected in the shape the prompt compiler
- * already consumes. A preset owns both halves now: `frame.yaml` decides which
+ * already consumes. An orchestration owns both halves now: `frame.yaml` decides which
  * blocks are enabled and in what order, while unlisted blocks stay in the tree
  * as an editable library.
  */
@@ -348,17 +354,18 @@ export function isPlayPresetBinding(
   );
 }
 
-/** A frozen v3 binding validates against the catalog identities it captured.
+/** A frozen overlay binding validates against the catalog identities it captured.
  * Newly shipped defaults belong to new sends, never to a saved request. */
 function frozenDefinitionMatches(
   snapshot: Record<string, unknown>,
   current: PlayPresetDefinition,
   files: Record<string, string>,
 ): boolean {
-  if (current.format !== "narraeon.play-preset/v3")
+  if (!isPromptOverlay(current.format))
     return isDeepStrictEqual(normalizedFrozenDefinition(snapshot), current);
   try {
-    const source = readYaml(files, "preset.yaml", "preset.yaml");
+    const path = presetManifest(files);
+    const source = readYaml(files, path, path);
     const expected = { ...current };
     const normalizedSnapshot = { ...snapshot };
     for (const key of ["playPrompts", "authorPrompts"] as const) {
@@ -563,6 +570,9 @@ interface StoredDocument {
 
 const defaultLimits: PortableContentTreeLimits =
   defaultPortableContentTreeLimits;
+const legacyManifest = "preset.yaml";
+const legacyLibraryFilename = "file-native-play-presets.json";
+const orchestrationLibraryFilename = "file-native-orchestrations.json";
 const revisionPattern = /^rev-[0-9a-f]{64}$/u;
 const namePattern = /^[^\r\n]{1,160}$/u;
 export const maxPlayPresetFollowups = 16;
@@ -576,10 +586,12 @@ const maxArtifactBytesCeiling = 1_048_576;
  */
 export class FileNativePlayPresetStore {
   readonly #path: string;
+  readonly #legacyPath: string;
   readonly #root: string;
   readonly #limits: PortableContentTreeLimits;
   readonly #locale: () => AppLocale;
   #tail: Promise<void> = Promise.resolve();
+  #opening: Promise<StoredDocument> | undefined;
   /**
    * Set when an unreadable library was moved aside on load. Surfaced as a
    * workspace diagnostic so the recovery is never silent.
@@ -594,7 +606,8 @@ export class FileNativePlayPresetStore {
     } = {},
   ) {
     this.#root = root;
-    this.#path = join(root, "file-native-play-presets.json");
+    this.#path = join(root, orchestrationLibraryFilename);
+    this.#legacyPath = join(root, legacyLibraryFilename);
     this.#limits = {
       ...defaultLimits,
       ...options.limits,
@@ -609,10 +622,7 @@ export class FileNativePlayPresetStore {
   async initialize(): Promise<void> {
     await this.#change(async () => {
       const document = await this.#read();
-      const migrated = this.#markLegacyBuiltinDefault(document);
-      const synchronized = this.#synchronizeBuiltinDefault(document);
-      const customizations = this.#migratePromptCustomizations(document);
-      if (migrated || synchronized || customizations)
+      if (this.#synchronizeBuiltinDefault(document))
         await this.#write(document);
     });
   }
@@ -669,7 +679,7 @@ export class FileNativePlayPresetStore {
       if (files === undefined)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "Play-preset revision is missing",
+          "Orchestration revision is missing",
         );
       const stored = this.#stored(randomUUID(), source.name, files);
       stored.scriptsEnabled = source.scriptsEnabled;
@@ -710,62 +720,55 @@ export class FileNativePlayPresetStore {
         }
         files = applyPlayPresetStructuredEditor(input.files, structure);
       }
+      const repairLegacyDraft =
+        stored.draftRevision !== undefined &&
+        presetManifest(stored.revisions[stored.draftRevision]!) ===
+          legacyManifest;
+      const candidate = parsePlayPresetFiles(files, this.#limits);
       if (
+        candidate.kind === "valid" &&
+        presetManifest(files) === legacyManifest &&
         previous.kind === "valid" &&
-        previous.definition.followupItems !== undefined
+        previous.definition.format === orchestrationFormat &&
+        !repairLegacyDraft
+      )
+        throw new FileNativePlayPresetError(
+          "readonly_prompt_removed",
+          "An orchestration cannot be replaced with a legacy orchestration",
+        );
+      if (
+        candidate.kind === "valid" &&
+        previous.kind === "valid" &&
+        previous.definition.followupItems !== undefined &&
+        candidate.definition.followupItems === undefined &&
+        !repairLegacyDraft
       ) {
-        const candidate = readYaml(files, "call-chain.yaml", "call-chain.yaml");
-        if (candidate.format !== "narraeon.play-call-chain/v2")
-          throw new FileNativePlayPresetError(
-            "readonly_followup_removed",
-            "Ordered followups cannot downgrade to v1",
-          );
-        parseFollowupItems(
-          candidate.followupItems,
-          parseFollowups(candidate.followups, files),
+        throw new FileNativePlayPresetError(
+          "readonly_followup_removed",
+          "Ordered follow-ups cannot be replaced with the legacy format",
         );
       }
+      files = upgradeValidOrchestration(files, this.#limits);
       if (
+        candidate.kind === "valid" &&
         previous.kind === "valid" &&
         previous.definition.playPrompts !== undefined
       ) {
-        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
-        if (
-          candidate.format !== "narraeon.play-preset/v2" &&
-          candidate.format !== "narraeon.play-preset/v3"
-        )
-          throw new FileNativePlayPresetError(
-            "readonly_prompt_removed",
-            "Ordered presets cannot downgrade to v1",
-          );
-        const candidates =
-          candidate.format === "narraeon.play-preset/v3"
-            ? parsePromptArrangement(candidate.playPrompts)
-            : parseOrderedPlayPrompts(candidate.playPrompts);
+        const definition = assertCurrentOrchestration(
+          files,
+          this.#limits,
+          this.#locale(),
+        );
         assertReadonlyPromptsRetained(
           previous.definition.playPrompts,
-          candidates,
+          definition.playPrompts ?? [],
         );
+        if (previous.definition.authorPrompts !== undefined)
+          assertReadonlyPromptsRetained(
+            previous.definition.authorPrompts,
+            definition.authorPrompts ?? [],
+          );
       }
-      if (
-        previous.kind === "valid" &&
-        previous.definition.authorPrompts !== undefined
-      ) {
-        const candidate = readYaml(files, "preset.yaml", "preset.yaml");
-        const entries =
-          candidate.format === "narraeon.play-preset/v3"
-            ? parsePromptArrangement(
-                candidate.authorPrompts,
-                builtinAuthorPrompts("en"),
-                false,
-              )
-            : parseOrderedAuthorPrompts(candidate.authorPrompts);
-        assertReadonlyPromptsRetained(
-          previous.definition.authorPrompts,
-          entries,
-        );
-      }
-      files = upgradeValidOrderedPromptFormat(files, this.#limits);
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
       stored.revisions[revision] = cloneFiles(files);
@@ -788,7 +791,7 @@ export class FileNativePlayPresetStore {
       if (!stored.enabled)
         throw new FileNativePlayPresetError(
           "preset_disabled",
-          "A disabled play preset cannot become the current selection",
+          "A disabled orchestration cannot become the current selection",
         );
       const preset = this.#view(stored);
       const candidateValidation = preset.draft?.validation ?? preset.validation;
@@ -814,7 +817,7 @@ export class FileNativePlayPresetStore {
     if (!stored.enabled)
       throw new FileNativePlayPresetError(
         "preset_disabled",
-        "The current play preset is disabled; enable it or choose another preset",
+        "The current orchestration is disabled; enable it or choose another orchestration",
       );
     return this.bindRevision(document.currentPresetId);
   }
@@ -835,7 +838,7 @@ export class FileNativePlayPresetStore {
     if (files === undefined)
       throw new FileNativePlayPresetError(
         "revision_not_found",
-        "The requested play-preset revision was not found",
+        "The requested orchestration revision was not found",
       );
     // A frozen revision may still name a retired composite builtin; the
     // ordered-prompt parser reads it as the blocks that replaced it, so old
@@ -888,7 +891,7 @@ export class FileNativePlayPresetStore {
         if (fallback === undefined) {
           throw new FileNativePlayPresetError(
             "cannot_disable_current_preset",
-            "The only current play preset cannot be disabled; select another enabled preset first",
+            "The only current orchestration cannot be disabled; select another enabled orchestration first",
           );
         }
         document.currentPresetId = fallback.id;
@@ -972,10 +975,27 @@ export class FileNativePlayPresetStore {
   async exportPortable(id: string): Promise<ContentTreeFile[]> {
     await this.#tail;
     const stored = findStored(await this.#read(), id);
-    const files = stored.revisions[stored.currentRevision]!;
-    return Object.keys(files)
+    const files = upgradeValidOrchestration(
+      stored.revisions[stored.currentRevision]!,
+      this.#limits,
+    );
+    const locale = this.#locale();
+    assertCurrentOrchestration(files, this.#limits, locale);
+    const portable = Object.keys(files)
       .sort()
       .map((path) => ({ path, contents: files[path]! }));
+    const importRequest = JSON.stringify({
+      protocol: v1Protocol,
+      request: { type: "play.import", name: stored.name, files: portable },
+    });
+    if (Buffer.byteLength(importRequest, "utf8") > v1RuntimeRequestBodyLimit)
+      throw new FileNativePlayPresetError(
+        "orchestration_export_too_large",
+        locale === "zh-CN"
+          ? "这份编排方案的 JSON 超出导入请求大小上限。请减少资源或提示词的体积，保存并应用后再导出。"
+          : "This orchestration's JSON exceeds the import request size limit. Reduce the size of its resources or prompts, then save and apply before exporting.",
+      );
+    return portable;
   }
 
   async importPortable(input: {
@@ -983,12 +1003,11 @@ export class FileNativePlayPresetStore {
     files: readonly ContentTreeFile[] | Record<string, string>;
   }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
     // A released preset gains the current builtins at import, as at upgrade.
-    const files = upgradeOrderedPromptFormat(
+    const files = upgradeValidOrchestration(
       toFileMap(input.files, this.#limits),
+      this.#limits,
     );
-    const parsed = parsePlayPresetFiles(files, this.#limits);
-    if (parsed.kind === "invalid") throw parsed.error;
-    toPlayPresetStructuredEditor(parsed.definition);
+    assertCurrentOrchestration(files, this.#limits, this.#locale());
     return this.#change(async () => {
       const document = await this.#read();
       const stored = this.#stored(randomUUID(), input.name, files);
@@ -1037,9 +1056,10 @@ export class FileNativePlayPresetStore {
       raw = await readFile(this.#path, "utf8");
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const document = this.#defaultDocument();
-      await this.#write(document);
-      return document;
+      this.#opening ??= this.#openMissingLibrary().finally(() => {
+        this.#opening = undefined;
+      });
+      return structuredClone(await this.#opening);
     }
     try {
       // Validation checks the structure and hash of every stored revision, so a library
@@ -1051,31 +1071,68 @@ export class FileNativePlayPresetStore {
       this.#validated = { raw, document: structuredClone(document) };
       return document;
     } catch (error: unknown) {
-      const quarantined = await this.#quarantine();
-      this.recovery = {
-        quarantinedPath: quarantined,
-        message:
-          error instanceof Error
-            ? error.message
-            : "The play-preset library could not be parsed",
-      };
+      await this.#quarantine(this.#path, orchestrationLibraryFilename, error);
       const document = this.#defaultDocument();
       await this.#write(document);
       return document;
     }
   }
 
+  async #openMissingLibrary(): Promise<StoredDocument> {
+    let raw: Buffer | undefined;
+    try {
+      raw = await readFile(this.#legacyPath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let document: StoredDocument | undefined;
+    if (raw !== undefined) {
+      try {
+        const json = new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: true,
+        }).decode(raw);
+        document = parseStoredDocument(
+          JSON.parse(json),
+          this.#limits,
+          "legacy",
+        );
+      } catch (error: unknown) {
+        await this.#quarantine(this.#legacyPath, legacyLibraryFilename, error);
+      }
+    }
+    if (document === undefined) {
+      document = this.#defaultDocument();
+      await this.#write(document);
+    } else {
+      this.#migrateEndpoints(document);
+      this.#synchronizeBuiltinDefault(document);
+      await this.#write(document, { verify: true });
+    }
+    return document;
+  }
+
   /**
    * Move the unreadable library aside rather than overwriting it. The user
    * keeps the original bytes and can hand-repair or discard them.
    */
-  async #quarantine(): Promise<string> {
+  async #quarantine(
+    path: string,
+    filename: string,
+    error: unknown,
+  ): Promise<void> {
     const target = join(
       this.#root,
-      `file-native-play-presets.unreadable-${Date.now()}.json`,
+      `${filename.slice(0, -5)}.unreadable-${Date.now()}-${randomUUID()}.json`,
     );
-    await rename(this.#path, target);
-    return target;
+    await rename(path, target);
+    this.recovery = {
+      quarantinedPath: target,
+      message:
+        error instanceof Error
+          ? error.message
+          : "The orchestration library could not be parsed",
+    };
   }
 
   #defaultDocument(): StoredDocument {
@@ -1092,64 +1149,28 @@ export class FileNativePlayPresetStore {
     };
   }
 
-  #markLegacyBuiltinDefault(document: StoredDocument): boolean {
-    if (document.presets.length !== 1) return false;
-    const [preset] = document.presets;
-    if (
-      preset === undefined ||
-      preset.builtinDefault === true ||
-      preset.name !== "default" ||
-      preset.draftRevision !== undefined
-    )
-      return false;
-    const files = preset.revisions[preset.currentRevision];
-    if (
-      files === undefined ||
-      (!isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("en")) &&
-        !isDeepStrictEqual(files, defaultPlayPresetFilesForLocale("zh-CN"))) ||
-      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("en")) ||
-      isDeepStrictEqual(files, legacyDefaultPlayPresetFilesForLocale("zh-CN"))
-    )
-      return false;
-    preset.builtinDefault = true;
-    return true;
-  }
-
   /**
-   * Convert released ordered lists to sparse customizations exactly once.
+   * Convert the live endpoints of a released library once.
    * Original revisions remain immutable. Current and valid draft endpoints
    * advance together in one atomic library replacement; invalid drafts retain
-   * their original bytes for repair. Catalog evolution never changes v3 files.
+   * their original bytes for repair.
    */
-  #migratePromptCustomizations(document: StoredDocument): boolean {
-    let changed = false;
+  #migrateEndpoints(document: StoredDocument): void {
+    const migrate = (stored: StoredPreset, revision: string): string => {
+      const files = stored.revisions[revision]!;
+      const migrated = upgradeValidOrchestration(files, this.#limits);
+      if (migrated === files) return revision;
+      const next = revisionForFiles(migrated, this.#limits);
+      stored.revisions[next] = migrated;
+      return next;
+    };
     for (const stored of document.presets) {
-      const current = stored.revisions[stored.currentRevision];
-      if (current !== undefined) {
-        const migrated = upgradeValidOrderedPromptFormat(current, this.#limits);
-        if (migrated !== current) {
-          const revision = revisionForFiles(migrated, this.#limits);
-          stored.revisions[revision] = cloneFiles(migrated);
-          stored.currentRevision = revision;
-          changed = true;
-        }
-      }
-      const draft =
-        stored.draftRevision === undefined
-          ? undefined
-          : stored.revisions[stored.draftRevision];
-      if (draft !== undefined) {
-        const migrated = upgradeValidOrderedPromptFormat(draft, this.#limits);
-        if (migrated !== draft) {
-          const revision = revisionForFiles(migrated, this.#limits);
-          stored.revisions[revision] = cloneFiles(migrated);
-          if (revision === stored.currentRevision) delete stored.draftRevision;
-          else stored.draftRevision = revision;
-          changed = true;
-        }
-      }
+      stored.currentRevision = migrate(stored, stored.currentRevision);
+      if (stored.draftRevision === undefined) continue;
+      const draft = migrate(stored, stored.draftRevision);
+      if (draft === stored.currentRevision) delete stored.draftRevision;
+      else stored.draftRevision = draft;
     }
-    return changed;
   }
 
   #synchronizeBuiltinDefault(document: StoredDocument): boolean {
@@ -1176,15 +1197,15 @@ export class FileNativePlayPresetStore {
     rawFiles: Record<string, string>,
   ): StoredPreset {
     const name = normalizeName(rawName);
-    const files = cloneFiles(
-      upgradeValidOrderedPromptFormat(rawFiles, this.#limits),
-    );
+    const files = upgradeValidOrchestration(rawFiles, this.#limits);
+    if (Object.hasOwn(files, legacyManifest))
+      assertCurrentOrchestration(files, this.#limits, this.#locale());
     const revision = revisionForFiles(files, this.#limits);
     return {
       id,
       name,
       currentRevision: revision,
-      revisions: { [revision]: files },
+      revisions: { [revision]: cloneFiles(files) },
       enabled: true,
       scriptsEnabled: true,
     };
@@ -1195,14 +1216,14 @@ export class FileNativePlayPresetStore {
     if (files === undefined)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "The current play-preset revision does not exist",
+        "The current orchestration revision does not exist",
       );
     const view: FileNativePlayPresetView = {
       id: stored.id,
       name: stored.name,
       revision: stored.currentRevision,
       files: cloneFiles(files),
-      ...editorProjection(files, this.#limits),
+      ...editorProjection(files, this.#limits, this.#locale()),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
     };
@@ -1211,25 +1232,49 @@ export class FileNativePlayPresetStore {
       if (draftFiles === undefined)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "The play-preset draft revision does not exist",
+          "The orchestration draft revision does not exist",
         );
       view.draft = {
         revision: stored.draftRevision,
         files: cloneFiles(draftFiles),
-        ...editorProjection(draftFiles, this.#limits),
+        ...editorProjection(draftFiles, this.#limits, this.#locale()),
       };
     }
     return view;
   }
 
-  async #write(document: StoredDocument): Promise<void> {
+  async #write(
+    document: StoredDocument,
+    options?: { verify: true },
+  ): Promise<void> {
     await mkdir(this.#root, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await rename(temporary, this.#path);
+    const raw = `${JSON.stringify(
+      {
+        schemaVersion: document.schemaVersion,
+        currentOrchestrationId: document.currentPresetId,
+        orchestrations: document.presets,
+      },
+      null,
+      2,
+    )}\n`;
+    try {
+      await writeFile(temporary, raw, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      if (options?.verify)
+        parseStoredDocument(
+          JSON.parse(await readFile(temporary, "utf8")),
+          this.#limits,
+        );
+      await rename(temporary, this.#path);
+      this.#validated = { raw, document: structuredClone(document) };
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 }
 
@@ -1253,8 +1298,8 @@ export function validatePlayPresetFiles(
       status: "invalid",
       code: "play_preset_invalid",
       message:
-        error instanceof Error ? error.message : "Play preset is invalid",
-      location: "preset.yaml",
+        error instanceof Error ? error.message : "Orchestration is invalid",
+      location: presetManifest(files),
     };
   }
 }
@@ -1262,16 +1307,17 @@ export function validatePlayPresetFiles(
 function editorProjection(
   files: Record<string, string>,
   limits: PortableContentTreeLimits,
+  locale: AppLocale,
 ): Pick<FileNativePlayPresetView, "validation" | "structure"> {
   const validation = validatePlayPresetFiles(files, limits);
   if (validation.status === "invalid") return { validation };
   const parsed = parsePlayPresetFiles(files, limits);
   if (parsed.kind === "invalid") return { validation };
   try {
-    return {
-      validation,
-      structure: toPlayPresetStructuredEditor(parsed.definition),
-    };
+    const structure = toPlayPresetStructuredEditor(parsed.definition);
+    if (parsed.definition.format === "narraeon.play-preset/v1")
+      structure.migrationNotice = legacyOrchestrationMigrationNotice(locale);
+    return { validation, structure };
   } catch (error: unknown) {
     return {
       validation: {
@@ -1281,7 +1327,7 @@ function editorProjection(
         message:
           error instanceof Error
             ? error.message
-            : "Legacy preset cannot be migrated",
+            : "Legacy orchestration cannot be migrated",
       },
     };
   }
@@ -1311,12 +1357,6 @@ export function toPlayPresetStructuredEditor(
           )
         : withModelPrompt(definition.playPrompts, "play"),
     ),
-    ...(definition.playPrompts
-      ? {}
-      : {
-          migrationNotice:
-            "旧世界指令与材料归并到首次世界位置，其他提示相对顺序及正文保留；历史请求不变。保存后采用统一编排。",
-        }),
     callChainPath: definition.callChainPath,
     ...(definition.settingImprovementPrompt === undefined
       ? {}
@@ -1345,13 +1385,14 @@ export function applyPlayPresetStructuredEditor(
   files: Record<string, string>,
   input: PlayPresetStructuredEditor,
 ): Record<string, string> {
-  const next = cloneFiles(upgradeOrderedPromptFormat(files));
-  const presetSource = next["preset.yaml"];
+  const next = cloneFiles(upgradeValidOrchestration(files, defaultLimits));
+  const path = presetManifest(next);
+  const presetSource = next[path];
   const callChainSource = next[input.callChainPath];
   if (presetSource === undefined || callChainSource === undefined)
     throw new FileNativePlayPresetError(
       "structured_editor_missing_file",
-      "Structured editing could not find preset.yaml or call-chain.yaml",
+      `Structured editing could not find ${path} or call-chain.yaml`,
     );
   const preset = parseDocument(presetSource, {
     schema: "core",
@@ -1366,7 +1407,7 @@ export function applyPlayPresetStructuredEditor(
   if (preset.errors.length > 0 || callChain.errors.length > 0)
     throw new FileNativePlayPresetError(
       "structured_editor_yaml_invalid",
-      "Structured editing can be applied only to parseable preset/call-chain YAML",
+      "Structured editing requires parseable orchestration and call-chain YAML",
     );
   preset.set("name", input.name);
   if (input.mergeConsecutiveMessages !== undefined)
@@ -1384,7 +1425,7 @@ export function applyPlayPresetStructuredEditor(
       ),
     );
   if (input.playPrompts !== undefined) {
-    preset.set("format", "narraeon.play-preset/v3");
+    preset.set("format", orchestrationFormat);
     preset.set(
       "playPrompts",
       customizePromptArrangement(
@@ -1437,7 +1478,8 @@ export function applyPlayPresetStructuredEditor(
       maxArtifactBytes: followup.maxArtifactBytes,
     })),
   );
-  next["preset.yaml"] = String(preset);
+  delete next[legacyManifest];
+  next[orchestrationManifest] = String(preset);
   next[input.callChainPath] = String(callChain);
   return next;
 }
@@ -1600,9 +1642,10 @@ export function parsePlayPresetFiles(
   try {
     const normalizedLimits = { ...defaultLimits, ...limits };
     validateFileTree(files, normalizedLimits);
-    assertRequiredPresetFiles(files);
-    const preset = readYaml(files, "preset.yaml", "preset.yaml");
-    assertNoEditableMechanics(preset, "preset.yaml");
+    const path = presetManifest(files);
+    assertRequiredPresetFiles(files, path);
+    const preset = readYaml(files, path, path);
+    assertNoEditableMechanics(preset, path);
     assertKnownKeys(
       preset,
       [
@@ -1617,24 +1660,27 @@ export function parsePlayPresetFiles(
         "playerViewPanels",
         "extensions",
       ],
-      "preset.yaml",
+      path,
     );
     const callChainPath = stringValue(preset.callChain);
     if (callChainPath !== "call-chain.yaml")
       invalid(
         "call_chain_path_invalid",
         "Entry callChain must be call-chain.yaml",
-        "preset.yaml",
+        path,
       );
     if (
-      preset.format !== "narraeon.play-preset/v1" &&
-      preset.format !== "narraeon.play-preset/v2" &&
-      preset.format !== "narraeon.play-preset/v3"
+      (preset.format !== orchestrationFormat &&
+        preset.format !== "narraeon.play-preset/v1" &&
+        preset.format !== "narraeon.play-preset/v2" &&
+        preset.format !== "narraeon.play-preset/v3") ||
+      (path === orchestrationManifest) !==
+        (preset.format === orchestrationFormat)
     )
       invalid(
         "preset_format_invalid",
-        "preset.yaml format must be narraeon.play-preset/v1",
-        "preset.yaml",
+        `Unsupported orchestration format in ${path}. Use ${orchestrationFormat}`,
+        path,
       );
     if (
       preset.format === "narraeon.play-preset/v1" &&
@@ -1642,17 +1688,13 @@ export function parsePlayPresetFiles(
         preset.authorPrompts !== undefined ||
         preset.mergeConsecutiveMessages !== undefined)
     )
-      invalid(
-        "preset_format_invalid",
-        "Ordered prompts require v2",
-        "preset.yaml",
-      );
+      invalid("preset_format_invalid", "Ordered prompts require v2", path);
     const name = stringValue(preset.name);
     if (!namePattern.test(name.trim()) || name.includes(String.fromCharCode(0)))
       invalid(
         "invalid_name",
-        "Play-preset name must contain 1 to 160 characters",
-        "preset.yaml",
+        "Orchestration name must contain 1 to 160 characters",
+        path,
       );
     const callChain = readYaml(files, callChainPath, "call-chain.yaml");
     assertNoEditableMechanics(callChain, callChainPath);
@@ -1684,7 +1726,7 @@ export function parsePlayPresetFiles(
         : parsePromptBlocks(
             [preset.settingImprovement],
             files,
-            "preset.yaml#settingImprovement",
+            `${path}#settingImprovement`,
           )[0];
     const followups = parseFollowups(callChain.followups, files);
     if (
@@ -1720,30 +1762,27 @@ export function parsePlayPresetFiles(
                 preset.mergeConsecutiveMessages,
               ),
             }),
-        ...(preset.format === "narraeon.play-preset/v2" ||
-        preset.format === "narraeon.play-preset/v3"
+        ...(preset.format !== "narraeon.play-preset/v1"
           ? {
-              playPrompts:
-                preset.format === "narraeon.play-preset/v3"
-                  ? parsePromptArrangement(preset.playPrompts)
-                  : parseReleasedOrderedPrompts(preset.playPrompts),
+              playPrompts: isPromptOverlay(preset.format)
+                ? parsePromptArrangement(preset.playPrompts)
+                : parseReleasedOrderedPrompts(preset.playPrompts),
             }
           : {}),
         ...(preset.authorPrompts === undefined
           ? {}
           : {
-              authorPrompts:
-                preset.format === "narraeon.play-preset/v3"
-                  ? parsePromptArrangement(
-                      preset.authorPrompts,
-                      builtinAuthorPrompts("en"),
-                      false,
-                    )
-                  : parseReleasedOrderedPrompts(
-                      preset.authorPrompts,
-                      builtinAuthorPrompts("en"),
-                      false,
-                    ),
+              authorPrompts: isPromptOverlay(preset.format)
+                ? parsePromptArrangement(
+                    preset.authorPrompts,
+                    builtinAuthorPrompts("en"),
+                    false,
+                  )
+                : parseReleasedOrderedPrompts(
+                    preset.authorPrompts,
+                    builtinAuthorPrompts("en"),
+                    false,
+                  ),
             }),
         name: name.trim(),
         callChainPath,
@@ -1765,7 +1804,7 @@ export function parsePlayPresetFiles(
       kind: "invalid",
       error: new FileNativePlayPresetError(
         "play_preset_invalid",
-        error instanceof Error ? error.message : "Play preset is invalid",
+        error instanceof Error ? error.message : "Orchestration is invalid",
       ),
     };
   }
@@ -3069,7 +3108,7 @@ function assertNoEditableMechanics(value: unknown, location: string): void {
     )
       invalid(
         "editable_mechanics_forbidden",
-        `A play preset cannot store Runtime tool schemas or results: ${key}`,
+        `An orchestration cannot store Runtime tool schemas or results: ${key}`,
         location,
       );
     assertNoEditableMechanics(child, `${location}.${key}`);
@@ -3099,7 +3138,7 @@ function validateFileTree(
   if (entries.length > limits.maxFiles)
     invalid(
       "too_many_files",
-      "Play-preset file count exceeds the safety limit",
+      "Orchestration file count exceeds the safety limit",
       "preset.yaml",
     );
   let total = 0;
@@ -3109,30 +3148,34 @@ function validateFileTree(
     if (typeof contents !== "string")
       invalid(
         "text_encoding_invalid",
-        `A play-preset file must be UTF-8 text: ${path}`,
+        `An orchestration file must be UTF-8 text: ${path}`,
         path,
       );
     if (Buffer.from(contents, "utf8").toString("utf8") !== contents)
       invalid(
         "text_encoding_invalid",
-        `A play-preset file is not valid UTF-8 text: ${path}`,
+        `An orchestration file is not valid UTF-8 text: ${path}`,
         path,
       );
     const bytes = Buffer.byteLength(contents, "utf8");
     if (bytes > limits.maxFileBytes)
-      invalid("file_too_large", `Play-preset file is too large: ${path}`, path);
+      invalid(
+        "file_too_large",
+        `Orchestration file is too large: ${path}`,
+        path,
+      );
     total += bytes;
     if (total > limits.maxTotalBytes)
       invalid(
         "total_too_large",
-        "Total play-preset size exceeds the safety limit",
+        "Total orchestration size exceeds the safety limit",
         "preset.yaml",
       );
     const key = portableContentTreePathKey(path);
     if (keys.has(key))
       invalid(
         "duplicate_path",
-        `Play-preset path is duplicated: ${path}`,
+        `Orchestration path is duplicated: ${path}`,
         path,
       );
     keys.add(key);
@@ -3147,21 +3190,46 @@ function validateFileTree(
  * schema accepts it. Invalid revisions remain inspectable so the user can
  * delete them through the library surface.
  */
-function assertRequiredPresetFiles(files: Record<string, string>): void {
-  if (files["preset.yaml"] === undefined)
+function presetManifest(
+  files: Record<string, string>,
+): typeof orchestrationManifest | typeof legacyManifest {
+  return files[orchestrationManifest] === undefined &&
+    files[legacyManifest] !== undefined
+    ? legacyManifest
+    : orchestrationManifest;
+}
+
+function isPromptOverlay(format: unknown): boolean {
+  return format === orchestrationFormat || format === "narraeon.play-preset/v3";
+}
+
+function assertRequiredPresetFiles(
+  files: Record<string, string>,
+  path: string,
+): void {
+  if (files[path] === undefined)
+    invalid("preset_missing", `Orchestration is missing ${path}`, path);
+  if (
+    files[orchestrationManifest] !== undefined &&
+    files[legacyManifest] !== undefined
+  )
     invalid(
-      "preset_missing",
-      "Play preset is missing preset.yaml",
-      "preset.yaml",
+      "duplicate_manifest",
+      "An orchestration can only contain one manifest",
+      orchestrationManifest,
     );
   if (files["call-chain.yaml"] === undefined)
     invalid(
       "call_chain_missing",
-      "Play preset is missing call-chain.yaml",
+      "Orchestration is missing call-chain.yaml",
       "call-chain.yaml",
     );
   if (files["frame.yaml"] === undefined)
-    invalid("frame_missing", "Preset is missing frame.yaml", "frame.yaml");
+    invalid(
+      "frame_missing",
+      "Orchestration is missing frame.yaml",
+      "frame.yaml",
+    );
 }
 
 function validatePath(path: string): void {
@@ -3177,18 +3245,23 @@ function validatePath(path: string): void {
   )
     invalid(
       "path_invalid",
-      `Play-preset path is unsafe: ${path}`,
-      path || "preset.yaml",
+      `Orchestration path is unsafe: ${path}`,
+      path || orchestrationManifest,
     );
   if (
-    path !== "preset.yaml" &&
+    path !== orchestrationManifest &&
+    path !== legacyManifest &&
     path !== "call-chain.yaml" &&
     path !== "frame.yaml" &&
     !/^(?:blocks\/[^/]+\.md|prompts\/[^/]+\.md|regex\/[^/]+\.yaml|renderers\/[^/]+\.html|scripts\/[^/]+\.js|assets\/[^/]+(?:\/[^/]+)*)$/u.test(
       path,
     )
   )
-    invalid("path_invalid", `Preset does not support file path: ${path}`, path);
+    invalid(
+      "path_invalid",
+      `Orchestration does not support file path: ${path}`,
+      path,
+    );
 }
 
 function readYaml(
@@ -3200,7 +3273,7 @@ function readYaml(
   if (source === undefined || source.trim() === "")
     invalid(
       "required_file_missing",
-      `Play-preset file does not exist: ${path}`,
+      `Orchestration file does not exist: ${path}`,
       location,
     );
   const document = parseDocument(source, {
@@ -3209,13 +3282,13 @@ function readYaml(
     strict: true,
   });
   if (document.errors.length > 0 || document.warnings.length > 0)
-    invalid("unsafe_yaml", `Play-preset YAML is invalid: ${path}`, location);
+    invalid("unsafe_yaml", `Orchestration YAML is invalid: ${path}`, location);
   visit(document, {
     Node(_, node) {
       if (isAlias(node) || ("anchor" in node && node.anchor) || node.tag)
         invalid(
           "unsafe_yaml",
-          `Play-preset YAML uses forbidden anchors, aliases or tags: ${path}`,
+          `Orchestration YAML uses forbidden anchors, aliases or tags: ${path}`,
           location,
         );
     },
@@ -3223,7 +3296,7 @@ function readYaml(
       if (String(pair.key) === "<<")
         invalid(
           "unsafe_yaml",
-          `Play-preset YAML uses forbidden merge keys: ${path}`,
+          `Orchestration YAML uses forbidden merge keys: ${path}`,
           location,
         );
     },
@@ -3232,7 +3305,7 @@ function readYaml(
   if (!isRecord(value))
     invalid(
       "yaml_shape_invalid",
-      `Top-level play-preset YAML must be a map: ${path}`,
+      `Top-level orchestration YAML must be a map: ${path}`,
       location,
     );
   return value;
@@ -3267,13 +3340,13 @@ function toFileMap(
     if (file.encoding !== undefined)
       invalid(
         "text_encoding_invalid",
-        `Play presets accept only UTF-8 text: ${file.path}`,
+        `Orchestrations accept only UTF-8 text: ${file.path}`,
         file.path,
       );
     if (files[file.path] !== undefined)
       invalid(
         "duplicate_path",
-        `Play-preset path is duplicated: ${file.path}`,
+        `Orchestration path is duplicated: ${file.path}`,
         file.path,
       );
     files[file.path] = file.contents;
@@ -3282,36 +3355,130 @@ function toFileMap(
   return files;
 }
 
-function upgradeValidOrderedPromptFormat(
+function legacyOrchestrationMigrationNotice(locale: AppLocale): string {
+  return locale === "zh-CN"
+    ? "这份旧编排方案需要整理后才能复制或导出。请打开「游玩」或「设定完善」，缩短较长的提示词，保存并应用。原文可在「高级文件」查看。"
+    : "This legacy orchestration needs editing before it can be copied or exported. In Play or Setting improvement, shorten the longest prompts, then save and apply. The original text is available in Advanced files.";
+}
+
+function assertCurrentOrchestration(
+  files: Record<string, string>,
+  limits: PortableContentTreeLimits,
+  locale: AppLocale,
+): PlayPresetDefinition {
+  const parsed = parsePlayPresetFiles(files, limits);
+  if (parsed.kind === "invalid") throw parsed.error;
+  if (parsed.definition.format !== orchestrationFormat)
+    throw new FileNativePlayPresetError(
+      "orchestration_migration_required",
+      legacyOrchestrationMigrationNotice(locale),
+    );
+  return parsed.definition;
+}
+
+/** One-way conversion for live revisions and portable imports. Invalid input stays inspectable. */
+function upgradeValidOrchestration(
   files: Record<string, string>,
   limits: PortableContentTreeLimits,
 ): Record<string, string> {
-  const upgraded = upgradeOrderedPromptFormat(files);
-  return upgraded !== files &&
-    validatePlayPresetFiles(upgraded, limits).status === "valid"
-    ? upgraded
-    : files;
+  const parsed = parsePlayPresetFiles(files, limits);
+  if (parsed.kind === "invalid") return files;
+  const { definition } = parsed;
+  if (
+    definition.format === orchestrationFormat &&
+    definition.followupItems !== undefined
+  )
+    return files;
+  const next = { ...files };
+  if (definition.format !== orchestrationFormat) {
+    const ordered = upgradeOrderedPromptFormat(files);
+    if (definition.format === "narraeon.play-preset/v2" && ordered === files)
+      return files;
+    const source = ordered[legacyManifest]!;
+    const manifest = parseDocument(source);
+    if (definition.format === "narraeon.play-preset/v1") {
+      // A broken old frame has no reliable ordering. Keep the original for repair.
+      let structure: PlayPresetStructuredEditor;
+      try {
+        structure = toPlayPresetStructuredEditor(definition);
+      } catch {
+        return files;
+      }
+      manifest.set("format", orchestrationFormat);
+      manifest.set(
+        "playPrompts",
+        customizePromptArrangement(
+          structure.playPrompts!,
+          builtinPlayPrompts("en"),
+        ),
+      );
+      manifest.set(
+        "authorPrompts",
+        customizePromptArrangement(
+          structure.authorPrompts!,
+          builtinAuthorPrompts("en"),
+          false,
+        ),
+      );
+      next[orchestrationManifest] = manifest.toString();
+    } else {
+      // Change only the format scalar of the sparse overlay, preserving inline
+      // custom prompt bodies, comments, and line endings in the manifest.
+      const format = manifest.get("format", true);
+      if (!isScalar(format) || !format.range) return files;
+      const [start, end] = format.range;
+      next[orchestrationManifest] =
+        source.slice(0, start) + orchestrationFormat + source.slice(end);
+    }
+    delete next[legacyManifest];
+  }
+  if (definition.followupItems === undefined) {
+    const chain = parseDocument(files[definition.callChainPath]!);
+    chain.set("format", "narraeon.play-call-chain/v2");
+    chain.set("followupItems", defaultFollowupItems(definition.followups));
+    next[definition.callChainPath] = chain.toString();
+  }
+  const result = parsePlayPresetFiles(next, limits);
+  if (result.kind === "invalid") {
+    // Inline conversion can exceed a portable limit even when each legacy
+    // Markdown file fit on its own. Keep that v1 revision usable as written.
+    if (definition.format === "narraeon.play-preset/v1") return files;
+    throw result.error;
+  }
+  return next;
 }
 
 function parseStoredDocument(
   value: unknown,
   limits: PortableContentTreeLimits = defaultLimits,
+  source?: "legacy",
 ): StoredDocument {
+  const selectionKey =
+    source === "legacy" ? "currentPresetId" : "currentOrchestrationId";
+  const libraryKey = source === "legacy" ? "presets" : "orchestrations";
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["schemaVersion", "currentPresetId", "presets"]) ||
-    value.schemaVersion !== 1 ||
-    typeof value.currentPresetId !== "string" ||
-    value.currentPresetId.trim() === "" ||
-    !Array.isArray(value.presets) ||
-    value.presets.length === 0
+    !hasExactKeys(value, ["schemaVersion", selectionKey, libraryKey]) ||
+    value.schemaVersion !== 1
   )
     throw new FileNativePlayPresetError(
       "store_invalid",
-      "File-native play-preset library is invalid",
+      "File-native orchestration library has an invalid or unsupported schema",
+    );
+  const selected = value[selectionKey];
+  const records = value[libraryKey];
+  if (
+    typeof selected !== "string" ||
+    selected.trim() === "" ||
+    !Array.isArray(records) ||
+    records.length === 0
+  )
+    throw new FileNativePlayPresetError(
+      "store_invalid",
+      "File-native orchestration library has an invalid selection or list",
     );
   const ids = new Set<string>();
-  const presets = value.presets.map((raw) => {
+  const presets = records.map((raw) => {
     if (
       !isRecord(raw) ||
       !hasExactKeys(
@@ -3342,19 +3509,19 @@ function parseStoredDocument(
     )
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "File-native play-preset record is invalid",
+        "File-native orchestration record is invalid",
       );
     if (ids.has(raw.id))
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "File-native play-preset identity is duplicated",
+        "File-native orchestration identity is duplicated",
       );
     ids.add(raw.id);
     const revisions: Record<string, Record<string, string>> = {};
     if (Object.keys(raw.revisions).length === 0)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "Play preset has no revision snapshot",
+        "Orchestration has no revision snapshot",
       );
     for (const [revision, files] of Object.entries(raw.revisions)) {
       if (
@@ -3365,7 +3532,7 @@ function parseStoredDocument(
       )
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "Play-preset revision snapshot is invalid",
+          "Orchestration revision snapshot is invalid",
         );
       const clone = cloneFiles(files as Record<string, string>);
       let expectedRevision: string;
@@ -3374,20 +3541,20 @@ function parseStoredDocument(
       } catch {
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "Play-preset revision file tree is invalid",
+          "Orchestration revision file tree is invalid",
         );
       }
       if (expectedRevision !== revision)
         throw new FileNativePlayPresetError(
           "store_invalid",
-          "Play-preset revision content hash does not match",
+          "Orchestration revision content hash does not match",
         );
       revisions[revision] = clone;
     }
     if (revisions[raw.currentRevision] === undefined)
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "Current play-preset revision is missing",
+        "Current orchestration revision is missing",
       );
     if (
       raw.draftRevision !== undefined &&
@@ -3398,7 +3565,7 @@ function parseStoredDocument(
     )
       throw new FileNativePlayPresetError(
         "store_invalid",
-        "Play-preset draft revision is invalid",
+        "Orchestration draft revision is invalid",
       );
     return {
       id: raw.id,
@@ -3413,18 +3580,18 @@ function parseStoredDocument(
         : { draftRevision: raw.draftRevision }),
     };
   });
-  const current = presets.find(({ id }) => id === value.currentPresetId);
+  const current = presets.find(({ id }) => id === selected);
   if (current === undefined)
     throw new FileNativePlayPresetError(
       "store_invalid",
-      "Current play preset does not exist",
+      "Current orchestration does not exist",
     );
   if (!current.enabled)
     throw new FileNativePlayPresetError(
       "store_invalid",
-      "Current play preset cannot be a disabled identity",
+      "Current orchestration cannot be a disabled identity",
     );
-  return { schemaVersion: 1, currentPresetId: value.currentPresetId, presets };
+  return { schemaVersion: 1, currentPresetId: selected, presets };
 }
 
 function findStored(document: StoredDocument, id: string): StoredPreset {
@@ -3432,7 +3599,7 @@ function findStored(document: StoredDocument, id: string): StoredPreset {
   if (preset === undefined)
     throw new FileNativePlayPresetError(
       "not_found",
-      "Requested play preset was not found",
+      "Requested orchestration was not found",
     );
   return preset;
 }
@@ -3462,14 +3629,14 @@ function normalizeName(raw: string): string {
   if (!namePattern.test(name) || name.includes(String.fromCharCode(0)))
     throw new FileNativePlayPresetError(
       "invalid_name",
-      "Play-preset name must contain 1 to 160 characters",
+      "Orchestration name must contain 1 to 160 characters",
     );
   return name;
 }
 
 function locatePlayPresetError(message: string): string {
   const match =
-    /(?:blocks|prompts|regex|renderers|scripts|assets)\/[^：\s]+|call-chain\.yaml|preset\.yaml|frame\.yaml/u.exec(
+    /(?:blocks|prompts|regex|renderers|scripts|assets)\/[^：\s]+|call-chain\.yaml|orchestration\.yaml|preset\.yaml|frame\.yaml/u.exec(
       message,
     );
   return match?.[0] ?? "call-chain.yaml";

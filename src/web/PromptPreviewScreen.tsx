@@ -177,7 +177,7 @@ const roleDescriptions: Record<
   },
   author_instruction: {
     title: "创作指令",
-    description: "当前主持预设、世界专属创作政策与玩法叙事规则。",
+    description: "当前编排方案、世界专属创作政策与玩法叙事规则。",
   },
   world_context: {
     title: "世界上下文",
@@ -471,10 +471,10 @@ export function PromptPreviewScreen({
             <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
             <dl>
               <div>
-                <dt>{uiText("主持预设")}</dt>
+                <dt>{uiText("当前编排方案")}</dt>
                 <dd>
                   <strong>
-                    {currentPreset?.name ?? uiText("没有当前预设")}
+                    {currentPreset?.name ?? uiText("没有当前编排方案")}
                   </strong>
                   <span>{uiText("工作区当前选择")}</span>
                 </dd>
@@ -519,12 +519,12 @@ export function PromptPreviewScreen({
                 </dd>
               </div>
               <div>
-                <dt>{uiText("玩法预设")}</dt>
+                <dt>{uiText("已绑定的编排方案")}</dt>
                 <dd>
                   <strong>{currentPlayPreset?.name ?? "default"}</strong>
                   <span>
                     {currentPlayPreset === undefined
-                      ? uiText("使用内置玩法的完整工具集合")
+                      ? uiText("使用内置编排方案的完整工具集合")
                       : `revision ${playPresetTarget?.revision ?? currentPlayPreset.revision}`}
                   </span>
                 </dd>
@@ -545,7 +545,7 @@ export function PromptPreviewScreen({
         <PromptPreviewResult
           preview={preview}
           packageName={selectedPackage?.title ?? packageId}
-          hostName={currentPreset?.name ?? uiText("未知预设")}
+          hostName={currentPreset?.name ?? uiText("未知编排方案")}
           modelName={
             activeConnection?.name ?? preview.diagnosticBinding.modelId
           }
@@ -683,7 +683,7 @@ function PromptPreviewResult({
           <ResultButton
             active={section === "callChain"}
             count={preview.playPreset.toolUniverse.length}
-            label={uiText("玩法绑定")}
+            label={uiText("编排方案绑定")}
             onClick={() => setSection("callChain")}
           />
         )}
@@ -819,9 +819,11 @@ function PlayPresetCallChain({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">PLAY PRESET · FROZEN REVISION</p>
+          <p className="prompt-preview-kicker">
+            {uiText("编排方案 · 冻结修订")}
+          </p>
           <h3 id="play-preset-call-chain-title">
-            {uiText("玩法绑定与调用链工具")}
+            {uiText("编排方案绑定与调用链工具")}
           </h3>
         </div>
         <p>
@@ -833,7 +835,7 @@ function PlayPresetCallChain({
       </div>
       <dl className="prompt-binding-details">
         <div>
-          <dt>{uiText("玩法文件")}</dt>
+          <dt>{uiText("调用链文件")}</dt>
           <dd>
             <code>{callChain.callChainPath}</code>
             <span>{uiText("冻结工具、叙事规则与后置产物契约")}</span>
@@ -942,7 +944,7 @@ function TurnGuidePanel({
         </div>
         <p>
           {uiText(
-            "各行按预设顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。",
+            "各行按编排方案顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。",
           )}
         </p>
       </div>

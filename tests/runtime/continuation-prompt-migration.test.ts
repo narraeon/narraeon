@@ -40,8 +40,9 @@ interface PromptEntry {
 
 function playList(files: Record<string, string>): PromptEntry[] {
   if (
+    files["orchestration.yaml"] !== undefined ||
     parseDocument(files["preset.yaml"]!).get("format") ===
-    "narraeon.play-preset/v3"
+      "narraeon.play-preset/v3"
   ) {
     const parsed = parseEffectivePreset(files);
     if (parsed.kind !== "valid") throw parsed.error;

@@ -83,7 +83,7 @@ export function projectArtifactForFrontend(
   if (binding === null && artifact.frozenPresentation === undefined)
     return missingBundle(
       preset,
-      "The frozen play-preset revision is unavailable and cannot be replaced with the current revision",
+      "The frozen orchestration revision is unavailable and cannot be replaced with the current revision",
       failure,
     );
   if (
@@ -93,7 +93,7 @@ export function projectArtifactForFrontend(
   )
     return missingBundle(
       preset,
-      "The play-preset binding does not match the artifact's frozen identity",
+      "The orchestration binding does not match the artifact's frozen identity",
       "invalid_revision",
     );
 
@@ -188,7 +188,7 @@ export function projectPlayerViewPanelForFrontend(
     return {
       ...missingBundle(
         preset,
-        "The current play-preset revision is unavailable, and player-view panels cannot use another revision",
+        "The current orchestration revision is unavailable, and player-view panels cannot use another revision",
         failure,
       ),
       source: "player_view",

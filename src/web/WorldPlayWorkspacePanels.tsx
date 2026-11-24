@@ -183,7 +183,9 @@ export function AiReadingRail({
           <p>
             {reading.currentContext.stale
               ? uiText("当前世界已推进；这条追加上下文不能再继续。")
-              : uiText("下一次发送将采用当前预设和世界材料；原生对话保留。")}
+              : uiText(
+                  "下一次发送将采用当前编排方案和世界材料；原生对话保留。",
+                )}
           </p>
         </section>
       )}

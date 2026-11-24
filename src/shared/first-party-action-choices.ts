@@ -1,5 +1,11 @@
+import { stringify } from "yaml";
+import { defaultFollowupItems } from "./ordered-followups.ts";
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
+import {
+  applicationPresetFilesForLocale,
+  orchestrationFormat,
+  orchestrationManifest,
+} from "./application-preset-files.ts";
 
 /**
  * An ordinary, portable play-preset asset. Runtime treats this exactly like
@@ -12,7 +18,7 @@ export function firstPartyActionChoicesPresetFilesForLocale(
   const displayName = locale === "zh-CN" ? "下一步建议" : "Next-step ideas";
   return {
     ...applicationPresetFilesForLocale(locale),
-    "preset.yaml": `format: narraeon.play-preset/v3
+    [orchestrationManifest]: `format: ${orchestrationFormat}
 name: action-choices-recommended
 callChain: call-chain.yaml
 playPrompts: {}
@@ -25,9 +31,9 @@ extensions:
   - scripts/player-options.js
   - assets/player-options.css
 `,
-    "call-chain.yaml": `format: narraeon.play-call-chain/v1
+    "call-chain.yaml": `format: narraeon.play-call-chain/v2
 narrative: []
-followups:
+${stringify({ followupItems: defaultFollowupItems([{ id: "player_options" }]) })}followups:
   - id: player_options
     displayName: ${displayName}
     prompt:

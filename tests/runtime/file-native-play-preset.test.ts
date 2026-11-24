@@ -205,15 +205,15 @@ describe("文件原生玩法预设", () => {
     });
     await store.initialize();
 
-    const path = join(root, "file-native-play-presets.json");
+    const path = join(root, "file-native-orchestrations.json");
     const document = JSON.parse(await readFile(path, "utf8")) as {
-      presets: {
+      orchestrations: {
         currentRevision: string;
         revisions: Record<string, Record<string, string>>;
         builtinDefault?: true;
       }[];
     };
-    const preset = document.presets[0]!;
+    const preset = document.orchestrations[0]!;
     expect(preset.builtinDefault).toBe(true);
     const previousFiles = structuredClone(
       defaultPlayPresetFilesForLocale("en"),
@@ -402,10 +402,9 @@ describe("文件原生玩法预设", () => {
 
     const rendererOnly = structuredClone(firstPartyActionChoicesPresetFiles);
     delete rendererOnly["scripts/player-options.js"];
-    rendererOnly["preset.yaml"] = rendererOnly["preset.yaml"]!.replace(
-      "  - scripts/player-options.js\n",
-      "",
-    );
+    rendererOnly["orchestration.yaml"] = rendererOnly[
+      "orchestration.yaml"
+    ]!.replace("  - scripts/player-options.js\n", "");
     rendererOnly["call-chain.yaml"] = rendererOnly["call-chain.yaml"]!.replace(
       "        scripts:\n          - scripts/player-options.js\n",
       "",
@@ -477,7 +476,9 @@ describe("文件原生玩法预设", () => {
       (await store.bindRevision(created.preset.id, created.preset.revision))
         .files,
     ).toEqual(binding.files);
-    expect(snapshot.artifactPreviews).toEqual([]);
+    expect(snapshot.artifactPreviews.map(({ requestId }) => requestId)).toEqual(
+      ["builtin:summary"],
+    );
     expect(snapshot.playerViewPreview?.panels[0]).toMatchObject({
       source: { kind: "player_view", viewId: "status" },
       lifecycle: "current_preset",
@@ -625,7 +626,7 @@ extensions:
     expect(Object.keys(preset.files).sort()).toEqual([
       "call-chain.yaml",
       "frame.yaml",
-      "preset.yaml",
+      "orchestration.yaml",
     ]);
     expect(preset.files).toEqual(currentDefaultPlayPresetFiles);
 
@@ -1082,49 +1083,49 @@ extensions:
       {
         label: "preset 未知字段",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.unexpectedField = true;
         },
       },
       {
         label: "缺失 enabled",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           delete presets[0]!.enabled;
         },
       },
       {
         label: "缺失 scriptsEnabled",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           delete presets[0]!.scriptsEnabled;
         },
       },
       {
         label: "空 id",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.id = "";
         },
       },
       {
         label: "无效 name",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.name = "\n";
         },
       },
       {
         label: "空 revisions",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.revisions = {};
         },
       },
       {
         label: "无效 current revision",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.currentRevision =
             "rev-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         },
@@ -1132,7 +1133,7 @@ extensions:
       {
         label: "无效 draft revision",
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[0]!.draftRevision =
             "rev-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         },
@@ -1144,7 +1145,7 @@ extensions:
           await store.copy(current.id);
         },
         mutate: (document) => {
-          const presets = document.presets as Record<string, unknown>[];
+          const presets = document.orchestrations as Record<string, unknown>[];
           presets[1]!.id = presets[0]!.id;
         },
       },
@@ -1157,7 +1158,7 @@ extensions:
       const store = new FileNativePlayPresetStore(root);
       await store.initialize();
       if (prepare !== undefined) await prepare(store);
-      const path = join(root, "file-native-play-presets.json");
+      const path = join(root, "file-native-orchestrations.json");
       const document = JSON.parse(await readFile(path, "utf8")) as Record<
         string,
         unknown
@@ -1180,14 +1181,14 @@ extensions:
     roots.push(root);
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
-    const path = join(root, "file-native-play-presets.json");
+    const path = join(root, "file-native-orchestrations.json");
     const document = JSON.parse(await readFile(path, "utf8")) as {
-      presets: {
+      orchestrations: {
         currentRevision: string;
         revisions: Record<string, Record<string, string>>;
       }[];
     };
-    const preset = document.presets[0]!;
+    const preset = document.orchestrations[0]!;
     preset.revisions[preset.currentRevision]!["prompts/adjudicate.md"] =
       "disk tampering";
     await writeFile(path, `${JSON.stringify(document)}\n`, "utf8");
@@ -1911,7 +1912,7 @@ describe("无法解析的预设库不阻断启动", () => {
     await store.initialize();
     const valid = await store.create("valid", defaultPlayPresetFiles);
     await store.select(valid.preset.id);
-    const invalidFiles = { "preset.yaml": "format: invalid\n" };
+    const invalidFiles = { "orchestration.yaml": "format: invalid\n" };
     const invalid = await store.create("invalid", invalidFiles);
     const revision = invalid.preset.revision;
     expect(invalid.preset.validation.status).toBe("invalid");
@@ -1932,14 +1933,11 @@ describe("无法解析的预设库不阻断启动", () => {
       await expect(instance.select(invalid.preset.id)).rejects.toMatchObject({
         code: "invalid_play_preset",
       });
-      expect(await instance.exportPortable(invalid.preset.id)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: "preset.yaml",
-            contents: invalidFiles["preset.yaml"],
-          }),
-        ]),
-      );
+      await expect(
+        instance.exportPortable(invalid.preset.id),
+      ).rejects.toMatchObject({
+        code: "call_chain_missing",
+      });
     }
     await store.delete(invalid.preset.id);
     expect((await store.list()).presets).toHaveLength(2);
@@ -1954,15 +1952,15 @@ describe("无法解析的预设库不阻断启动", () => {
     await store.initialize();
     const selected = await store.create("selected", defaultPlayPresetFiles);
     await store.select(selected.preset.id);
-    const path = join(root, "file-native-play-presets.json");
+    const path = join(root, "file-native-orchestrations.json");
     const document = JSON.parse(await readFile(path, "utf8")) as {
-      presets: {
+      orchestrations: {
         id: string;
         revisions: Record<string, Record<string, string>>;
         currentRevision: string;
       }[];
     };
-    const stored = document.presets.find(
+    const stored = document.orchestrations.find(
       (preset) => preset.id === selected.preset.id,
     )!;
     const files = { "preset.yaml": "format: invalid\n" };
@@ -1991,13 +1989,17 @@ describe("无法解析的预设库不阻断启动", () => {
   test("彻底损坏的库被移到一旁并重建，原文件保留且可诊断", async () => {
     for (const [label, body, reason] of [
       ["坏 JSON", "{ not json", /JSON/u],
-      ["缺字段", JSON.stringify({ schemaVersion: 1 }), /library is invalid/u],
+      [
+        "缺字段",
+        JSON.stringify({ schemaVersion: 1 }),
+        /invalid or unsupported schema/u,
+      ],
       [
         "hash 不匹配",
         JSON.stringify({
           schemaVersion: 1,
-          currentPresetId: "p",
-          presets: [
+          currentOrchestrationId: "p",
+          orchestrations: [
             {
               id: "p",
               name: "手改过的",
@@ -2013,7 +2015,7 @@ describe("无法解析的预设库不阻断启动", () => {
     ] as const) {
       const root = await mkdtemp(join(tmpdir(), "narraeon-play-broken-"));
       roots.push(root);
-      const path = join(root, "file-native-play-presets.json");
+      const path = join(root, "file-native-orchestrations.json");
       await writeFile(path, body, "utf8");
 
       const store = new FileNativePlayPresetStore(root);

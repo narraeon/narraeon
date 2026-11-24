@@ -185,7 +185,7 @@ describe("tabletop builtins and defaults", () => {
     expect(playPrompts[worldIndex - 1]).toMatchObject({
       kind: "builtin",
       builtin: "play.tabletop",
-      enabled: true,
+      enabled: false,
     });
     expect(
       editor.authorPrompts!.map((entry) =>
