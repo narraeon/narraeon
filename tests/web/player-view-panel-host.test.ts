@@ -151,7 +151,7 @@ describe("player-view panel frontend seam", () => {
     expect(screen.getByTitle("current")).toBeTruthy();
     expect(reads).toBe(3);
     offline = false;
-    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
     await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
     expect(reads).toBe(4);
   });

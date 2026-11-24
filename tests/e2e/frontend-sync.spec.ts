@@ -244,7 +244,7 @@ test("a rejected language change keeps its reason after manual recovery", async 
   await page.getByLabel("界面语言").selectOption("en");
   await expect(page.getByText("暂时无法同步", { exact: true })).toBeVisible();
   offline = false;
-  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(page.getByText("暂时无法同步", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("偏好版本冲突，请核对后再保存。", { exact: true }),
@@ -268,7 +268,7 @@ test("first load retries once then offers a read-only recovery in the original p
     page.getByText(/^(暂时无法同步|Temporarily unable to sync)$/u),
   ).toBeVisible();
   expect(reads).toBe(2);
-  await page.getByRole("button", { name: /^(重新读取|Read again)$/u }).click();
+  await page.getByRole("button", { name: /^(重新加载|Reload)$/u }).click();
   await expect(
     page.getByRole("button", { name: "从示例新建", exact: true }),
   ).toBeVisible();
@@ -316,7 +316,7 @@ test("failed recovery retains the homepage and selected import; manual recovery 
   ).toHaveCount(before.contentPackages.length);
   expect(reads).toBe(1);
   offline = false;
-  await page.getByRole("button", { name: /^(重新读取|Read again)$/u }).click();
+  await page.getByRole("button", { name: /^(重新加载|Reload)$/u }).click();
   await expect(
     page.getByRole("button", { name: /^打开内容包：/u }),
   ).toHaveCount(before.contentPackages.length + 1);
@@ -358,7 +358,7 @@ test("a non-home workspace refresh failure keeps its receipt and draft with one 
     page.getByText("Temporarily unable to sync", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Read again", exact: true }),
+    page.getByRole("button", { name: "Reload", exact: true }),
   ).toHaveCount(1);
   await expect(page.getByLabel("Interface language")).toHaveValue("en");
   await expect(
@@ -367,7 +367,7 @@ test("a non-home workspace refresh failure keeps its receipt and draft with one 
   await page.getByLabel("Configuration name").fill("Keep this unsaved model");
   expect(reads).toBe(2);
   offline = false;
-  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(
     page.getByText("Temporarily unable to sync", { exact: true }),
   ).toHaveCount(0);

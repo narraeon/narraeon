@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
+import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { RuntimeClient } from "../../src/web/runtimeClient.ts";
 import type { ObserveConversation } from "../../src/web/ConversationObserver.ts";
@@ -208,7 +209,7 @@ test("首屏读取失败后可重读并恢复原书签", async () => {
   request.mockRejectedValueOnce(new Error("Workspace still unavailable"));
   render(createElement(App, { client }));
   await screen.findByText("暂时无法同步");
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await screen.findByLabelText("配置名称");
   expect(window.location.hash).toBe("#/models");
   expect(
@@ -302,7 +303,7 @@ test("创建结果核对连续失败后只重读原操作，不按列表同名�
   await screen.findByText("暂时无法同步");
   expect(window.location.hash).toBe("#/create");
   expect(outcomeReads).toBe(2);
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() => expect(window.location.hash).toBe("#/world/confirmed"));
   expect(
     request.mock.calls.filter(([r]) => r.type === "world.create"),
@@ -331,7 +332,7 @@ test("内容包导航预读取失败保留原位置，手动重读成功后才�
   await screen.findByText("暂时无法同步");
   expect(reads).toBe(2);
   expect(window.location.hash).toBe("#/");
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await screen.findByRole("heading", { name: "当前创作 · AI 设定完善" });
   expect(window.location.hash).toBe("#/content/chosen");
   expect(
@@ -420,7 +421,7 @@ test("创建前检查手动恢复只读取，必须再次明确创建才派发�
   );
   await screen.findByText("暂时无法同步");
   expect(reads).toBe(2);
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
   expect(
     request.mock.calls.some(([input]) => input.type === "world.create"),
@@ -672,7 +673,7 @@ test.each(["model", "preset"])(
   },
 );
 
-function fixture() {
+function fixture(locale: AppLocale = "zh-CN") {
   const packages = [
     {
       localId: "first",
@@ -691,7 +692,7 @@ function fixture() {
     await Promise.resolve();
     if (input.type === "workspace.read") {
       return {
-        preferences: { locale: "zh-CN" },
+        preferences: { locale },
         contentPackages: packages,
         worlds: [],
         storageNotices: [],
@@ -940,38 +941,57 @@ test("迟到的内容包读取不会卸载刚产生模型草稿的页面", async
   ).toBeNull();
 });
 
-test("创建页重新核验所选包的运行状态，避免使用其他标签页的中间结果", async () => {
-  const { client, request } = fixture();
-  const original = request.getMockImplementation()!;
-  request.mockImplementation((input) =>
-    input.type === "setting-improvement.overview"
-      ? Promise.resolve({
-          latest: { runStatus: "ready" },
-          history: [{ runStatus: "running" }],
-        })
-      : original(input),
-  );
-  render(createElement(App, { client }));
-  await screen.findByRole("heading", { name: "世界工作区" });
-  fireEvent.click(
-    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
-      "button",
-      { name: "新建世界" },
-    ),
-  );
-  fireEvent.change(screen.getByLabelText("创建世界的内容包"), {
-    target: { value: "chosen" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "从当前内容包创建" }));
-  await screen.findByText("这份内容包正在完善，请在回复完成后创建世界。");
-  expect(request).toHaveBeenCalledWith({
-    type: "setting-improvement.overview",
-    packageId: "chosen",
-  });
-  expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
-    false,
-  );
-});
+test.each(["zh-CN", "en"] as const)(
+  "创建页重新核验所选包的运行状态，避免使用其他标签页的中间结果 (%s)",
+  async (locale) => {
+    const t = (zh: string, en: string) => (locale === "zh-CN" ? zh : en);
+    const { client, request } = fixture(locale);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation((input) =>
+      input.type === "setting-improvement.overview"
+        ? Promise.resolve({
+            latest: { runStatus: "ready" },
+            history: [{ runStatus: "running" }],
+          })
+        : original(input),
+    );
+    render(createElement(App, { client }));
+    await screen.findByRole("heading", {
+      name: t("世界工作区", "World workspace"),
+    });
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", {
+          name: t("工作区导航", "Workspace navigation"),
+        }),
+      ).getByRole("button", { name: t("新建世界", "Create world") }),
+    );
+    fireEvent.change(
+      screen.getByLabelText(
+        t("创建世界的内容包", "Content package for the new world"),
+      ),
+      { target: { value: "chosen" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("从当前内容包创建", "Create from current content package"),
+      }),
+    );
+    await screen.findByText(
+      t(
+        "正在编辑这份内容包，请在回复完成后创建世界。",
+        "Editing this content package. Wait for the reply to finish before creating a world.",
+      ),
+    );
+    expect(request).toHaveBeenCalledWith({
+      type: "setting-improvement.overview",
+      packageId: "chosen",
+    });
+    expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
+      false,
+    );
+  },
+);
 
 test("工作区补读在模型页失败时保留语言回执并提供唯一只读恢复入口", async () => {
   window.history.replaceState(null, "", "#/models");
@@ -1005,12 +1025,12 @@ test("工作区补读在模型页失败时保留语言回执并提供唯一只�
     screen.getByLabelText<HTMLSelectElement>("Interface language").value,
   ).toBe("en");
   expect(screen.getByText("Interface language saved.")).toBeTruthy();
-  expect(screen.getAllByRole("button", { name: "Read again" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Reload" })).toHaveLength(1);
   expect(window.location.hash).toBe("#/models");
   fireEvent.change(screen.getByLabelText("Configuration name"), {
     target: { value: "Keep the model draft" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Read again" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
   await waitFor(() =>
     expect(screen.queryByText("Temporarily unable to sync")).toBeNull(),
   );

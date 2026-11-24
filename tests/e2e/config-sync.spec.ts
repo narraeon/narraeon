@@ -81,7 +81,7 @@ test("preset conflict preserves edits and rejection while a bounded offline read
     "我的名称草稿",
   );
   offline = false;
-  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(
     page.getByRole("option", { name: "其他页面的新名称", exact: true }),
   ).toHaveCount(1);
@@ -341,7 +341,7 @@ test("draft output and interface preview have independent bounded reads and keep
   await expect(output.getByText("暂时无法同步", { exact: true })).toBeVisible();
   expect([...readCounts.values()].every((count) => count <= 2)).toBe(true);
   offline = false;
-  await output.getByRole("button", { name: "重新读取", exact: true }).click();
+  await output.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(output.getByText("暂时无法同步", { exact: true })).toHaveCount(
     0,
   );
@@ -357,7 +357,7 @@ test("draft output and interface preview have independent bounded reads and keep
   await panel.getByRole("button", { name: "预览界面", exact: true }).click();
   await expect(panel.getByText("暂时无法同步", { exact: true })).toBeVisible();
   offline = false;
-  await panel.getByRole("button", { name: "重新读取", exact: true }).click();
+  await panel.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(panel.getByText("暂时无法同步", { exact: true })).toHaveCount(0);
   await expect(page.getByText("草稿尚未保存", { exact: true })).toBeVisible();
   expect(writes).toBe(0);
@@ -415,7 +415,7 @@ for (const embedded of [false, true])
     expect(reads).toBe(3);
     offline = false;
     await preview
-      .getByRole("button", { name: "重新读取", exact: true })
+      .getByRole("button", { name: "重新加载", exact: true })
       .click();
     await expect(
       preview.getByRole("heading", { name: "编译通过", exact: true }),
@@ -482,7 +482,7 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
   await expect(dialog.getByText("暂时无法同步", { exact: true })).toBeVisible();
   expect(inspections).toBe(2);
   offline = false;
-  await dialog.getByRole("button", { name: "重新读取" }).click();
+  await dialog.getByRole("button", { name: "重新加载" }).click();
   await dialog.getByRole("checkbox", { name: /待迁移提示/u }).check();
   await dialog.getByRole("button", { name: "转换预览", exact: true }).click();
   await dialog
@@ -492,7 +492,7 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
   await expect(dialog.getByText("暂时无法同步", { exact: true })).toBeVisible();
   expect(libraryReads).toBe(1);
   libraryOffline = false;
-  await dialog.getByRole("button", { name: "重新读取", exact: true }).click();
+  await dialog.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(dialog.getByText("暂时无法同步", { exact: true })).toHaveCount(
     0,
   );

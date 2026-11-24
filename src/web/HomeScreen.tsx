@@ -361,7 +361,7 @@ export function HomeScreen({
                         <span className="home-package-card-copy">
                           {item.status === "usable"
                             ? uiText("可编辑、预览并创建新世界")
-                            : uiText("打开并修复当前树中的问题")}
+                            : uiText("打开并修复内容包中的问题")}
                         </span>
                       </button>
                       <details className="home-world-card-actions">
@@ -471,7 +471,7 @@ export function HomeScreen({
                 </div>
               ) : (
                 <div className="home-empty-packages">
-                  <h3>{uiText("从一组人类可读文件开始")}</h3>
+                  <h3>{uiText("用清晰易读的文档搭好你的世界")}</h3>
                   <p>
                     {uiText(
                       "从雨夜旅店的示例故事开始，也可以新建或导入自己的内容包。",

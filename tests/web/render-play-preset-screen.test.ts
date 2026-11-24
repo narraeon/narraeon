@@ -208,7 +208,7 @@ test("删除回执生效后列表读取失败，重试只读取重建的编排�
     screen.getByText("编排方案已删除；删空后会自动重建默认编排方案。"),
   ).toBeTruthy();
   expect(screen.queryByRole("button", { name: "删除编排方案" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() =>
     expect(screen.getByLabelText<HTMLSelectElement>("切换编排方案").value).toBe(
       rebuilt.id,

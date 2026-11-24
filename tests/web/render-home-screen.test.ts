@@ -136,7 +136,7 @@ describe("世界工作区主页", () => {
     );
 
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
-    expect(screen.getByText("从一组人类可读文件开始")).toBeTruthy();
+    expect(screen.getByText("用清晰易读的文档搭好你的世界")).toBeTruthy();
     expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "从示例开始" }));
     expect(onCreateSamplePackage).toHaveBeenCalledOnce();

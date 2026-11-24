@@ -47,7 +47,7 @@ test("产物草稿首次离线只恢复一次并保留本页输入，重新读�
   await screen.findByText("暂时无法同步");
   expect(requests).toEqual(["play.workbench.read", "play.workbench.read"]);
   offline = false;
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
   expect(
     screen.getByLabelText<HTMLTextAreaElement>("本页输入草稿（尚未发送）")

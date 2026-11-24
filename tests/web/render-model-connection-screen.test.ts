@@ -64,7 +64,7 @@ test("拒绝保存后读回最新模型配置并保留表单草稿，恢复失�
   await screen.findByText("暂时无法同步");
   expect(requests).toEqual(["model.save", "model.read"]);
   offline = false;
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await screen.findByText("另一页面保存的模型", { selector: "strong" });
   expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
     "保留我的编辑",

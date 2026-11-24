@@ -8,7 +8,7 @@ let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
   暂时无法同步: "Temporarily unable to sync",
-  重新读取: "Read again",
+  重新加载: "Reload",
   页面出错了: "Something went wrong",
   导出诊断日志: "Export diagnostic logs",
   "页面显示时发生错误，已保存的故事和世界不受影响。请重新加载页面；如果反复出现，请把下面的技术详情发给开发者。":
@@ -128,8 +128,8 @@ const englishMessages: Record<string, string> = {
   "找不到该编排方案。": "Orchestration not found.",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
-  "这份内容包正在完善，请在回复完成后创建世界。":
-    "This content package is being developed. Wait for the reply to finish before creating a world.",
+  "正在编辑这份内容包，请在回复完成后创建世界。":
+    "Editing this content package. Wait for the reply to finish before creating a world.",
   放弃控制修改: "Discard control changes",
   选择编辑文件: "Choose a file to edit",
   当前文件: "Current file",
@@ -179,7 +179,7 @@ const englishMessages: Record<string, string> = {
   "支持工具子集选择（allowed_tools）":
     "Supports tool subset selection (allowed_tools)",
   创建世界: "Create world",
-  完善这份内容包: "Develop this content package",
+  编辑这份内容包: "Refine this content package",
   返回游玩: "Return to play",
 
   编排方案管理: "Manage orchestrations",
@@ -597,7 +597,7 @@ const englishMessages: Record<string, string> = {
   加载最新版本: "Load latest version",
   "已放弃草稿，载入内容包最新版本。":
     "Discarded the draft and loaded the latest content package.",
-  "内容包版本缺失，请重新读取后再保存。":
+  "内容包版本缺失，请重新加载后再保存。":
     "The content package version is missing. Reload it before saving.",
   "内容包已重命名。": "The content package has been renamed.",
   "内容包 ZIP 自身大小超过安全上限。":
@@ -860,8 +860,8 @@ const englishMessages: Record<string, string> = {
     "Start with a rainy-night inn story, or create or import your own content package.",
   待修复: "Needs repair",
   "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
-  打开并修复当前树中的问题: "Open and repair issues in the current tree",
-  从一组人类可读文件开始: "Start with human-readable files",
+  打开并修复内容包中的问题: "Open and fix issues in this content package",
+  用清晰易读的文档搭好你的世界: "Start with clear, readable world files",
   "内容包由 opening.md、world 与 control 组成，可以从空白新建，也可以上传一份内容包 ZIP。":
     "A content package contains opening.md, world, and control. Create one from scratch or upload a content-package ZIP.",
   "导入 ZIP": "Import ZIP",
@@ -964,7 +964,6 @@ const playPresetEnglishMessages: Record<string, string> = {
   编排方案工作区: "Orchestration workspace",
   编排方案列表: "Orchestration list",
   本地编排方案: "Local orchestrations",
-  "选择一个本地身份开始编辑。": "Choose a local identity to start editing.",
   当前编排方案: "Current orchestration",
   结构有效: "Structure valid",
   已停用: "Disabled",

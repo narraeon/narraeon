@@ -169,7 +169,7 @@ export function CreateWorldScreen({
           {pending ? uiText("正在创建世界…") : uiText("从当前内容包创建")}
         </button>
         <button type="button" disabled={pending} onClick={onEdit}>
-          {uiText(selected === undefined ? "新建内容包" : "完善这份内容包")}
+          {uiText(selected === undefined ? "新建内容包" : "编辑这份内容包")}
         </button>
         <small>{uiText("新世界独立保存，之后的游玩不会修改源内容包。")}</small>
       </aside>

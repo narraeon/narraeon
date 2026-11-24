@@ -151,7 +151,7 @@ test("预览读取失败保留上次结果，恢复一次后提供只读重新�
   expect(screen.getByRole("heading", { name: "编译通过" })).toBeTruthy();
   expect(reads).toBe(3);
   offline = false;
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
   expect(reads).toBe(4);
 });
