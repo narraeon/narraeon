@@ -1,4 +1,5 @@
-export class PlayCallChainError extends Error {
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
+export class PlayCallChainError extends RuntimeDomainError {
   readonly code: "invalid_request" | "model_protocol_mismatch";
   readonly details: { recovery: "fresh_context" } | undefined;
   constructor(
@@ -6,7 +7,20 @@ export class PlayCallChainError extends Error {
     code: PlayCallChainError["code"] = "invalid_request",
     details?: { recovery: "fresh_context" },
   ) {
-    super(message);
+    super(message, {
+      receipt: {
+        code: code,
+        commands: [
+          "world.delete",
+          "play.chain.revise-player",
+          "play.chain.regenerate-narrative",
+          "play.chain.start",
+          "play.chain.append",
+          "play.chain.cancel",
+        ],
+        ...(details === undefined ? {} : { details }),
+      },
+    });
     this.name = "PlayCallChainError";
     this.code = code;
     this.details = details;

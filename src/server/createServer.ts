@@ -313,15 +313,8 @@ export async function createServer(input: {
         return reply.send(response);
       } catch (error: unknown) {
         if (error instanceof V1ProtocolError) {
-          // 读取期间端点或内容包发生变化时，客户端可以重试。
-          const status =
-            error.code === "endpoint_discarded" ||
-            error.code === "endpoint_read_conflict" ||
-            error.code === "content_conflict"
-              ? 409
-              : 400;
-          return reply.status(status).send({
-            protocol: "narraeon.runtime/v1",
+          return reply.status(error.httpStatus).send({
+            protocol: v1Protocol,
             error: {
               code: error.code,
               message: error.message,

@@ -12,6 +12,7 @@ import {
   resumeAuthoringRequest,
   type AuthoringContinuation,
 } from "../authoring/AuthoringSessionBase.ts";
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import type { GenerationActivity } from "../GenerationActivity.ts";
 import { authoringConversationTurns } from "../authoring/AuthoringCallDetails.ts";
 import {
@@ -97,14 +98,20 @@ type SettingConversation = ModelToolConversation<
 >;
 const liveConversations = new AuthoringLiveScopes<SettingConversation>();
 
-export class SettingImprovementRollbackError extends Error {
+export class SettingImprovementRollbackError extends RuntimeDomainError {
   constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+    super(message, {
+      ...options,
+      receipt: {
+        code: "invalid_request",
+        commands: ["setting-improvement.rollback"],
+      },
+    });
     this.name = "SettingImprovementRollbackError";
   }
 }
 
-export class SettingMessageEditError extends Error {
+export class SettingMessageEditError extends RuntimeDomainError {
   readonly reason: "conflict" | "invalid_tree" | "unattributed";
   readonly paths: string[];
   constructor(
@@ -117,6 +124,13 @@ export class SettingMessageEditError extends Error {
         : reason === "invalid_tree"
           ? `Reverting would make these files invalid: ${paths.join(", ")}`
           : `Cannot attribute older file changes to this message: ${paths.join(", ")}`,
+      {
+        receipt: {
+          code: "invalid_request",
+          commands: ["setting-improvement.message.edit"],
+          details: { kind: "setting_message_edit", reason, paths },
+        },
+      },
     );
     this.name = "SettingMessageEditError";
     this.reason = reason;

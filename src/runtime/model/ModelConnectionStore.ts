@@ -1,3 +1,4 @@
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import { randomUUID } from "node:crypto";
 import {
   chmod,
@@ -72,9 +73,11 @@ interface ModelConnectionDocument {
   connections: StoredModelConnection[];
 }
 
-export class ModelConnectionUnavailableError extends Error {
+export class ModelConnectionUnavailableError extends RuntimeDomainError {
   constructor() {
-    super("No V1 model connection is enabled");
+    super("No V1 model connection is enabled", {
+      receipt: { code: "invalid_request", commands: ["world.create"] },
+    });
     this.name = "ModelConnectionUnavailableError";
   }
 }

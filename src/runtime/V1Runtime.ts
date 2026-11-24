@@ -1,36 +1,20 @@
+import { RuntimeDomainError } from "./RuntimeDomainError.ts";
+import { AuthoringCommands } from "./commands/AuthoringCommands.ts";
+import { hasCommandPrefix } from "./commands/Command.ts";
+import { handleContentCommand } from "./commands/ContentCommands.ts";
+import { handleModelCommand } from "./commands/ModelCommands.ts";
+import { PlayCommands, previewWorld } from "./commands/PlayCommands.ts";
+import { WorldCommands } from "./commands/WorldCommands.ts";
 import type { GenerationActivity } from "./GenerationActivity.ts";
 import { mayChangeUserState } from "../protocol/requestEffect.ts";
-import {
-  inspectSillyTavernContent,
-  convertSillyTavernContent,
-} from "./content/SillyTavernContent.ts";
-import {
-  inspectSillyTavernPreset,
-  convertSillyTavernPreset,
-} from "../shared/sillytavern-preset.ts";
 import type { ArchiveUploadPolicy } from "./archive/ArchiveUploads.ts";
 import { WorldArchives } from "./archive/WorldArchives.ts";
-import { WorldArchiveError } from "./archive/WorldArchiveZip.ts";
-import {
-  FileNativeWorldCreationError,
-  FileNativeWorldNotFoundError,
-} from "./world/FileNativeWorldStore.ts";
-import { RuntimeRequestRejection } from "./RuntimeRequestRejection.ts";
-import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
-import { PackageScriptPermissions } from "./extension/PackageScriptPermissions.ts";
-import { comparePromptPrefixes } from "./prompt/WorldPromptDiagnostics.ts";
 import { join } from "node:path";
 
 import {
-  maxPortableContentArchiveBase64Characters,
-  maxPortableContentArchiveBytes,
-} from "../protocol/contentTree.ts";
-import {
   assertV1RequestType,
-  V1ProtocolError,
   v1Protocol,
   type V1PlayCallChainView,
-  type V1PlayTimelinePage,
   type V1Request,
   type V1Response,
 } from "../protocol/v1.ts";
@@ -38,95 +22,38 @@ import {
   defaultAppLocale,
   type AppLocale,
 } from "../protocol/appPreferences.ts";
-import type {
-  PlayerViewDiagnostic,
-  RenderedPlayerView,
-} from "../protocol/playerViews.ts";
-import {
-  ContentPackageImportError,
-  ContentTreeConflictError,
-  ContentWorkspace,
-  InvalidContentTreeError,
-} from "./content/ContentWorkspace.ts";
+import { ContentWorkspace } from "./content/ContentWorkspace.ts";
 import { contentTreeFingerprint } from "./content/ContentTreeFingerprint.ts";
-import { inspectContentPackageCurrentTree } from "./content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "./model/FileNativeModelAdapters.ts";
 import { type ModelHostBinding } from "./model/ModelHost.ts";
-import {
-  ModelConnectionStore,
-  ModelConnectionUnavailableError,
-} from "./model/ModelConnectionStore.ts";
+import { ModelConnectionStore } from "./model/ModelConnectionStore.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
 import {
   PlayCallChain,
-  PlayCallChainError,
   type PlayCallChainObserver,
 } from "./play/PlayCallChain.ts";
 import {
-  FileNativePlayPresetError,
   FileNativePlayPresetStore,
   presetHostBinding,
-  parsePlayPresetFiles,
-  toPlayPresetStructuredEditor,
-  type PlayPresetBinding,
 } from "./play/FileNativePlayPresetStore.ts";
-import { buildPlayPresetWorkbenchSnapshot } from "./play/PlayPresetWorkbench.ts";
 import { FileNativeArtifactStore } from "./artifact/FileNativeArtifactStore.ts";
-import {
-  projectArtifactForFrontend,
-  projectDebugArtifactForFrontend,
-  type FrontendBundleFailure,
-  type FrontendArtifactDebugRecord,
-} from "./extension/FrontendExtensionBundle.ts";
-import {
-  projectPlayerViewPanels,
-  type FrontendPlayerViewPanelProjection,
-} from "./extension/PlayerViewPanelProjector.ts";
 import { FileNativePromptCompiler } from "./prompt/FileNativePromptCompiler.ts";
 import { FileNativeSettingImprovementStore } from "./setting/FileNativeSettingImprovementStore.ts";
-import {
-  SettingImprovementRollbackError,
-  SettingImprovementSession,
-  SettingMessageEditError,
-} from "./setting/SettingImprovementSession.ts";
+import { SettingImprovementSession } from "./setting/SettingImprovementSession.ts";
 import { FileNativeWorldStore } from "./world/FileNativeWorldStore.ts";
-import { WorldDocumentStore } from "./world/WorldDocumentStore.ts";
 import { FileNativeAiFailureLog } from "./model/AiFailureLog.ts";
 import { FileNativeRuntimeErrorLog } from "./RuntimeErrorLog.ts";
 import { ProtagonistTemplateStore } from "./config/ProtagonistTemplateStore.ts";
 import { AppPreferencesStore } from "./config/AppPreferencesStore.ts";
 import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRevisionStore.ts";
-import {
-  WorldRevisionSession,
-  WorldRevisionMessageEditError,
-} from "./world-revision/WorldRevisionSession.ts";
-import {
-  WorldRevisionWorkspace,
-  WorldRevisionWorkspaceError,
-} from "./world-revision/WorldRevisionWorkspace.ts";
+import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
+import { WorldRevisionWorkspace } from "./world-revision/WorldRevisionWorkspace.ts";
 
 import { ConversationChanges } from "./ConversationChanges.ts";
 import type {
   ConversationTarget,
   ConversationState,
 } from "../protocol/conversationObservation.ts";
-
-// 先取得当前端点再按它读取的请求，在端点被回退丢弃时最多重做这么多次（#94）。
-const currentEndpointReadAttempts = 3;
-
-// Direct preset library commands validate their inputs before persisting.
-const playPresetRequests = new Set<V1Request["type"]>([
-  "play.create",
-  "play.copy",
-  "play.save",
-  "play.rename",
-  "play.delete",
-  "play.enable",
-  "play.scripts",
-  "play.select",
-  "play.export",
-  "play.import",
-]);
 
 export class V1Runtime {
   readonly worldArchives: WorldArchives;
@@ -143,6 +70,9 @@ export class V1Runtime {
   readonly #protagonistTemplates: ProtagonistTemplateStore;
   readonly #settingImprovements: SettingImprovementSession;
   readonly #worldRevisions: WorldRevisionSession;
+  readonly #authoringCommands: AuthoringCommands;
+  readonly #worldCommands: WorldCommands;
+  readonly #playCommands: PlayCommands;
   readonly #compiler = new FileNativePromptCompiler();
   #locale: AppLocale = defaultAppLocale;
 
@@ -292,6 +222,35 @@ export class V1Runtime {
           playPreset,
         ),
     });
+    this.#worldCommands = new WorldCommands({
+      worlds: this.#worlds,
+      worldArchives: this.worldArchives,
+      content: this.#content,
+      models: this.#models,
+      playPresets: this.#playPresets,
+      playCallChains: this.#playCallChains,
+      worldRevisions: this.#worldRevisions,
+      artifacts: this.#artifacts,
+      locale: () => this.#locale,
+    });
+    this.#playCommands = new PlayCommands({
+      worlds: this.#worlds,
+      content: this.#content,
+      models: this.#models,
+      playPresets: this.#playPresets,
+      playCallChains: this.#playCallChains,
+      compiler: this.#compiler,
+      locale: () => this.#locale,
+      modelHost: () => this.#modelHost(),
+      reconcileArtifacts: (worldId) =>
+        this.#worldCommands.reconcileArtifacts(worldId),
+    });
+    this.#authoringCommands = new AuthoringCommands({
+      settingImprovements: this.#settingImprovements,
+      worldRevisions: this.#worldRevisions,
+      reconcileArtifacts: (worldId) =>
+        this.#worldCommands.reconcileArtifacts(worldId),
+    });
   }
 
   async initialize(): Promise<void> {
@@ -312,37 +271,9 @@ export class V1Runtime {
       return { protocol: v1Protocol, result };
     } catch (error) {
       await this.#errorLog?.recordRequestFailure(request, error);
-      if (
-        error instanceof RuntimeRequestRejection ||
-        (error instanceof ModelConnectionUnavailableError &&
-          request.type === "world.create") ||
-        (error instanceof FileNativeWorldNotFoundError &&
-          (request.type === "world.rename" ||
-            request.type === "world.story.export" ||
-            request.type === "world.delete")) ||
-        (error instanceof FileNativePlayPresetError &&
-          error.code !== "store_invalid" &&
-          playPresetRequests.has(request.type))
-      )
-        throw new V1ProtocolError("invalid_request", error.message, {
-          cause: error,
-        });
-      if (error instanceof WorldArchiveError)
-        throw new V1ProtocolError(error.code, error.message, { cause: error });
-      if (
-        error instanceof FileNativeWorldCreationError &&
-        (error.code === "endpoint_discarded" ||
-          error.code === "endpoint_read_conflict")
-      )
-        throw new V1ProtocolError(error.code, error.message, { cause: error });
-      if (
-        request.type === "world.archive.export" &&
-        error instanceof FileNativeWorldCreationError &&
-        (error.code === "operation_conflict" ||
-          error.code === "inconsistent_materialization")
-      )
-        throw new V1ProtocolError(error.code, error.message, { cause: error });
-      throw error;
+      throw error instanceof RuntimeDomainError
+        ? (error.toProtocolError(request.type) ?? error)
+        : error;
     } finally {
       // Explicit commands may partially settle before failing. Readers recover
       // through the same Runtime projection, never infer success from this signal.
@@ -468,6 +399,26 @@ export class V1Runtime {
     request: V1Request,
     playCallChainObserver?: PlayCallChainObserver,
   ): Promise<unknown> {
+    if (
+      hasCommandPrefix(request, "setting-improvement") ||
+      hasCommandPrefix(request, "world.revision")
+    )
+      return this.#authoringCommands.handle(request);
+    if (
+      hasCommandPrefix(request, "play") ||
+      hasCommandPrefix(request, "prompt") ||
+      hasCommandPrefix(request, "world.play-context")
+    )
+      return this.#playCommands.handle(request, playCallChainObserver);
+    if (
+      hasCommandPrefix(request, "world") ||
+      hasCommandPrefix(request, "artifacts")
+    )
+      return this.#worldCommands.handle(request);
+    if (hasCommandPrefix(request, "content"))
+      return handleContentCommand(request, this.#content, this.#locale);
+    if (hasCommandPrefix(request, "model"))
+      return handleModelCommand(request, this.#models);
     switch (request.type) {
       case "workspace.read":
         return {
@@ -500,975 +451,7 @@ export class V1Runtime {
         return this.#protagonistTemplates.copy(request.id);
       case "protagonist-templates.delete":
         return this.#protagonistTemplates.delete(request.id);
-      case "model.read":
-        return this.#models.view();
-      case "model.save":
-        return this.#models.save(request.connection);
-      case "model.copy":
-        return this.#models.copy(request.connectionId, request.name);
-      case "model.select":
-        return this.#models.select(request.connectionId);
-      case "model.delete":
-        return this.#models.delete(request.connectionId);
-      case "model.models":
-        return this.#models.listModels(request);
-      case "content.create":
-        return this.#content.createCurrentTreeContentPackage(request.gameplay);
-      case "content.gameplay.set": {
-        try {
-          return await this.#content.setCurrentTreeContentGameplayScheme(
-            request.packageId,
-            request.scheme,
-          );
-        } catch (error: unknown) {
-          if (error instanceof InvalidContentTreeError)
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-            });
-          throw error;
-        }
-      }
-      case "content.create-sample":
-        return this.#content.createSampleContentPackage(request.locale);
-      case "content.scripts.read":
-        return this.#content.packageScriptPermissions(request.packageId);
-      case "content.scripts.set":
-        return this.#content.packageScriptPermissions(
-          request.packageId,
-          request.enabled,
-        );
-      case "world.package-scripts.read":
-        return this.#worlds.packageScriptPermissions(request.worldId);
-      case "world.package-scripts.set":
-        return this.#worlds.packageScriptPermissions(
-          request.worldId,
-          request.enabled,
-        );
-      case "content.read":
-        return this.#content.readCurrentTreeContentPackage(request.packageId);
-      case "content.replace":
-        try {
-          return await this.#content.replaceCurrentTreeContentPackage(
-            request.packageId,
-            request.files,
-            { baseTreeRevision: request.baseTreeRevision },
-          );
-        } catch (error: unknown) {
-          if (error instanceof InvalidContentTreeError)
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-            });
-          if (error instanceof ContentTreeConflictError)
-            throw new V1ProtocolError("content_conflict", error.message, {
-              cause: error,
-              details: { current: error.current },
-            });
-          throw error;
-        }
-      case "content.copy":
-        return this.#content.copyCurrentTreeContentPackage(request.packageId);
-      case "content.delete":
-        await this.#content.deleteCurrentTreeContentPackage(request.packageId);
-        return { deleted: true };
-      case "content.rename":
-        return this.#content.renameCurrentTreeContentPackage(
-          request.packageId,
-          request.name,
-        );
-      case "content.import": {
-        const archive = decodePortableContentArchive(request.archiveBase64);
-        try {
-          return await this.#content.importPortableContentPackageArchive(
-            archive,
-            request.title === undefined ? {} : { title: request.title },
-          );
-        } catch (error: unknown) {
-          if (
-            error instanceof ContentPackageImportError ||
-            error instanceof InvalidContentTreeError
-          )
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-            });
-          throw error;
-        }
-      }
-      case "content.sillytavern.inspect":
-      case "content.sillytavern.preview":
-      case "content.sillytavern.import": {
-        try {
-          if (
-            request.source.length > 12 * 1024 * 1024 ||
-            !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-              request.source,
-            )
-          )
-            throw new Error("Invalid source encoding");
-          const source = Buffer.from(request.source, "base64");
-          if (source.toString("base64") !== request.source)
-            throw new Error("Invalid source encoding");
-          if (request.type === "content.sillytavern.inspect")
-            return inspectSillyTavernContent(source);
-          const converted = convertSillyTavernContent(
-            source,
-            request.selection,
-            this.#locale,
-          );
-          this.#content.validateCurrentTreeContentPackage(converted.files);
-          if (request.type === "content.sillytavern.preview")
-            return {
-              ...converted,
-              inspection: this.#content.inspectCurrentTreeContentPackage(
-                converted.files,
-              ),
-            };
-          return await this.#content.importSillyTavernContent(
-            request.name,
-            converted.files,
-          );
-        } catch (error) {
-          throw new V1ProtocolError(
-            "invalid_request",
-            error instanceof Error
-              ? error.message
-              : "Invalid SillyTavern content",
-          );
-        }
-      }
-      case "content.export": {
-        const exported = await this.#content.exportCurrentTreeContentPackage(
-          request.packageId,
-        );
-        return {
-          fileName: exported.fileName,
-          base64: exported.archive.toString("base64"),
-        };
-      }
-      case "setting-improvement.preview":
-        return this.#settingImprovements.preview(
-          request.packageId,
-          request.sessionId,
-        );
-      case "setting-improvement.call.context":
-        return this.#settingImprovements.readCallContext(
-          request.packageId,
-          request.sessionId,
-          request.callId,
-        );
-      case "setting-improvement.request.preview":
-        return (
-          (
-            await this.#settingImprovements.readRequestPreviews(
-              request.packageId,
-              request.sessionId,
-            )
-          ).find(({ requestId }) => requestId === request.requestId) ?? null
-        );
-      case "setting-improvement.read":
-        return this.#settingImprovements.read(request.packageId);
-      case "setting-improvement.status":
-        return this.#settingImprovements.status(
-          request.packageId,
-          request.sessionId,
-        );
-      case "setting-improvement.overview":
-        return this.#settingImprovements.overview(request.packageId);
-      case "setting-improvement.session.read":
-        return this.#settingImprovements.readSession(
-          request.packageId,
-          request.sessionId,
-        );
-      case "setting-improvement.session.delete":
-        return this.#settingImprovements.deleteSession(
-          request.packageId,
-          request.sessionId,
-        );
-      case "setting-improvement.rollback":
-        try {
-          return await this.#settingImprovements.rollback(request);
-        } catch (error: unknown) {
-          if (error instanceof SettingImprovementRollbackError)
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-            });
-          throw error;
-        }
-      case "setting-improvement.message":
-        return this.#settingImprovements.send(request);
-      case "setting-improvement.message.edit":
-        try {
-          return await this.#settingImprovements.editMessage(request);
-        } catch (error: unknown) {
-          if (error instanceof SettingMessageEditError)
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-              details: {
-                kind: "setting_message_edit",
-                reason: error.reason,
-                paths: error.paths,
-              },
-            });
-          throw error;
-        }
-      case "setting-improvement.cancel":
-        return this.#settingImprovements.cancel(request.sessionId);
-      case "setting-improvement.resume":
-        return this.#settingImprovements.resume(request);
-      case "play.read":
-        return this.#playPresets.list();
-      case "play.create":
-        return this.#playPresets.create(request.name, request.files);
-      case "play.copy":
-        return this.#playPresets.copy(request.presetId);
-      case "play.save":
-        return this.#playPresets.save(request);
-      case "play.rename":
-        return this.#playPresets.rename(request.presetId, request.name);
-      case "play.delete":
-        return this.#playPresets.delete(request.presetId);
-      case "play.enable":
-        return this.#playPresets.setEnabled(request.presetId, request.enabled);
-      case "play.scripts":
-        return this.#playPresets.setScriptsEnabled(
-          request.presetId,
-          request.enabled,
-        );
-      case "play.select":
-        return this.#playPresets.select(request.presetId);
-      case "play.export":
-        return {
-          files: await this.#playPresets.exportPortable(request.presetId),
-        };
-      case "play.import":
-        return this.#playPresets.importPortable(request);
-      case "play.sillytavern.inspect":
-      case "play.sillytavern.preview":
-      case "play.sillytavern.import": {
-        // Do not trust the browser to enforce the import limit or supply
-        // already-converted files. Preview and import both parse from source.
-        if (Buffer.byteLength(request.source, "utf8") > 2 * 1024 * 1024)
-          throw new V1ProtocolError(
-            "invalid_request",
-            "SillyTavern source exceeds the size limit",
-          );
-        if (
-          request.type !== "play.sillytavern.inspect" &&
-          (request.selected.length > 4096 ||
-            request.selected.reduce(
-              (bytes, id) => bytes + Buffer.byteLength(id, "utf8"),
-              0,
-            ) >
-              2 * 1024 * 1024)
-        )
-          throw new V1ProtocolError(
-            "invalid_request",
-            "SillyTavern selection exceeds the size limit",
-          );
-        try {
-          if (request.type === "play.sillytavern.inspect")
-            return inspectSillyTavernPreset(request.source, request.groupId);
-          const converted = convertSillyTavernPreset(request.source, {
-            groupId: request.groupId,
-            selected: request.selected,
-            name: request.name,
-            locale: this.#locale,
-          });
-          if (request.type === "play.sillytavern.preview") {
-            const parsed = parsePlayPresetFiles(converted.files);
-            if (parsed.kind === "invalid") throw parsed.error;
-            toPlayPresetStructuredEditor(parsed.definition);
-            return converted;
-          }
-          return await this.#playPresets.importPortable({
-            name: request.name,
-            files: converted.files,
-          });
-        } catch (error) {
-          if (error instanceof V1ProtocolError) throw error;
-          throw new V1ProtocolError(
-            "invalid_request",
-            error instanceof Error
-              ? error.message
-              : "Invalid SillyTavern preset",
-          );
-        }
-      }
-      case "play.workbench.read": {
-        const binding =
-          request.presetId === undefined
-            ? await this.#playPresets.bindCurrent()
-            : await this.#playPresets.bindRevision(
-                request.presetId,
-                request.revision,
-              );
-        if (request.worldId === undefined)
-          return buildPlayPresetWorkbenchSnapshot(
-            binding,
-            undefined,
-            request.draft,
-          );
-        const { worldId } = request;
-        return this.#readingCurrentEndpoint(async () => {
-          const head = await this.#worlds.currentHead(worldId);
-          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-            worldId,
-            head,
-          );
-          return buildPlayPresetWorkbenchSnapshot(
-            binding,
-            { worldId, head, playerViews },
-            request.draft,
-          );
-        });
-      }
-      case "prompt.preview": {
-        const [package_, connection, playPreset] = await Promise.all([
-          this.#content.readCurrentTreeContentPackage(request.packageId),
-          this.#models.bind(),
-          request.playPresetId === undefined
-            ? this.#playPresets.bindCurrent()
-            : this.#playPresets.bindRevision(
-                request.playPresetId,
-                request.playPresetRevision,
-              ),
-        ]);
-        const hostBinding = presetHostBinding(playPreset);
-        const modelHost = new FileNativeModelHost(connection);
-        const preview = this.#compiler.preview(
-          {
-            endpoint: {
-              id: `content:${request.packageId}`,
-              commit: "current",
-            },
-            hostBinding,
-            world: previewWorld(
-              WorldDocumentStore.open({
-                layout: "content_package",
-                files: package_.files,
-              }),
-              `content:${request.packageId}.message.genesis.narrator`,
-              "content-preview",
-            ),
-            playerInputPlacement: "append",
-            playerInput: request.playerInput,
-            ...(request.turnNote === undefined
-              ? {}
-              : { turnNote: request.turnNote }),
-            modelBinding: modelHost.binding(),
-            modelPrompt: modelHost.modelPrompt(),
-          },
-          playPreset,
-        );
-        const tools = structuredClone(preview.compilation.tools);
-        return {
-          ...preview,
-          wireRequest: modelHost.previewRequest({
-            bootstrap: structuredClone(preview.compilation),
-            tools: structuredClone(tools),
-            toolUniverse: structuredClone(
-              preview.compilation.toolUniverse ?? tools,
-            ),
-            allowedTools: tools.map(({ name }) => name),
-            toolStrategy: preview.compilation.toolStrategy,
-            appended:
-              preview.initialAppend === undefined
-                ? []
-                : [
-                    ...(preview.initialAppend.beforePlayer === undefined
-                      ? []
-                      : [preview.initialAppend.beforePlayer.logical]),
-                    preview.initialAppend.logical,
-                    ...(preview.initialAppend.afterPlayer === undefined
-                      ? []
-                      : [preview.initialAppend.afterPlayer.logical]),
-                  ],
-            requestId: "play_call_chain",
-            operationId: "prompt-preview",
-            requestAttempt: 1,
-            exchange: 1,
-            maxOutputTokens: modelHost.binding().maxOutputTokens,
-          }),
-        };
-      }
-      case "world.create": {
-        const [package_, connection, preset] = await Promise.all([
-          this.#content.readCurrentTreeContentPackage(request.packageId),
-          this.#models.bind(),
-          this.#playPresets.bindCurrent(),
-        ]);
-        return this.#worlds.createFromContentPackage({
-          operationId: request.operationId,
-          sourcePackageId: request.packageId,
-          sourcePackageTitle: package_.title,
-          packageScriptGrants: await this.#content.readPackageScriptGrants(
-            request.packageId,
-          ),
-          packageFiles: package_.files,
-          prompt: {
-            hostBinding: presetHostBinding(preset),
-            modelBinding: new FileNativeModelHost(connection).binding(),
-          },
-        });
-      }
-      case "world.creation-outcome":
-        return this.#worlds.getCreationOutcome(request.operationId);
-      case "world.rename":
-        return this.#worlds.renameWorld(request.worldId, request.name);
-      case "world.story.export":
-        return this.#worlds.exportStory(
-          request.worldId,
-          request.format,
-          this.#locale,
-        );
-      case "world.delete":
-        return playCall(() =>
-          this.#worlds.deleteWorld(request.worldId, async () => {
-            try {
-              await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-            } catch (error: unknown) {
-              if (
-                error instanceof FileNativeWorldCreationError &&
-                error.code === "operation_conflict"
-              )
-                throw new V1ProtocolError(error.code, error.message, {
-                  cause: error,
-                });
-              throw error;
-            }
-            await this.#playCallChains.abortWorld(request.worldId);
-            this.#playCallChains.forgetWorld(request.worldId);
-          }),
-        );
-      case "world.archive.export":
-        return this.worldArchives.exportWorld(request);
-      case "world.archive.import":
-        return this.worldArchives.importWorld(request);
-      case "world.read":
-        return this.#readingCurrentEndpoint(async () => {
-          const head = await this.#worlds.currentHead(request.worldId);
-          const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-            request.worldId,
-            head,
-          );
-          const extensionControls = await this.#currentExtensionControls(
-            request.worldId,
-          );
-          const [playerViewPanels, playTimeline, revisionEpoch] =
-            await Promise.all([
-              this.#frontendPlayerViewPanels(
-                request.worldId,
-                head,
-                playerViews,
-                extensionControls,
-              ),
-              this.#readPlayTimeline(request.worldId, 40),
-              this.#worldRevisions.activeEpoch(request.worldId),
-            ]);
-          return {
-            worldId: request.worldId,
-            head,
-            state: [],
-            control: [],
-            history: [],
-            runtime: { head, surfaces: "lazy" },
-            playerViews,
-            committedMessages: [],
-            artifacts: [],
-            extensions: [],
-            playerViewPanels,
-            extensionControls,
-            suppressedPlayerViewIds:
-              await this.#suppressedPlayerViewIds(extensionControls),
-            artifactDebug: [],
-            playCallChain: null,
-            playTimeline,
-            worldRevision: revisionEpoch,
-            archiveNeedsFreshContext:
-              await this.#worlds.archiveNeedsFreshContext(request.worldId),
-          };
-        });
-      case "world.surface.read":
-        return request.surface === "runtime"
-          ? this.#worlds.readSurface(request.worldId, "runtime", request.head)
-          : this.#worlds.readSurface(
-              request.worldId,
-              request.surface,
-              request.head,
-            );
-      case "world.extensions.read":
-        return this.#worlds.extensionControls(
-          request.worldId,
-          await this.#playPresets.bindCurrent(),
-          this.#locale,
-        );
-      case "world.extensions.set": {
-        const result = await this.#worlds.extensionControls(
-          request.worldId,
-          await this.#playPresets.bindCurrent(),
-          this.#locale,
-          request,
-        );
-        return result;
-      }
-      case "world.play-decorations.read":
-        return this.#readingCurrentEndpoint(async () => {
-          for (;;) {
-            const extensionControls = await this.#currentExtensionControls(
-              request.worldId,
-            );
-            const head = await this.#reconcileArtifacts(request.worldId);
-            const [projection, artifactDebug] = await Promise.all([
-              this.#frontendDecorations(request.worldId),
-              this.#frontendDebug(request.worldId),
-            ]);
-            const playerViews = await this.#worlds.renderPlayerViewsAtHead(
-              request.worldId,
-              head,
-            );
-            const playerViewPanels = await this.#frontendPlayerViewPanels(
-              request.worldId,
-              head,
-              playerViews,
-              extensionControls,
-            );
-            const suppressedPlayerViewIds =
-              await this.#suppressedPlayerViewIds(extensionControls);
-            // Never attach a newer controls revision to a projection read before
-            // that choice was accepted. Concurrent toggles restart this read.
-            if (
-              (await this.#worlds.extensionControlsRevision(
-                request.worldId,
-              )) !== extensionControls.revision
-            )
-              continue;
-            return {
-              head,
-              ...projection,
-              artifactDebug,
-              playerViews,
-              playerViewPanels,
-              extensionControls,
-              suppressedPlayerViewIds,
-            };
-          }
-        });
-      case "artifacts.read":
-        await this.#reconcileArtifacts(request.worldId);
-        return (
-          await this.#frontendDecorations(request.worldId, request.channel)
-        ).artifacts;
-      case "artifacts.debug":
-        await this.#reconcileArtifacts(request.worldId);
-        return this.#frontendDebug(request.worldId, request.operationId);
-      case "world.control-draft.save":
-        await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-        return this.#worlds.saveControlDraft(request.worldId, request.files);
-      case "world.control-draft.preview": {
-        const prompt = {
-          ...(await this.#promptBinding()),
-          playerInput:
-            this.#locale === "zh-CN"
-              ? "预览世界控制。"
-              : "Preview world control.",
-        };
-        return this.#worlds.previewControlDraft(request.worldId, prompt);
-      }
-      case "world.control-draft.apply": {
-        const prompt = {
-          ...(await this.#promptBinding()),
-          playerInput:
-            this.#locale === "zh-CN"
-              ? "预览世界控制。"
-              : "Preview world control.",
-        };
-        return this.#worlds.applyControlDraft(request.worldId, prompt);
-      }
-      case "world.revision.open":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.open(request.worldId),
-        );
-      case "world.revision.overview":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.overview(request.worldId),
-        );
-      case "world.revision.preview":
-        return this.#worldRevisions.preview(request.worldId, request.sessionId);
-      case "world.revision.call.context":
-        return this.#worldRevisions.readCallContext(
-          request.worldId,
-          request.sessionId,
-          request.callId,
-        );
-      case "world.revision.request.preview":
-        return (
-          (
-            await this.#worldRevisions.readRequestPreviews(
-              request.worldId,
-              request.sessionId,
-            )
-          ).find(({ requestId }) => requestId === request.requestId) ?? null
-        );
-      case "world.revision.status":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.status(request.worldId, request.sessionId),
-        );
-      case "world.revision.session.read":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.readSession(request.worldId, request.sessionId),
-        );
-      case "world.revision.session.delete":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.deleteSession(
-            request.worldId,
-            request.sessionId,
-          ),
-        );
-      case "world.revision.message":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.send(request),
-        );
-      case "world.revision.message.edit":
-        try {
-          return await this.#worldRevisionCall(() =>
-            this.#worldRevisions.editMessage(request),
-          );
-        } catch (error: unknown) {
-          if (error instanceof WorldRevisionMessageEditError)
-            throw new V1ProtocolError("invalid_request", error.message, {
-              cause: error,
-              details: {
-                kind: "world_revision_message_edit",
-                reason: error.reason,
-                paths: error.paths,
-              },
-            });
-          throw error;
-        }
-      case "world.revision.cancel":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.cancel(request.sessionId),
-        );
-      case "world.revision.resume":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.resume(request),
-        );
-      case "world.revision.files.replace":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.replaceFiles(request),
-        );
-      case "world.revision.rollback":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.rollback(request),
-        );
-      case "world.revision.apply": {
-        const result = await this.#worldRevisionCall(() =>
-          this.#worldRevisions.apply(request),
-        );
-        await this.#reconcileArtifacts(request.worldId);
-        return result;
-      }
-      case "world.revision.discard":
-        return this.#worldRevisionCall(() =>
-          this.#worldRevisions.discard(request),
-        );
-      case "world.derive": {
-        const preset = await this.#playPresets.bindCurrent();
-        const result = await this.#playCallChains.deriveWorld({
-          operationId: request.operationId,
-          sourceWorldId: request.sourceWorldId,
-          sourceHead: request.sourceHead,
-          hostPresetId: preset.id,
-        });
-        await this.#reconcileResultArtifacts(result);
-        return { outcome: result.outcome, world: result.world };
-      }
-      case "play.chain.revise-player": {
-        const base = {
-          operationId: request.operationId,
-          worldId: request.worldId,
-          chainId: request.chainId,
-          eventId: request.eventId,
-          replacementExchangeId: request.replacementExchangeId,
-          replacementText: request.replacementText,
-          ...(request.turnNote === undefined
-            ? {}
-            : { turnNote: request.turnNote }),
-        };
-        const result = await playCall(async () => {
-          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-          const binding =
-            request.continuation === "fresh_context" ||
-            request.sendAfterRevision === true
-              ? await this.#continuousBinding()
-              : null;
-          const modelHost =
-            binding?.modelHost ??
-            (request.requireCompatible === true
-              ? await this.#modelHost()
-              : undefined);
-          const revision =
-            request.continuation === "continue_context"
-              ? ({
-                  ...base,
-                  continuation: request.continuation,
-                  ...(modelHost === undefined ? {} : { modelHost }),
-                } as const)
-              : ({
-                  ...base,
-                  continuation: request.continuation,
-                  freshContext: {
-                    hostBinding: binding!.hostBinding,
-                    playPreset: binding!.playPreset,
-                    modelBinding: binding!.modelBinding,
-                    modelPrompt: binding!.modelHost.modelPrompt(),
-                  },
-                } as const);
-          if (request.sendAfterRevision === true && binding !== null)
-            return this.#playCallChains.reviseAndAppend(
-              revision,
-              binding.modelHost,
-              () => Promise.resolve(binding),
-            );
-          return this.#playCallChains.revisePlayer(revision);
-        });
-        await this.#reconcileArtifacts(request.worldId);
-        return result;
-      }
-      case "play.chain.regenerate-narrative":
-        return playCall(async () => {
-          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-          return this.#playCallChains.regenerateNarrative({
-            ...request,
-            modelHost: await this.#modelHost(),
-          });
-        });
-      case "play.chain.start": {
-        await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-        const { modelHost, hostBinding, playPreset, modelBinding } =
-          await this.#continuousBinding();
-        return playCall(() =>
-          this.#playCallChains.start({
-            worldId: request.worldId,
-            chainId: request.chainId,
-            exchangeId: request.exchangeId,
-            playerText: request.playerText,
-            ...(request.turnNote === undefined
-              ? {}
-              : { turnNote: request.turnNote }),
-            hostBinding,
-            playPreset,
-            modelBinding,
-            modelHost,
-            ...(playCallChainObserver === undefined
-              ? {}
-              : { observer: playCallChainObserver }),
-          }),
-        );
-      }
-      case "play.chain.append":
-        return playCall(async () => {
-          await this.#worlds.assertWorldRevisionUnlocked(request.worldId);
-          return this.#playCallChains.append({
-            worldId: request.worldId,
-            chainId: request.chainId,
-            exchangeId: request.exchangeId,
-            playerText: request.playerText,
-            ...(request.recovery === undefined
-              ? {}
-              : { recovery: request.recovery }),
-            ...(request.turnNote === undefined
-              ? {}
-              : { turnNote: request.turnNote }),
-            modelHost: await this.#modelHost(),
-            resolvePrompt: () => this.#playPromptBinding(),
-            ...(playCallChainObserver === undefined
-              ? {}
-              : { observer: playCallChainObserver }),
-          });
-        });
-      case "play.chain.cancel":
-        return playCall(() =>
-          this.#playCallChains.cancel({
-            worldId: request.worldId,
-            chainId: request.chainId,
-            exchangeId: request.exchangeId,
-          }),
-        );
-      case "play.chain.inspect":
-        return this.#playCallChains.inspectWorld(request.worldId);
-      case "play.timeline.page":
-        await this.#worlds.ensureCurrentStorage(request.worldId);
-        return this.#readPlayTimeline(
-          request.worldId,
-          request.limit,
-          request.cursor,
-        );
-      case "play.timeline.detail":
-        await this.#worlds.ensureCurrentStorage(request.worldId);
-        return this.#worlds.playTimeline.readDetail(
-          request.worldId,
-          request.chainId,
-          request.eventId,
-        );
-      case "play.timeline.context":
-        await this.#worlds.ensureCurrentStorage(request.worldId);
-        return this.#worlds.playTimeline.readRequestContext(
-          request.worldId,
-          request.chainId,
-          request.eventId,
-        );
-      case "world.play-context.read": {
-        const binding = await this.#worlds.bindPlayCallChain(request.worldId);
-        const currentContext = await this.#playCallChains.inspectReading(
-          request.worldId,
-          binding.parentHead,
-        );
-        const model = await this.#models.view();
-        if (!model.configured)
-          return {
-            worldId: request.worldId,
-            worldHead: binding.parentHead,
-            currentContext,
-            nextFreshContext: null,
-          };
-        const { modelHost, hostBinding, playPreset, modelBinding } =
-          await this.#continuousBinding();
-        const live =
-          currentContext === null
-            ? null
-            : await this.#playCallChains.currentContinuation(request.worldId);
-        const frozenBinding = live?.modelBinding;
-        const continueContext =
-          currentContext !== null &&
-          !currentContext.stale &&
-          frozenBinding?.provider === modelBinding.provider;
-        const baseline = continueContext
-          ? await this.#worlds.bindPlayCallChainAt(
-              request.worldId,
-              currentContext.baselineHead,
-            )
-          : binding;
-        const preview = this.#compiler.preview(
-          {
-            ...(continueContext && live !== null
-              ? { frozenWorldContext: live.bootstrap }
-              : {}),
-            extensionControls: await this.#worlds.extensionControls(
-              request.worldId,
-              playPreset,
-              this.#locale,
-            ),
-            endpoint: {
-              id: `${request.worldId}:${binding.parentHead}`,
-              commit: binding.parentHead,
-            },
-            hostBinding,
-            world: {
-              controlFingerprint: fingerprintControl(binding.files),
-              documentSnapshot: WorldDocumentStore.open({
-                layout: "world_state",
-                files: Object.entries(binding.files).map(
-                  ([path, contents]) => ({ path, contents }),
-                ),
-              }),
-              additionalMaterials: structuredClone(binding.additionalMaterials),
-              history: structuredClone(binding.history),
-              historyBackgrounds: structuredClone(
-                binding.historyBackgrounds ?? {},
-              ),
-              narrativeCheckpoint: baseline.narrativeCheckpoint,
-              historyAlreadyAppended: Object.keys(binding.history).filter(
-                (key) => !(key in baseline.history),
-              ),
-              ...(await this.#worlds.inspectDocumentMaintenance(
-                request.worldId,
-                binding.parentHead,
-              )),
-            },
-            playerInputPlacement: "append",
-            playerInput: "",
-            modelBinding,
-            modelPrompt: modelHost.modelPrompt(),
-          },
-          playPreset,
-        );
-        const tools = preview.compilation.tools;
-        const nextEncoding = modelHost.previewRequest({
-          bootstrap: preview.compilation,
-          tools,
-          toolUniverse: preview.compilation.toolUniverse,
-          allowedTools: tools.map(({ name }) => name),
-          toolStrategy: preview.compilation.toolStrategy,
-          appended: continueContext ? (live?.transcript ?? []) : [],
-          operationId: continueContext
-            ? currentContext.chainId
-            : "next-fresh-context-preview",
-          maxOutputTokens: modelBinding.maxOutputTokens,
-        });
-        const currentEncoding =
-          currentContext === null
-            ? null
-            : await this.#worlds.playTimeline
-                .readInitialEncoding(
-                  request.worldId,
-                  currentContext.chainId,
-                  currentContext.requestExchange,
-                )
-                .catch(() => null);
-        const prefixDiagnostics = comparePromptPrefixes(
-          currentContext === null
-            ? null
-            : {
-                bootstrap: currentContext.bootstrap,
-                encoding: currentEncoding,
-              },
-          { bootstrap: preview.compilation, encoding: nextEncoding },
-        );
-        return {
-          worldId: request.worldId,
-          worldHead: binding.parentHead,
-          currentContext,
-          nextFreshContext: {
-            contextMode: continueContext ? "append" : "fresh",
-            head: binding.parentHead,
-            preview,
-            prefixDiagnostics,
-          },
-        };
-      }
     }
-  }
-
-  async #readPlayTimeline(
-    worldId: string,
-    limit: number,
-    cursor?: string,
-  ): Promise<V1PlayTimelinePage> {
-    const page = await this.#worlds.playTimeline.readPage(
-      worldId,
-      limit,
-      cursor,
-    );
-    const activeInvocationExchangeId =
-      this.#playCallChains.currentInvocationExchangeId(
-        worldId,
-        page.activeChainId,
-      );
-    // Followups keep the live context running after the durable main reply settles.
-    return {
-      ...page,
-      activeInvocationExchangeId,
-      ...(activeInvocationExchangeId === null
-        ? {}
-        : {
-            activeStatus: "running",
-            activeCanRetry: false,
-            activeCanContinuePartial: false,
-            activeLastFailure: null,
-            activeLastFailureKind: undefined,
-            activeFreshContextReason: undefined,
-          }),
-    };
   }
 
   async #modelHost(): Promise<FileNativeModelHost> {
@@ -1479,20 +462,6 @@ export class V1Runtime {
     );
   }
 
-  async #worldRevisionCall<Value>(
-    operation: () => Promise<Value>,
-  ): Promise<Value> {
-    try {
-      return await operation();
-    } catch (error: unknown) {
-      if (error instanceof WorldRevisionWorkspaceError)
-        throw new V1ProtocolError("invalid_request", error.message, {
-          cause: error,
-        });
-      throw error;
-    }
-  }
-
   async #matchingModelHost(
     binding: ModelHostBinding,
   ): Promise<FileNativeModelHost> {
@@ -1501,301 +470,6 @@ export class V1Runtime {
       fetch,
       this.#failureLog,
     );
-  }
-
-  /**
-   * Reads that take the current endpoint first and then read at it (ADR-0044):
-   * a rewind published in between discards that endpoint, so the read starts
-   * again from the new current endpoint instead of failing.
-   */
-  async #readingCurrentEndpoint<T>(read: () => Promise<T>): Promise<T> {
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        return await read();
-      } catch (error: unknown) {
-        if (
-          !(
-            error instanceof FileNativeWorldCreationError &&
-            (error.code === "endpoint_discarded" ||
-              error.code === "endpoint_read_conflict")
-          ) ||
-          attempt >= currentEndpointReadAttempts
-        )
-          throw error;
-      }
-    }
-  }
-
-  async #reconcileArtifacts(worldId: string): Promise<string> {
-    const { head, operationId } = await this.#worlds.currentEndpoint(worldId);
-    await this.#artifacts.reconcileHead(
-      worldId,
-      head,
-      operationId ?? undefined,
-    );
-    return head;
-  }
-
-  async #frontendDecorations(worldId: string, channel?: string) {
-    await this.#currentExtensionControls(worldId);
-    const summaries = await this.#artifacts.readExtensionSummaries(worldId);
-    const targets = await this.#worlds.playTimeline.resolveReplies(
-      worldId,
-      summaries.flatMap((item) =>
-        item.attachment === undefined ? [] : [item.attachment],
-      ),
-    );
-    const matches = (attachment: {
-      contextId: string;
-      eventId: number;
-      head: string;
-    }) =>
-      targets.find(
-        (target) =>
-          target.contextId === attachment.contextId &&
-          target.eventId === attachment.eventId &&
-          target.head === attachment.head,
-      );
-    const extensions = summaries
-      .filter(
-        (item) =>
-          item.attachment === undefined ||
-          matches(item.attachment) !== undefined,
-      )
-      .sort(
-        (left, right) =>
-          Number(left.head?.replace("commit:", "") ?? 0) -
-          Number(right.head?.replace("commit:", "") ?? 0),
-      );
-    const artifacts = await this.#artifacts.readActiveProjection(
-      worldId,
-      channel,
-      targets,
-    );
-    const projected = (
-      await Promise.all(
-        artifacts.map(async (artifact) => {
-          const { renderer, ...safeArtifact } = artifact;
-          void renderer;
-          const resolved = await this.#frontendBinding(
-            artifact.playPresetId,
-            artifact.playPresetRevision,
-          );
-          return {
-            ...safeArtifact,
-            ...(artifact.attachment === undefined
-              ? {}
-              : {
-                  reply: matches(artifact.attachment)!,
-                }),
-            frontend: projectArtifactForFrontend(
-              artifact,
-              resolved.binding,
-              resolved.failure,
-              artifact.requestId.startsWith("package:") &&
-                artifact.frozenPresentation !== undefined &&
-                (await this.#worlds.readPackageScriptGrants(worldId)).includes(
-                  PackageScriptPermissions.fingerprint(
-                    artifact.frozenPresentation.files,
-                  ),
-                ),
-            ),
-          };
-        }),
-      )
-    ).filter(
-      (artifact) =>
-        artifact.frontend.mount !== "story" || artifact.reply !== undefined,
-    );
-    return { artifacts: projected, extensions };
-  }
-
-  async #currentExtensionControls(
-    worldId: string,
-  ): Promise<WorldExtensionsView> {
-    try {
-      return await this.#worlds.extensionControls(
-        worldId,
-        await this.#playPresets.bindCurrent(),
-        this.#locale,
-      );
-    } catch (error) {
-      if (!(error instanceof FileNativePlayPresetError)) throw error;
-      return {
-        revision: await this.#worlds.extensionControlsRevision(worldId),
-        items: [],
-      };
-    }
-  }
-
-  async #suppressedPlayerViewIds(
-    controls: WorldExtensionsView,
-  ): Promise<string[]> {
-    let binding: PlayPresetBinding;
-    try {
-      binding = await this.#playPresets.bindCurrent();
-    } catch (error) {
-      if (error instanceof FileNativePlayPresetError) return [];
-      throw error;
-    }
-    // Every declared panel owns its view's fallback even while hidden.
-    return [
-      ...new Set([
-        ...binding.definition.playerViewPanels.map(
-          (panel) => panel.source.view,
-        ),
-        ...controls.items
-          .filter((item) => item.kind === "view" && !item.enabled)
-          .map((item) => item.id),
-      ]),
-    ];
-  }
-
-  async #frontendPlayerViewPanels(
-    worldId: string,
-    head: string,
-    playerViews: {
-      views: RenderedPlayerView[];
-      diagnostics: PlayerViewDiagnostic[];
-    },
-    controls: WorldExtensionsView,
-  ): Promise<FrontendPlayerViewPanelProjection[]> {
-    try {
-      const binding = await this.#playPresets.bindCurrent();
-      return projectPlayerViewPanels({
-        worldId,
-        head,
-        playerViews,
-        binding,
-      }).filter((panel) =>
-        controls.items.some(
-          (item) =>
-            item.kind === "panel" && item.id === panel.panelId && item.enabled,
-        ),
-      );
-    } catch (error: unknown) {
-      // Panels are decoration on top of a world read. Any unusable preset —
-      // disabled, deleted, or written by an older build and now missing a
-      // required file — costs the panels, never the world itself.
-      if (error instanceof FileNativePlayPresetError) return [];
-      throw error;
-    }
-  }
-
-  async #frontendDebug(
-    worldId: string,
-    operationId?: string,
-  ): Promise<FrontendArtifactDebugRecord[]> {
-    const records = await this.#artifacts.readDebug(worldId, operationId);
-    return Promise.all(
-      records.map(async (record) => {
-        const { renderer, ...safeRecord } = record;
-        void renderer;
-        const resolved = await this.#frontendBinding(
-          record.playPresetId,
-          record.playPresetRevision,
-        );
-        return {
-          ...safeRecord,
-          frontend: projectDebugArtifactForFrontend(
-            record,
-            resolved.binding,
-            resolved.failure,
-            record.requestId.startsWith("package:") &&
-              record.frozenPresentation !== undefined &&
-              (await this.#worlds.readPackageScriptGrants(worldId)).includes(
-                PackageScriptPermissions.fingerprint(
-                  record.frozenPresentation.files,
-                ),
-              ),
-          ),
-        };
-      }),
-    );
-  }
-
-  async #frontendBinding(
-    id: string,
-    revision: string,
-  ): Promise<{
-    binding: PlayPresetBinding | null;
-    failure: FrontendBundleFailure;
-  }> {
-    try {
-      return {
-        binding: await this.#playPresets.bindRevision(id, revision),
-        failure: "missing_revision",
-      };
-    } catch (error: unknown) {
-      // A historical revision is intentionally not replaced with current.
-      if (
-        !(error instanceof FileNativePlayPresetError) ||
-        error.code === "store_invalid"
-      )
-        throw error;
-      return {
-        binding: null,
-        failure:
-          error.code === "revision_not_found" || error.code === "not_found"
-            ? "missing_revision"
-            : "invalid_revision",
-      };
-    }
-  }
-
-  async #reconcileResultArtifacts(
-    result: unknown,
-    fallbackWorldId?: string,
-  ): Promise<void> {
-    const candidate = isRecord(result) ? result : undefined;
-    const nestedWorld =
-      candidate !== undefined && isRecord(candidate.world)
-        ? candidate.world
-        : undefined;
-    const worldId =
-      (candidate !== undefined && typeof candidate.worldId === "string"
-        ? candidate.worldId
-        : undefined) ??
-      (nestedWorld !== undefined && typeof nestedWorld.worldId === "string"
-        ? nestedWorld.worldId
-        : undefined) ??
-      fallbackWorldId;
-    if (worldId === undefined) return;
-    await this.#reconcileArtifacts(worldId);
-  }
-
-  async #promptBinding() {
-    const [preset, connection] = await Promise.all([
-      this.#playPresets.bindCurrent(),
-      this.#models.bind(),
-    ]);
-    const modelHost = new FileNativeModelHost(connection);
-    return {
-      hostBinding: presetHostBinding(preset),
-      modelBinding: modelHost.binding(),
-    };
-  }
-
-  async #playPromptBinding() {
-    const playPreset = await this.#playPresets.freeze();
-    return { hostBinding: presetHostBinding(playPreset), playPreset };
-  }
-
-  async #continuousBinding(): Promise<{
-    modelHost: FileNativeModelHost;
-    hostBinding: { hostPresetId: string; files: Record<string, string> };
-    playPreset: PlayPresetBinding;
-    modelBinding: ModelHostBinding;
-  }> {
-    const [modelHost, prompt] = await Promise.all([
-      this.#modelHost(),
-      this.#playPromptBinding(),
-    ]);
-    return {
-      modelHost,
-      ...prompt,
-      modelBinding: modelHost.binding(),
-    };
   }
 
   #storageNotices(): { surface: string; message: string }[] {
@@ -1814,79 +488,6 @@ export class V1Runtime {
   }
 }
 
-async function playCall<Value>(
-  operation: () => Value | Promise<Value>,
-): Promise<Value> {
-  try {
-    return await operation();
-  } catch (error: unknown) {
-    if (error instanceof PlayCallChainError)
-      throw new V1ProtocolError(error.code, error.message, {
-        ...(error.details === undefined ? {} : { details: error.details }),
-        cause: error,
-      });
-    throw error;
-  }
-}
-
-function decodePortableContentArchive(archiveBase64: string): Buffer {
-  if (
-    archiveBase64.length === 0 ||
-    archiveBase64.length > maxPortableContentArchiveBase64Characters ||
-    archiveBase64.length % 4 !== 0
-  )
-    throw invalidContentArchiveUpload();
-  const archive = Buffer.from(archiveBase64, "base64");
-  if (
-    archive.byteLength > maxPortableContentArchiveBytes ||
-    archive.toString("base64") !== archiveBase64
-  )
-    throw invalidContentArchiveUpload();
-  return archive;
-}
-
-function invalidContentArchiveUpload(): V1ProtocolError {
-  return new V1ProtocolError(
-    "invalid_request",
-    "content.import.archiveBase64 is not a supported content-package ZIP",
-  );
-}
-
-function previewWorld(
-  snapshot: WorldDocumentStore,
-  openingMessageId: string,
-  controlFingerprint: string,
-) {
-  const inspection = inspectContentPackageCurrentTree(snapshot.files, {
-    worldDocumentSnapshot: snapshot,
-  });
-  if (inspection.opening !== "valid")
-    throw new Error(
-      `A real first-turn Prompt Preview requires a usable opening.md: ${inspection.issues
-        .filter(
-          ({ code }) =>
-            code === "missing_opening" || code === "invalid_opening",
-        )
-        .map(({ message }) => message)
-        .join("；")}`,
-    );
-  const opening = snapshot.files.find(
-    ({ path, encoding }) => path === "opening.md" && encoding === undefined,
-  );
-  if (opening === undefined)
-    throw new Error(
-      "A real first-turn Prompt Preview could not read opening.md",
-    );
-  return {
-    controlFingerprint,
-    documentSnapshot: snapshot,
-    history: { [openingMessageId]: opening.contents },
-    additionalMaterials: [
-      { kind: "history_message" as const, message: openingMessageId },
-    ],
-  };
-}
-
 function defaultSettingPreviewHost(): Record<string, string> {
   return {
     "frame.yaml": `format: narraeon.host-frame/v1
@@ -1902,8 +503,4 @@ roles:
     - include: world.context
 `,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

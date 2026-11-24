@@ -1,3 +1,4 @@
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import { withContinuityScaffold } from "../../shared/continuity-scaffold.ts";
 import { isAbsolute, win32 } from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -75,11 +76,13 @@ export interface PortableContentPackageExport {
 export type ContentPackageImportErrorCode =
   "invalid_zip" | "limit_exceeded" | "unsafe_path" | "unsupported_file_type";
 
-export class ContentPackageImportError extends Error {
+export class ContentPackageImportError extends RuntimeDomainError {
   readonly code: ContentPackageImportErrorCode;
 
   constructor(code: ContentPackageImportErrorCode, message: string) {
-    super(message);
+    super(message, {
+      receipt: { code: "invalid_request", commands: ["content.import"] },
+    });
     this.name = "ContentPackageImportError";
     this.code = code;
   }

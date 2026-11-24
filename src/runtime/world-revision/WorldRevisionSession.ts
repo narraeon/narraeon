@@ -11,6 +11,7 @@ import {
   resumeAuthoringRequest,
   type AuthoringContinuation,
 } from "../authoring/AuthoringSessionBase.ts";
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import type { GenerationActivity } from "../GenerationActivity.ts";
 import { authoringConversationTurns } from "../authoring/AuthoringCallDetails.ts";
 import {
@@ -87,7 +88,7 @@ import { historyEntries } from "../history/HistoryTools.ts";
 
 export type WorldRevisionContinuation = AuthoringContinuation;
 
-export class WorldRevisionMessageEditError extends Error {
+export class WorldRevisionMessageEditError extends RuntimeDomainError {
   readonly reason: "conflict" | "sealed" | "invalid_tree";
   readonly paths: string[];
   constructor(
@@ -100,6 +101,13 @@ export class WorldRevisionMessageEditError extends Error {
         : reason === "conflict"
           ? `Cannot revert changed files: ${paths.join(", ")}`
           : `Reverting would make the revision invalid: ${paths.join(", ")}`,
+      {
+        receipt: {
+          code: "invalid_request",
+          commands: ["world.revision.message.edit"],
+          details: { kind: "world_revision_message_edit", reason, paths },
+        },
+      },
     );
     this.name = "WorldRevisionMessageEditError";
     this.reason = reason;

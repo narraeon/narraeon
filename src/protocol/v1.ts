@@ -1029,6 +1029,7 @@ export class V1ProtocolError extends Error {
     | "inconsistent_materialization"
     | "model_protocol_mismatch";
   readonly details: Readonly<Record<string, unknown>> | undefined;
+  readonly httpStatus: 400 | 409;
 
   constructor(
     code: V1ProtocolError["code"],
@@ -1039,6 +1040,12 @@ export class V1ProtocolError extends Error {
     this.name = "V1ProtocolError";
     this.code = code;
     this.details = options.details;
+    this.httpStatus =
+      code === "endpoint_discarded" ||
+      code === "endpoint_read_conflict" ||
+      code === "content_conflict"
+        ? 409
+        : 400;
   }
 }
 

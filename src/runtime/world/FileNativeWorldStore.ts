@@ -1,3 +1,5 @@
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
+import type { V1Request } from "../../protocol/v1.ts";
 import { compareWorldActivity } from "../../shared/world-activity-order.ts";
 import {
   captureNarrativeOrigin,
@@ -101,7 +103,7 @@ import { LegacyAuthorityV3Reader } from "./LegacyAuthorityV3Reader.ts";
 const publicationFile = "publication.json";
 const localMetadataFile = "local.json";
 
-export class FileNativeWorldCreationError extends Error {
+export class FileNativeWorldCreationError extends RuntimeDomainError {
   readonly code:
     | "content_package_needs_repair"
     | "content_package_title_invalid"
@@ -121,11 +123,36 @@ export class FileNativeWorldCreationError extends Error {
     this.name = "FileNativeWorldCreationError";
     this.code = code;
   }
+
+  override toProtocolError(command: V1Request["type"]) {
+    if (
+      this.code === "endpoint_discarded" ||
+      this.code === "endpoint_read_conflict"
+    )
+      return this.protocolError(this.code);
+    if (
+      (command === "world.archive.export" || command === "world.delete") &&
+      this.code === "operation_conflict"
+    )
+      return this.protocolError(this.code);
+    if (
+      command === "world.archive.export" &&
+      this.code === "inconsistent_materialization"
+    )
+      return this.protocolError(this.code);
+    return undefined;
+  }
 }
 
-export class FileNativeWorldNotFoundError extends Error {
+export class FileNativeWorldNotFoundError extends RuntimeDomainError {
   constructor(options?: ErrorOptions) {
-    super("World does not exist", options);
+    super("World does not exist", {
+      ...options,
+      receipt: {
+        code: "invalid_request",
+        commands: ["world.rename", "world.story.export", "world.delete"],
+      },
+    });
     this.name = "FileNativeWorldNotFoundError";
   }
 }

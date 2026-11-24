@@ -1,3 +1,4 @@
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import {
   applicationPresetFilesForLocale,
   orchestrationFormat,
@@ -469,11 +470,32 @@ export interface FileNativePlayPresetLibrary {
   presets: FileNativePlayPresetView[];
 }
 
-export class FileNativePlayPresetError extends Error {
+export class FileNativePlayPresetError extends RuntimeDomainError {
   readonly code: string;
 
   constructor(code: string, message: string) {
-    super(message);
+    super(
+      message,
+      code === "store_invalid"
+        ? {}
+        : {
+            receipt: {
+              code: "invalid_request",
+              commands: [
+                "play.create",
+                "play.copy",
+                "play.save",
+                "play.rename",
+                "play.delete",
+                "play.enable",
+                "play.scripts",
+                "play.select",
+                "play.export",
+                "play.import",
+              ],
+            },
+          },
+    );
     this.code = code;
     this.name = "FileNativePlayPresetError";
   }

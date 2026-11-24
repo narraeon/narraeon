@@ -1,3 +1,4 @@
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, stat } from "node:fs/promises";
@@ -11,14 +12,14 @@ import type {
   WorldArchiveErrorCode,
 } from "../../protocol/worldArchives.ts";
 
-export class WorldArchiveError extends Error {
+export class WorldArchiveError extends RuntimeDomainError {
   readonly code: WorldArchiveErrorCode;
   constructor(
     code: WorldArchiveErrorCode,
     message: string,
     options?: ErrorOptions,
   ) {
-    super(message, options);
+    super(message, { ...options, receipt: { code: code } });
     this.code = code;
     this.name = "WorldArchiveError";
   }

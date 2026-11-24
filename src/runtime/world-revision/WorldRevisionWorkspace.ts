@@ -1,4 +1,5 @@
 import { planAuthoringRollback } from "../authoring/AuthoringRollback.ts";
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -27,9 +28,29 @@ import {
   inspectWorldRevisionFiles,
 } from "./WorldRevisionAuthoringTransaction.ts";
 
-export class WorldRevisionWorkspaceError extends Error {
+export class WorldRevisionWorkspaceError extends RuntimeDomainError {
   constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+    super(message, {
+      ...options,
+      receipt: {
+        code: "invalid_request",
+        commands: [
+          "world.revision.open",
+          "world.revision.overview",
+          "world.revision.status",
+          "world.revision.session.read",
+          "world.revision.session.delete",
+          "world.revision.message",
+          "world.revision.message.edit",
+          "world.revision.cancel",
+          "world.revision.resume",
+          "world.revision.files.replace",
+          "world.revision.rollback",
+          "world.revision.apply",
+          "world.revision.discard",
+        ],
+      },
+    });
     this.name = "WorldRevisionWorkspaceError";
   }
 }

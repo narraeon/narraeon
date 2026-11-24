@@ -1,3 +1,7 @@
+import {
+  RuntimeDomainError,
+  type RuntimeDomainErrorOptions,
+} from "../RuntimeDomainError.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -112,8 +116,8 @@ export class CurrentTreeContentPackageNotFoundError extends Error {
   }
 }
 
-export class CurrentTreeContentLibraryError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+export class CurrentTreeContentLibraryError extends RuntimeDomainError {
+  constructor(message: string, options?: RuntimeDomainErrorOptions) {
     super(message, options);
     this.name = "CurrentTreeContentLibraryError";
   }
@@ -136,15 +140,27 @@ export class ContentTreeConflictError extends CurrentTreeContentLibraryError {
   constructor(current: EditableContentPackageDetail) {
     super(
       "The content package changed after this draft was opened; load the latest tree before saving",
+      {
+        receipt: {
+          code: "content_conflict",
+          commands: ["content.replace"],
+          details: { current },
+        },
+      },
     );
     this.name = "ContentTreeConflictError";
     this.current = current;
   }
 }
 
-export class InvalidContentTreeError extends Error {
+export class InvalidContentTreeError extends RuntimeDomainError {
   constructor(message: string) {
-    super(message);
+    super(message, {
+      receipt: {
+        code: "invalid_request",
+        commands: ["content.gameplay.set", "content.replace", "content.import"],
+      },
+    });
     this.name = "InvalidContentTreeError";
   }
 }
