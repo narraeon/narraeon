@@ -1,0 +1,74 @@
+{
+  "sourceCommit": "015a2ed",
+  "historicalConnection": {
+    "provider": "chat_completions",
+    "modelId": "deepseek-flash",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "cacheStrategy": "provider_managed",
+    "endpointFingerprint": "5ea267c7938af0eb084f066755dcd7ea04b72f57a4ed9ae76da1d00de72597fa",
+    "protocolConfigFingerprint": "efdfbe6c8b5ee98818a722daafedc81c70778e0094ee675be7f709c4014f32b5"
+  },
+  "historicalRequestParameters": {
+    "model": "deepseek-flash",
+    "reasoning_effort": "max",
+    "tool_choice": "auto",
+    "max_tokens": 384000,
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "repeats": 3,
+  "workers": 3,
+  "scenarios": {
+    "claim": {
+      "state": "账房里只有你和掌柜，两人隔柜坐着，柜上放着欠条，眼前摊着签名页。掌柜声称你父亲押了祖屋。眼下你们手边只有签名页，掌柜还没有出示支持这项说法的材料。",
+      "opening": "你和掌柜隔着账房里的榆木柜台坐着。掌柜说：“这笔账押着祖屋。”他把欠条推过来，问：“这张欠条是谁签的？”",
+      "input": "我父亲。",
+      "questions": {
+        "neutral": "我想看看完整字据。",
+        "leading": "你说押了祖屋，字据上哪一条写着？"
+      },
+      "fixedHistoricalReply": "掌柜点了点头，手还搭在纸边。"
+    },
+    "none": {
+      "state": "账房里只有你和掌柜，两人隔柜坐着，柜上放着欠条，眼前摊着签名页。欠条载明本金三十两、无抵押。双方签署的完整原件就在柜上，可以翻阅。",
+      "opening": "你和掌柜隔着账房里的榆木柜台坐着。他把欠条推过来，问：“这张欠条是谁签的？”",
+      "input": "我父亲。",
+      "questions": {
+        "neutral": "我想看看完整字据。",
+        "leading": "你说押了祖屋，字据上哪一条写着？"
+      },
+      "fixedHistoricalReply": "掌柜点了点头，手还搭在纸边。"
+    },
+    "signed": {
+      "state": "账房里只有你和掌柜，两人隔柜坐着，柜上放着欠条，眼前摊着签名页。双方签署的完整原件就在柜上，可以翻阅。第二条载明：本金三十两，借款人以西巷祖屋一所作抵。你父亲与掌柜均已在条款下签署。",
+      "opening": "你和掌柜隔着账房里的榆木柜台坐着。他把欠条推过来，问：“这张欠条是谁签的？”",
+      "input": "我父亲。",
+      "questions": {
+        "neutral": "我想看看完整字据。",
+        "leading": "你说押了祖屋，字据上哪一条写着？"
+      },
+      "fixedHistoricalReply": "掌柜点了点头，手还搭在纸边。"
+    },
+    "unknown": {
+      "state": "账房里只有你和掌柜，两人隔柜坐着，柜上放着欠条，眼前摊着签名页。金额与抵押条款尚未揭示。",
+      "opening": "你和掌柜隔着账房里的榆木柜台坐着。他把欠条推过来，问：“这张欠条是谁签的？”",
+      "input": "我父亲。",
+      "questions": {
+        "neutral": "我想看看完整字据。",
+        "leading": "你说押了祖屋，字据上哪一条写着？"
+      },
+      "fixedHistoricalReply": "掌柜点了点头，手还搭在纸边。"
+    },
+    "original-claim": {
+      "state": "账房里只有你和掌柜，两人隔柜坐着。柜面上放着一张欠条。掌柜刚声称立据人押了祖屋，目前只见签名页。",
+      "opening": "雨一直下到傍晚。你和掌柜隔着账房里的榆木柜台坐着，柜角那盏油灯已经点了起来。掌柜说：“这笔账押着祖屋。”他把欠条推过来，问：“这张欠条是谁签的？”",
+      "input": "我父亲。",
+      "questions": {
+        "leading": "你说押了祖屋，字据上哪一条写着？"
+      }
+    }
+  }
+}
