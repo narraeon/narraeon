@@ -26,6 +26,7 @@ import {
 } from "../../protocol/gameplay.ts";
 import type { V1StoryExport, V1StoryExportFormat } from "../../protocol/v1.ts";
 import { HistoryQuery } from "../history/HistoryQuery.ts";
+import { createHistoryQuery } from "../history/HistoryTools.ts";
 import { exportStory } from "../history/StoryExport.ts";
 import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import { PackageScriptPermissions } from "../extension/PackageScriptPermissions.ts";
@@ -91,10 +92,12 @@ import {
   type WorldRevisionLockHandle,
 } from "./WorldOperationCoordinator.ts";
 import {
+  committedHistoryEntries,
   projectFileNativeHistorySurface,
   projectHistoryBackgrounds,
   historyBackgroundRecord,
 } from "./FileNativeHistoryProjection.ts";
+import { LegacyAuthorityV3Reader } from "./LegacyAuthorityV3Reader.ts";
 
 const publicationFile = "publication.json";
 const localMetadataFile = "local.json";
@@ -477,6 +480,47 @@ export class FileNativeWorldStore {
       );
       return exportStory(title, history.messages, format, locale);
     });
+  }
+
+  /** Open a published history snapshot without migration or recovery writes. */
+  async openHistoryQuery(worldId: string): Promise<HistoryQuery> {
+    assertIdentity(worldId, "World ID");
+    const root = join(this.#worldsRoot, worldId);
+    try {
+      await readPublicationAt(root);
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === "ENOENT")
+        throw new FileNativeWorldNotFoundError({ cause: error });
+      throw error;
+    }
+
+    const authority = new WorldLedgerAuthority(root);
+    if (!(await authority.exists())) {
+      const legacy = new LegacyAuthorityV3Reader(root);
+      if (await legacy.exists()) {
+        try {
+          const history = await legacy.recoverCommittedHistory();
+          return createHistoryQuery(worldId, committedHistoryEntries(history));
+        } catch (error: unknown) {
+          // The desktop migrator publishes head.json before removing V3 files.
+          if (
+            !isNodeError(error) ||
+            error.code !== "ENOENT" ||
+            !(await authority.exists())
+          )
+            throw error;
+        }
+      } else if (!(await authority.exists())) {
+        throw new UnsupportedLegacyStorageError(worldId);
+      }
+    }
+    const { history, historyVersion } =
+      await authority.recoverCommittedHistory();
+    return createHistoryQuery(
+      worldId,
+      committedHistoryEntries(history),
+      historyVersion,
+    );
   }
 
   async renameWorld(

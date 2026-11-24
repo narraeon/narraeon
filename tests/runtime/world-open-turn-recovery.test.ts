@@ -60,6 +60,29 @@ test("崩溃留下的未完成轮在第一次读取时回滚：端点与当前�
   expect(await readHeadSequence(worldRoot)).toBe(1);
 });
 
+test("只读历史使用已发布轮次，不恢复另一个进程正在写的轮", async () => {
+  const fixture = await world();
+  await commitPlay(fixture, "genesis", "第一句。");
+  const worldRoot = worldRootOf(fixture);
+  await crashMidTurn(worldRoot, crashedChanges());
+  const before = await contentsOf(worldRoot);
+  vi.mocked(recoverIncomplete).mockClear();
+
+  const history = await new FileNativeWorldStore(fixture.root).openHistoryQuery(
+    fixture.worldId,
+  );
+  expect(history.search({ queries: ["第一句"] })).toMatchObject({
+    ok: true,
+    matches: 1,
+  });
+  expect(history.search({ queries: ["半写入"] })).toMatchObject({
+    ok: true,
+    matches: 0,
+  });
+  expect(recoverIncomplete).not.toHaveBeenCalled();
+  expect(await contentsOf(worldRoot)).toEqual(before);
+});
+
 test("崩溃现场打开之后再提交一轮并回退到 commit:1，文件回到原始内容", async () => {
   const fixture = await world();
   await commitPlay(fixture, "genesis", "第一句。");

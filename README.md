@@ -78,6 +78,14 @@ the Runtime's request checks. Narraeon provides no built-in web authentication.
 Stable releases move `latest`, prereleases move `next`, and every release also
 has an exact version tag.
 
+### Search a world's story from the terminal
+
+```bash
+npx narraeon history grep "$world_id" "the letter"
+```
+
+This read-only command uses the same data directory as `narraeon web`, including any `NARRAEON_DATA_ROOT` override. It searches committed messages on the current timeline, newest first, using case-insensitive literal matching. Each result gives a message reference, the excerpt's starting position, and the excerpt. The exit status is `0` for matches, `1` for no matches, and `2` for a usage or read error.
+
 ## Run from source
 
 ```bash

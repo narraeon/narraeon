@@ -159,9 +159,8 @@ export class FileNativeAuthorityV3Error extends Error {
 }
 
 /**
- * Read-only access to the retired Authority V3 fact chain. It exists only so
- * the storage migrator can convert a V3 world into the current layout; nothing
- * on the live path writes V3 facts.
+ * Read-only access to the retired Authority V3 fact chain for migration and
+ * history inspection before migration.
  *
  * World-neutral immutable Authority facts with one target-local mutable head.
  *
@@ -218,6 +217,14 @@ export class LegacyAuthorityV3Reader {
   async recoverHeadResult(): Promise<FileNativeAuthorityRecoveredEndpoint> {
     const current = await this.readHead();
     return this.#recoverResult(current.head, current.result);
+  }
+
+  async recoverCommittedHistory(): Promise<
+    FileNativeAuthorityHistoryMessage[]
+  > {
+    const { result } = await this.readHead();
+    const endpoint = await this.#readEndpoint(result);
+    return this.#recoverHistory(endpoint.history, endpoint.historyLength);
   }
 
   async #recoverResult(

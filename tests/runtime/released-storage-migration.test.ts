@@ -140,6 +140,25 @@ test("含时间线修订的 V3 世界迁移为单个修订轮，修订后的端�
   ).rejects.toThrow();
 });
 
+test("只读历史可搜索尚未迁移的 V3 世界，修订后的历史与迁移后相同", async () => {
+  const { root, worldRoot, fixture } = await restore("revised");
+  const store = new FileNativeWorldStore(root);
+  const legacy = await store.openHistoryQuery(fixture.worldId);
+
+  expect(legacy.messages.length).toBeGreaterThan(0);
+  expect((await listRelative(worldRoot)).sort()).toEqual(
+    fixture.files.map(({ path }) => path).sort(),
+  );
+  for (const { path, base64 } of fixture.files)
+    expect((await readFile(join(worldRoot, path))).toString("base64")).toBe(
+      base64,
+    );
+
+  await expect(store.currentHead(fixture.worldId)).resolves.toBe("commit:5");
+  const migrated = await store.openHistoryQuery(fixture.worldId);
+  expect(migrated.messages).toEqual(legacy.messages);
+});
+
 test("迁移中途留下的未发布账本会被丢弃并重做", async () => {
   const { root, worldRoot, fixture } = await restore("plain");
   // 构造一个未发布的中间状态：有半写的轮记录目录，但没有 head.json。

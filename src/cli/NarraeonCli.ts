@@ -2,6 +2,7 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { grepHistory } from "./HistoryGrep.ts";
 import { v1Protocol } from "../protocol/v1.ts";
 import { parseTrustedWebOrigins } from "../server/WebAccess.ts";
 import {
@@ -25,6 +26,7 @@ export type LocalWebInspection =
 
 export type NarraeonCliResult =
   | { kind: "help" }
+  | { kind: "history-grep"; exitCode: 0 | 1 | 2 }
   | { kind: "reused"; url: string }
   | { kind: "started"; url: string; server: StoppableServer };
 
@@ -47,7 +49,20 @@ interface WebCommand {
   openBrowser: boolean;
 }
 
-export class NarraeonCliUsageError extends Error {}
+interface HistoryGrepCommand {
+  kind: "history-grep";
+  worldId: string;
+  query: string;
+}
+
+export class NarraeonCliUsageError extends Error {
+  readonly exitCode: 1 | 2;
+
+  constructor(message: string, exitCode: 1 | 2 = 1) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
 
 export async function runNarraeonCli(
   input: NarraeonCliInput,
@@ -60,6 +75,17 @@ export async function runNarraeonCli(
   if (command === null) {
     output(cliHelp);
     return { kind: "help" };
+  }
+  if (command.kind === "history-grep") {
+    const { dataRoot } = resolveAppPaths(input.environment);
+    const exitCode = await grepHistory(
+      dataRoot,
+      command.worldId,
+      command.query,
+      output,
+      errorOutput,
+    );
+    return { kind: "history-grep", exitCode };
   }
 
   const url = `http://127.0.0.1:${command.port}`;
@@ -171,10 +197,26 @@ function acceptsTcpConnections(url: string): Promise<boolean> {
 function parseCliCommand(
   args: string[],
   environment: NodeJS.ProcessEnv,
-): WebCommand | null {
+): WebCommand | HistoryGrepCommand | null {
   const parsed = parseRawArguments(args);
   if (parsed.values.help === true || parsed.positionals.length === 0)
     return null;
+  if (parsed.positionals[0] === "history") {
+    const [, subcommand, worldId, query, ...extra] = parsed.positionals;
+    if (
+      subcommand !== "grep" ||
+      worldId === undefined ||
+      query === undefined ||
+      extra.length !== 0 ||
+      parsed.values.port !== undefined ||
+      parsed.values.open !== undefined
+    )
+      throw new NarraeonCliUsageError(
+        "Expected narraeon history grep <worldId> <query>",
+        2,
+      );
+    return { kind: "history-grep", worldId, query };
+  }
   if (parsed.positionals.length !== 1 || parsed.positionals[0] !== "web")
     throw new NarraeonCliUsageError(
       `Unknown command: ${parsed.positionals.join(" ") || "(empty)"}`,
@@ -217,7 +259,10 @@ function parseRawArguments(args: string[]) {
       },
     });
   } catch (error: unknown) {
-    throw new NarraeonCliUsageError(errorMessage(error));
+    throw new NarraeonCliUsageError(
+      errorMessage(error),
+      args[0] === "history" ? 2 : 1,
+    );
   }
 }
 
@@ -266,6 +311,7 @@ export const cliHelp = `Narraeon
 
 Usage:
   narraeon web [--port <port>] [--no-open]
+  narraeon history grep <worldId> <query>
 
 Options:
   -p, --port <port>  Local web port (default: 4317)

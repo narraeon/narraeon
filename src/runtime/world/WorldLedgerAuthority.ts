@@ -21,6 +21,7 @@ import type {
   NarrativeCheckpointDeclaration,
 } from "../play/PlayContinuity.ts";
 import {
+  committedHistoryEntries,
   projectFileNativeHistorySurface,
   projectHistoryBackgrounds,
 } from "./FileNativeHistoryProjection.ts";
@@ -99,6 +100,11 @@ export interface WorldRecoveredEndpoint {
   additionalMaterials: MaterialSelection[];
   narrativeCheckpoint?: NarrativeCheckpoint;
 }
+
+type CommittedHistory = Pick<
+  WorldRecoveredEndpoint,
+  "history" | "historyVersion"
+>;
 
 export interface WorldHeadState {
   head: string;
@@ -293,27 +299,41 @@ export class WorldLedgerAuthority {
       { dirs: ["state"], paths: [materialsFile], includeTurns: true },
     );
     const commits = commitsFromTurns(turns);
+    const checkpoint = this.#checkpointAt(commits);
+    return {
+      head: headName(sequence),
+      state: surfaceFiles(files, "state"),
+      ...(await this.#recoverCommittedHistory(commits)),
+      additionalMaterials: this.#materialsFrom(files.get(materialsFile)),
+      ...(checkpoint === undefined ? {} : { narrativeCheckpoint: checkpoint }),
+    };
+  }
+
+  /** Read the published history without opening or repairing the world. */
+  async recoverCommittedHistory(): Promise<CommittedHistory> {
+    const { turns } = await readTurnHistory(this.#root);
+    return this.#recoverCommittedHistory(commitsFromTurns(turns));
+  }
+
+  async #recoverCommittedHistory(
+    commits: readonly WorldTurnCommit[],
+  ): Promise<CommittedHistory> {
     const genesis = await this.#genesisHistory();
     let historyVersion = appendHistoryVersion(
       "",
-      historyInputsAtCommit(genesis),
+      historyInputs(committedHistoryEntries(genesis)),
     );
     for (const { historyAppend } of commits) {
       if (historyAppend.length !== 0)
         historyVersion = versionAfterCommit(historyVersion, historyAppend);
     }
-    const checkpoint = this.#checkpointAt(commits);
     return {
-      head: headName(sequence),
-      state: surfaceFiles(files, "state"),
       // Committed messages are borrowed from the cached ledger view.
       history: [
         ...genesis,
         ...structuredClone(commits.flatMap((commit) => commit.historyAppend)),
       ],
       historyVersion,
-      additionalMaterials: this.#materialsFrom(files.get(materialsFile)),
-      ...(checkpoint === undefined ? {} : { narrativeCheckpoint: checkpoint }),
     };
   }
 
@@ -607,16 +627,6 @@ export class WorldLedgerAuthority {
   }
 }
 
-function historyInputsAtCommit(messages: readonly WorldHistoryMessage[]) {
-  return historyInputs(
-    messages.map(({ messageId, exactText, background }) => ({
-      path: messageId,
-      contents: exactText,
-      ...(background === undefined ? {} : { background }),
-    })),
-  );
-}
-
 // Turn payloads are immutable and reused by the ledger view. The prefix check
 // also covers a newly opened or replaced genesis. Eviction follows the ledger.
 const turnHistoryVersions = new WeakMap<
@@ -632,7 +642,7 @@ function versionAfterCommit(
   if (cached?.previous === previous) return cached.version;
   const version = appendHistoryVersion(
     previous,
-    historyInputsAtCommit(messages),
+    historyInputs(committedHistoryEntries(messages)),
   );
   turnHistoryVersions.set(messages, { previous, version });
   return version;

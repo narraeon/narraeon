@@ -1,10 +1,12 @@
 import { createServer as createHttpServer } from "node:http";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import {
   createServer as createNetServer,
   type Server,
   type Socket,
 } from "node:net";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { expect, test } from "vitest";
 
@@ -236,6 +238,44 @@ test("非法端口和未知命令是用法错误", async () => {
       environment: { NARRAEON_HOST: "192.0.2.10" },
     }),
   ).rejects.toThrow("NARRAEON_HOST must be 127.0.0.1 or 0.0.0.0: 192.0.2.10");
+});
+
+test("history grep 用法错误退出 2，查找缺失世界时不启动服务或初始化数据目录", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-cli-history-"));
+  try {
+    const capture = createCapture();
+    const result = await runNarraeonCli({
+      ...cliInput({
+        args: ["history", "grep", "missing-world", "那封信"],
+        capture,
+        inspection: "occupied",
+      }),
+      environment: {
+        NARRAEON_DATA_ROOT: join(root, "missing-data"),
+        NARRAEON_PORT: "invalid-web-port",
+      },
+      inspectServer: () => {
+        throw new Error("History must not inspect a web server");
+      },
+      startServer: () => {
+        throw new Error("History must not start a web server");
+      },
+    });
+    expect(result).toEqual({ kind: "history-grep", exitCode: 2 });
+    expect(capture.output).toBe("");
+    expect(capture.error).toContain("World does not exist");
+    expect(await readdir(root)).toEqual([]);
+    for (const args of [
+      ["history", "grep", "world-id"],
+      ["history", "grep", "world-id", "term", "--bad-option"],
+      ["history", "grep", "world-id", "term", "--port", "4321"],
+    ])
+      await expect(
+        runNarraeonCli(cliInput({ args, capture, inspection: "occupied" })),
+      ).rejects.toMatchObject({ exitCode: 2 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("发布版 CLI 从模块位置解析 Web 产物，不依赖当前目录", () => {
