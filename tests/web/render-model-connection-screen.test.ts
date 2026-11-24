@@ -125,7 +125,7 @@ test("预填充高级设置显式保存并在重开后保留，切换协议清�
     onDirtyChange: vi.fn(),
   };
   const view = render(createElement(ModelConnectionScreen, props));
-  fireEvent.click(screen.getByText("高级选项"));
+  fireEvent.click(screen.getByText("高级协议选项"));
   const select = screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式");
   expect(select.value).toBe("disabled");
   fireEvent.change(select, { target: { value: "mistral_prefix" } });
@@ -144,7 +144,7 @@ test("预填充高级设置显式保存并在重开后保留，切换协议清�
   render(
     createElement(ModelConnectionScreen, { ...props, library: savedLibrary }),
   );
-  fireEvent.click(screen.getByText("高级选项"));
+  fireEvent.click(screen.getByText("高级协议选项"));
   expect(
     screen.getByLabelText<HTMLSelectElement>("中断回复的续写方式").value,
   ).toBe("mistral_prefix");
@@ -200,7 +200,7 @@ test("Responses 高级选项可编辑保存并用英文显示已保存的值", a
     onDirtyChange: vi.fn(),
   };
   const view = render(createElement(ModelConnectionScreen, props));
-  fireEvent.click(screen.getByText("Advanced options"));
+  fireEvent.click(screen.getByText("Advanced protocol options"));
   const select = screen.getByLabelText<HTMLSelectElement>(
     "Supports tool subset selection (allowed_tools)",
   );
@@ -222,7 +222,7 @@ test("Responses 高级选项可编辑保存并用英文显示已保存的值", a
       },
     }),
   );
-  fireEvent.click(screen.getByText("Advanced options"));
+  fireEvent.click(screen.getByText("Advanced protocol options"));
   expect(
     screen.getByLabelText<HTMLSelectElement>(
       "Supports tool subset selection (allowed_tools)",
@@ -254,7 +254,7 @@ test("GPT-6.2 本轮提示和转 Claude 缓存各自显式启用，随连接限�
       onDirtyChange: vi.fn(),
     }),
   );
-  fireEvent.click(screen.getByText("高级选项"));
+  fireEvent.click(screen.getByText("高级协议选项"));
   const turnLabel = "GPT-6.2 本轮提示";
   const cacheLabel = "CLIProxyAPI 转 Claude 的显式缓存标记";
   const turn = screen.getByLabelText<HTMLSelectElement>(turnLabel);
@@ -341,6 +341,7 @@ test("Google 手工选择方言、推理等级或兼容预算，均保留独立�
       onDirtyChange: vi.fn(),
     }),
   );
+  fireEvent.click(screen.getByText("高级协议选项"));
   fireEvent.change(screen.getByLabelText("协议适配器"), {
     target: { value: "google_interactions" },
   });
@@ -411,6 +412,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
     }),
   );
 
+  fireEvent.click(screen.getByText("高级协议选项"));
   expect(
     screen.getByLabelText<HTMLSelectElement>("Effort（推理强度）").value,
   ).toBe("provider_default");
@@ -482,6 +484,7 @@ test("三种协议只暴露各自真实支持的 Effort、Thinking 和返回内�
     }),
   );
 
+  fireEvent.click(screen.getByText("高级协议选项"));
   const provider = screen.getByLabelText<HTMLSelectElement>("协议适配器");
   const thinking =
     screen.getByLabelText<HTMLSelectElement>("Thinking（思考模式）");
@@ -524,6 +527,7 @@ test("已有配置可以更改协议，更换来源时须重新填写 API Key", 
   );
   fireEvent.click(screen.getByRole("button", { name: "编辑" }));
 
+  fireEvent.click(screen.getByText("高级协议选项"));
   fireEvent.change(screen.getByLabelText("协议适配器"), {
     target: { value: "openai_responses" },
   });
@@ -563,6 +567,7 @@ test("CLIProxyAPI 模型后缀控制 Thinking 时仍可独立配置返回内容"
     }),
   );
 
+  fireEvent.click(screen.getByText("高级协议选项"));
   expect(
     screen.getByLabelText<HTMLSelectElement>("Thinking（思考模式）").value,
   ).toBe("provider_default");

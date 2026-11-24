@@ -881,10 +881,16 @@
   background: var(--surface-selected);
   box-shadow: none;
 }
-.parameter-help {
-  padding: 4px 0 12px;
-  color: var(--muted);
-  font-size: 12px;
+.model-protocol-options {
+  padding: 8px 0;
+}
+.model-protocol-fields {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+.model-protocol-fields .field-note {
+  margin: 0;
 }
 .model-connection-screen .config-form > label {
   align-self: center;

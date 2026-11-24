@@ -7,6 +7,7 @@ import {
   hasCLIProxyThinkingSuffix,
   isGoogleThinkingLevel,
   isSameModelServiceOrigin,
+  modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
   googleThinkingLevels,
   type CopyModelConnectionResult,
@@ -95,6 +96,7 @@ export function ModelConnectionScreen({
   const localPending = useState<string | null>(null);
   const [pending, setPending] = pendingState ?? localPending;
   const [dirty, setDirty] = useState(false);
+  const advancedOptions = useRef<HTMLDetailsElement>(null);
   const editing = useRef({ dirty, form, onLibraryChange });
   useEffect(() => {
     editing.current = { dirty, form, onLibraryChange };
@@ -237,6 +239,11 @@ export function ModelConnectionScreen({
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (pending !== null) return;
+    const thinkingBudgetTokens =
+      form.thinkingMode === "enabled"
+        ? Number(form.thinkingBudgetTokens)
+        : null;
+    const maxOutputTokens = Number(form.maxOutputTokens);
     setPending("save");
     try {
       const next = await target.command(() =>
@@ -264,12 +271,9 @@ export function ModelConnectionScreen({
             ),
             supportsAllowedTools: form.supportsAllowedTools,
             assistantPrefillMode: form.assistantPrefillMode,
-            thinkingBudgetTokens:
-              form.thinkingMode === "enabled"
-                ? Number(form.thinkingBudgetTokens)
-                : null,
+            thinkingBudgetTokens,
             contextWindowTokens: Number(form.contextWindowTokens),
-            maxOutputTokens: Number(form.maxOutputTokens),
+            maxOutputTokens,
           },
         }),
       );
@@ -281,6 +285,23 @@ export function ModelConnectionScreen({
       if (saved !== undefined) edit(saved);
       onNotice(uiText("模型连接已保存并启用；后续请求只使用当前配置。"));
     } catch (error: unknown) {
+      const options = advancedOptions.current;
+      if (
+        options?.open === false &&
+        modelReasoningPolicyIssue({
+          provider: form.provider,
+          dialect: form.dialect,
+          modelId: form.modelId.trim(),
+          effort: form.reasoningEffort,
+          summary: form.reasoningSummary,
+          thinking: form.thinkingMode,
+          thinkingBudgetTokens,
+          maxOutputTokens,
+        }) !== null
+      ) {
+        options.open = true;
+        options.querySelector("summary")?.focus();
+      }
       onNotice(errorMessage(error));
     } finally {
       setPending(null);
@@ -453,359 +474,6 @@ export function ModelConnectionScreen({
             onChange={(event) => change({ name: event.target.value })}
           />
 
-          <label htmlFor="model-provider">{uiText("协议适配器")}</label>
-          <select
-            id="model-provider"
-            value={form.provider}
-            onChange={(event) =>
-              change(
-                {
-                  presetId: "custom",
-                  provider: event.target.value as ModelProviderKind,
-                  assistantPrefillMode: "disabled",
-                  ...reasoningForProvider(
-                    form,
-                    event.target.value as ModelProviderKind,
-                    form.dialect,
-                  ),
-                },
-                true,
-              )
-            }
-          >
-            <option value="chat_completions">
-              OpenAI-compatible Chat Completions
-            </option>
-            <option value="openai_responses">OpenAI Responses API</option>
-            <option value="anthropic_messages">Anthropic Messages</option>
-            <option value="google_interactions">
-              Google Gemini · Interactions
-            </option>
-          </select>
-
-          <label htmlFor="model-dialect">{uiText("端点方言")}</label>
-          <select
-            id="model-dialect"
-            value={form.dialect}
-            onChange={(event) => {
-              const dialect = event.target.value as ModelProviderDialect;
-              change({
-                dialect,
-                ...reasoningForProvider(form, form.provider, dialect),
-              });
-            }}
-          >
-            <option value="standard">{uiText("协议标准")}</option>
-            <option value="cliproxyapi">CLIProxyAPI</option>
-          </select>
-          <details className="parameter-help">
-            <summary>{uiText("参数说明")}</summary>
-            <p className="field-note">
-              {uiText(
-                "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
-              )}
-            </p>
-          </details>
-
-          <div className="model-reasoning-fields">
-            <label htmlFor="model-reasoning-effort">
-              {uiText("Effort（推理强度）")}
-              <select
-                id="model-reasoning-effort"
-                value={form.reasoningEffort}
-                onChange={(event) =>
-                  change({
-                    reasoningEffort: event.target.value as ModelReasoningEffort,
-                    ...(google && event.target.value !== "provider_default"
-                      ? {
-                          thinkingMode: "provider_default",
-                          thinkingBudgetTokens: "",
-                        }
-                      : {}),
-                  })
-                }
-              >
-                <option value="provider_default">
-                  {uiText("Provider 默认")}
-                </option>
-                {google ? (
-                  googleThinkingLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    {form.provider === "anthropic_messages" ? null : (
-                      <>
-                        <option value="none">none</option>
-                        <option value="minimal">minimal</option>
-                      </>
-                    )}
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
-                    <option value="xhigh">xhigh</option>
-                    <option value="max">max</option>
-                  </>
-                )}
-              </select>
-            </label>
-            <label htmlFor="model-thinking-mode">
-              {uiText(
-                google ? "Thinking（兼容预算模式）" : "Thinking（思考模式）",
-              )}
-              <select
-                id="model-thinking-mode"
-                disabled={!google && form.provider !== "anthropic_messages"}
-                value={form.thinkingMode}
-                onChange={(event) => {
-                  const thinkingMode = event.target.value as ModelThinkingMode;
-                  change({
-                    thinkingMode,
-                    ...(google && thinkingMode !== "provider_default"
-                      ? { reasoningEffort: "provider_default" }
-                      : {}),
-                    thinkingBudgetTokens:
-                      thinkingMode === "enabled"
-                        ? form.thinkingBudgetTokens ||
-                          defaultThinkingBudget(form.maxOutputTokens)
-                        : "",
-                    reasoningSummary:
-                      !google &&
-                      (thinkingMode === "provider_default" ||
-                        thinkingMode === "disabled")
-                        ? thinkingMode === "provider_default" &&
-                          cliProxySuffixControlsThinking({
-                            ...form,
-                            thinkingMode,
-                          })
-                          ? form.reasoningSummary
-                          : "provider_default"
-                        : form.reasoningSummary,
-                  });
-                }}
-              >
-                <option value="provider_default">
-                  {uiText("Provider 默认")}
-                </option>
-                <option value="adaptive">adaptive</option>
-                <option value="enabled">{uiText("手动 token 预算")}</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-            <label htmlFor="model-reasoning-summary">
-              {uiText("Thinking 返回内容")}
-              <select
-                id="model-reasoning-summary"
-                disabled={
-                  (form.provider === "chat_completions" &&
-                    form.dialect === "standard") ||
-                  (form.provider === "anthropic_messages" &&
-                    (form.thinkingMode === "provider_default" ||
-                      form.thinkingMode === "disabled") &&
-                    !cliProxySuffixControlsThinking(form))
-                }
-                value={form.reasoningSummary}
-                onChange={(event) =>
-                  change({
-                    reasoningSummary: event.target
-                      .value as ModelReasoningSummary,
-                  })
-                }
-              >
-                <option value="provider_default">
-                  {uiText("Provider 默认")}
-                </option>
-                <option value="auto">auto</option>
-                {form.provider === "openai_responses" ? (
-                  <>
-                    <option value="concise">concise</option>
-                    <option value="detailed">detailed</option>
-                  </>
-                ) : null}
-                <option value="none">none</option>
-              </select>
-            </label>
-          </div>
-          {(google || form.provider === "anthropic_messages") &&
-          form.thinkingMode === "enabled" ? (
-            <label htmlFor="model-thinking-budget">
-              {uiText("Thinking budget tokens")}
-              <input
-                id="model-thinking-budget"
-                min={google ? 0 : 1024}
-                max={
-                  google
-                    ? undefined
-                    : Math.max(1024, Number(form.maxOutputTokens) - 1)
-                }
-                required
-                step={1}
-                type="number"
-                value={form.thinkingBudgetTokens}
-                onChange={(event) =>
-                  change({ thinkingBudgetTokens: event.target.value })
-                }
-              />
-            </label>
-          ) : null}
-          <details className="parameter-help">
-            <summary>{uiText("参数说明")}</summary>
-            <p className="field-note">
-              {uiText(
-                google
-                  ? "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。"
-                  : "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
-              )}
-            </p>
-          </details>
-
-          {!google && (
-            <details className="parameter-help">
-              <summary>{uiText("高级选项")}</summary>
-              {form.provider === "openai_responses" ? (
-                <>
-                  <label htmlFor="model-responses-turn-instructions">
-                    {uiText("GPT-6.2 本轮提示")}
-                  </label>
-                  <select
-                    id="model-responses-turn-instructions"
-                    value={String(form.responsesTurnInstructions)}
-                    onChange={(event) =>
-                      change({
-                        responsesTurnInstructions:
-                          event.target.value === "true",
-                      })
-                    }
-                  >
-                    <option value="false">
-                      {uiText("玩家本轮临时要求放在 input 末尾（默认）")}
-                    </option>
-                    <option value="true">
-                      {uiText("玩家本轮临时要求放入 instructions")}
-                    </option>
-                  </select>
-                  <p className="field-note">
-                    {uiText(
-                      "编排方案和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。",
-                    )}
-                  </p>
-                  {form.dialect === "cliproxyapi" && (
-                    <>
-                      <label htmlFor="model-responses-cache-control">
-                        {uiText("CLIProxyAPI 转 Claude 的显式缓存标记")}
-                      </label>
-                      <select
-                        id="model-responses-cache-control"
-                        value={String(form.responsesCacheControl)}
-                        onChange={(event) =>
-                          change({
-                            responsesCacheControl:
-                              event.target.value === "true",
-                          })
-                        }
-                      >
-                        <option value="false">{uiText("否")}</option>
-                        <option value="true">{uiText("是")}</option>
-                      </select>
-                      <p className="field-note">
-                        {uiText(
-                          "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。",
-                        )}
-                      </p>
-                    </>
-                  )}
-                  <label htmlFor="model-allowed-tools">
-                    {uiText("支持工具子集选择（allowed_tools）")}
-                  </label>
-                  <select
-                    id="model-allowed-tools"
-                    value={String(form.supportsAllowedTools)}
-                    onChange={(event) =>
-                      change({
-                        supportsAllowedTools: event.target.value === "true",
-                      })
-                    }
-                  >
-                    <option value="true">{uiText("是")}</option>
-                    <option value="false">{uiText("否")}</option>
-                  </select>
-                </>
-              ) : null}
-              <>
-                <label htmlFor="model-assistant-prefill">
-                  {uiText("中断回复的续写方式")}
-                </label>
-                <select
-                  id="model-assistant-prefill"
-                  value={form.assistantPrefillMode}
-                  onChange={(event) =>
-                    change({
-                      assistantPrefillMode: event.target
-                        .value as ModelAssistantPrefillMode,
-                    })
-                  }
-                >
-                  <option value="disabled">{uiText("通用续写指令")}</option>
-                  <option value="assistant">
-                    {uiText("普通 assistant 预填充")}
-                  </option>
-                  {form.provider === "openai_responses" && (
-                    <option value="partial">
-                      {uiText("partial: true（火山方舟）")}
-                    </option>
-                  )}
-                  {form.provider === "chat_completions" && (
-                    <>
-                      <option value="prefix">
-                        {uiText("prefix: true（DeepSeek）")}
-                      </option>
-                      <option value="mistral_prefix">
-                        {uiText("prefix: true（Mistral，响应包含前缀）")}
-                      </option>
-                      <option value="partial">
-                        {uiText("partial: true（Kimi / 千问）")}
-                      </option>
-                    </>
-                  )}
-                </select>
-                <p className="field-note">
-                  {uiText(
-                    "默认随原请求发送已收到的正文，并要求模型只返回后文。服务和模型支持原生预填充时，可以选择对应的格式。",
-                  )}
-                </p>
-                {form.assistantPrefillMode === "assistant" && (
-                  <p className="field-note">
-                    {uiText(
-                      "普通预填充依赖具体端点；标准 OpenAI 不支持，OpenRouter 等兼容端点须确认模型支持。Anthropic 仅限受支持的旧模型，并须关闭 Thinking；Claude 4.6 及后续模型不支持。",
-                    )}
-                  </p>
-                )}
-                {form.assistantPrefillMode === "prefix" && (
-                  <p className="field-note">
-                    {uiText(
-                      "DeepSeek 前缀补全须使用支持此能力的 /beta 端点；响应按新增正文拼接。",
-                    )}
-                  </p>
-                )}
-                {form.assistantPrefillMode === "mistral_prefix" && (
-                  <p className="field-note">
-                    {uiText("Mistral 返回包含已发前缀的完整正文，不重复拼接。")}
-                  </p>
-                )}
-                {form.assistantPrefillMode === "partial" && (
-                  <p className="field-note">
-                    {uiText(
-                      form.provider === "openai_responses"
-                        ? "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。"
-                        : "Kimi / 千问的模型与思考模式须支持 partial。",
-                    )}
-                  </p>
-                )}
-              </>
-            </details>
-          )}
           <label htmlFor="model-base-url">Base URL</label>
           <input
             id="model-base-url"
@@ -944,6 +612,381 @@ export function ModelConnectionScreen({
               />
             </label>
           </div>
+
+          <details
+            className="model-protocol-options"
+            key={form.connectionId}
+            ref={advancedOptions}
+            onInvalid={(event) => {
+              event.currentTarget.open = true;
+            }}
+          >
+            <summary>{uiText("高级协议选项")}</summary>
+            <div className="model-protocol-fields">
+              <div className="two-column-fields">
+                <div>
+                  <label htmlFor="model-provider">{uiText("协议适配器")}</label>
+                  <select
+                    id="model-provider"
+                    value={form.provider}
+                    onChange={(event) =>
+                      change(
+                        {
+                          presetId: "custom",
+                          provider: event.target.value as ModelProviderKind,
+                          assistantPrefillMode: "disabled",
+                          ...reasoningForProvider(
+                            form,
+                            event.target.value as ModelProviderKind,
+                            form.dialect,
+                          ),
+                        },
+                        true,
+                      )
+                    }
+                  >
+                    <option value="chat_completions">
+                      OpenAI-compatible Chat Completions
+                    </option>
+                    <option value="openai_responses">
+                      OpenAI Responses API
+                    </option>
+                    <option value="anthropic_messages">
+                      Anthropic Messages
+                    </option>
+                    <option value="google_interactions">
+                      Google Gemini · Interactions
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="model-dialect">{uiText("端点方言")}</label>
+                  <select
+                    id="model-dialect"
+                    value={form.dialect}
+                    onChange={(event) => {
+                      const dialect = event.target
+                        .value as ModelProviderDialect;
+                      change({
+                        dialect,
+                        ...reasoningForProvider(form, form.provider, dialect),
+                      });
+                    }}
+                  >
+                    <option value="standard">{uiText("协议标准")}</option>
+                    <option value="cliproxyapi">CLIProxyAPI</option>
+                  </select>
+                </div>
+              </div>
+              <p className="field-note">
+                {uiText(
+                  "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
+                )}
+              </p>
+
+              <div className="model-reasoning-fields">
+                <label htmlFor="model-reasoning-effort">
+                  {uiText("Effort（推理强度）")}
+                  <select
+                    id="model-reasoning-effort"
+                    value={form.reasoningEffort}
+                    onChange={(event) =>
+                      change({
+                        reasoningEffort: event.target
+                          .value as ModelReasoningEffort,
+                        ...(google && event.target.value !== "provider_default"
+                          ? {
+                              thinkingMode: "provider_default",
+                              thinkingBudgetTokens: "",
+                            }
+                          : {}),
+                      })
+                    }
+                  >
+                    <option value="provider_default">
+                      {uiText("Provider 默认")}
+                    </option>
+                    {google ? (
+                      googleThinkingLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        {form.provider === "anthropic_messages" ? null : (
+                          <>
+                            <option value="none">none</option>
+                            <option value="minimal">minimal</option>
+                          </>
+                        )}
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                        <option value="max">max</option>
+                      </>
+                    )}
+                  </select>
+                </label>
+                <label htmlFor="model-thinking-mode">
+                  {uiText(
+                    google
+                      ? "Thinking（兼容预算模式）"
+                      : "Thinking（思考模式）",
+                  )}
+                  <select
+                    id="model-thinking-mode"
+                    disabled={!google && form.provider !== "anthropic_messages"}
+                    value={form.thinkingMode}
+                    onChange={(event) => {
+                      const thinkingMode = event.target
+                        .value as ModelThinkingMode;
+                      change({
+                        thinkingMode,
+                        ...(google && thinkingMode !== "provider_default"
+                          ? { reasoningEffort: "provider_default" }
+                          : {}),
+                        thinkingBudgetTokens:
+                          thinkingMode === "enabled"
+                            ? form.thinkingBudgetTokens ||
+                              defaultThinkingBudget(form.maxOutputTokens)
+                            : "",
+                        reasoningSummary:
+                          !google &&
+                          (thinkingMode === "provider_default" ||
+                            thinkingMode === "disabled")
+                            ? thinkingMode === "provider_default" &&
+                              cliProxySuffixControlsThinking({
+                                ...form,
+                                thinkingMode,
+                              })
+                              ? form.reasoningSummary
+                              : "provider_default"
+                            : form.reasoningSummary,
+                      });
+                    }}
+                  >
+                    <option value="provider_default">
+                      {uiText("Provider 默认")}
+                    </option>
+                    <option value="adaptive">adaptive</option>
+                    <option value="enabled">{uiText("手动 token 预算")}</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </label>
+                <label htmlFor="model-reasoning-summary">
+                  {uiText("Thinking 返回内容")}
+                  <select
+                    id="model-reasoning-summary"
+                    disabled={
+                      (form.provider === "chat_completions" &&
+                        form.dialect === "standard") ||
+                      (form.provider === "anthropic_messages" &&
+                        (form.thinkingMode === "provider_default" ||
+                          form.thinkingMode === "disabled") &&
+                        !cliProxySuffixControlsThinking(form))
+                    }
+                    value={form.reasoningSummary}
+                    onChange={(event) =>
+                      change({
+                        reasoningSummary: event.target
+                          .value as ModelReasoningSummary,
+                      })
+                    }
+                  >
+                    <option value="provider_default">
+                      {uiText("Provider 默认")}
+                    </option>
+                    <option value="auto">auto</option>
+                    {form.provider === "openai_responses" ? (
+                      <>
+                        <option value="concise">concise</option>
+                        <option value="detailed">detailed</option>
+                      </>
+                    ) : null}
+                    <option value="none">none</option>
+                  </select>
+                </label>
+              </div>
+              {(google || form.provider === "anthropic_messages") &&
+              form.thinkingMode === "enabled" ? (
+                <label htmlFor="model-thinking-budget">
+                  {uiText("Thinking budget tokens")}
+                  <input
+                    id="model-thinking-budget"
+                    min={google ? 0 : 1024}
+                    max={
+                      google
+                        ? undefined
+                        : Math.max(1024, Number(form.maxOutputTokens) - 1)
+                    }
+                    required
+                    step={1}
+                    type="number"
+                    value={form.thinkingBudgetTokens}
+                    onChange={(event) =>
+                      change({ thinkingBudgetTokens: event.target.value })
+                    }
+                  />
+                </label>
+              ) : null}
+              <p className="field-note">
+                {uiText(
+                  google
+                    ? "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。"
+                    : "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
+                )}
+              </p>
+
+              {!google && (
+                <>
+                  {form.provider === "openai_responses" ? (
+                    <>
+                      <label htmlFor="model-responses-turn-instructions">
+                        {uiText("GPT-6.2 本轮提示")}
+                      </label>
+                      <select
+                        id="model-responses-turn-instructions"
+                        value={String(form.responsesTurnInstructions)}
+                        onChange={(event) =>
+                          change({
+                            responsesTurnInstructions:
+                              event.target.value === "true",
+                          })
+                        }
+                      >
+                        <option value="false">
+                          {uiText("玩家本轮临时要求放在 input 末尾（默认）")}
+                        </option>
+                        <option value="true">
+                          {uiText("玩家本轮临时要求放入 instructions")}
+                        </option>
+                      </select>
+                      <p className="field-note">
+                        {uiText(
+                          "编排方案和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。",
+                        )}
+                      </p>
+                      {form.dialect === "cliproxyapi" && (
+                        <>
+                          <label htmlFor="model-responses-cache-control">
+                            {uiText("CLIProxyAPI 转 Claude 的显式缓存标记")}
+                          </label>
+                          <select
+                            id="model-responses-cache-control"
+                            value={String(form.responsesCacheControl)}
+                            onChange={(event) =>
+                              change({
+                                responsesCacheControl:
+                                  event.target.value === "true",
+                              })
+                            }
+                          >
+                            <option value="false">{uiText("否")}</option>
+                            <option value="true">{uiText("是")}</option>
+                          </select>
+                          <p className="field-note">
+                            {uiText(
+                              "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。",
+                            )}
+                          </p>
+                        </>
+                      )}
+                      <label htmlFor="model-allowed-tools">
+                        {uiText("支持工具子集选择（allowed_tools）")}
+                      </label>
+                      <select
+                        id="model-allowed-tools"
+                        value={String(form.supportsAllowedTools)}
+                        onChange={(event) =>
+                          change({
+                            supportsAllowedTools: event.target.value === "true",
+                          })
+                        }
+                      >
+                        <option value="true">{uiText("是")}</option>
+                        <option value="false">{uiText("否")}</option>
+                      </select>
+                    </>
+                  ) : null}
+                  <>
+                    <label htmlFor="model-assistant-prefill">
+                      {uiText("中断回复的续写方式")}
+                    </label>
+                    <select
+                      id="model-assistant-prefill"
+                      value={form.assistantPrefillMode}
+                      onChange={(event) =>
+                        change({
+                          assistantPrefillMode: event.target
+                            .value as ModelAssistantPrefillMode,
+                        })
+                      }
+                    >
+                      <option value="disabled">{uiText("通用续写指令")}</option>
+                      <option value="assistant">
+                        {uiText("普通 assistant 预填充")}
+                      </option>
+                      {form.provider === "openai_responses" && (
+                        <option value="partial">
+                          {uiText("partial: true（火山方舟）")}
+                        </option>
+                      )}
+                      {form.provider === "chat_completions" && (
+                        <>
+                          <option value="prefix">
+                            {uiText("prefix: true（DeepSeek）")}
+                          </option>
+                          <option value="mistral_prefix">
+                            {uiText("prefix: true（Mistral，响应包含前缀）")}
+                          </option>
+                          <option value="partial">
+                            {uiText("partial: true（Kimi / 千问）")}
+                          </option>
+                        </>
+                      )}
+                    </select>
+                    <p className="field-note">
+                      {uiText(
+                        "默认随原请求发送已收到的正文，并要求模型只返回后文。服务和模型支持原生预填充时，可以选择对应的格式。",
+                      )}
+                    </p>
+                    {form.assistantPrefillMode === "assistant" && (
+                      <p className="field-note">
+                        {uiText(
+                          "普通预填充依赖具体端点；标准 OpenAI 不支持，OpenRouter 等兼容端点须确认模型支持。Anthropic 仅限受支持的旧模型，并须关闭 Thinking；Claude 4.6 及后续模型不支持。",
+                        )}
+                      </p>
+                    )}
+                    {form.assistantPrefillMode === "prefix" && (
+                      <p className="field-note">
+                        {uiText(
+                          "DeepSeek 前缀补全须使用支持此能力的 /beta 端点；响应按新增正文拼接。",
+                        )}
+                      </p>
+                    )}
+                    {form.assistantPrefillMode === "mistral_prefix" && (
+                      <p className="field-note">
+                        {uiText(
+                          "Mistral 返回包含已发前缀的完整正文，不重复拼接。",
+                        )}
+                      </p>
+                    )}
+                    {form.assistantPrefillMode === "partial" && (
+                      <p className="field-note">
+                        {uiText(
+                          form.provider === "openai_responses"
+                            ? "火山方舟 Responses 仅限支持 partial 的模型；标准 OpenAI Responses 不支持。"
+                            : "Kimi / 千问的模型与思考模式须支持 partial。",
+                        )}
+                      </p>
+                    )}
+                  </>
+                </>
+              )}
+            </div>
+          </details>
 
           <div className="form-actions">
             <button disabled={pending !== null} type="submit">
