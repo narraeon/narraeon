@@ -533,7 +533,7 @@ export function DocumentWorkbench({
             {workspace.kind === "world-correction" ? (
               <footer className="document-workbench-review">
                 <div>
-                  <strong>{uiText("应用前先审阅")}</strong>
+                  <strong>{uiText("应用前确认修改")}</strong>
                   <span>
                     {uiText(
                       "完整差异 · 真实 Prompt Preview · 一笔 Authority 修订",

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -8,12 +14,38 @@ import { FileNativeCorrectionPanel } from "../../src/web/FileNativeCorrectionPan
 import { setWebLocale } from "../../src/web/i18n.ts";
 
 describe("文件原生连续性修正界面", () => {
-  afterEach(() => setWebLocale("zh-CN"));
+  afterEach(() => {
+    cleanup();
+    setWebLocale("zh-CN");
+  });
 
-  test("应用前显示父端点、完整前后内容、hash、清单和真实 Prompt Preview", () => {
+  test.each([
+    {
+      locale: "zh-CN",
+      region: "确认修正内容",
+      review: "应用前确认修改",
+      checksum: "查看技术校验值",
+      details: "查看修改前版本、附加材料和下一次提示词",
+      previousVersion: "修改前版本",
+      applyLabel: "应用这笔修正",
+      cancelLabel: "放弃修正草稿",
+    },
+    {
+      locale: "en",
+      region: "Review correction",
+      review: "Review before applying",
+      checksum: "View technical checksum",
+      details:
+        "View the previous version, additional material, and next prompt",
+      previousVersion: "Previous version",
+      applyLabel: "Apply this correction",
+      cancelLabel: "Discard correction draft",
+    },
+  ] as const)("应用前可展开校验值和修改前版本（$locale）", (labels) => {
+    setWebLocale(labels.locale);
     const apply = vi.fn();
     const cancel = vi.fn();
-    const panel = () =>
+    render(
       createElement(FileNativeCorrectionPanel, {
         preview: {
           parentHead: "commit:7",
@@ -88,28 +120,38 @@ describe("文件原生连续性修正界面", () => {
         },
         onApply: apply,
         onCancel: cancel,
-      });
-    const { rerender } = render(panel());
+      }),
+    );
 
-    expect(screen.getByRole("region", { name: "确认修正内容" })).toBeTruthy();
-    expect(screen.getByText("应用前预览", { exact: true })).toBeTruthy();
-    expect(screen.getByText("commit:7")).toBeTruthy();
+    expect(screen.getByRole("region", { name: labels.region })).toBeTruthy();
+    expect(screen.getByText(labels.review, { exact: true })).toBeTruthy();
     expect(screen.getByText("衣着: 白色背心")).toBeTruthy();
     expect(screen.getByText("衣着: 蓝色训练外套")).toBeTruthy();
-    expect(screen.getByText(/sha256:before/u)).toBeTruthy();
-    expect(screen.getByText(/Next real request/u)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "应用这笔修正" }));
-    fireEvent.click(screen.getByRole("button", { name: "放弃修正草稿" }));
+
+    const checksumSummary = screen.getByText(labels.checksum, { exact: true });
+    const checksumDetails = checksumSummary.closest("details")!;
+    expect(checksumDetails.open).toBe(false);
+    fireEvent.click(checksumSummary);
+    expect(checksumDetails.open).toBe(true);
+    expect(
+      within(checksumDetails).getByText("sha256:before → sha256:after"),
+    ).toBeTruthy();
+
+    const versionSummary = screen.getByText(labels.details, { exact: true });
+    const versionDetails = versionSummary.closest("details")!;
+    expect(versionDetails.open).toBe(false);
+    fireEvent.click(versionSummary);
+    expect(versionDetails.open).toBe(true);
+    const version = within(versionDetails).getByText(labels.previousVersion, {
+      selector: "dt",
+      exact: true,
+    });
+    expect(version.nextElementSibling?.textContent).toBe("commit:7");
+    expect(within(versionDetails).getByText(/Next real request/u)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: labels.applyLabel }));
+    fireEvent.click(screen.getByRole("button", { name: labels.cancelLabel }));
     expect(apply).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
-
-    setWebLocale("en");
-    rerender(panel());
-    expect(
-      screen.getByRole("region", { name: "Review correction" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Preview before applying", { exact: true }),
-    ).toBeTruthy();
   });
 });

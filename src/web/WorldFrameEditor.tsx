@@ -273,7 +273,7 @@ export function WorldFrameEditor({
           <p>{parsed.error}</p>
           <span>
             {uiText(
-              "下面的高级编辑器会原样保留草稿；修复后可视化页面会自动恢复。",
+              "下面的源码视图会原样保留草稿。修复后可视化页面会自动恢复。",
             )}
           </span>
         </div>
@@ -336,7 +336,7 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>{uiText("01 · 权威绑定")}</span>
+                <span>{uiText("当前场景与常驻视图")}</span>
                 <h6 id="world-frame-binding-title">{uiText("当前情境绑定")}</h6>
               </div>
               <span
@@ -351,11 +351,8 @@ export function WorldFrameEditor({
                   : uiText("已解析")}
               </span>
             </header>
-            <p>
-              {uiText(
-                "`current_situation` 插槽会从这里读取唯一当前情境文档，不按文件名或标题猜测。",
-              )}
-            </p>
+            <p>{uiText("当前场景文档将从这里读取")}</p>
+            <p>{uiText("常驻视图在 control/player-views.yaml 中配置。")}</p>
             <label>
               {uiText("当前情境文档")}
               <select
@@ -739,7 +736,7 @@ export function WorldFrameEditor({
       )}
 
       <details className="world-frame-source" open={frame === null}>
-        <summary>{uiText("高级：直接编辑 frame.yaml")}</summary>
+        <summary>{uiText("源码视图（frame.yaml）")}</summary>
         <p>
           {uiText(
             "可视化修改会把 YAML 重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。",

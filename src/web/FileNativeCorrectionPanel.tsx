@@ -48,7 +48,7 @@ export function FileNativeCorrectionPanel({
     >
       <header>
         <div>
-          <p className="eyebrow">{uiText("应用前预览")}</p>
+          <p className="eyebrow">{uiText("应用前确认修改")}</p>
           <h4 id="continuity-correction-title">{uiText("确认修正内容")}</h4>
         </div>
         <span>
@@ -69,7 +69,7 @@ export function FileNativeCorrectionPanel({
             </section>
           </div>
           <details className="technical-details">
-            <summary>{uiText("查看内容 hash")}</summary>
+            <summary>{uiText("查看技术校验值")}</summary>
             <p>
               {diff.beforeHash} → {diff.afterHash}
             </p>
@@ -77,10 +77,10 @@ export function FileNativeCorrectionPanel({
         </article>
       ))}
       <details className="technical-details">
-        <summary>{uiText("查看端点、附加材料和下一次提示词")}</summary>
+        <summary>{uiText("查看修改前版本、附加材料和下一次提示词")}</summary>
         <dl className="correction-technical-summary">
           <div>
-            <dt>{uiText("父端点")}</dt>
+            <dt>{uiText("修改前版本")}</dt>
             <dd>{preview.parentHead}</dd>
           </div>
           <div>
