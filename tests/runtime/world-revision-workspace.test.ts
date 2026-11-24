@@ -1235,7 +1235,30 @@ test("世界修订可以删除与移动无引用的既有状态文档，检查�
     locale: "zh-CN",
     preview: () => preview,
   });
-  const [readOld, deleteOld, readPlace, movePlace] = transaction.execute([
+  const [
+    unread,
+    readControl,
+    deleteControl,
+    readOld,
+    deleteOld,
+    readPlace,
+    movePlace,
+  ] = transaction.execute([
+    {
+      id: "delete-unread",
+      name: "world_revision_delete",
+      arguments: { document: "state/npc/old.yaml" },
+    },
+    {
+      id: "read-control",
+      name: "world_revision_read",
+      arguments: { path: "control/frame.yaml" },
+    },
+    {
+      id: "delete-control",
+      name: "world_revision_delete",
+      arguments: { document: "control/frame.yaml" },
+    },
     {
       id: "read-old",
       name: "world_revision_read",
@@ -1257,6 +1280,11 @@ test("世界修订可以删除与移动无引用的既有状态文档，检查�
       arguments: { from: "@place", to: "state/places/dock.yaml" },
     },
   ]);
+  expect(unread).toMatchObject({ isError: true, changes: [] });
+  expect(unread?.markdown).toContain("删除 @oldnpc 前必须完整读取该文档");
+  expect(readControl).toMatchObject({ isError: false });
+  expect(deleteControl).toMatchObject({ isError: true, changes: [] });
+  expect(deleteControl?.markdown).toContain("必须是 @ref 或 state/ 文档路径");
   expect(readOld).toMatchObject({ isError: false });
   expect(deleteOld).toMatchObject({ isError: false });
   expect(readPlace).toMatchObject({ isError: false });
@@ -1314,7 +1342,7 @@ test("世界修订删除仍被引用的文档时逐条列出全部阻挡位置�
   );
 });
 
-test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻挡位置", () => {
+test("世界修订逐条报告 $ref 和维护时钟的删除阻挡位置", () => {
   const base = seededRevisionBase();
   const seed = new WorldRevisionAuthoringTransaction({
     history: { scope: "world", entries: [] },
@@ -1338,11 +1366,16 @@ test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻�
     },
   ]);
   expect(created).toMatchObject({ isError: false });
-  const withHolder = seed.files();
+  const referenced = replaceContents(
+    seed.files(),
+    "control/frame.yaml",
+    (contents) =>
+      `${contents}\nmaintenance:\n  clock:\n    document: "@oldnpc"\n    locator: { yaml: [name] }\n`,
+  );
   const transaction = new WorldRevisionAuthoringTransaction({
     history: { scope: "world", entries: [] },
-    baseFiles: withHolder,
-    immutableBaseFiles: withHolder,
+    baseFiles: referenced,
+    immutableBaseFiles: referenced,
     locale: "zh-CN",
     preview: () => preview,
   });
@@ -1360,16 +1393,21 @@ test("其他文档的 $ref 同样阻挡删除，手动删除也逐条列出阻�
   ]);
   expect(read).toMatchObject({ isError: false });
   expect(deleted).toMatchObject({ isError: true });
-  expect(deleted?.markdown).toContain("state/holder.yaml");
+  const blockers = [
+    "control/frame.yaml · maintenance.clock.document",
+    'state/holder.yaml · yaml:["merchant"]',
+  ];
+  for (const location of blockers)
+    expect(deleted?.markdown).toContain(location);
 
-  const manual = withHolder.filter(({ path }) => path !== "state/npc/old.yaml");
-  const manualInspection = inspectWorldRevisionFiles(manual, withHolder);
+  const manual = referenced.filter(({ path }) => path !== "state/npc/old.yaml");
+  const manualInspection = inspectWorldRevisionFiles(manual, referenced);
   expect(manualInspection.status).toBe("needs_repair");
   const blocked = manualInspection.diagnostics.find(
     ({ code }) => code === "existing_state_delete_blocked",
   );
   expect(blocked).toMatchObject({ path: "state/npc/old.yaml" });
-  expect(blocked?.message).toContain("state/holder.yaml");
+  for (const location of blockers) expect(blocked?.message).toContain(location);
 });
 
 test("持久修订锁阻止游玩与其他写入，重启后仍由同一 epoch 恢复", async () => {
@@ -1829,14 +1867,18 @@ test.each([
   [
     "en",
     "Replacing the existing control/gameplay.json is allowed only if both the gameplay mode and resolution scheme stay unchanged.",
+    "delete a completely read document under state/ in the world revision worktree",
+    "reports every blocking location",
   ],
   [
     "zh-CN",
     "替换既有 control/gameplay.json 时，玩法模式和判定方案必须保持不变。",
+    "从世界修订工作树的 state/ 目录下永久删除一份已完整读取的世界文档",
+    "返回全部精确阻挡位置",
   ],
 ] as const)(
-  "%s world revision sends the fixed gameplay rule to the model",
-  async (locale, rule) => {
+  "%s world revision sends the fixed gameplay rule and deletion scope to the model",
+  async (locale, gameplayRule, deleteScope, blockerLocations) => {
     const { root, worldId, worlds, workspace } = await createdWorld([
       ...minimalFileNativeContentScaffold(locale),
       gameplayFile({ mode: "tabletop", scheme: "d20" }),
@@ -1865,7 +1907,18 @@ test.each([
     const write = tools.find(
       ({ name }) => name === "world_revision_write_file",
     );
-    expect(write?.description).toContain(rule);
+    expect(write?.description).toContain(gameplayRule);
+    const deletion = tools.find(({ name }) => name === "world_revision_delete");
+    expect(deletion?.description).toContain(deleteScope);
+    expect(deletion?.description).toContain(blockerLocations);
+    for (const reference of [
+      "currentSituation",
+      "frame slot",
+      "maintenance.clock",
+      "player-view selector",
+      "$ref",
+    ])
+      expect(deletion?.description).toContain(reference);
   },
 );
 

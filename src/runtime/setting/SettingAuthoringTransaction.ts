@@ -520,7 +520,7 @@ const worldRevisionDescriptionsEn = (
     'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op "set_metadata" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with world_revision_write_file.',
   move: "Move a completely read world document to a new state/ .yaml or .md logical path while preserving its identity and contents.",
   delete:
-    "Permanently delete a completely read world document from the world revision worktree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
+    "Permanently delete a completely read document under state/ in the world revision worktree. Runtime rejects deletion while currentSituation, a frame slot, maintenance.clock, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
 });
 
 const worldRevisionDescriptionsZhCN = (
@@ -537,7 +537,7 @@ const worldRevisionDescriptionsZhCN = (
     '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op "set_metadata"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 world_revision_write_file 整份重写。',
   move: "把已完整读取的世界文档移动到新的 state/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   delete:
-    "从世界修订工作树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
+    "从世界修订工作树的 state/ 目录下永久删除一份已完整读取的世界文档。若 currentSituation、frame slot、maintenance.clock、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
 });
 
 function worldRevisionUnavailablePath(
