@@ -340,7 +340,7 @@ export function PromptPreviewScreen({
         </div>
         <p className="prompt-preview-lede">
           {embedded
-            ? uiText("真实编译，0 次模型调用，不会创建对话或写入权威状态。")
+            ? uiText("仅预览最终提示词，不调用模型，也不会改动世界进度。")
             : uiText(
                 "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。",
               )}

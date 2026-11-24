@@ -637,7 +637,7 @@ test.each(["model", "preset"])(
     fireEvent.click(modelButton);
     fireEvent.click(screen.getByRole("button", { name: "切换到此配置" }));
     const messages = {
-      model: "已切换当前模型配置；Runtime 不会自动故障转移。",
+      model: "已切换当前模型配置（出错时不会自动切换到其他模型）。",
       preset: "编排方案已删除；删空后会自动重建默认编排方案。",
     };
     await screen.findByText(messages.model);

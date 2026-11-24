@@ -123,16 +123,17 @@ for (const locale of ["zh-CN", "en"] as const)
       ).treeRevision,
       files: contentFiles(),
     });
+    const model = {
+      provider: "chat_completions",
+      modelId: "failure-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 8192,
+    } as const;
     const created = await runtime<{ world: { worldId: string } }>(page, {
       type: "world.create",
       operationId: `create-recovery-${locale}`,
       packageId: package_.localId,
-      model: {
-        provider: "chat_completions",
-        modelId: "failure-model",
-        contextWindowTokens: 64000,
-        maxOutputTokens: 8192,
-      },
+      model,
     });
     const reopenWorld = async (): Promise<void> => {
       await page.reload();
@@ -205,8 +206,32 @@ for (const locale of ["zh-CN", "en"] as const)
     await note.fill(`${wrapUp} ${english ? "End quietly." : "安静收尾。"}`);
     const sentNote = await note.inputValue();
     expect(providerRequests).toHaveLength(0);
+    const playerInput = "我闭上眼睛睡着了";
+    const readHead = async () =>
+      (
+        await runtime<{ head: string }>(page, {
+          type: "world.read",
+          worldId: created.world.worldId,
+        })
+      ).head;
+    const headBeforePreview = await readHead();
+    interface ChatRequest {
+      messages: { role: string; content: string | null }[];
+    }
+    const preview = await runtime<{ wireRequest: { body: ChatRequest } }>(
+      page,
+      {
+        type: "prompt.preview",
+        packageId: package_.localId,
+        playerInput,
+        turnNote: sentNote,
+        model,
+      },
+    );
+    expect(await readHead()).toBe(headBeforePreview);
+    expect(providerRequests).toHaveLength(0);
     steps.push({ kind: "reject" });
-    await input.fill("我闭上眼睛睡着了");
+    await input.fill(playerInput);
     await page
       .getByRole("button", {
         name: english
@@ -230,9 +255,20 @@ for (const locale of ["zh-CN", "en"] as const)
     await recoveryExpect(rejectionCard.locator("pre")).toBeHidden();
     expect(providerRequests).toHaveLength(1);
     await expect(note).toHaveValue(sentNote);
-    const wire = JSON.parse(providerRequests[0]!) as {
-      messages: { role: string; content: string | null }[];
-    };
+    const wire = JSON.parse(providerRequests[0]!) as ChatRequest;
+    const systemText = ({ messages }: ChatRequest) =>
+      messages
+        .filter(({ role }) => role === "system")
+        .map(({ content }) => content)
+        .join("\n\n");
+    expect(systemText(preview.wireRequest.body)).toBe(systemText(wire));
+    const systemLines = systemText(wire).split("\n");
+    expect(systemLines).toContain(
+      english ? "# Runtime mechanics" : "# Runtime 机制",
+    );
+    expect(systemLines).toContain(
+      english ? "# Author instruction" : "# 作者指令",
+    );
     const inputTag = english ? "current_player_input" : "本轮玩家输入";
     const playerContent = `<${inputTag}>\n我闭上眼睛睡着了\n</${inputTag}>`;
     expect(

@@ -692,8 +692,8 @@ const englishMessages: Record<string, string> = {
     "The current call chain is committing; its draft cannot be changed yet",
   "composer.set_draft.text 必须是字符串":
     "composer.set_draft.text must be a string",
-  "扩展资源不可用，显示 raw artifact。":
-    "Extension resources are unavailable; showing the raw artifact.",
+  "扩展卡片暂时无法渲染，已切换为纯文本显示。":
+    "Extension card unavailable; showing plain text instead.",
   恢复此扩展: "Restore this extension",
   停用此扩展: "Disable this extension",
   本地可信代码: "Trusted local code",
@@ -874,8 +874,8 @@ const englishMessages: Record<string, string> = {
   默认模型: "Default model",
   "模型连接已保存并启用；后续请求只使用当前配置。":
     "The model connection was saved and enabled. Later requests use only the current configuration.",
-  "已切换当前模型配置；Runtime 不会自动故障转移。":
-    "The current model configuration was switched. Runtime does not fail over automatically.",
+  "已切换当前模型配置（出错时不会自动切换到其他模型）。":
+    "Active model updated (no automatic fallback on errors).",
   "模型配置已从本机删除。":
     "The model configuration was deleted from this device.",
   "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。":
@@ -1299,8 +1299,8 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "真实编译已完成；没有调用模型，也没有改变内容或世界。":
     "Real compilation completed without calling a model or changing content or world state.",
   全新上下文会发送什么: "What a new context sends",
-  "真实编译，0 次模型调用，不会创建对话或写入权威状态。":
-    "Real compilation, zero model calls, and no conversation creation or authority writes.",
+  "仅预览最终提示词，不调用模型，也不会改动世界进度。":
+    "Preview only — no model calls and no changes to your world.",
   "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。":
     "Use the real compiler to inspect what a new context sends: logical roles, Markdown, material, tools, budgets, and Provider mapping.",
   预览性质: "Preview properties",
