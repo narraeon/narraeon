@@ -1,3 +1,4 @@
+import type { GenerationActivity } from "./GenerationActivity.ts";
 import { mayChangeUserState } from "../protocol/requestEffect.ts";
 import {
   inspectSillyTavernContent,
@@ -151,6 +152,7 @@ export class V1Runtime {
     configRoot: string;
     logRoot?: string;
     archiveUploadPolicy?: ArchiveUploadPolicy;
+    generationActivity?: GenerationActivity;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
     this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
@@ -176,6 +178,7 @@ export class V1Runtime {
       this.#artifacts,
       this.#failureLog,
       (id) => this.#conversationChanges.publish(`play:${id}`),
+      input.generationActivity,
     );
     this.worldArchives = new WorldArchives({
       dataRoot: input.dataRoot,
@@ -189,7 +192,12 @@ export class V1Runtime {
     this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
       compiler: this.#compiler,
     });
+    const generation =
+      input.generationActivity === undefined
+        ? {}
+        : { generationActivity: input.generationActivity };
     this.#settingImprovements = new SettingImprovementSession({
+      ...generation,
       changed: (id, durable) =>
         this.#conversationChanges.publish(`setting:${id}`, durable),
       store: new FileNativeSettingImprovementStore(input.dataRoot, {
@@ -234,6 +242,7 @@ export class V1Runtime {
       worlds: this.#worlds,
     });
     this.#worldRevisions = new WorldRevisionSession({
+      ...generation,
       changed: (id, durable) =>
         this.#conversationChanges.publish(`revision:${id}`, durable),
       store: worldRevisionStore,

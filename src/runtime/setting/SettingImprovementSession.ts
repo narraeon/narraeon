@@ -1,3 +1,4 @@
+import type { GenerationActivity } from "../GenerationActivity.ts";
 import {
   authoringConversationTurns,
   readAuthoringCallContext,
@@ -150,10 +151,12 @@ export class SettingImprovementSession {
     SettingImprovementView
   >;
   readonly #changed: (id: string, durable: boolean) => void;
+  readonly #generationActivity: GenerationActivity | undefined;
   #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
     changed?: (id: string, durable: boolean) => void;
+    generationActivity?: GenerationActivity;
     store: FileNativeSettingImprovementStore;
     content: ContentWorkspace;
     compiler: FileNativePromptCompiler;
@@ -168,6 +171,7 @@ export class SettingImprovementSession {
       modelPrompt?: ModelConnectionPrompt,
     ) => PromptPreview;
   }) {
+    this.#generationActivity = input.generationActivity;
     this.#changed =
       input.changed ??
       (() => {
@@ -855,6 +859,9 @@ export class SettingImprovementSession {
   ): Promise<SettingImprovementView> {
     let activeTransaction: ActiveTransaction | null = null;
     return this.#conversation.run({
+      ...(this.#generationActivity === undefined
+        ? {}
+        : { generationActivity: this.#generationActivity }),
       changed: (durable) => this.#changed(session.packageId, durable),
       session,
       host,

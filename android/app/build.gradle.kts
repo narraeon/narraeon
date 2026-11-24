@@ -42,7 +42,7 @@ if (releaseSigningReady) {
 android {
     namespace = "app.narraeon.android"
     ndkVersion = "26.3.11579264"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "app.narraeon.android"

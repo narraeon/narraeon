@@ -9,12 +9,12 @@ proof from that Node instance. Only `arm64-v8a` is supported. See
 ## Prerequisites
 
 - JDK 17
-- Android SDK with platform 34 and build-tools 34
+- Android SDK with platform 35 and build-tools 34
 - NDK 26.3.11579264 with CMake 3.22.1 (install through the SDK manager)
 - Node.js 24.12 or later, for the bundle build
-- Known limit: Android 15 (API 35) caps `dataSync` foreground services at 6 hours per day.
-  The current `targetSdk` is 34 and is not affected. Raising `targetSdk` to 35 or later needs
-  a different foreground service type or a different way to keep the backend running.
+- The APK targets API 34. Compiling with API 35 lets the service implement Android 15's
+  `dataSync` timeout callback. Targeting API 35 enables the system's six-hour background
+  budget per 24 hours.
 
 ## Build
 
@@ -49,14 +49,39 @@ recopied.
 
 ## Background running
 
-The foreground service keeps the process alive when the app leaves the screen, and it
-holds a partial wake lock while Node runs, so the CPU keeps serving requests with the
-screen off. The wake lock also keeps the device out of deep sleep while the app is idle.
+The foreground service keeps the process alive when the app leaves the screen. When the
+Runtime starts play, setting improvement, or world revision generation, it requests a
+partial wake lock so generation can continue with the screen off. Overlapping runs share
+one lock until the last run settles, including cancellation and failure. Android releases
+the lock after at most 15 minutes of continuous generation. Once the Runtime becomes idle,
+the next generation gets a fresh 15-minute window.
+
+When Android reports a `dataSync` timeout, the service releases the lock and stops.
+The app process then ends. Opening the app starts Node in a fresh process and opens the
+same data directory, where the Runtime recovers saved worlds and interrupted generation.
 The service notification opens the app when tapped, and its **Exit** action releases the
 wake lock and ends the process. On Android 13 and later the app asks for the notification
 permission at launch; if it is denied, the service still runs but the notification and its
 Exit action stay hidden. Vendor ROMs that kill background apps despite a foreground
 service are not handled.
+
+On a dedicated Android 15 test emulator, enable the compatibility change and shorten the
+system budget. Open the app, send a generation, then leave the app in the background.
+Inspect the active wake locks with `adb shell dumpsys power` and the timeout with
+`adb logcat -s ActivityManager AndroidRuntime NARRAEON-SERVICE`. Check that the service
+logs the timeout and the lock is released. Reopen the app and check a saved world.
+
+```bash
+adb shell am compat enable FGS_INTRODUCE_TIME_LIMITS app.narraeon.android
+adb shell device_config put activity_manager data_sync_fgs_timeout_duration 12000
+```
+
+Restore the emulator settings afterward.
+
+```bash
+adb shell device_config delete activity_manager data_sync_fgs_timeout_duration
+adb shell am compat reset FGS_INTRODUCE_TIME_LIMITS app.narraeon.android
+```
 
 ## Back key
 
