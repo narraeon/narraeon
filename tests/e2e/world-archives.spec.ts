@@ -43,10 +43,10 @@ test("导入旧玩家消息的修改默认采用本机全新上下文并禁用�
     });
     await player.getByRole("button", { name: "修改", exact: true }).click();
     await expect(
-      player.getByRole("radio", { name: /沿原上下文继续/ }),
+      player.getByRole("radio", { name: /接着原对话继续/ }),
     ).toBeDisabled();
     await expect(
-      player.getByRole("radio", { name: /作为全新上下文保存/ }),
+      player.getByRole("radio", { name: /用新对话继续/ }),
     ).toBeChecked();
     await expect(
       player.getByText("此上下文来自备份；修改后须以本机选择开启全新上下文。", {
