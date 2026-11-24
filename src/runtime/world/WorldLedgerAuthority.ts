@@ -23,14 +23,13 @@ import {
   projectHistoryBackgrounds,
 } from "./FileNativeHistoryProjection.ts";
 import {
-  appendTurn,
+  appendTurnWithDigest,
   initializeLedger,
   readEndpoint,
   readFileAt,
   readHead as readLedgerHead,
   readLedgerFiles,
   readTreeAt,
-  readTurnDigest,
   readTurnHistory,
   type WorldTurnFileChange,
   type WorldTurnRecord,
@@ -218,13 +217,13 @@ export class WorldLedgerAuthority {
     const genesis = await readJsonOrNull<{ history?: WorldHistoryMessage[] }>(
       join(this.#root, genesisFile),
     );
-    return structuredClone(genesis?.history ?? []);
+    return genesis?.history ?? [];
   }
 
   #materialsFrom(text: string | undefined): MaterialSelection[] {
     if (text === undefined) return [];
     const parsed = JSON.parse(text) as { items?: MaterialSelection[] };
-    return structuredClone(parsed.items ?? []);
+    return parsed.items ?? [];
   }
 
   async recoverSurface(
@@ -275,11 +274,11 @@ export class WorldLedgerAuthority {
     for (let index = commits.length - 1; index >= 0; index -= 1) {
       const commit = commits[index]!;
       if (commit.narrativeCheckpoint === undefined) continue;
-      return {
+      return structuredClone({
         ...commit.narrativeCheckpoint,
         head: commit.head,
         historyMessageId: commit.historyAppend.at(-1)?.messageId ?? "",
-      };
+      });
     }
     return undefined;
   }
@@ -291,19 +290,19 @@ export class WorldLedgerAuthority {
       { dirs: ["state"], paths: [materialsFile], includeTurns: true },
     );
     const commits = commitsFromTurns(turns);
+    // Genesis is parsed for this read. Only committed messages may be shared
+    // with the ledger view and need to be copied for the caller.
     const history = [
       ...(await this.#genesisHistory()),
-      ...commits.flatMap((commit) => commit.historyAppend),
+      ...structuredClone(commits.flatMap((commit) => commit.historyAppend)),
     ];
     const checkpoint = this.#checkpointAt(commits);
     return {
       head: headName(sequence),
       state: surfaceFiles(files, "state"),
-      history: structuredClone(history),
+      history,
       additionalMaterials: this.#materialsFrom(files.get(materialsFile)),
-      ...(checkpoint === undefined
-        ? {}
-        : { narrativeCheckpoint: structuredClone(checkpoint) }),
+      ...(checkpoint === undefined ? {} : { narrativeCheckpoint: checkpoint }),
     };
   }
 
@@ -338,7 +337,7 @@ export class WorldLedgerAuthority {
     const { sequence, turns } = await readTurnHistory(this.#root);
     return {
       head: headName(sequence),
-      commits: commitsFromTurns(turns),
+      commits: structuredClone(commitsFromTurns(turns)),
     };
   }
 
@@ -349,7 +348,7 @@ export class WorldLedgerAuthority {
       parsePosition(head),
     );
     if (sequence === 0) return null;
-    return this.#commitFromRecord(sequence, record);
+    return structuredClone(this.#commitFromRecord(sequence, record));
   }
 
   /** 某一轮修改的状态文件内容：即该轮结束时的文件，并校验哈希。 */
@@ -445,7 +444,7 @@ export class WorldLedgerAuthority {
     const commit = this.#commitFromRecord(sequence, record);
     if (digest === null)
       throw new WorldAuthorityError("corrupt", `第 ${sequence} 轮缺少记录`);
-    return { commit, digest };
+    return { commit: structuredClone(commit), digest };
   }
 
   /**
@@ -588,14 +587,11 @@ export class WorldLedgerAuthority {
         ? {}
         : { narrativeCheckpoint: structuredClone(input.narrativeCheckpoint) }),
     };
-    const record = await appendTurn(this.#root, {
+    const { digest: commitDigest } = await appendTurnWithDigest(this.#root, {
       mode: input.mode,
       changes,
       payload: commit,
     });
-    const commitDigest = await readTurnDigest(this.#root, record.sequence);
-    if (commitDigest === null)
-      throw new WorldAuthorityError("corrupt", "新提交缺少轮记录");
     return { commit, commitDigest };
   }
 }

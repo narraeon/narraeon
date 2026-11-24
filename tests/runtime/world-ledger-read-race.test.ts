@@ -7,10 +7,12 @@ import { afterEach, expect, test, vi } from "vitest";
 import type * as FsPromises from "node:fs/promises";
 
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
+import type { MaterialSelection } from "../../src/runtime/prompt/MaterialSelection.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { WorldLedgerAuthority } from "../../src/runtime/world/WorldLedgerAuthority.ts";
 import {
   appendTurn,
+  beginTurn,
   forgetLedger,
   initializeLedger,
   listTurns,
@@ -24,6 +26,7 @@ import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
 const race = vi.hoisted(() => ({
   armed: false,
   inject: (): Promise<void> => Promise.resolve(),
+  beforeRename: undefined as ((destination: string) => void) | undefined,
   afterRename: undefined as
     ((destination: string) => Promise<void>) | undefined,
   beforeRead: undefined as ((path: string) => Promise<void>) | undefined,
@@ -41,6 +44,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return actual.readdir(...args);
     },
     rename: async (...args: Parameters<typeof actual.rename>) => {
+      race.beforeRename?.(String(args[1]));
       await actual.rename(...args);
       await race.afterRename?.(String(args[1]));
     },
@@ -55,6 +59,7 @@ const roots: string[] = [];
 
 afterEach(async () => {
   race.armed = false;
+  race.beforeRename = undefined;
   race.afterRename = undefined;
   race.beforeRead = undefined;
   await Promise.all(
@@ -272,6 +277,158 @@ test("首次恢复分批读取轮账本，损坏记录修复后可以重读", as
   await writeFile(damaged, original);
   expect(await listTurns(root)).toEqual(turns);
   expect(reads).toBe(turns.length);
+});
+
+test("an append with an empty view cache loads the parent before writing its journal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-ledger-cold-append-"));
+  roots.push(root);
+  await initializeLedger(root);
+  await appendTurn(root, { mode: "play", changes: [] });
+  forgetLedger(root);
+
+  const directory = join(root, "runtime/turns");
+  const reads: string[] = [];
+  race.beforeRead = (path) => {
+    if (dirname(path) === directory) reads.push(path);
+    return Promise.resolve();
+  };
+  await appendTurn(root, { mode: "play", changes: [] });
+  expect(reads).toEqual([
+    join(directory, "00000001.json"),
+    join(directory, "00000002.json"), // Absence check before the write.
+  ]);
+  expect((await listTurns(root)).map(({ sequence }) => sequence)).toEqual([
+    1, 2,
+  ]);
+});
+
+test.each(["turns/00000003.json", "head.json"])(
+  "can retry a product commit after failing to rename runtime/%s",
+  async (file) => {
+    const { root, worldId, worlds } = await worldArchiveFixture();
+    roots.push(root);
+    const worldRoot = join(root, "worlds-file-native", worldId);
+    const before = await worlds.recoverEndpoint(worldId);
+    expect(before.head).toBe("commit:2");
+    const input = {
+      worldId,
+      operationId: "retry-after-rename-failure",
+      parentHead: before.head,
+      historyAppend: [{ role: "player" as const, exactText: "Try again." }],
+      nextMaterials: [
+        { kind: "document" as const, document: "@current-situation" },
+      ],
+      stateChanges: [],
+    };
+    const failure = new Error("injected rename failure");
+    race.beforeRename = (destination) => {
+      if (destination !== join(worldRoot, "runtime", file)) return;
+      race.beforeRename = undefined;
+      throw failure;
+    };
+    await expect(worlds.commitPlayStep(input)).rejects.toBe(failure);
+    expect(await worlds.recoverEndpoint(worldId)).toEqual(before);
+    const journal = join(worldRoot, "runtime", "turns", "00000003.json");
+    await expect(readFile(journal)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const committed = await worlds.commitPlayStep(input);
+    expect(committed.head).toBe("commit:3");
+    expect(committed.commitDigest).toBe(
+      createHash("sha256")
+        .update(await readFile(journal))
+        .digest("hex"),
+    );
+    expect(await worlds.commitPlayStep(input)).toEqual(committed);
+    const after = await worlds.recoverEndpoint(worldId);
+    expect(after.history.slice(0, -1)).toEqual(before.history);
+    expect(after.history.at(-1)?.exactText).toBe("Try again.");
+    forgetLedger(worldRoot);
+    const restarted = new FileNativeWorldStore(root);
+    expect(await restarted.recoverEndpoint(worldId)).toEqual(after);
+    expect(await new WorldLedgerAuthority(worldRoot).readHead()).toMatchObject({
+      head: committed.head,
+      commitDigest: committed.commitDigest,
+    });
+  },
+);
+
+test("commit payloads and product read results are detached from the cached ledger", async () => {
+  const { root, worldId, worlds } = await worldArchiveFixture();
+  roots.push(root);
+  const worldRoot = join(root, "worlds-file-native", worldId);
+  const authority = new WorldLedgerAuthority(worldRoot);
+  const background = {
+    kind: "narrative" as const,
+    before: "dock",
+    after: "inn",
+  };
+  const material = {
+    kind: "node",
+    document: "@current-situation",
+    locator: { yaml: ["情况"] },
+  } satisfies MaterialSelection;
+  const checkpoint = { contextId: "archive-chain", completedPlayerRounds: 1 };
+  const input = {
+    worldId,
+    operationId: "test-ownership",
+    parentHead: await worlds.currentHead(worldId),
+    historyAppend: [
+      { role: "narrator" as const, exactText: "In the inn.", background },
+    ],
+    nextMaterials: [material],
+    stateChanges: [],
+    narrativeCheckpoint: checkpoint,
+  };
+  const originalInput = structuredClone(input);
+  const outcome = await worlds.commitPlayStep(input);
+  const expectedOutcome = structuredClone(outcome);
+  background.after = "mutated input";
+  material.locator.yaml[0] = "mutated input";
+  checkpoint.completedPlayerRounds = 100;
+  outcome.commitDigest = "mutated outcome";
+  outcome.nextAdditionalMaterials.length = 0;
+  const retry = await worlds.commitPlayStep(originalInput);
+  expect(retry).toEqual(expectedOutcome);
+  retry.historyAppend[0]!.exactText = "mutated retry";
+  expect(await worlds.getOperationOutcome(input.operationId)).toEqual(
+    expectedOutcome,
+  );
+
+  const recovered = await worlds.recoverEndpoint(worldId);
+  const expected = structuredClone(recovered);
+  recovered.history[0]!.exactText = "mutated opening";
+  const lastBackground = recovered.history.at(-1)?.background;
+  if (lastBackground?.kind !== "narrative")
+    throw new Error("Missing background");
+  lastBackground.after = "mutated history";
+  const recoveredMaterial = recovered.additionalMaterials[0];
+  if (recoveredMaterial?.kind !== "node")
+    throw new Error("Missing node material");
+  recoveredMaterial.locator.yaml![0] = "mutated recovery";
+  recovered.narrativeCheckpoint!.completedPlayerRounds = 100;
+
+  const { commits } = await authority.readHistory();
+  commits.at(-1)!.historyAppend[0]!.exactText = "mutated history commit";
+  const commit = await authority.commitAt(expected.head);
+  commit!.historyAppend[0]!.exactText = "mutated commit at";
+  const { commit: fact } = await authority.authorityFactAt(expected.head);
+  fact.nextAdditionalMaterials.length = 0;
+  const materials = await authority.recoverMaterials();
+  materials[0]!.kind = "document";
+  expect(await worlds.recoverEndpoint(worldId)).toEqual(expected);
+  expect(await worlds.commitPlayStep(originalInput)).toEqual(expectedOutcome);
+
+  // A fresh instance rolls back an uncommitted journal using its disk before-images.
+  const statePath = `state/${expected.state[0]!.path}`;
+  const changes = [{ path: statePath, content: "unpublished state" }];
+  await beginTurn(worldRoot, { mode: "play", changes });
+  await writeFile(join(worldRoot, statePath), changes[0]!.content);
+  forgetLedger(worldRoot);
+  const restarted = new FileNativeWorldStore(root);
+  expect(await restarted.recoverEndpoint(worldId)).toEqual(expected);
+  await expect(
+    readFile(join(worldRoot, "runtime", "turns", "00000004.json")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 function commitPayload(sequence: number) {

@@ -343,10 +343,7 @@ async function readAllRecords(root: string): Promise<StoredTurn[]> {
         // 回退发布端点后才删除丢弃的轮。跳过已经消失的记录，端点变化由 loadView 重试。
         const text = await readTextOrNull(join(directory, name));
         if (text === null) return null;
-        return {
-          record: parseTurn(text, name),
-          digest: createHash("sha256").update(text).digest("hex"),
-        };
+        return parseStoredTurn(text, name);
       }),
     );
     for (const result of batch) {
@@ -572,11 +569,24 @@ function ledgerPath(path: string): string {
 async function writeTurnRecord(
   root: string,
   record: WorldTurnRecord,
-): Promise<void> {
+): Promise<{ record: WorldTurnRecord; text: string }> {
   const path = turnFileName(record.sequence);
   const text = `${JSON.stringify(record, null, 2)}\n`;
-  parseTurn(text, basename(path));
+  // Validate the serialized form and keep its detached, normalized record.
+  const parsed = parseTurn(text, basename(path));
   await writeFileAtomic(join(root, path), text);
+  return { record: parsed, text };
+}
+
+function parseStoredTurn(text: string, name: string): StoredTurn {
+  return {
+    record: parseTurn(text, name),
+    digest: turnDigest(text),
+  };
+}
+
+function turnDigest(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 async function captureBefore(
@@ -591,23 +601,31 @@ async function captureBefore(
   return files;
 }
 
-// 第一步：写入本轮记录（序号为 head + 1）。记录原子落盘，之后任何一步崩溃都可由 recoverIncomplete 回滚。
-export async function beginTurn(
+interface TurnInput {
+  mode: WorldTurnMode;
+  changes: readonly WorldTurnFileChange[];
+  restoresSequence?: number;
+  payload?: unknown;
+}
+
+async function recoverPendingTurn(
   root: string,
-  input: {
-    mode: WorldTurnMode;
-    changes: readonly WorldTurnFileChange[];
-    restoresSequence?: number;
-    payload?: unknown;
-    createdAt?: string;
-  },
+  head: number,
+): Promise<boolean> {
+  // A journal at head + 1 marks an interrupted turn. Recover before capturing
+  // before-images so a partial write cannot become the next turn's baseline.
+  if ((await readTextOrNull(join(root, turnFileName(head + 1)))) === null)
+    return false;
+  await recoverIncomplete(root);
+  return true;
+}
+
+async function prepareTurn(
+  root: string,
+  head: number,
+  input: TurnInput & { createdAt?: string },
 ): Promise<WorldTurnRecord> {
-  const head = await readHead(root);
-  // head + 1 上还留着记录，说明上一轮没有发布端点（中断，或回滚失败）。
-  // 先恢复，否则新记录会把半写入的文件当作前像保存。
-  if ((await readTextOrNull(join(root, turnFileName(head + 1)))) !== null)
-    await recoverIncomplete(root);
-  const record: WorldTurnRecord = {
+  return {
     sequence: head + 1,
     mode: input.mode,
     createdAt: input.createdAt ?? new Date().toISOString(),
@@ -620,6 +638,16 @@ export async function beginTurn(
       input.changes.map((change) => change.path),
     ),
   };
+}
+
+// 第一步：写入本轮记录（序号为 head + 1）。记录原子落盘，之后任何一步崩溃都可由 recoverIncomplete 回滚。
+export async function beginTurn(
+  root: string,
+  input: TurnInput & { createdAt?: string },
+): Promise<WorldTurnRecord> {
+  const head = await readHead(root);
+  await recoverPendingTurn(root, head);
+  const record = await prepareTurn(root, head, input);
   await writeTurnRecord(root, record);
   return record;
 }
@@ -646,41 +674,58 @@ export async function commitTurnHead(
   root: string,
   record: WorldTurnRecord,
 ): Promise<void> {
-  const key = resolve(root);
   const previous = await loadView(root);
   if (record.sequence !== previous.head + 1)
     throw new WorldTurnLedgerError("corrupt", "要发布的轮与当前端点不一致");
   const path = turnFileName(record.sequence);
   const text = await readFile(join(root, path), "utf8");
-  const published = {
-    record: parseTurn(text, basename(path)),
-    digest: createHash("sha256").update(text).digest("hex"),
-  };
-  const next = viewOf(record.sequence, [...previous.turns.values(), published]);
-  await publishHead(root, record.sequence);
-  rememberView(key, next);
+  // A split caller supplies a sequence only. The journal on disk is authoritative.
+  await publishTurn(root, previous, parseStoredTurn(text, basename(path)));
+}
+
+async function publishTurn(
+  root: string,
+  previous: LedgerView,
+  stored: StoredTurn,
+): Promise<void> {
+  const { sequence } = stored.record;
+  const next = viewOf(sequence, [...previous.turns.values(), stored]);
+  await publishHead(root, sequence);
+  rememberView(resolve(root), next);
 }
 
 export async function appendTurn(
   root: string,
-  input: {
-    mode: WorldTurnMode;
-    changes: readonly WorldTurnFileChange[];
-    restoresSequence?: number;
-    payload?: unknown;
-  },
+  input: TurnInput,
 ): Promise<WorldTurnRecord> {
-  const record = await beginTurn(root, input);
+  return (await appendTurnWithDigest(root, input)).record;
+}
+
+export async function appendTurnWithDigest(
+  root: string,
+  input: TurnInput,
+): Promise<StoredTurn> {
+  // The caller serializes writes for this world. Load the parent before
+  // writing so even a cold or evicted view never re-parses our new journal.
+  let previous = await loadView(root);
+  if (await recoverPendingTurn(root, previous.head))
+    previous = await loadView(root);
+  const record = await prepareTurn(root, previous.head, input);
+  const written = await writeTurnRecord(root, record);
+  const digest = turnDigest(written.text);
   try {
     await applyChanges(root, input.changes);
-    await commitTurnHead(root, record);
+    if ((await readHead(root)) !== previous.head)
+      throw new WorldTurnLedgerError("corrupt", "要发布的轮与当前端点不一致");
+    await publishTurn(root, previous, { record: written.record, digest });
   } catch (error: unknown) {
     // 本轮未发布：用启动恢复的同一规则回滚。回滚本身失败时保留原始错误；
     // 残留的记录留在 head + 1 上，下一次推进开始前会先恢复（见 beginTurn）。
     await recoverIncomplete(root).catch(() => undefined);
     throw error;
   }
-  return record;
+  // The caller gets its own input record. Only the parsed copy enters the view.
+  return { record, digest };
 }
 
 // 世界首次打开时调用（FileNativeWorldStore），进程内推进失败时也调用：序号大于 head 的记录
@@ -728,7 +773,7 @@ export async function recoverIncomplete(
 
 export async function listTurns(root: string): Promise<WorldTurnRecord[]> {
   const view = await loadView(root);
-  return turnsThrough(view, view.head);
+  return structuredClone(turnsThrough(view, view.head));
 }
 
 function turnsThrough(view: LedgerView, position: number): WorldTurnRecord[] {
@@ -739,6 +784,7 @@ function turnsThrough(view: LedgerView, position: number): WorldTurnRecord[] {
   return turns.reverse();
 }
 
+/** Internal reader. Returned records are borrowed from the cached view. */
 export async function readTurnHistory(
   root: string,
   requested?: number,
@@ -751,7 +797,7 @@ export async function readTurnHistory(
   return { sequence, turns: turnsThrough(view, sequence) };
 }
 
-// 当前端点的逻辑位置、它的轮记录与记录摘要，三者来自同一个视图。
+/** The logical position, borrowed record and digest all come from one view. */
 export async function readEndpoint(
   root: string,
   requested?: number,
@@ -768,16 +814,6 @@ export async function readEndpoint(
     record: turn?.record ?? null,
     digest: turn?.digest ?? null,
   };
-}
-
-// 第 sequence 轮记录文件的 sha256；0 轮没有记录，返回 null。
-export async function readTurnDigest(
-  root: string,
-  sequence: number,
-): Promise<string | null> {
-  if (sequence === 0) return null;
-  const text = await readFile(join(root, turnFileName(sequence)), "utf8");
-  return createHash("sha256").update(text).digest("hex");
 }
 
 // 读取端点 sequence 处某个文件的内容；不存在返回 null。
@@ -801,7 +837,7 @@ export async function readTreeAt(
   return (await readLedgerFiles(root, sequence, { dirs })).files;
 }
 
-/** Read all requested files and turn metadata from one published endpoint. */
+/** Read files and borrowed turn records from one published endpoint. */
 export async function readLedgerFiles(
   root: string,
   sequence: number | undefined,
