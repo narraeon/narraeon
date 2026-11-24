@@ -1934,7 +1934,7 @@ describe("世界游玩页面", () => {
     expect(within(rail).getByText("精确节点")).toBeTruthy();
     expect(
       within(rail).getByText(
-        "这里只证明 Runtime 发送或返回了什么，不声称 AI 理解、记住或正确使用。",
+        "记录显示实际发给模型的内容和工具返回的结果，无法确认模型记住了什么或会怎么做。",
       ),
     ).toBeTruthy();
 
@@ -1947,7 +1947,7 @@ describe("世界游玩页面", () => {
         "这里只查看上下文证据，不会开启修订或锁定世界。",
       ),
     ).toBeTruthy();
-    expect(within(dialog).getByText("AI 实际收到了哪些世界内容")).toBeTruthy();
+    expect(within(dialog).getByText("AI 读取记录与发送预览")).toBeTruthy();
     expect(
       within(dialog).getAllByText("最近一次请求材料").length,
     ).toBeGreaterThan(0);
@@ -1960,7 +1960,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(within(dialog).getByText("查看按需读取返回的完整记录"));
     expect(within(dialog).getByText(/独立淋浴间: true/u)).toBeTruthy();
     expect(
-      within(dialog).getAllByText("下一次发送候选").length,
+      within(dialog).getAllByText("下次发送的世界内容预览").length,
     ).toBeGreaterThan(0);
   });
 

@@ -157,15 +157,15 @@ export function AiReadingRail({
   onOpenFull: () => void;
 }): React.JSX.Element {
   if (loading && reading === null)
-    return <p role="status">{uiText("正在核对 Runtime 读取记录…")}</p>;
-  if (reading === null) return <p>{uiText("暂时无法读取上下文证据。")}</p>;
+    return <p role="status">{uiText("正在检查 AI 读过的世界文档…")}</p>;
+  if (reading === null) return <p>{uiText("暂时无法加载 AI 读取记录。")}</p>;
   const rows = documentEvidence(reading, documents, "cumulative");
   return (
     <div className="ai-reading-rail">
       {reading.currentContext === null ? (
         <section className="ai-reading-context-card">
-          <span>{uiText("当前没有追加上下文")}</span>
-          <strong>{uiText("下一次行动将建立全新上下文")}</strong>
+          <span>{uiText("暂无当前对话记录")}</span>
+          <strong>{uiText("下一次行动将开启新对话")}</strong>
         </section>
       ) : (
         <section
@@ -202,7 +202,7 @@ export function AiReadingRail({
       </ol>
       <p className="ai-reading-caveat">
         {uiText(
-          "这里只证明 Runtime 发送或返回了什么，不声称 AI 理解、记住或正确使用。",
+          "记录显示实际发给模型的内容和工具返回的结果，无法确认模型记住了什么或会怎么做。",
         )}
       </p>
       <button type="button" onClick={onOpenFull}>
@@ -234,7 +234,7 @@ export function AiReadingDialog({
       >
         <header>
           <div>
-            <span>{uiText("Runtime 证据")}</span>
+            <span>{uiText("发送与读取记录")}</span>
             <h2 id="ai-reading-audit-title">{uiText("AI 如何读取")}</h2>
             <p>{uiText("这里只查看上下文证据，不会开启修订或锁定世界。")}</p>
           </div>
@@ -395,7 +395,7 @@ function AiReadingAudit({
   if (reading === null)
     return (
       <div className="ai-reading-audit">
-        <p role="status">{uiText("请先从右侧 AI 读取页加载 Runtime 证据。")}</p>
+        <p role="status">{uiText("请先从侧栏加载 AI 读取记录。")}</p>
       </div>
     );
   const currentRows = documentEvidence(reading, documents, "current");
@@ -404,7 +404,7 @@ function AiReadingAudit({
     <div className="ai-reading-audit">
       <header>
         <div>
-          <strong>{uiText("AI 实际收到了哪些世界内容")}</strong>
+          <strong>{uiText("AI 读取记录与发送预览")}</strong>
           <p>
             {uiText(
               "这里可以查看最近一次请求、这段对话各轮读过的内容，以及下一次可能发送的材料。",
@@ -414,11 +414,11 @@ function AiReadingAudit({
       </header>
       <div className="ai-reading-flow">
         <article>
-          <span>{uiText("当前上下文")}</span>
+          <span>{uiText("最近一次请求材料")}</span>
           <strong>
             {reading.currentContext?.requestHead ??
               reading.currentContext?.baselineHead ??
-              uiText("尚未建立")}
+              uiText("暂无当前对话记录")}
           </strong>
           <p>{uiText("每次正常发送重新编译，工具往返使用本轮快照")}</p>
         </article>
@@ -433,11 +433,10 @@ function AiReadingAudit({
         </article>
         <span aria-hidden="true">→</span>
         <article>
-          <span>{uiText("下一次发送候选")}</span>
+          <span>{uiText("下次发送的世界内容预览")}</span>
           <strong>
             {reading.nextFreshContext?.head ?? uiText("模型未配置")}
           </strong>
-          <p>{uiText("按当前世界重新运行真实 Prompt 编译")}</p>
         </article>
       </div>
       <WorldPromptDiagnosticsPanel
@@ -448,7 +447,7 @@ function AiReadingAudit({
         preview
       />
       <EvidenceTable title={uiText("最近一次请求材料")} rows={currentRows} />
-      <EvidenceTable title={uiText("下一次发送候选")} rows={nextRows} />
+      <EvidenceTable title={uiText("下次发送的世界内容预览")} rows={nextRows} />
       <EvidenceTable
         title={uiText("AI 在这段对话中读过")}
         rows={documentEvidence(reading, documents, "cumulative")}
@@ -488,7 +487,7 @@ function AiReadingAudit({
         ))}
       </details>
       <details className="ai-reading-raw">
-        <summary>{uiText("查看当前上下文的完整 Runtime 文本块")}</summary>
+        <summary>{uiText("查看最近一次请求的完整提示材料")}</summary>
         {reading.currentContext?.bootstrap.logicalMessages.map((message) => (
           <section key={message.role}>
             <h3>{message.role}</h3>
@@ -499,10 +498,10 @@ function AiReadingAudit({
               </details>
             ))}
           </section>
-        )) ?? <p>{uiText("当前还没有冻结上下文。")}</p>}
+        )) ?? <p>{uiText("暂无当前对话记录")}</p>}
       </details>
       <details className="ai-reading-raw">
-        <summary>{uiText("查看下一次发送候选的完整 Prompt Preview")}</summary>
+        <summary>{uiText("查看下次发送的完整提示词预览")}</summary>
         {reading.nextFreshContext?.preview.compilation.logicalMessages.map(
           (message) => (
             <section key={message.role}>
@@ -510,11 +509,11 @@ function AiReadingAudit({
               <pre>{message.markdown}</pre>
             </section>
           ),
-        ) ?? <p>{uiText("配置模型后才能编译下一次上下文。")}</p>}
+        ) ?? <p>{uiText("配置模型后可查看下次发送的预览。")}</p>}
       </details>
       <p className="ai-reading-caveat">
         {uiText(
-          "这些证据只能证明 Runtime 发出了哪些文本、工具返回了哪些内容；无法证明模型理解或记住。",
+          "记录显示实际发给模型的内容和工具返回的结果，无法确认模型记住了什么或会怎么做。",
         )}
       </p>
     </div>
@@ -607,8 +606,8 @@ function documentEvidence(
           target === "cumulative"
             ? uiText("这是读取时的内容，可能与当前值不同")
             : target === "current"
-              ? uiText("本次请求快照的真实覆盖")
-              : uiText("下一次 Prompt Preview 的真实 coverage"),
+              ? uiText("列在最近一次请求的材料中")
+              : uiText("列在下次发送的预览材料中"),
         tone: direct.complete ? "good" : "warning",
       };
     const catalog = coverage?.find(({ catalogEntries }) =>
@@ -622,14 +621,25 @@ function documentEvidence(
         detail: uiText("材料目录；正文没有因此进入上下文"),
         tone: "warning",
       };
+    if (context === undefined)
+      return {
+        path: document.path,
+        title: metadata.title,
+        label: uiText("暂无记录"),
+        detail:
+          target === "next" ? uiText("模型未配置") : uiText("暂无当前对话记录"),
+        tone: "muted",
+      };
     return {
       path: document.path,
       title: metadata.title,
-      label: uiText("未进入"),
+      label: uiText("未列出"),
       detail:
         target === "current"
-          ? uiText("没有 bootstrap 注入或成功读取记录")
-          : uiText("下一次 Prompt Preview 未选择这份文档"),
+          ? uiText("最近一次请求的材料未列出这份文档")
+          : target === "cumulative"
+            ? uiText("这段对话的请求材料未列出这份文档，也没有成功读取记录")
+            : uiText("下次发送的预览未列出这份文档"),
       tone: "muted",
     };
   });
@@ -777,7 +787,7 @@ export function WorldManagementDialog({
           </article>
           <article className="manage-card derive-card">
             <div>
-              <h3>{uiText("从当前端点创建分叉")}</h3>
+              <h3>{uiText("从这里开新分支")}</h3>
               <p>{uiText("创建一个拥有独立状态与时间线的新世界。")}</p>
             </div>
             <button
@@ -796,13 +806,11 @@ export function WorldManagementDialog({
             <article className="manage-card control-card">
               <div className="manage-card-copy">
                 <h3>{uiText("世界控制")}</h3>
-                <p>
-                  {uiText("控制草稿必须经过真实 Prompt Preview 后整批应用。")}
-                </p>
+                <p>{uiText("世界控制修改需先预览，再一次性应用。")}</p>
               </div>
               <span className="control-draft-state">
                 {controlDirty
-                  ? uiText("有尚未预览的修改")
+                  ? uiText("有尚未应用的修改")
                   : uiText("当前已应用控制")}
               </span>
               <label>
