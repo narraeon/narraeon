@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { expect, type Page } from "@playwright/test";
-import type { V1Request } from "../../src/protocol/v1.ts";
+import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
 
 test.use({ runtimeScope: "player-copy" });
@@ -93,12 +93,15 @@ for (const locale of ["zh-CN", "en"] as const) {
   test(`${locale}: read history, continue in a new chat, and resume generation`, async ({
     page,
   }) => {
-    const firstRead = t("shen-he", "nora");
-    const secondRead = t("lin-lan", "evelyn");
+    const firstRead = t("@shen-he", "@nora");
+    const secondRead = t("@lin-lan", "@evelyn");
+    const unlistedTitle = t("测试用未列出文档", "Unlisted fixture document");
+    const failedRead = "@fixture-unlisted#/missing";
     const responses = [
       { ref: firstRead },
       { text: "Fixture first reply" },
       { ref: secondRead },
+      { ref: failedRead },
       { text: "Fixture second reply" },
       { text: "Fixture new-chat reply" },
       { text: "Fixture regenerated reply" },
@@ -123,7 +126,7 @@ for (const locale of ["zh-CN", "en"] as const) {
                     type: "function",
                     function: {
                       name: "context_read",
-                      arguments: JSON.stringify({ ref: "@" + next.ref }),
+                      arguments: JSON.stringify({ ref: next.ref }),
                     },
                   },
                 ],
@@ -168,6 +171,33 @@ for (const locale of ["zh-CN", "en"] as const) {
         type: "content.create-sample",
         locale,
       });
+      const { files, treeRevision } = await runtime<{
+        files: ContentTreeFile[];
+        treeRevision: string;
+      }>(page, {
+        type: "content.read",
+        packageId: pack.localId,
+      });
+      await runtime(page, {
+        type: "content.replace",
+        packageId: pack.localId,
+        baseTreeRevision: treeRevision,
+        files: [
+          ...files,
+          {
+            path: "world/notes/unlisted.yaml",
+            contents: [
+              "$document:",
+              "  id: note.fixture-unlisted",
+              "  ref: fixture-unlisted",
+              "  title: " + unlistedTitle,
+              "  summary: A document outside the configured catalogs.",
+              "  aliases: []",
+              "description: Available only through an explicit read.",
+            ].join("\n"),
+          },
+        ],
+      });
       const { world } = await runtime<{ world: { worldId: string } }>(page, {
         type: "world.create",
         operationId: "player-copy-" + locale,
@@ -180,6 +210,63 @@ for (const locale of ["zh-CN", "en"] as const) {
       const action = page.getByLabel(t("你的行动", "Your action"), {
         exact: true,
       });
+      const readsButton = page.getByRole("button", {
+        name: t("AI 读取", "Model reads"),
+        exact: true,
+      });
+      const readDialog = page.getByRole("dialog", {
+        name: t("AI 如何读取", "How the model reads"),
+      });
+      const showReadDialog = async () => {
+        await page
+          .getByRole("button", {
+            name: t("展开完整读取记录", "Open the complete read record"),
+          })
+          .click();
+      };
+      const closeReads = async () => {
+        await readDialog
+          .getByRole("button", { name: t("关闭", "Close") })
+          .click();
+        await page
+          .getByRole("button", { name: t("收起世界栏", "Close world panel") })
+          .click();
+      };
+      const releaseReading = Promise.withResolvers<void>();
+      await page.route("**/api/runtime/v1", async (route) => {
+        const { request } = route.request().postDataJSON() as {
+          request?: V1Request;
+        };
+        if (request?.type === "world.play-context.read")
+          await releaseReading.promise;
+        await route.fallback();
+      });
+      await readsButton.click();
+      try {
+        await expect(
+          page.getByText(
+            t(
+              "正在检查 AI 读过的世界文档…",
+              "Checking which world files the AI read…",
+            ),
+            { exact: true },
+          ),
+        ).toBeVisible();
+      } finally {
+        releaseReading.resolve();
+      }
+      await showReadDialog();
+      await expect(
+        readDialog
+          .locator(".ai-reading-flow")
+          .getByText(t("暂无当前对话记录", "No current conversation record"), {
+            exact: true,
+          }),
+      ).toBeVisible();
+      await closeReads();
+      await page.unroute("**/api/runtime/v1");
+      expect(calls).toBe(0);
+
       await action.fill("Fixture first action");
       await page
         .getByRole("button", {
@@ -197,23 +284,9 @@ for (const locale of ["zh-CN", "en"] as const) {
         .click();
       await expect(story.getByText("Fixture second reply")).toBeVisible();
 
-      const openReads = async () => {
-        await page
-          .getByRole("button", {
-            name: t("AI 读取", "Model reads"),
-            exact: true,
-          })
-          .click();
-        await page
-          .getByRole("button", {
-            name: t("展开完整读取记录", "Open the complete read record"),
-          })
-          .click();
-        return page.getByRole("dialog", {
-          name: t("AI 如何读取", "How the model reads"),
-        });
-      };
-      const reading = await openReads();
+      await readsButton.click();
+      await showReadDialog();
+      const reading = readDialog;
       const readLabel = t(
         "AI 在这段对话中读过",
         "What the AI has read in this conversation",
@@ -234,21 +307,92 @@ for (const locale of ["zh-CN", "en"] as const) {
           exact: true,
         }),
       ).toBeVisible();
-      const readTable = reading.locator(".ai-reading-table").filter({
-        has: page.getByRole("heading", {
-          name: readLabel,
+      const documentTable = (title: string) =>
+        reading.locator(".ai-reading-table").filter({
+          has: page.getByRole("heading", { name: title, exact: true }),
+        });
+      const latest = documentTable(
+        t("最近一次请求材料", "Latest request materials"),
+      );
+      const next = documentTable(
+        t("下次发送的世界内容预览", "World content preview for the next send"),
+      );
+      const cumulative = documentTable(readLabel);
+      await expect(
+        reading.getByText(t("发送与读取记录", "Send and read records"), {
           exact: true,
         }),
-      });
+      ).toBeVisible();
+      await expect(reading.locator(".ai-reading-caveat")).toHaveText(
+        t(
+          "记录显示实际发给模型的内容和工具返回的结果，无法确认模型记住了什么或会怎么做。",
+          "The records show what was sent to the model and what tools returned. They cannot tell you what the model remembers or how it will respond.",
+        ),
+      );
       for (const title of [t("沈禾", "Nora"), t("林岚", "Evelyn")]) {
         await expect(
-          readTable.getByText(title, { exact: true }).locator(".."),
+          cumulative.getByText(title, { exact: true }).locator(".."),
         ).toContainText(t("精确全文", "Exact full document"));
+        await expect(
+          latest
+            .getByText(title, { exact: true })
+            .locator("..")
+            .getByText(t("全文", "Full document"), { exact: true }),
+        ).toBeVisible();
       }
-      await reading.getByRole("button", { name: t("关闭", "Close") }).click();
-      await page
-        .getByRole("button", { name: t("收起世界栏", "Close world panel") })
+      const catalogTitle = t("柜台上的托付", "A letter left for safekeeping");
+      await expect(
+        latest.getByText(catalogTitle, { exact: true }).locator(".."),
+      ).toContainText(t("标题 + 摘要", "Title + summary"));
+      const inn = t("雨灯旅店", "Rain Lantern Inn");
+      await expect(
+        next.getByText(inn, { exact: true }).locator(".."),
+      ).toContainText(
+        t(
+          "列在下次发送的预览材料中",
+          "Listed in the next send preview materials",
+        ),
+      );
+      for (const [table, detail] of [
+        [
+          latest,
+          t(
+            "最近一次请求的材料未列出这份文档",
+            "This document is absent from the latest request materials",
+          ),
+        ],
+        [
+          next,
+          t(
+            "下次发送的预览未列出这份文档",
+            "This document is absent from the next send preview",
+          ),
+        ],
+        [
+          cumulative,
+          t(
+            "这段对话的请求材料未列出这份文档，也没有成功读取记录",
+            "This document is absent from the conversation’s request materials, and no successful read was recorded",
+          ),
+        ],
+      ] as const) {
+        await expect(
+          table.getByText(unlistedTitle, { exact: true }).locator(".."),
+        ).toContainText(detail);
+      }
+      await reading
+        .getByText(
+          t(
+            "查看按需读取返回的完整记录",
+            "View complete records returned by on-demand reads",
+          ),
+          { exact: true },
+        )
         .click();
+      await expect(
+        reading.getByRole("heading", { name: failedRead }).locator(".."),
+      ).toContainText(t("读取失败", "Read failed"));
+      await closeReads();
       const mode = page.getByLabel(t("选择提交方式", "Choose submission mode"));
       await action.fill("Fixture new-chat action");
       await mode.click();
@@ -335,6 +479,113 @@ for (const locale of ["zh-CN", "en"] as const) {
         await expect(story.locator(".call-chain-player")).toHaveCount(3);
       }
       await expect(story.getByText("Fixture edited action")).toBeVisible();
+
+      const callsBeforeManagement = calls;
+      const readWorld = (worldId: string) =>
+        runtime<{ head: string }>(page, { type: "world.read", worldId });
+      const { head } = await readWorld(world.worldId);
+      const readControl = (worldId: string, head: string) =>
+        runtime<ContentTreeFile[]>(page, {
+          type: "world.surface.read",
+          worldId,
+          surface: "control",
+          head,
+        });
+      const control = await readControl(world.worldId, head);
+      const changedControl = control.map((file) =>
+        file.path === "frame.yaml"
+          ? { ...file, contents: file.contents + "\n# Copy verification\n" }
+          : file,
+      );
+      expect(changedControl).not.toEqual(control);
+      await page
+        .getByRole("button", {
+          name: t("世界管理", "World management"),
+          exact: true,
+        })
+        .click();
+      const management = page.getByRole("dialog", {
+        name: t("世界管理", "World management"),
+      });
+      const branch = management.getByRole("heading", {
+        name: t("从这里开新分支", "Branch from here"),
+      });
+      await expect(branch).toBeVisible();
+      await management
+        .getByText(
+          t("世界控制 · 高级编辑", "World control · Advanced editor"),
+          { exact: true },
+        )
+        .click();
+      await expect(
+        management.getByText(
+          t(
+            "世界控制修改需先预览，再一次性应用。",
+            "Preview world-control changes before applying them together.",
+          ),
+          { exact: true },
+        ),
+      ).toBeVisible();
+      const controlInput = management.getByLabel(
+        t("世界控制文件（JSON）", "World-control files (JSON)"),
+      );
+      await expect(controlInput).toHaveValue(JSON.stringify(control, null, 2));
+      await controlInput.fill(JSON.stringify(changedControl, null, 2));
+      const apply = management.getByRole("button", {
+        name: t("整批应用世界控制", "Apply all world-control changes"),
+      });
+      await expect(apply).toBeDisabled();
+      await management
+        .getByRole("button", {
+          name: t("预览世界控制", "Preview world control"),
+        })
+        .click();
+      await expect(page.locator(".world-feedback")).toContainText(
+        t(
+          "世界控制修改已预览，可以一次性应用。",
+          "World-control changes have been previewed and can now be applied together.",
+        ),
+      );
+      await expect(apply).toBeEnabled();
+      await expect(
+        management.getByText(t("有尚未应用的修改", "Unapplied changes")),
+      ).toBeVisible();
+      expect((await readWorld(world.worldId)).head).toBe(head);
+      await apply.click();
+      await expect(page.locator(".world-feedback")).toContainText(
+        t("世界控制已整批应用。", "World control was applied as a whole."),
+      );
+      const applied = await readWorld(world.worldId);
+      expect(applied.head).not.toBe(head);
+      expect(await readControl(world.worldId, applied.head)).toEqual(
+        changedControl,
+      );
+      const forkResponse = page.waitForResponse((response) => {
+        const request = response.request();
+        return (
+          request.url().endsWith("/api/runtime/v1") &&
+          request.method() === "POST" &&
+          (request.postDataJSON() as { request?: V1Request }).request?.type ===
+            "world.derive"
+        );
+      });
+      await branch
+        .locator("../..")
+        .getByRole("button", {
+          name: t("创建分叉", "Create fork"),
+        })
+        .click();
+      const { result } = (await (await forkResponse).json()) as {
+        result: { world: { worldId: string } };
+      };
+      const forkId = result.world.worldId;
+      expect(forkId).not.toBe(world.worldId);
+      await expect(page).toHaveURL(new RegExp(`/#/world/${forkId}$`, "u"));
+      expect(await readControl(forkId, (await readWorld(forkId)).head)).toEqual(
+        changedControl,
+      );
+      expect((await readWorld(world.worldId)).head).toBe(applied.head);
+      expect(calls).toBe(callsBeforeManagement);
       await runtime(page, { type: "model.delete", connectionId });
     } finally {
       provider.closeAllConnections();

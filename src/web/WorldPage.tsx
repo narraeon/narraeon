@@ -1401,7 +1401,7 @@ export function WorldPage({
       if (preview === null) return;
       setFeedback({
         kind: "status",
-        text: uiText("控制草稿已通过真实提示词预览；确认后才会整批应用。"),
+        text: uiText("世界控制修改已预览，可以一次性应用。"),
       });
     } catch (reason: unknown) {
       setControlPreview(null);

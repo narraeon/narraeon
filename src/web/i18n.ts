@@ -543,12 +543,12 @@ const englishMessages: Record<string, string> = {
     "The next send uses the current orchestration and world materials while preserving the native conversation.",
   "每次正常发送重新编译，工具往返使用本轮快照":
     "Each normal send recompiles; tool exchanges use the same run snapshot.",
-  下一次发送候选: "Next send candidate",
+  下次发送的世界内容预览: "World content preview for the next send",
   "这里可以查看最近一次请求、这段对话各轮读过的内容，以及下一次可能发送的材料。":
     "See the latest request, what the AI has read across turns in this conversation, and what might be sent next.",
-  本次请求快照的真实覆盖: "Actual coverage of this request snapshot",
-  "查看下一次发送候选的完整 Prompt Preview":
-    "Inspect the complete next-send Prompt Preview",
+  列在最近一次请求的材料中: "Listed in the latest request materials",
+  查看下次发送的完整提示词预览:
+    "View the full prompt preview for the next send",
   "游玩在下一次正常发送生效，原样重试保留旧请求":
     "Play changes take effect on the next normal send; exact retries retain the saved request.",
   "· 游玩修改在下一次正常发送生效":
@@ -1810,8 +1810,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "The model continued from the existing context without appending a player instruction.",
   "调用链已返回；模型完成的叙事和世界变化已经分别提交。":
     "The call chain returned. Completed narrative and world changes were committed separately.",
-  "控制草稿已通过真实提示词预览；确认后才会整批应用。":
-    "The control draft passed a real Prompt Preview and will be applied as a whole only after confirmation.",
+  "世界控制修改已预览，可以一次性应用。":
+    "World-control changes have been previewed and can now be applied together.",
   "世界控制已整批应用。": "World control was applied as a whole.",
   "修正草稿已预览；应用前世界状态没有变化。":
     "The correction draft was previewed. World state remains unchanged until application.",
@@ -1956,7 +1956,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   世界控制: "World control",
   "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。":
     "Edit the host frame and player views. The draft must pass a real Prompt Preview before it can be applied as a whole.",
-  有尚未预览的修改: "Changes have not been previewed",
+  有尚未应用的修改: "Unapplied changes",
   当前已应用控制: "Current control applied",
   "模型调用尚未返回；完成或中断后才能应用新控制。":
     "The model call has not returned. New control can be applied after it completes or is interrupted.",
@@ -2060,18 +2060,17 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   检查点: "Checkpoint",
   "AI 响应诊断": "Model response diagnostics",
   "AI 如何读取": "How the model reads",
-  "AI 实际收到了哪些世界内容": "What world content the model actually received",
+  "AI 读取记录与发送预览": "AI read records and send preview",
   "AI 读取": "Model reads",
   "Ctrl / ⌘ + S 预览整笔修订": "Ctrl / ⌘ + S previews the complete revision",
   "{count} 项记录": "{count} records",
   "上次模型请求没有完整返回。保持输入为空并重试，会原样发送保存的请求。":
     "The previous model request did not complete. Retry with an empty input to resend the saved request unchanged.",
-  "下一次 Prompt Preview 未选择这份文档":
-    "The next Prompt Preview did not select this document",
-  "下一次 Prompt Preview 的真实 coverage":
-    "Real coverage from the next Prompt Preview",
+  下次发送的预览未列出这份文档:
+    "This document is absent from the next send preview",
+  列在下次发送的预览材料中: "Listed in the next send preview materials",
   下一次全新上下文: "Next fresh context",
-  下一次行动将建立全新上下文: "The next action will create a fresh context",
+  下一次行动将开启新对话: "The next action will start a new conversation",
   不完整: "Incomplete",
   世界与状态: "World and status",
   世界侧栏: "World side panel",
@@ -2082,7 +2081,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   世界阅读工具: "World reading tools",
   从全新上下文发送行动: "Send action from a fresh context",
   从当前世界重新编译材料: "Recompile materials from the current world",
-  从当前端点创建分叉: "Fork from the current endpoint",
+  从这里开新分支: "Branch from here",
   "用新对话继续（保留故事进度）":
     "Continue in a new chat (keep story progress)",
   "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。":
@@ -2115,13 +2114,11 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   完整: "Complete",
   "完整差异 · 真实 Prompt Preview · 一笔 Authority 修订":
     "Complete diff · real Prompt Preview · one Authority revision",
-  尚未建立: "Not established",
   展开完整读取记录: "Open the complete read record",
   "已修改 · 未预览": "Modified · not previewed",
   应用前先审阅: "Review before applying",
   建立后追加不重新注入世界材料:
     "Appending after creation does not reinject world materials",
-  当前上下文: "Current context",
   当前世界: "Current world",
   "当前世界已推进；这条追加上下文不能再继续。":
     "The current world has advanced; this append context can no longer continue.",
@@ -2129,15 +2126,10 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "当前世界没有可修订的状态文档。":
     "The current world has no state documents that can be revised.",
   当前冻结上下文: "Current frozen context",
-  当前没有追加上下文: "There is no current append context",
-  "当前还没有冻结上下文。": "There is no frozen context yet.",
-  "当前链已结算的 context_read 记录":
-    "Settled context_read record from the current chain",
+  暂无当前对话记录: "No current conversation record",
   恢复默认: "Restore defaults",
   手动修正: "Manual correction",
   "找到 {visible} / {total} 份": "Found {visible} / {total}",
-  "按当前世界重新运行真实 Prompt 编译":
-    "Run the real Prompt compilation against the current world",
   按需读取: "On-demand reads",
   排版密度: "Layout density",
   "接下来，你要做什么？": "What do you do next?",
@@ -2152,8 +2144,8 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "Applies to this turn only; it does not enter the story",
   "超过 120 字；仍会发送，但请尽量简短。":
     "Over 120 characters; it will still be sent, but keep it short.",
-  "控制草稿必须经过真实 Prompt Preview 后整批应用。":
-    "The control draft must pass a real Prompt Preview before being applied as a whole.",
+  "世界控制修改需先预览，再一次性应用。":
+    "Preview world-control changes before applying them together.",
   收起世界栏: "Close world panel",
   收起侧栏: "Close side panel",
   收起状态栏: "Close status panel",
@@ -2166,8 +2158,9 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "The file tree, search, and full-source editor are shared. This creates a world revision and does not modify the source content package.",
   无本地修改: "No local changes",
   暂无摘要: "No summary",
-  "暂时无法读取上下文证据。": "Context evidence is currently unavailable.",
-  未进入: "Not included",
+  "暂时无法加载 AI 读取记录。": "Could not load the AI read records.",
+  暂无记录: "No record yet",
+  未列出: "Not listed",
   本段模型调用详情: "Model-call details for this section",
   "{count} 次模型调用": "{count} model calls",
   "{count} 次": "{count}",
@@ -2211,19 +2204,21 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "View complete text blocks for the next context",
   "查看下一次全新上下文的完整 Prompt Preview":
     "View the complete Prompt Preview for the next fresh context",
-  "查看当前上下文的完整 Runtime 文本块":
-    "View complete Runtime text blocks for the current context",
+  查看最近一次请求的完整提示材料:
+    "View the full prompt materials for the latest request",
   查看按需读取返回的完整记录:
     "View complete records returned by on-demand reads",
   标准: "Standard",
   "标题 + 摘要": "Title + summary",
   模型未配置: "Model not configured",
   次成功记录: "successful reads",
-  "正在核对 Runtime 读取记录…": "Checking Runtime read records…",
+  "正在检查 AI 读过的世界文档…": "Checking which world files the AI read…",
   正文宽度: "Text width",
   此刻: "Now",
-  "没有 bootstrap 注入或成功读取记录":
-    "No bootstrap injection or successful read record",
+  最近一次请求的材料未列出这份文档:
+    "This document is absent from the latest request materials",
+  "这段对话的请求材料未列出这份文档，也没有成功读取记录":
+    "This document is absent from the conversation’s request materials, and no successful read was recorded",
   没有匹配的文档: "No matching documents",
   "管理名称、分叉、控制文件与 Runtime 诊断。":
     "Manage the name, forks, control files, and Runtime diagnostics.",
@@ -2235,25 +2230,23 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   节点: "Node",
   节点片段: "Node fragment",
   行距: "Line height",
-  "请先从右侧 AI 读取页加载 Runtime 证据。":
-    "Load Runtime evidence from the Model reads panel first.",
+  "请先从侧栏加载 AI 读取记录。":
+    "Open Model reads in the side panel to load the read records.",
   读取失败: "Read failed",
   "读取成功 · 完整文档": "Read succeeded · complete document",
   "读取成功 · 文档片段": "Read succeeded · document fragment",
   "输入完整 UTF-8 文档内容……": "Enter complete UTF-8 document contents…",
   返回编辑: "Back to editing",
-  "这些证据只能证明 Runtime 发出了哪些文本、工具返回了哪些内容；无法证明模型理解或记住。":
-    "This evidence only proves what text Runtime sent and what tools returned. It cannot prove that the model understood or remembered it.",
-  "这里只证明 Runtime 发送或返回了什么，不声称 AI 理解、记住或正确使用。":
-    "This only proves what Runtime sent or returned; it does not claim the model understood, remembered, or used it correctly.",
+  "记录显示实际发给模型的内容和工具返回的结果，无法确认模型记住了什么或会怎么做。":
+    "The records show what was sent to the model and what tools returned. They cannot tell you what the model remembers or how it will respond.",
   进入方式: "How it entered",
   "追加不会重新编译世界材料。": "Appending does not recompile world materials.",
   追加当前上下文: "Append to current context",
   追加行动: "Append action",
   选择提交方式: "Choose submission mode",
   选择文档: "Choose document",
-  "配置模型后才能编译下一次上下文。":
-    "Configure a model before compiling the next context.",
+  "配置模型后可查看下次发送的预览。":
+    "Configure a model to preview the next send.",
   阅读设置: "Reading settings",
   阅读设置保存在本机: "Reading settings are saved locally",
   预览修订: "Preview revision",
@@ -2358,7 +2351,7 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   "世界修订期间，分叉和控制变更已锁定；本地显示名称仍可修改。":
     "Forking and control changes are locked during world revision. The local display name remains editable.",
   继续修订: "Continue revision",
-  "Runtime 证据": "Runtime evidence",
+  发送与读取记录: "Send and read records",
   "这里只查看上下文证据，不会开启修订或锁定世界。":
     "This view only inspects context evidence; it does not start a revision or lock the world.",
 };
