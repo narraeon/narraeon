@@ -214,12 +214,29 @@ for (const locale of ["zh-CN", "en"] as const) {
         });
       };
       const reading = await openReads();
+      const readLabel = t(
+        "AI 在这段对话中读过",
+        "What the AI has read in this conversation",
+      );
+      const readCard = reading
+        .locator(".ai-reading-flow")
+        .getByRole("article")
+        .filter({
+          has: page.getByText(t("按需读取", "On-demand reads"), {
+            exact: true,
+          }),
+        });
+      await expect(
+        readCard.getByText(readLabel, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        readCard.getByText(t("2 次成功记录", "2 successful reads"), {
+          exact: true,
+        }),
+      ).toBeVisible();
       const readTable = reading.locator(".ai-reading-table").filter({
         has: page.getByRole("heading", {
-          name: t(
-            "AI 在这段对话中读过",
-            "What the AI has read in this conversation",
-          ),
+          name: readLabel,
           exact: true,
         }),
       });

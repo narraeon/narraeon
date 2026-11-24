@@ -1951,7 +1951,9 @@ describe("世界游玩页面", () => {
     expect(
       within(dialog).getAllByText("最近一次请求材料").length,
     ).toBeGreaterThan(0);
-    expect(within(dialog).getByText("AI 在这段对话中读过")).toBeTruthy();
+    expect(
+      within(dialog).getByRole("heading", { name: "AI 在这段对话中读过" }),
+    ).toBeTruthy();
     expect(within(dialog).getAllByText("标题 + 摘要").length).toBeGreaterThan(
       0,
     );

@@ -427,7 +427,7 @@ function AiReadingAudit({
             {reading.currentContext?.reads.filter(({ ok }) => ok).length ?? 0}{" "}
             {uiText("次成功记录")}
           </strong>
-          <p>{uiText("来自当前链已结算的 context_read")}</p>
+          <p>{uiText("AI 在这段对话中读过")}</p>
         </article>
         <span aria-hidden="true">→</span>
         <article>

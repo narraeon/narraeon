@@ -2212,8 +2212,6 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "Historical logical context; native continuation payloads are omitted. This records a dispatch attempt, not confirmed delivery.",
   "材料目录；正文没有因此进入上下文":
     "Material catalog only; the document body did not enter context",
-  "来自当前链已结算的 context_read":
-    "From settled context_read calls in the current chain",
   "查找人物、地点、规则…": "Search characters, locations, rules…",
   查找当前文档: "Search current documents",
   查看下一次上下文的完整文本块:
