@@ -56,11 +56,26 @@ test.afterAll(async () => {
   );
 });
 
-test("修改旧玩家提交可另存为全新上下文，创建分叉才生成独立世界", async ({
-  page,
-}) => {
+for (const locale of ["zh-CN", "en"] as const) {
+  test(`${locale}: edit history in the existing session or a new conversation`, ({
+    page,
+  }) => verifyHistoryEdit(page, locale));
+}
+
+async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
+  const t = (zh: string, en: string) => (locale === "en" ? en : zh);
+  const expectReply = expect.configure({ timeout: 20_000 });
+  const title = `History branch world ${locale}`;
+  const openWorld = t(`打开世界：${title}`, `Open world: ${title}`);
+  const workspace = () =>
+    runtime<{ worlds: { worldId: string }[] }>(page, {
+      type: "workspace.read",
+    });
+  responses.length = 0;
+  providerRequests.length = 0;
   await page.goto("/");
-  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+  await page.locator(".workspace-locale-picker select").selectOption(locale);
+  const worldsBefore = (await workspace()).worlds.length;
   await runtime(page, {
     type: "model.save",
     connection: {
@@ -80,7 +95,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   await runtime(page, {
     type: "content.rename",
     packageId: package_.localId,
-    name: "History branch world",
+    name: title,
   });
   await runtime(page, {
     type: "content.replace",
@@ -95,7 +110,7 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   });
   const created = await runtime<{ world: { worldId: string } }>(page, {
     type: "world.create",
-    operationId: "edit-history-player-world",
+    operationId: `edit-history-player-world-${locale}`,
     packageId: package_.localId,
     model: {
       provider: "chat_completions",
@@ -106,123 +121,161 @@ test("修改旧玩家提交可另存为全新上下文，创建分叉才生成�
   });
 
   await page.reload();
+  await page.getByRole("button", { name: openWorld, exact: true }).click();
+
+  const originalReply = "Alex says to meet downstairs at eight.";
+  const action = page.getByLabel(t("你的行动", "Your action"), { exact: true });
+  responses.push(originalReply);
+  await action.fill("I ask Alex when we are meeting.");
   await page
     .getByRole("button", {
-      name: "打开世界：History branch world",
+      name: t("从全新上下文发送行动", "Send action from a fresh context"),
+      exact: true,
+    })
+    .click();
+  await expectReply(
+    page.getByText(originalReply, { exact: true }),
+  ).toBeVisible();
+
+  const originalAction = "Then I will go downstairs five minutes early.";
+  const replacedReply = "Alex nods and says he will arrive five minutes early.";
+  responses.push(replacedReply);
+  await action.fill(originalAction);
+  await page
+    .getByRole("button", { name: t("追加行动", "Append action"), exact: true })
+    .click();
+  await expectReply(
+    page.getByText(replacedReply, { exact: true }),
+  ).toBeVisible();
+
+  const revisedTimeline = page.getByLabel(t("故事时间线", "Story timeline"));
+  const edit = t("修改", "Edit");
+  const fork = t("创建分叉", "Create fork");
+  const editor = revisedTimeline.locator(".history-player-edit");
+  const openEdit = async (before: string, after: string) => {
+    const player = revisedTimeline
+      .locator(".call-chain-player")
+      .filter({ hasText: before });
+    await player.getByRole("button", { name: edit, exact: true }).click();
+    await editor.getByLabel(t("修改后的行动", "Edited action")).fill(after);
+  };
+  const priorAssistantMessage = { role: "assistant", content: originalReply };
+  const messages = () =>
+    (JSON.parse(providerRequests.at(-1)!) as { messages: unknown[] }).messages;
+  const separators = revisedTimeline.getByRole("separator", {
+    name: t("全新上下文从这里开始", "A new context begins here"),
+  });
+
+  const currentEdit = "Then let's meet ten minutes early.";
+  const currentReply =
+    "Alex agrees to meet ten minutes early in the same conversation.";
+  await openEdit(originalAction, currentEdit);
+  const currentLabel = t("接着原对话继续", "Continue existing session");
+  await expect(editor.getByText(currentLabel, { exact: true })).toBeVisible();
+  await expect(
+    editor.getByRole("radio", { name: new RegExp(`^${currentLabel}`, "u") }),
+  ).toBeChecked();
+  await expect(
+    editor.getByText(
+      t(
+        "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
+        "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
+      ),
+      { exact: true },
+    ),
+  ).toBeVisible();
+  responses.push(currentReply);
+  await editor
+    .getByRole("button", {
+      name: t("保存修改并继续", "Save edit and continue"),
+      exact: true,
+    })
+    .click();
+  await expectReply(
+    revisedTimeline.getByText(currentReply, { exact: true }),
+  ).toBeVisible();
+  await expect(revisedTimeline).not.toContainText(originalAction);
+  await expect(revisedTimeline).not.toContainText(replacedReply);
+  await expect(separators).toHaveCount(1);
+  expect(messages()).toContainEqual(
+    expect.objectContaining(priorAssistantMessage),
+  );
+
+  const freshEdit = "Then let's meet fifteen minutes early.";
+  await openEdit(currentEdit, freshEdit);
+  const freshLabel = t("用新对话继续", "Continue in a new conversation");
+  await expect(editor.getByText(freshLabel, { exact: true })).toBeVisible();
+  await editor
+    .getByRole("radio", { name: new RegExp(`^${freshLabel}`, "u") })
+    .check();
+  const freshReply = "Alex agrees to wait downstairs at seven forty-five.";
+  responses.push(freshReply);
+  await editor
+    .getByRole("button", {
+      name: t(
+        "保存修改并用新对话继续",
+        "Save edit and continue in a new conversation",
+      ),
       exact: true,
     })
     .click();
 
-  responses.push("Alex says to meet downstairs at eight.");
-  await page.getByLabel("你的行动").fill("I ask Alex when we are meeting.");
-  await page
-    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
-    .click();
-  await expect(
-    page.getByText("Alex says to meet downstairs at eight."),
+  await expectReply(
+    revisedTimeline.getByText(freshReply, { exact: true }),
   ).toBeVisible();
-
-  responses.push("Alex nods and says he will arrive five minutes early.");
-  await page
-    .getByLabel("你的行动")
-    .fill("Then I will go downstairs five minutes early.");
-  await page.getByRole("button", { name: "追加行动" }).click();
   await expect(
-    page.getByText("Alex nods and says he will arrive five minutes early."),
+    page.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
-
-  const editedPlayer = page
-    .locator(".call-chain-player")
-    .filter({ hasText: "Then I will go downstairs five minutes early." });
-  await editedPlayer.getByRole("button", { name: "修改" }).click();
-  await editedPlayer
-    .getByLabel("修改后的行动")
-    .fill("Then let's meet fifteen minutes early.");
-  await page.getByRole("radio", { name: /作为全新上下文保存/u }).check();
-  responses.push("Alex agrees to wait downstairs at seven forty-five.");
-  await page.getByRole("button", { name: "保存为全新上下文并继续" }).click();
-
+  await expect(separators).toHaveCount(2);
+  await expect(revisedTimeline).not.toContainText(currentEdit);
+  await expect(revisedTimeline).not.toContainText(currentReply);
   await expect(
-    page.getByRole("heading", { name: "History branch world", exact: true }),
-  ).toBeVisible();
-  const revisedTimeline = page.getByLabel("故事时间线");
-  await expect(
-    page.getByRole("separator", { name: "全新上下文从这里开始" }),
-  ).toHaveCount(2);
-  await expect(revisedTimeline).not.toContainText(
-    "Then I will go downstairs five minutes early.",
-  );
-  await expect(revisedTimeline).not.toContainText(
-    "Alex nods and says he will arrive five minutes early.",
-  );
-  await expect(revisedTimeline).toContainText(
-    "Then let's meet fifteen minutes early.",
-  );
-  await expect(revisedTimeline).toContainText(
-    "Alex agrees to wait downstairs at seven forty-five.",
-  );
-  const workspaceAfterRevision = await runtime<{
-    worlds: { worldId: string; title: string }[];
-  }>(page, { type: "workspace.read" });
-  expect(workspaceAfterRevision.worlds).toEqual([
+    revisedTimeline.getByText(freshEdit, { exact: true }),
+  ).toHaveCount(1);
+  await expect(revisedTimeline).toContainText(originalReply);
+  const afterRevision = (await workspace()).worlds;
+  expect(afterRevision).toHaveLength(worldsBefore + 1);
+  expect(afterRevision).toContainEqual(
     expect.objectContaining({ worldId: created.world.worldId }),
-  ]);
+  );
   const copiedPlayer = page
     .locator(".call-chain-player")
     .filter({ hasText: "I ask Alex when we are meeting." });
   await expect(
-    copiedPlayer.getByRole("button", { name: "修改" }),
+    copiedPlayer.getByRole("button", { name: edit, exact: true }),
   ).toBeVisible();
   await expect(
-    copiedPlayer.getByRole("button", { name: "创建分叉" }),
+    copiedPlayer.getByRole("button", { name: fork, exact: true }),
   ).toBeVisible();
-  expect(providerRequests).toHaveLength(3);
-  expect(providerRequests[2]).toContain(
-    "Then let's meet fifteen minutes early.",
-  );
-  expect(providerRequests[2]).not.toContain(
-    "Then I will go downstairs five minutes early.",
+  expect(providerRequests).toHaveLength(4);
+  expect(providerRequests.at(-1)).toContain(freshEdit);
+  expect(providerRequests.at(-1)).not.toContain(originalAction);
+  expect(messages()).not.toContainEqual(
+    expect.objectContaining(priorAssistantMessage),
   );
 
   const revisedPlayer = page
     .locator(".call-chain-player")
-    .filter({ hasText: "Then let's meet fifteen minutes early." });
-  await revisedPlayer.getByRole("button", { name: "创建分叉" }).click();
+    .filter({ hasText: freshEdit });
+  await revisedPlayer.getByRole("button", { name: fork, exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "History branch world (fork)" }),
+    page.getByRole("heading", { name: `${title} (fork)`, exact: true }),
   ).toBeVisible();
-  const forkTimeline = page.getByLabel("故事时间线");
-  await expect(forkTimeline).toContainText(
-    "Then let's meet fifteen minutes early.",
+  await expect(revisedTimeline).toContainText(freshEdit);
+  await expect(revisedTimeline).not.toContainText(originalAction);
+  const afterFork = (await workspace()).worlds;
+  expect(afterFork).toHaveLength(worldsBefore + 2);
+  expect(afterFork).toContainEqual(
+    expect.objectContaining({ worldId: created.world.worldId }),
   );
-  await expect(forkTimeline).not.toContainText(
-    "Then I will go downstairs five minutes early.",
-  );
-  const workspaceAfterFork = await runtime<{
-    worlds: { worldId: string; title: string }[];
-  }>(page, { type: "workspace.read" });
-  expect(workspaceAfterFork.worlds).toHaveLength(2);
-  expect(
-    workspaceAfterFork.worlds.some(
-      ({ worldId }) => worldId === created.world.worldId,
-    ),
-  ).toBe(true);
 
-  await page.getByRole("button", { name: "返回工作区" }).click();
   await page
-    .getByRole("button", {
-      name: "打开世界：History branch world",
-      exact: true,
-    })
+    .getByRole("button", { name: t("返回工作区", "Back to workspace") })
     .click();
-  const currentTimeline = page.getByLabel("故事时间线");
-  await expect(currentTimeline).toContainText(
-    "Then let's meet fifteen minutes early.",
-  );
-  await expect(currentTimeline).not.toContainText(
-    "Then I will go downstairs five minutes early.",
-  );
-});
+  await page.getByRole("button", { name: openWorld, exact: true }).click();
+  await expect(revisedTimeline).toContainText(freshEdit);
+  await expect(revisedTimeline).not.toContainText(originalAction);
+}
 
 test("故事模式开关持久化，最新检查点自动预选且取消后只由新检查点重选", async ({
   page,

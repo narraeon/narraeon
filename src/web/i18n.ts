@@ -1834,8 +1834,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Your edit was saved. The model request failed.",
   "修改已保存在当前世界，并已从修改稿继续。":
     "The edit was saved in the current world and play continued from it.",
-  "修改已保存在当前世界，并已作为全新上下文继续。":
-    "The edit was saved in the current world and continued as a fresh context.",
+  "修改已保存在当前世界，并已用新对话继续。":
+    "Your edit was saved in the current world and play continued in a new conversation.",
   "世界名称已保存。": "World name saved.",
   "← 返回工作区": "← Back to workspace",
   "正在打开世界…": "Opening world…",
@@ -1997,14 +1997,14 @@ const worldPageEnglishMessages: Record<string, string> = {
   修改后如何继续: "How to continue after editing",
   "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。":
     "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
-  沿原上下文继续: "Continue the original context",
+  接着原对话继续: "Continue existing session",
   "保留修改点以前的模型对话和原生续传。":
     "Keep model messages and provider-native continuation before the edit.",
-  作为全新上下文保存: "Save as a fresh context",
-  "不继承旧模型对话；修改稿会成为全新上下文的第一条消息。":
-    "Do not inherit the old model conversation. The edited message becomes the first message in a fresh context.",
+  用新对话继续: "Continue in a new conversation",
+  "修改稿会成为新对话的第一条玩家消息。":
+    "The edited message becomes the first player message in a new conversation.",
   保存修改并继续: "Save edit and continue",
-  保存为全新上下文并继续: "Save as fresh context and continue",
+  保存修改并用新对话继续: "Save edit and continue in a new conversation",
   "AI 响应": "Model response",
   模型工具步骤: "Model tool step",
   空模型响应: "Empty model response",
@@ -2248,7 +2248,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "This only proves what Runtime sent or returned; it does not claim the model understood, remembered, or used it correctly.",
   进入方式: "How it entered",
   "追加不会重新编译世界材料。": "Appending does not recompile world materials.",
-  追加当前上下文: "Append to current context",
+  接着当前对话继续: "Continue current session",
   追加行动: "Append action",
   选择提交方式: "Choose submission mode",
   选择文档: "Choose document",

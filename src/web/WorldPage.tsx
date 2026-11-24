@@ -1649,7 +1649,7 @@ export function WorldPage({
               : "修改已保存。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可继续生成。",
             {
               menu: uiText("选择提交方式"),
-              action: uiText("追加当前上下文"),
+              action: uiText("接着当前对话继续"),
             },
           ),
         });
@@ -1689,7 +1689,7 @@ export function WorldPage({
             : regenerate
               ? uiText("已重新生成；原回复已离开当前时间线")
               : continuation === "fresh_context"
-                ? uiText("修改已保存在当前世界，并已作为全新上下文继续。")
+                ? uiText("修改已保存在当前世界，并已用新对话继续。")
                 : uiText("修改已保存在当前世界，并已从修改稿继续。"),
       });
     } catch (reason: unknown) {
@@ -2464,7 +2464,7 @@ export function WorldPage({
                     }}
                   >
                     <strong id={submissionModeId + "-append"}>
-                      {uiText("追加当前上下文")}
+                      {uiText("接着当前对话继续")}
                     </strong>
                     <span id={submissionModeId + "-append-description"}>
                       {uiText("保留原生对话，重新编译当前提示和材料")}
@@ -3423,7 +3423,7 @@ function TimelineEvent({
                     onChange={() => setRevisionContinuation("continue_context")}
                   />
                   <span>
-                    <strong>{uiText("沿原上下文继续")}</strong>
+                    <strong>{uiText("接着原对话继续")}</strong>
                     <small>
                       {uiText("保留修改点以前的模型对话和原生续传。")}
                     </small>
@@ -3439,11 +3439,9 @@ function TimelineEvent({
                     onChange={() => setRevisionContinuation("fresh_context")}
                   />
                   <span>
-                    <strong>{uiText("作为全新上下文保存")}</strong>
+                    <strong>{uiText("用新对话继续")}</strong>
                     <small>
-                      {uiText(
-                        "不继承旧模型对话；修改稿会成为全新上下文的第一条消息。",
-                      )}
+                      {uiText("修改稿会成为新对话的第一条玩家消息。")}
                     </small>
                   </span>
                 </label>
@@ -3474,7 +3472,7 @@ function TimelineEvent({
                   }
                 >
                   {revisionContinuation === "fresh_context"
-                    ? uiText("保存为全新上下文并继续")
+                    ? uiText("保存修改并用新对话继续")
                     : uiText("保存修改并继续")}
                 </button>
                 <button

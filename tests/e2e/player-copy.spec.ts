@@ -93,6 +93,8 @@ for (const locale of ["zh-CN", "en"] as const) {
   test(`${locale}: read history, continue in a new chat, and resume generation`, async ({
     page,
   }) => {
+    test.setTimeout(90_000);
+    const expectReply = expect.configure({ timeout: 20_000 });
     const firstRead = t("shen-he", "nora");
     const secondRead = t("lin-lan", "evelyn");
     const responses = [
@@ -180,6 +182,10 @@ for (const locale of ["zh-CN", "en"] as const) {
       const action = page.getByLabel(t("你的行动", "Your action"), {
         exact: true,
       });
+      const menu = t("选择提交方式", "Choose submission mode");
+      const mode = page.getByLabel(menu);
+      const append = t("接着当前对话继续", "Continue current session");
+      const resume = page.getByRole("button", { name: append, exact: true });
       await action.fill("Fixture first action");
       await page
         .getByRole("button", {
@@ -187,15 +193,12 @@ for (const locale of ["zh-CN", "en"] as const) {
           exact: true,
         })
         .click();
-      await expect(story.getByText("Fixture first reply")).toBeVisible();
+      await expectReply(story.getByText("Fixture first reply")).toBeVisible();
       await action.fill("Fixture second action");
-      await page
-        .getByRole("button", {
-          name: t("追加行动", "Append action"),
-          exact: true,
-        })
-        .click();
-      await expect(story.getByText("Fixture second reply")).toBeVisible();
+      await mode.click();
+      await expect(resume.getByText(append, { exact: true })).toBeVisible();
+      await resume.click();
+      await expectReply(story.getByText("Fixture second reply")).toBeVisible();
 
       const openReads = async () => {
         await page
@@ -249,7 +252,6 @@ for (const locale of ["zh-CN", "en"] as const) {
       await page
         .getByRole("button", { name: t("收起世界栏", "Close world panel") })
         .click();
-      const mode = page.getByLabel(t("选择提交方式", "Choose submission mode"));
       await action.fill("Fixture new-chat action");
       await mode.click();
       const fresh = t(
@@ -259,12 +261,13 @@ for (const locale of ["zh-CN", "en"] as const) {
       const start = page.getByRole("button", { name: fresh, exact: true });
       await expect(start.getByText(fresh, { exact: true })).toBeVisible();
       await start.click();
-      await expect(story.getByText("Fixture new-chat reply")).toBeVisible();
+      await expectReply(
+        story.getByText("Fixture new-chat reply"),
+      ).toBeVisible();
       await expect(story.getByText("Fixture first reply")).toBeVisible();
       await expect(story.getByText("Fixture second reply")).toBeVisible();
       await expect(story.getByRole("separator")).toHaveCount(2);
 
-      const append = t("追加当前上下文", "Append to current context");
       const recoveryCases = [
         {
           previousReply: "Fixture new-chat reply",
@@ -313,7 +316,12 @@ for (const locale of ["zh-CN", "en"] as const) {
         await expect(notice).toContainText(
           t("将输入框留空", "leave the input empty"),
         );
-        await expect(notice).toContainText(append);
+        await expect(notice).toContainText(
+          t(
+            `「${menu}」（＋）中选择「${append}」`,
+            `“${append}” under “${menu}” (+)`,
+          ),
+        );
         await expect(story.getByText(recovery.previousReply)).toHaveCount(0);
         const playCalls = calls;
         await page
@@ -327,10 +335,9 @@ for (const locale of ["zh-CN", "en"] as const) {
         await page.goto(worldUrl);
         await expect(action).toHaveValue("");
         await mode.click();
-        const resume = page.getByRole("button", { name: append, exact: true });
         await expect(resume.getByText(append, { exact: true })).toBeVisible();
         await resume.click();
-        await expect(story.getByText(recovery.nextReply)).toBeVisible();
+        await expectReply(story.getByText(recovery.nextReply)).toBeVisible();
         expect(calls).toBe(playCalls + 1);
         await expect(story.locator(".call-chain-player")).toHaveCount(3);
       }

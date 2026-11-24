@@ -390,7 +390,7 @@ describe("世界游玩页面", () => {
       name: "你的行动",
     });
     fireEvent.change(input, { target: { value: "Look outside." } });
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
     if (unconfirmed) {
       expect((await screen.findByRole("alert")).textContent).toContain(
         "Send disconnected",
@@ -407,7 +407,7 @@ describe("世界游玩页面", () => {
         fireEvent.change(input, { target: { value: "Continue." } });
         expect(
           screen.getByRole<HTMLButtonElement>("button", {
-            name: "追加当前上下文",
+            name: "接着当前对话继续",
           }).disabled,
         ).toBe(false);
       }
@@ -1671,8 +1671,9 @@ describe("世界游玩页面", () => {
       screen.getByRole("button", { name: "用新对话继续（保留故事进度）" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "追加当前上下文" })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "接着当前对话继续",
+      }).disabled,
     ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "此刻" }));
@@ -2274,8 +2275,9 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "追加当前上下文" })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "接着当前对话继续",
+      }).disabled,
     ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "世界" }));
     fireEvent.click(screen.getByRole("button", { name: "修订当前世界" }));
@@ -2726,7 +2728,7 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I open the dormitory door." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
     await screen.findByText("Alex opens the door and lets you go first.");
     expect(
@@ -3624,7 +3626,7 @@ describe("世界游玩页面", () => {
       fireEvent.change(screen.getByLabelText("你的行动"), {
         target: { value: "I continue inside the same model context." },
       });
-      fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+      fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
       await waitFor(() =>
         expect(
@@ -3677,21 +3679,22 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "Continue after switching back." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
     const notice = await screen.findByText(
       "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
     );
     expect(notice.closest("details")).toBeNull();
     expect(screen.queryByText("调用链中断")).toBeNull();
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "追加当前上下文" })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "接着当前对话继续",
+      }).disabled,
     ).toBe(false);
     expect(screen.getByLabelText<HTMLTextAreaElement>("你的行动").value).toBe(
       "Continue after switching back.",
     );
     incompatible = false;
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
     await waitFor(() =>
       expect(
         client.request.mock.calls.filter(
@@ -3751,7 +3754,7 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I walk into the corridor." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
     expect(
       await screen.findByText("The corridor lights come on one by one."),
@@ -3808,7 +3811,7 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I walk into the corridor." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
     await waitFor(() =>
       expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull(),
@@ -4115,10 +4118,11 @@ describe("世界游玩页面", () => {
       }).disabled,
     ).toBe(true);
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "追加当前上下文" })
-        .disabled,
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "接着当前对话继续",
+      }).disabled,
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
     expect(
       await screen.findByText("Alex reconsiders and pulls the door open."),
@@ -4834,7 +4838,7 @@ describe("世界游玩页面", () => {
     expect(
       within(playerMessage)
         .getByRole("radio", {
-          name: /沿原上下文继续/u,
+          name: /接着原对话继续/u,
         })
         .matches(":checked"),
     ).toBe(true);
@@ -4874,7 +4878,7 @@ describe("世界游玩页面", () => {
     );
   });
 
-  test("修改玩家提交可明确选择把修改稿作为全新上下文保存", async () => {
+  test("修改玩家提交后可以用新对话继续", async () => {
     let chain = playChainView(
       "play-chain-existing",
       "exchange-first",
@@ -4945,12 +4949,12 @@ describe("世界游玩页面", () => {
     });
     fireEvent.click(
       within(playerMessage).getByRole("radio", {
-        name: /作为全新上下文保存/u,
+        name: /用新对话继续/u,
       }),
     );
     fireEvent.click(
       within(playerMessage).getByRole("button", {
-        name: "保存为全新上下文并继续",
+        name: "保存修改并用新对话继续",
       }),
     );
 
@@ -6539,7 +6543,7 @@ test("a lost play response and failed recovery preserve the draft until a read c
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Look outside." } });
-  fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
   await screen.findByText("暂时无法同步");
   expect(input.value).toBe("Look outside.");
   offline = false;
@@ -6572,7 +6576,7 @@ test("a recovered older exchange with identical action text cannot confirm a los
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Look outside." } });
-  fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
   await screen.findByText("No response received");
   expect(input.value).toBe("Look outside.");
   expect(screen.queryByText("暂时无法同步")).toBeNull();
@@ -6627,7 +6631,7 @@ test("a later action in the same context cannot hide the recovered submission id
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Look outside." } });
-  fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
   await screen.findByText("A later action from another page.");
   await waitFor(() => expect(input.value).toBe(""));
   expect(screen.queryByText("No response received")).toBeNull();
@@ -6782,7 +6786,7 @@ test("a confirmed play receipt keeps the timeline fallback usable when world rea
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Open the door." } });
-  fireEvent.click(screen.getByRole("button", { name: "追加当前上下文" }));
+  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
   await screen.findByText("暂时无法同步");
   await screen.findByText("Alex opens the door and lets you go first.");
   fireEvent.change(input, {
