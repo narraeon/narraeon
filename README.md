@@ -57,15 +57,24 @@ docker run --detach --name narraeon \
 
 Then open <http://127.0.0.1:4317>. The named volume preserves worlds,
 configuration, credentials, logs, and recovery state across container
-recreation. Keep the host-side address as `127.0.0.1`; publishing the port on
-all interfaces would unnecessarily expose a local, single-user Runtime.
-Runtime accepts the loopback addresses `127.0.0.1` and `localhost` on its
-configured listening port. For a different published port or a reverse proxy on
-a trusted private network, set `NARRAEON_TRUSTED_ORIGINS` to the comma-separated
-browser origins, for example `http://127.0.0.1:8080,https://narraeon.example`.
-Configure the proxy to preserve the incoming `Host` and `Origin` headers.
-Narraeon provides no built-in web authentication. Run it on loopback or a
-trusted private network.
+recreation. `NARRAEON_HOST=0.0.0.0` makes the Runtime listen on all IPv4
+interfaces inside the container. Docker's `--publish` sets the host-side
+binding, which is `127.0.0.1` in the example above.
+
+Run Narraeon on loopback or a trusted private network. For private-network
+access through a reverse proxy, require the proxy to authenticate visitors
+before forwarding requests. Restrict access to the Runtime port so visitors
+can only connect through the proxy. A proxy on the Docker host can forward to
+`127.0.0.1:4317` using the mapping above.
+
+By default, the Runtime accepts `127.0.0.1` and `localhost` on its listening
+port. If you change the published port or use a reverse proxy, set the
+container's `NARRAEON_TRUSTED_ORIGINS` to the comma-separated origins from the
+URLs visitors open in their browsers. Include the scheme, hostname, and any
+non-default port, for example `http://127.0.0.1:8080,https://narraeon.example`.
+Configure the proxy to preserve the incoming `Host` and `Origin` headers for
+the Runtime's request checks. Narraeon provides no built-in web authentication.
+
 Stable releases move `latest`, prereleases move `next`, and every release also
 has an exact version tag.
 
