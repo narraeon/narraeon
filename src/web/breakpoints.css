@@ -1,0 +1,9 @@
+/* Expanded at build time so embedded WebViews receive plain media queries. */
+@custom-media --workspace-mobile (max-width: 640px);
+@custom-media --workspace-compact (max-width: 960px);
+@custom-media --workspace-desktop (min-width: 961px);
+@custom-media --workspace-narrow-desktop (max-width: 1200px);
+
+/* World chrome and its resizable rail share the reader-specific threshold. */
+@custom-media --world-reader-narrow (max-width: 42rem);
+@custom-media --world-reader-resizable (min-width: 42.001rem);

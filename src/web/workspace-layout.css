@@ -1,3 +1,4 @@
+@import "./breakpoints.css";
 /* One manuscript workspace: compact navigation, content first, tools in context. */
 .workspace-shell {
   width: 100%;
@@ -7,7 +8,7 @@
 }
 .workspace-header {
   position: relative;
-  z-index: 50;
+  z-index: var(--z-workspace-header);
   height: var(--workspace-header-height);
   display: flex;
   align-items: center;
@@ -508,61 +509,27 @@
 .world-reader-shell::before {
   content: "";
   position: absolute;
-  z-index: 11;
+  z-index: var(--z-reader-header-mask);
   inset: 0 0 auto;
   height: var(--world-header-height);
   background: var(--surface);
   pointer-events: none;
 }
-.setting-story-column,
-.world-story-column {
+.setting-story-column {
   min-height: 100%;
   padding-top: 90px;
-}
-.world-story-column {
-  padding-top: calc(var(--world-header-height) + 10px);
 }
 .setting-reader-scroll,
 .world-reader-scroll,
 .setting-conversation-composer,
-.world-composer-dock,
 .setting-panel-scrim,
 .setting-overlay-rail,
-.world-floating-chrome,
-.world-floating-title,
 .world-overlay-rail,
 .world-reading-popover,
 .world-dialog-scrim,
 .world-feedback,
 .world-panel-scrim.is-visible {
   position: absolute;
-}
-.world-floating-chrome {
-  top: 12px;
-  border: 0;
-  padding: 0;
-  background: var(--surface);
-  box-shadow: none;
-}
-.world-floating-chrome-left {
-  left: 20px;
-}
-.world-floating-chrome-right {
-  right: 20px;
-}
-.world-floating-chrome button {
-  font-size: 13px;
-  min-height: 34px;
-  border-radius: 3px;
-}
-.world-floating-title {
-  top: 60px;
-  color: var(--muted);
-  font-size: 12px;
-  max-width: calc(100% - 40px);
-}
-.setting-floating-title {
-  max-width: calc(100% - 40px);
 }
 .setting-conversation-intro {
   text-align: left;
@@ -594,18 +561,15 @@
   font-size: 15px;
   line-height: 1.9;
 }
-.setting-conversation-composer,
-.world-composer-dock {
+.setting-conversation-composer {
   box-shadow: 0 4px 24px rgb(37 49 59 / 8%);
   background: var(--surface);
 }
-.setting-conversation-composer textarea,
-.world-composer-dock textarea {
+.setting-conversation-composer textarea {
   background: transparent;
   border-color: transparent;
 }
-.setting-conversation-composer-row > button,
-.world-composer-row > button {
+.setting-conversation-composer-row > button {
   background: #343832;
   color: #fff;
 }
@@ -681,16 +645,6 @@
 .world-permission-disclosure > summary {
   font-size: 13px;
 }
-.content-tree-editor .document-workbench {
-  border: 0;
-  border-radius: 0;
-}
-.content-tree-editor .content-file-sidebar {
-  background: var(--surface-muted);
-}
-.content-tree-editor .content-file-editor {
-  background: var(--surface);
-}
 .authoring-prompt-preview {
   font-size: 12px;
 }
@@ -700,20 +654,6 @@
 }
 .authoring-prompt-preview > p[role="alert"] {
   color: var(--danger);
-}
-.world-story-column .story-heading {
-  background: transparent;
-  border: 0;
-  padding: 0 0 18px;
-}
-.world-story-column .story-heading h1 {
-  font-size: 28px;
-}
-.world-story-column .player-message {
-  border-left: 2px solid var(--border);
-}
-.world-story-column .player-message > article {
-  background: var(--surface-muted);
 }
 .world-management-dialog {
   height: auto;
@@ -1161,14 +1101,14 @@
 .play-preset-screen {
   border: 0;
 }
-@media (min-width: 961px) {
+@media (--workspace-desktop) {
   .play-preset-screen .ordered-play-editor > aside,
   .play-preset-screen .ordered-play-content,
   .play-preset-screen .preset-object-detail {
     height: calc(100dvh - 192px);
   }
 }
-@media (max-width: 960px) {
+@media (--workspace-compact) {
   .workspace-header {
     gap: 16px;
     padding: 0 16px;
@@ -1216,7 +1156,7 @@
     grid-template-columns: 220px minmax(0, 1fr);
   }
 }
-@media (max-width: 620px) {
+@media (--workspace-mobile) {
   .play-preset-screen .ordered-play-editor > aside {
     height: 144px;
     padding: 8px 12px;
@@ -1319,32 +1259,6 @@
     grid-column: 1;
     grid-row: auto;
   }
-  .world-floating-chrome {
-    gap: 0;
-  }
-  .world-floating-chrome-left {
-    left: 8px;
-  }
-  .world-floating-chrome-right {
-    right: 8px;
-  }
-  .world-floating-chrome button {
-    padding: 6px;
-    font-size: 12px;
-  }
-  .world-floating-title,
-  .setting-floating-title {
-    display: block;
-  }
-  .setting-floating-chrome.world-floating-chrome-right {
-    left: 8px;
-    right: 8px;
-    overflow-x: auto;
-  }
-  .setting-floating-chrome.world-floating-chrome-right button {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
   .content-tree-editor .content-tree-heading {
     padding: 12px 16px;
     gap: 8px;
@@ -1370,40 +1284,11 @@
     padding: 12px 16px;
     font-size: 12px;
   }
-  .content-file-sidebar > header,
-  .content-file-sidebar > .content-file-filter,
-  .content-file-sidebar > .content-file-list {
-    display: none;
-  }
-  .document-workbench .content-file-sidebar {
-    display: block;
-    min-height: 0;
-    padding: 0 16px 10px;
-  }
-  .content-file-sidebar > .content-new-file {
-    margin: 0;
-  }
-  .content-file-editor {
-    padding: 16px;
-  }
-  .world-floating-title {
-    top: 58px;
-  }
-  .setting-floating-chrome.world-floating-chrome-right {
-    top: 42px;
-  }
-  .setting-story-column,
-  .world-story-column {
+  .setting-story-column {
     padding-top: 86px;
   }
   .world-reader-page {
     --world-header-height: 76px;
-  }
-  .world-story-column {
-    padding-top: calc(var(--world-header-height) + 10px);
-  }
-  .setting-floating-title {
-    top: 82px;
   }
   .setting-story-column {
     padding-top: 110px;
@@ -1414,8 +1299,7 @@
   .setting-reader-page .setting-conversation-message {
     max-width: 100%;
   }
-  .setting-conversation-composer,
-  .world-composer-dock {
+  .setting-conversation-composer {
     bottom: 8px;
   }
   .setting-overlay-rail,
@@ -1466,12 +1350,12 @@
   outline: none;
   border-right: 2px solid var(--accent);
 }
-@media (min-width: 42.001rem) {
+@media (--world-reader-resizable) {
   .world-overlay-rail-left {
     width: min(var(--world-left-rail-width, 320px), calc(100vw - 1.4rem));
   }
 }
-@media (max-width: 42rem) {
+@media (--world-reader-narrow) {
   .world-rail-resize-handle {
     display: none;
   }
@@ -1479,7 +1363,7 @@
 
 .protagonist-template-scrim {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-dialog);
   inset: 0;
   display: grid;
   place-items: center;
@@ -1538,7 +1422,7 @@
   margin: auto;
   box-sizing: border-box;
   transform: none;
-  z-index: 100;
+  z-index: var(--z-confirmation);
   overflow: auto;
   background: var(--surface, white);
   color: var(--text, black);

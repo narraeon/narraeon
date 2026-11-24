@@ -1,0 +1,211 @@
+@import "./breakpoints.css";
+
+.dock {
+  position: fixed;
+  z-index: var(--z-composer);
+  right: 1rem;
+  bottom: 1.1rem;
+  left: 1rem;
+  display: grid;
+  width: min(calc(100% - 2rem), var(--world-story-measure));
+  gap: 0.45rem;
+  margin: 0 auto;
+  padding: 0.38rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: 0 8px 30px rgb(37 49 59 / 10%);
+}
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.row > label {
+  min-width: 0;
+  flex: 1;
+}
+
+.row textarea {
+  min-height: 1.5rem;
+  max-height: 9.5rem;
+  padding: 0.32rem 0.4rem;
+  resize: none;
+  overflow-y: hidden;
+  border: 0;
+  background: transparent;
+  line-height: 1.55;
+}
+
+.send,
+.more > summary {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 0.82rem;
+  list-style: none;
+}
+
+.send {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--surface-selected);
+}
+
+.more {
+  position: relative;
+}
+
+.more > summary {
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more > div {
+  position: absolute;
+  bottom: calc(100% + 0.7rem);
+  left: 0;
+  display: grid;
+  width: min(19rem, calc(100vw - 2rem));
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.more > div button {
+  display: grid;
+  justify-items: start;
+  gap: 0.12rem;
+  padding: 0.58rem 0.65rem;
+  border-color: transparent;
+  border-radius: 3px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.more > div button span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.turnNote {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.turnNoteField {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.4rem;
+}
+
+.turnNoteField > span {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.turnNoteField input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.32rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.clearNote {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.more > summary:global(.has-turn-note) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.clearNote {
+  border-color: transparent;
+  background: transparent;
+}
+
+.clearNote:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.dock :global(.model-required-callout),
+.dock :global(.play-call-failure),
+.dock :global(.play-retry-note) {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+}
+
+:where(.dock) :global(.world-fresh-context-note) {
+  padding: 0.35rem 0.6rem;
+  border-radius: 3px;
+  color: var(--warning);
+  background: var(--danger-surface);
+  font-size: 0.75rem;
+}
+
+@media (--world-reader-narrow) {
+  .dock {
+    right: 0.5rem;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    width: calc(100% - 1rem);
+  }
+}
+.dock {
+  position: absolute;
+}
+.dock {
+  box-shadow: 0 4px 24px rgb(37 49 59 / 8%);
+  background: var(--surface);
+}
+.dock textarea {
+  background: transparent;
+  border-color: transparent;
+}
+.row > button {
+  background: #343832;
+  color: #fff;
+}
+@media (--workspace-mobile) {
+  .dock {
+    bottom: 8px;
+  }
+}

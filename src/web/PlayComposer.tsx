@@ -1,3 +1,4 @@
+import styles from "./PlayComposer.module.css";
 import {
   useId,
   useRef,
@@ -74,12 +75,12 @@ export function PlayComposer({
   const submissionModeId = useId();
   const composerMoreRef = useRef<HTMLDetailsElement>(null);
   return (
-    <footer ref={dockRef} className="world-composer-dock">
+    <footer ref={dockRef} className={`world-composer-dock ${styles.dock}`}>
       <ArtifactExtensionMount mount="composer_above" />
       {children}
       {turnNoteOpen ? (
-        <div className="world-turn-note">
-          <div className="world-turn-note-field">
+        <div className={`world-turn-note ${styles.turnNote}`}>
+          <div className={`world-turn-note-field ${styles.turnNoteField}`}>
             <span>{uiText("本轮")}</span>
             <input
               ref={turnNoteInputRef}
@@ -105,7 +106,7 @@ export function PlayComposer({
             />
             <button
               type="button"
-              className="world-turn-note-clear"
+              className={`world-turn-note-clear ${styles.clearNote}`}
               aria-label={uiText("清空并收起本轮临时要求")}
               disabled={disabled}
               onClick={() => {
@@ -123,10 +124,10 @@ export function PlayComposer({
           ) : null}
         </div>
       ) : null}
-      <div className="world-composer-row">
+      <div className={`world-composer-row ${styles.row}`}>
         <details
           ref={composerMoreRef}
-          className="world-composer-mode"
+          className={`world-composer-mode ${styles.more}`}
           onKeyDown={(event) => {
             if (event.key !== "Escape" || !event.currentTarget.open) return;
             event.preventDefault();
@@ -240,7 +241,7 @@ export function PlayComposer({
         </label>
         <button
           type="button"
-          className="world-composer-send"
+          className={`world-composer-send ${styles.send}`}
           aria-label={
             defaultSubmitFresh
               ? uiText("从全新上下文发送行动")
@@ -253,7 +254,7 @@ export function PlayComposer({
         </button>
       </div>
       {showTechnicalInfo ? (
-        <p className="world-composer-hint">
+        <p className={`world-composer-hint ${styles.hint}`}>
           {uiText(
             activeCanRetry
               ? "原样重试使用已保存请求，不采用新编排方案。"

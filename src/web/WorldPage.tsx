@@ -1,3 +1,4 @@
+import styles from "./PlayTimeline.module.css";
 import {
   applyPlayTimelineFrame,
   assistantResponseKind,
@@ -1645,7 +1646,7 @@ export function WorldPage({
             aria-label={uiText("世界游玩")}
           >
             <article
-              className="world-story-column"
+              className={`world-story-column ${styles.column}`}
               aria-busy={pending !== null || activeStatus === "running"}
               aria-label={uiText("故事时间线")}
             >

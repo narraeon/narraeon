@@ -1,3 +1,4 @@
+import styles from "./DocumentWorkbench.module.css";
 import { useMemo, useState } from "react";
 
 import { gameplayPath } from "../protocol/gameplay.ts";
@@ -152,7 +153,7 @@ export function DocumentWorkbench({
 
   return (
     <div
-      className={`content-file-workspace document-workbench document-workbench-${workspace.kind}`}
+      className={`content-file-workspace document-workbench document-workbench-${workspace.kind} ${styles.workspace} ${styles.workbench}`}
     >
       <label className="content-mobile-file-picker">
         {uiText("当前文件")}
@@ -169,7 +170,7 @@ export function DocumentWorkbench({
         </select>
       </label>
       <aside
-        className="content-file-sidebar"
+        className={`content-file-sidebar ${styles.sidebar}`}
         aria-label={
           workspace.kind === "content-package"
             ? uiText("内容包文件")
@@ -302,7 +303,7 @@ export function DocumentWorkbench({
       </aside>
 
       <section
-        className="content-file-editor"
+        className={`content-file-editor ${styles.editor}`}
         aria-label={
           selectedFile === undefined
             ? uiText("文件编辑器")

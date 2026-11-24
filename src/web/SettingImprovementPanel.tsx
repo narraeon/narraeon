@@ -1,3 +1,4 @@
+import styles from "./WorldHeaderChrome.module.css";
 import { ModelCallAttempts } from "./ModelCallAttempts.tsx";
 import { groupCallAttempts } from "./GroupModelCallAttempts.ts";
 import {
@@ -527,7 +528,7 @@ export function SettingImprovementPanel({
     >
       <div className="setting-reader-shell">
         <nav
-          className="world-floating-chrome world-floating-chrome-left setting-floating-chrome"
+          className={`world-floating-chrome world-floating-chrome-left setting-floating-chrome ${styles.chrome} ${styles.left}`}
           aria-label={
             revisingWorld ? uiText("世界修订导航") : uiText("设定完善导航")
           }
@@ -558,7 +559,7 @@ export function SettingImprovementPanel({
 
         <h1
           id="setting-improvement-title"
-          className="world-floating-title setting-floating-title"
+          className={`world-floating-title setting-floating-title ${styles.title} ${styles.authoringTitle}`}
           title={packageName}
         >
           {packageName} ·{" "}
@@ -566,7 +567,7 @@ export function SettingImprovementPanel({
         </h1>
 
         <nav
-          className="world-floating-chrome world-floating-chrome-right setting-floating-chrome"
+          className={`world-floating-chrome world-floating-chrome-right setting-floating-chrome ${styles.chrome} ${styles.right}`}
           aria-label={
             revisingWorld ? uiText("世界修订工具") : uiText("设定完善工具")
           }

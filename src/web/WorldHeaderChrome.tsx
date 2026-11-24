@@ -1,3 +1,4 @@
+import styles from "./WorldHeaderChrome.module.css";
 import { uiText } from "./i18n.ts";
 
 export type WorldReadingRail = "documents" | "ai-reading";
@@ -26,7 +27,7 @@ export function WorldHeaderChrome({
   return (
     <>
       <nav
-        className="world-floating-chrome world-floating-chrome-left"
+        className={`world-floating-chrome world-floating-chrome-left ${styles.chrome} ${styles.left}`}
         aria-label={uiText("世界与状态")}
       >
         {onBack !== undefined && (
@@ -48,12 +49,12 @@ export function WorldHeaderChrome({
         </button>
       </nav>
 
-      <h1 className="world-floating-title" title={worldTitle}>
+      <h1 className={`world-floating-title ${styles.title}`} title={worldTitle}>
         {worldTitle}
       </h1>
 
       <nav
-        className="world-floating-chrome world-floating-chrome-right"
+        className={`world-floating-chrome world-floating-chrome-right ${styles.chrome} ${styles.right}`}
         aria-label={uiText("世界阅读工具")}
       >
         <button

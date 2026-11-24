@@ -1,3 +1,4 @@
+import styles from "./PlayTimeline.module.css";
 import { Fragment, useCallback, useState } from "react";
 import type {
   V1PlayCallChainEvent,
@@ -101,7 +102,7 @@ export function PlayTimeline({
   );
   return (
     <ol
-      className="call-chain-events play-timeline-events"
+      className={`call-chain-events play-timeline-events ${styles.events}`}
       aria-label={uiText("模型调用链")}
     >
       {groups.map((group) => {
@@ -756,7 +757,7 @@ export function Transcript({
   onRestartFrom?: (head: string) => void;
 }): React.JSX.Element {
   return (
-    <ol className="narrative-list">
+    <ol className={`narrative-list ${styles.transcript}`}>
       {messages.map((message, index) => (
         <li
           key={message.messageId ?? `${index}-${message.role}`}

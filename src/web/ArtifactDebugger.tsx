@@ -1,3 +1,4 @@
+import styles from "./ArtifactDebugger.module.css";
 import { uiText } from "./i18n.ts";
 import {
   applyRegexPipeline,
@@ -75,7 +76,7 @@ export function ArtifactDebugger({
     return null;
   return (
     <section
-      className="artifact-debugger"
+      className={`artifact-debugger ${styles.debugger}`}
       data-artifact-debugger="true"
       aria-label={uiText("产物调试器")}
     >
@@ -95,7 +96,7 @@ export function ArtifactDebugger({
       ) : null}
       {extensions.length === 0 ? null : (
         <section
-          className="artifact-extension-statuses"
+          className={`artifact-extension-statuses ${styles.statuses}`}
           data-artifact-extension-statuses="true"
           data-testid="artifact-extension-statuses"
           aria-label={uiText("扩展状态")}
@@ -103,7 +104,7 @@ export function ArtifactDebugger({
           <h3>{uiText("扩展状态")}</h3>
           {extensions.map((extension) => (
             <article
-              className="artifact-extension-status"
+              className={`artifact-extension-status ${styles.status}`}
               data-extension-operation={extension.operationId}
               data-extension-status={extension.status}
               key={extension.operationId}
@@ -132,7 +133,7 @@ export function ArtifactDebugger({
       )}
       {playerViewPanels.length === 0 ? null : (
         <section
-          className="player-view-panel-debug"
+          className={`player-view-panel-debug ${styles.playerViews}`}
           data-player-view-panel-debug="true"
           aria-label={uiText("玩家视图面板诊断")}
         >
@@ -202,7 +203,7 @@ function ArtifactDebugEntry({
   });
   return (
     <details
-      className="artifact-debugger-entry"
+      className={`artifact-debugger-entry ${styles.entry}`}
       data-artifact-record={record.recordId}
     >
       <summary>
