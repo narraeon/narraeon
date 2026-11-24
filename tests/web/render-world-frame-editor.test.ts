@@ -7,8 +7,43 @@ import { afterEach, describe, expect, test, vi, type Mock } from "vitest";
 
 import type { ContentTreeFile } from "../../src/protocol/v1.ts";
 import { WorldFrameEditor } from "../../src/web/WorldFrameEditor.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setWebLocale("zh-CN");
+});
+
+test("English material names agree between the slot picker and the cards", () => {
+  setWebLocale("en");
+  render(
+    createElement(FrameHarness, {
+      initialContents: frame(),
+      files: files(),
+      onContentsChange: vi.fn(),
+      onSave: vi.fn(),
+    }),
+  );
+
+  expect(
+    screen.getByRole("option", { name: /^Bounded catalog/u }),
+  ).toBeTruthy();
+  expect(screen.getByText("Bounded catalog", { exact: true })).toBeTruthy();
+  expect(
+    screen.getByText("Additional materials", { exact: true }),
+  ).toBeTruthy();
+
+  expect(
+    screen.getByRole("option", { name: /^Explicit reference targets/u }),
+  ).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Add material type"), {
+    target: { value: "reference_targets" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add material slot" }));
+  expect(
+    screen.getByText("Explicit reference targets", { exact: true }),
+  ).toBeTruthy();
+});
 
 describe("世界提示框架可视化编辑器", () => {
   test("建议体积保持材料身份，调序不丢失设置，清空可取消建议", () => {

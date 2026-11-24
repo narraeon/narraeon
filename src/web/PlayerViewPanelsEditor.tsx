@@ -320,7 +320,7 @@ export function PlayerViewPanelsEditor({
                   </div>
                   <div className="play-preset-section-header">
                     <div>
-                      <h6>{uiText("分组")}</h6>
+                      <h6>{uiText("项目分组")}</h6>
                       <p>
                         {uiText("把已选项目按组显示；每个项目 ID 单独一行。")}
                       </p>

@@ -335,7 +335,7 @@ const englishMessages: Record<string, string> = {
     "Static candidate (the runtime value may differ):",
   源停用: "Source disabled",
   空值: "Empty value",
-  正文: "Content",
+  提示词正文: "Prompt text",
   来源字段详情: "Source field details",
   选中提示中的变量声明: "Variable declarations in selected prompts",
   "仅静态阅读：按来源顺序列出，不代表运行顺序或运行时值；外部聊天变量不可知。":
@@ -644,7 +644,7 @@ const englishMessages: Record<string, string> = {
   "已完成请求：": "Completed requests:",
   无: "None",
   玩家视图面板诊断: "Player-view panel diagnostics",
-  玩家视图面板: "Player-view panel",
+  玩家视图面板: "Player-view panels",
   "已提交玩家视图投影 · head：": "Committed player-view projection · head:",
   "bridge 事件（": "Bridge events (",
   来源: "Source",
@@ -734,7 +734,7 @@ const englishMessages: Record<string, string> = {
   文件内容: "File content",
   "Ctrl / ⌘ + S 整批保存": "Ctrl / ⌘ + S saves the whole draft",
   行: "Lines",
-  字符: "Characters",
+  字符: "characters",
   已保存版本诊断: "Saved-version diagnostics",
   已保存版本有: "The saved version has",
   "已保存版本有 {count} 项需要修复":
@@ -775,9 +775,9 @@ const englishMessages: Record<string, string> = {
   "写下玩家首次行动前立即看到的局面……":
     "Describe the situation visible immediately before the player's first action…",
   "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n":
-    "$document:\n  id: character.example\n  ref: example\n  title: Alex Morgan\n  summary: A stable one-sentence description.\n  aliases: []\n",
+    "$document:\n  id: character.example\n  ref: example\n  title: Example character\n  summary: A one-sentence stable summary.\n  aliases: []\n",
   "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
-    "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A stable one-sentence description.\n  aliases: []\n---\n\n# Example rule\n",
+    "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
   "输入 UTF-8 文本内容……": "Enter UTF-8 text…",
   确认修正内容: "Review correction",
   份文档会变化: "document(s) will change",
@@ -953,12 +953,11 @@ const playPresetEnglishMessages: Record<string, string> = {
   导入玩法: "Import play preset",
   "玩法预设已导入为新的本地身份；请显式启用其中的 JavaScript。":
     "The play preset was imported as a new local identity. Enable its JavaScript explicitly if you trust it.",
-  玩法预设: "Play presets",
+  玩法预设工作台: "Play presets",
   "在同一处管理设定完善方法、主持规则、调用链、界面产物与可信本地代码。":
     "Manage setting-improvement methods, host rules, call chains, interface artifacts, and trusted local code in one place.",
   新调用链与设定完善当前使用:
     "New call chains and setting-improvement sessions currently use",
-  未选择: "Not selected",
   "已经开始的模型会话继续使用冻结 revision":
     "Model sessions already in progress keep their frozen revision",
   玩法预设工作区: "Play-preset workspace",
@@ -967,7 +966,6 @@ const playPresetEnglishMessages: Record<string, string> = {
   "选择一个本地身份开始编辑。": "Choose a local identity to start editing.",
   当前玩法: "Current play preset",
   结构有效: "Structure valid",
-  需要修复: "Needs repair",
   已停用: "Disabled",
   新建与导入玩法预设: "Create and import play presets",
   新建或导入: "Create or import",
@@ -1047,7 +1045,6 @@ const playPresetEnglishMessages: Record<string, string> = {
     "The current host does not provide a Prompt Preview panel.",
   "preset.yaml/call-chain.yaml 与结构化字段均有未保存修改；请撤销其中一侧后再保存，避免 stale structure 覆盖 raw YAML。":
     "preset.yaml/call-chain.yaml and structured fields both have unsaved changes. Discard one side before saving so stale structure cannot overwrite raw YAML.",
-  草稿尚未保存: "Draft not saved",
   结构校验通过: "Structure validation passed",
   草稿需要修复: "Draft needs repair",
   撤销未保存修改: "Discard unsaved changes",
@@ -1103,10 +1100,7 @@ const playPresetEnglishMessages: Record<string, string> = {
     "These blocks enter the stable bootstrap with the host rules and constrain player-visible prose in the call chain. Their real content appears below.",
   "尚未声明叙事提示块；通用文风仍由主持块提供。":
     "No narrative prompt blocks are declared; the host blocks still provide the general prose style.",
-  删除: "Delete",
   新增后置请求: "Add follow-up request",
-  "每个后置请求在主调用链完成后单独派发一次，共用同一段冻结前缀，彼此看不见对方，也不会进入之后的模型上下文。请求提示、产物格式和显示位置都可在当前页面编辑。":
-    "Each follow-up is dispatched once after the main call chain. They share the same frozen prefix, cannot see one another, and never enter later model context. Edit each request prompt, artifact format, and display location here.",
   "没有后置请求；主调用链完成后不会再派发额外请求。":
     "There are no follow-up requests; no additional request is dispatched after the main call chain.",
   显示名: "Display name",
@@ -1161,8 +1155,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   静态文档: "Static document",
   "可交互 app": "Interactive app",
   正则处理规则: "Regex processing rules",
-  不使用: "None",
-  脚本: "Scripts",
+  脚本文件: "Scripts",
   "没有脚本文件。": "No script files.",
   样式与资源: "Styles and resources",
   "没有资源文件。": "No resource files.",
@@ -1172,7 +1165,6 @@ const playPresetEnglishMessages: Record<string, string> = {
   未命名提示内容: "Untitled prompt content",
   玩家状态: "Player status",
   "当前没有可显示内容。": "There is no content to display.",
-  玩家视图面板: "Player-view panels",
   "把世界控制里已经定义好的玩家视图，持续显示在游玩页面。它不调用模型，也不改世界。":
     "Keep player views defined in world control visible on the play page. This does not call a model or change the world.",
   新增玩家视图面板: "Add player-view panel",
@@ -1195,7 +1187,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   主题标识: "Theme identifier",
   "只显示这些项目（每行一个，可留空）":
     "Show only these items (one per line; may be empty)",
-  分组: "Groups",
+  项目分组: "Groups",
   "把已选项目按组显示；每个项目 ID 单独一行。":
     "Display selected items in groups; enter one item ID per line.",
   新分组: "New group",
@@ -1312,7 +1304,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   全新上下文会发送什么: "What a new context sends",
   "真实编译，0 次模型调用，不会创建对话或写入权威状态。":
     "Real compilation, zero model calls, and no conversation creation or authority writes.",
-  提示词预览: "Prompt Preview",
   "用真实编译器检查全新上下文会发送什么：逻辑 role、Markdown、材料、工具、预算与 Provider 映射。":
     "Use the real compiler to inspect what a new context sends: logical roles, Markdown, material, tools, budgets, and Provider mapping.",
   预览性质: "Preview properties",
@@ -1324,7 +1315,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "内容包首轮 · 全新上下文": "Content-package first turn · new context",
   "还没有内容包。先新建并修好一份内容包，才能编译真实提示词。":
     "There are no content packages. Create and repair one before compiling a real prompt.",
-  内容包: "Content package",
   预览内容包: "Content package to preview",
   " · 需要修复": " · needs repair",
   预览玩家输入: "Preview player input",
@@ -1339,7 +1329,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   主持预设: "Host preset",
   没有当前预设: "No current preset",
   工作区当前选择: "Current workspace selection",
-  模型连接: "Model connection",
   没有当前模型: "No current model",
   请先配置并启用模型: "Configure and enable a model first",
   模型窗口: "Model window",
@@ -1392,7 +1381,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "definitions：稳定全集": "Definitions: stable complete set",
   稳定前缀: "Stable prefix",
   频道挂载: "Channel mounts",
-  无: "None",
   "全新上下文发送这份稳定前缀；玩家原文随后作为普通消息追加。Runtime 不再插入裁决、叙事或结算 delta。":
     "A new context sends this stable prefix, then appends the player's original text as a regular message. Runtime no longer inserts adjudication, narrative, or settlement deltas.",
   条逻辑消息: "logical message(s)",
@@ -1404,7 +1392,6 @@ const promptPreviewEnglishMessages: Record<string, string> = {
     "This view preserves product-level logical roles. The next section shows how Provider mapping changes them.",
   逻辑消息顺序: "Logical-message order",
   块: "blocks",
-  字符: "characters",
   消息块来源: "Message-block sources",
   "最终 Markdown 正文": "Final Markdown body",
   块之间已按真实编译顺序合并: "Blocks merged in the real compilation order",
@@ -1498,15 +1485,10 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   正在接收调用详情: "Receiving call details",
   "请先保存文件编辑，再继续 AI 设定完善。":
     "Save the file edits before continuing setting improvement.",
-  模型: "Model",
-  逻辑消息: "Logical messages",
   工具: "Tools",
-  上下文检查: "Context check",
   预算: "Budget",
-  "由 Provider 判断": "Determined by Provider",
   查看逻辑消息正文: "View logical message bodies",
   查看材料覆盖与预算: "View material coverage and budget",
-  来源: "Source",
   状态: "Status",
   查看真实工具定义: "View real tool definitions",
   "查看最终 Provider 请求结构": "View final Provider request structure",
@@ -1581,7 +1563,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "Save the manual edits before continuing setting improvement.",
   "和 AI 边聊边修改 {packageName}。成功的工具改动会像游玩一样直接写入内容包当前树。":
     "Discuss and revise {packageName} with the model. Successful tool changes write directly to the content package current tree, just like play.",
-  全新上下文: "Fresh context",
+  全新上下文: "New context",
   "上下文 —": "Context —",
   "上下文 {percent}%": "Context {percent}%",
   "上下文已用 {percent}%，建议下一条从全新上下文开始":
@@ -1708,8 +1690,6 @@ const worldFrameEnglishMessages: Record<string, string> = {
   世界指令顺序: "World-instruction order",
   引用的文件不存在: "Referenced file does not exist",
   调整顺序: "Reorder",
-  上移: "Move up",
-  下移: "Move down",
   移除: "Remove",
   "尚未加入世界提示块。": "No world prompt blocks have been added.",
   "要加入的 Markdown 块": "Markdown block to add",
@@ -1726,7 +1706,6 @@ const worldFrameEnglishMessages: Record<string, string> = {
   必需插槽还未成对: "Required slots are not paired yet",
   当前情境: "Current situation",
   "个 · 附加材料": " · additional material",
-  个: "total",
   补上当前情境: "Add current situation",
   补上附加材料: "Add additional material",
   新增材料类型: "Add material type",
@@ -1783,7 +1762,7 @@ const worldFrameEnglishMessages: Record<string, string> = {
     "Create a world document with a $document technical header first.",
   "从上方绑定读取紧接着的叙事不能忘记的短期局面。":
     "Read the short-term situation that immediately following narrative must not forget from the binding above.",
-  附加材料: "Additional material",
+  附加材料: "Additional materials",
   "展开当前端点为全新上下文保存的完整精确材料清单。":
     "Expand the complete exact material list saved at the current endpoint for a new context.",
   整份文档: "Whole document",
@@ -1791,10 +1770,10 @@ const worldFrameEnglishMessages: Record<string, string> = {
   文档局部节点: "Document node",
   "精确加入 YAML 路径或 Markdown 标题子树。":
     "Include a YAML path or Markdown heading subtree exactly.",
-  有界目录: "Bounded directory",
+  有界目录: "Bounded catalog",
   "列出一级目录中的标题、简介和短引用，不展开正文。":
     "List titles, summaries, and short references in one directory level without expanding bodies.",
-  显式引用目标: "Explicit reference target",
+  显式引用目标: "Explicit reference targets",
   "读取 YAML 节点中的 $ref，并加入一层目标文档。":
     "Read a $ref from a YAML node and include one level of target documents.",
   最近叙事: "Recent narrative",
@@ -1930,18 +1909,14 @@ const worldPageEnglishMessages: Record<string, string> = {
   "需要先配置模型连接才能游玩。":
     "Configure a model connection before playing.",
   配置模型: "Configure model",
-  "上次模型请求没有完整返回。保持输入框为空并点击“追加上下文”，就会原样发送已保存的请求；不会追加玩家指令，中断片段也不会进入模型上下文。":
-    "The previous model request did not return completely. Leave the input empty and append context to resend the saved request unchanged. No player instruction is appended, and the interrupted fragment does not enter model context.",
   你的行动: "Your action",
   "描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…":
     "Describe your action, or leave it blank and append to let the model continue from existing context…",
   "Ctrl / ⌘ + Enter 追加；没有上下文时自动全新开始":
     "Ctrl / ⌘ + Enter appends; without context it starts a new one",
   "正在开始…": "Starting…",
-  全新上下文: "New context",
   "正在追加…": "Appending…",
   追加上下文: "Append context",
-  玩家视图: "Player view",
   当前情景: "Current situation",
   "这个世界还没有配置常驻玩家视图。":
     "This world has no persistent player view configured.",
@@ -1955,11 +1930,9 @@ const worldPageEnglishMessages: Record<string, string> = {
   "尚无已提交叙事。": "No committed narrative yet.",
   "这些操作位于故事之外；它们不会被普通游玩 AI 擅自执行。":
     "These actions happen outside the story and cannot be performed unprompted by the regular play model.",
-  世界名称: "World name",
   "这是工作区和世界页显示的名字；修改它不会改动故事、状态或历史。":
     "This name appears in the workspace and world page. Changing it does not alter story, state, or history.",
   世界显示名称: "World display name",
-  "正在保存…": "Saving…",
   保存名称: "Save name",
   从此刻创建分叉: "Fork from this point",
   "复制当前状态和截至此刻的已提交叙事，得到一个完全独立的新世界。":
@@ -2001,7 +1974,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   "在故事之外修正当前文档。修正会追加一笔新提交，不会改写旧叙事。":
     "Correct current documents outside the story. A correction appends a new commit and does not rewrite earlier narrative.",
   要修正的文档: "Document to correct",
-  "YAML 路径": "YAML path",
   "例如：衣着 或 关系.秦龙.好感":
     "For example: clothing or relationships.Alex.trust",
   新值: "New value",
@@ -2014,7 +1986,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   当前端点: "Current endpoint",
   "世界 ID": "World ID",
   "查看 Runtime 原始诊断": "View raw Runtime diagnostics",
-  你: "You",
   主持: "Host",
   未结算: "Unsettled",
   模型调用链: "Model call chain",
@@ -2037,7 +2008,6 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Do not inherit the old model conversation. The edited message becomes the first message in a fresh context.",
   保存修改并继续: "Save edit and continue",
   保存为全新上下文并继续: "Save as fresh context and continue",
-  取消: "Cancel",
   "AI 响应": "Model response",
   模型工具步骤: "Model tool step",
   空模型响应: "Empty model response",
@@ -2082,7 +2052,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   "[参数无法序列化]": "[Arguments could not be serialized]",
   "当前没有可显示项目。": "There are no items to display.",
   "[无法显示]": "[Unable to display]",
-  操作失败: "Operation failed",
   "扩展内容读取失败：{reason}": "Failed to read extension content: {reason}",
   重试: "Retry",
 };
@@ -2191,7 +2160,6 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   收起侧栏: "Close side panel",
   收起状态栏: "Close status panel",
   全部展开: "Expand all",
-  全部收起: "Collapse all",
   "{count} 项": "{count} items",
   放弃本地修改: "Discard local changes",
   故事之外: "Outside the story",
@@ -2212,7 +2180,6 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   仅保留部分上下文: "Only partial context was retained",
   模型推理: "Model reasoning",
   未返回: "Not returned",
-  工具调用: "Tool calls",
   调用量详情: "Token usage details",
   未记录本次用量: "Token usage was not recorded for this call",
   本对话累计用量: "Conversation token usage",
@@ -2366,7 +2333,6 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   "保存只更新锁定工作树并留下可回滚记录，不会提交世界。":
     "Saving updates only the locked worktree and records a reversible change. It does not commit the world.",
   保存到修订: "Save to revision",
-  "正在应用…": "Applying…",
   应用并解锁: "Apply and unlock",
   放弃: "Discard",
   "浏览不会锁定世界；首次编辑或发送消息后才会锁定。":
@@ -2410,10 +2376,6 @@ const dynamicEnglishMessages: Record<string, string> = {
   "打开 {path}": "Open {path}",
   "文件编辑器：{path}": "File editor: {path}",
   "编辑 {path}": "Edit {path}",
-  "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n":
-    "$document:\n  id: character.example\n  ref: example\n  title: Example character\n  summary: A one-sentence stable summary.\n  aliases: []\n",
-  "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
-    "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
   "{count} 个世界": "{count} world(s)",
   "打开世界：{title}": "Open world: {title}",
   "重命名世界：{title}": "Rename world: {title}",
@@ -2423,7 +2385,6 @@ const dynamicEnglishMessages: Record<string, string> = {
   "{count} 份内容包": "{count} content package(s)",
   "{count} 份可用": "{count} ready",
   "打开内容包：{name}": "Open content package: {name}",
-  默认模型: "Default model",
   "已从当前端点拉取 {count} 个模型 ID。":
     "Fetched {count} model ID(s) from the current endpoint.",
   "叙事规则、后置请求与工具契约":
@@ -2431,7 +2392,6 @@ const dynamicEnglishMessages: Record<string, string> = {
   "AI 创作方法；工具契约保持内置":
     "Model authoring method; tool contracts remain built in",
   设定完善: "Setting improvement",
-  界面扩展: "Interface extensions",
   "频道挂载、面板与扩展引用":
     "Channel mounts, panels, and extension references",
   提示内容: "Prompt content",
@@ -2501,11 +2461,8 @@ const dynamicEnglishMessages: Record<string, string> = {
   已提供: "Provided",
   可选未证明完整: "Optional; completeness not proven",
   分页目录: "Paged catalog",
-  当前情境: "Current situation",
-  附加材料: "Additional materials",
   材料目录: "Material catalog",
   引用目标: "Reference targets",
-  最近叙事: "Recent narrative",
   "最大输出 {count}": "Maximum output {count}",
   "打开第 {index} 条逻辑消息：{title}": "Open logical message {index}: {title}",
   "可继续：{continuation}": "Continuation: {continuation}",
@@ -2530,15 +2487,11 @@ const dynamicEnglishMessages: Record<string, string> = {
   "检查现有设定的缺口，并补齐当前情境、主持原则与玩家视图。":
     "Find gaps in the current setting and complete the current situation, host principles, and player views.",
   "注入 {path}": "Inject {path}",
-  整份文档: "Whole document",
   "始终提供一份指定世界文档。": "Always provide one specified world document.",
-  文档局部节点: "Document node",
   "只提供一份 YAML 路径或 Markdown 标题下的内容。":
     "Provide only one YAML path or the content under one Markdown heading.",
-  显式引用目标: "Explicit reference targets",
   "从一个 YAML 节点读取 $ref，并提供一层目标文档。":
     "Read $ref values from a YAML node and provide one level of target documents.",
-  有界目录: "Bounded catalog",
   "提供指定一级目录的标题、简介和短引用目录。":
     "Provide titles, summaries, and short references from one specified top-level directory.",
   "带上最近几条已提交叙事，让全新上下文读得到此前写出的细节。":

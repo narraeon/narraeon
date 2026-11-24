@@ -708,7 +708,7 @@ export function PlayPresetScreen({
       <header className="play-preset-header">
         <div>
           <p className="eyebrow">PLAY WORKBENCH · FILE NATIVE</p>
-          <h2 id="play-preset-title">{uiText("玩法预设")}</h2>
+          <h2 id="play-preset-title">{uiText("玩法预设工作台")}</h2>
           <p className="play-preset-lede">
             {uiText("在同一处编辑设定完善方法、主持规则、后置请求与界面展示。")}
           </p>
@@ -1654,7 +1654,7 @@ export function ArtifactDefinitionEditor({
         </div>
         <div className="play-preset-resource-columns">
           <div>
-            <h6>{uiText("脚本")}</h6>
+            <h6>{uiText("脚本文件")}</h6>
             <PathChecklist
               ariaLabel={uiText("{name} 脚本", { name: artifact.name })}
               paths={scriptPaths}

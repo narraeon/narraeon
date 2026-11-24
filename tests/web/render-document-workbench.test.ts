@@ -20,6 +20,49 @@ const files: ContentTreeFile[] = [
   gameplay,
 ];
 
+test.each([
+  [
+    "world/people/example.yaml",
+    "character.example",
+    "Example character",
+    "示例人物",
+  ],
+  ["world/rules/example.md", "rule.example", "Example rule", "示例规则"],
+])(
+  "localizes the sample document placeholder for %s",
+  (path, id, english, chinese) => {
+    const workbench = () =>
+      createElement(DocumentWorkbench, {
+        workspace: {
+          kind: "content-package",
+          files: [{ path, contents: "" }],
+          dirty: false,
+          issues: [],
+          onFilesChange: vi.fn(),
+          onSave: vi.fn(),
+        },
+        selectedPath: path,
+      });
+
+    setWebLocale("en");
+    const { rerender } = render(workbench());
+    const placeholder = screen
+      .getByRole("textbox", { name: `Edit ${path}` })
+      .getAttribute("placeholder");
+    expect(placeholder).toContain(`id: ${id}`);
+    expect(placeholder).toContain(`title: ${english}`);
+    expect(screen.getByText("0 characters")).toBeTruthy();
+
+    setWebLocale("zh-CN");
+    rerender(workbench());
+    expect(
+      screen
+        .getByRole("textbox", { name: `编辑 ${path}` })
+        .getAttribute("placeholder"),
+    ).toContain(`title: ${chinese}`);
+  },
+);
+
 describe("文档工作区与玩法文件", () => {
   test("内容包中的 control/gameplay.json 可以打开和编辑，不显示 JSON 不支持的提示", () => {
     const onFilesChange = vi.fn();
