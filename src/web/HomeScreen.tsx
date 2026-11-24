@@ -32,6 +32,7 @@ interface HomeDeletion {
 }
 
 export function HomeScreen({
+  libraryOnly = false,
   worldLibrary: {
     worlds,
     renderWorldBackupExport,
@@ -62,6 +63,7 @@ export function HomeScreen({
   currentPresetName,
   onOpenPlayPresets = () => undefined,
 }: {
+  libraryOnly?: boolean;
   worldLibrary: {
     worlds: HomeWorld[];
     renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
@@ -152,13 +154,19 @@ export function HomeScreen({
   return (
     <main className="home-dashboard">
       <header className="home-page-heading">
-        <h1>{uiText("世界工作区")}</h1>
-        <p>{uiText("选择一个世界继续故事，或从内容包开始创作。")}</p>
+        <h1>{uiText(libraryOnly ? "内容库" : "世界工作区")}</h1>
+        {!libraryOnly && (
+          <p>{uiText("选择一个世界继续故事，或从内容包开始创作。")}</p>
+        )}
       </header>
-      <div className="home-library-grid">
+      <div
+        className="home-library-grid"
+        data-library-only={libraryOnly || undefined}
+      >
         <section
           className="home-surface home-world-library"
           aria-labelledby="home-worlds-title"
+          hidden={libraryOnly}
         >
           <header className="home-section-heading">
             <div>

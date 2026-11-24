@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 
@@ -106,10 +107,7 @@ test("世界、内容包、编排方案刷新恢复，书签直接打开世界�
   await expect(
     page.getByRole("heading", { name: `${data.name} · AI 设定完善` }),
   ).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "工作区导航" })
-    .getByRole("button", { name: "编排方案", exact: true })
-    .click();
+  await openWorkspaceCreationTool(page);
   const length = await page.evaluate(() => history.length);
   await page.getByLabel("切换编排方案").selectOption(data.presets[1]!);
   await expect(page).toHaveURL(
@@ -144,11 +142,17 @@ test("旧列表书签替换为新地址，并按界面语言显示编排方案",
   await runtime(page, { type: "preferences.save", locale: "en" });
   await page.goto("/#/presets");
   await expect(page).toHaveURL(/#\/orchestrations$/u);
+  const tools = page.getByRole("button", {
+    name: "Creation tools",
+    exact: true,
+  });
+  await expect(tools).toHaveAttribute("aria-current", "location");
+  await tools.click();
   await expect(
     page
       .getByRole("navigation", { name: "Workspace navigation" })
       .getByRole("button", { name: "Orchestrations", exact: true }),
-  ).toBeVisible();
+  ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("region", { name: "Orchestrations", exact: true }),
   ).toBeVisible();
@@ -179,10 +183,7 @@ for (const removed of [false, true])
         exact: true,
       }),
     ).toBeVisible();
-    await page
-      .getByRole("navigation", { name: "工作区导航" })
-      .getByRole("button", { name: "编排方案", exact: true })
-      .click();
+    await openWorkspaceCreationTool(page);
     await page.getByLabel("切换编排方案").selectOption(preset.preset.id);
     await page.reload();
     await expect(page.getByLabel("切换编排方案")).toHaveValue(preset.preset.id);
@@ -285,16 +286,13 @@ for (const draft of ["content", "preset", "model", "world"] as const) {
         .click();
       await page.getByLabel("编辑 opening.md").fill("地址测试未保存开场");
     } else if (draft === "preset") {
-      await page
-        .getByRole("navigation", { name: "工作区导航" })
-        .getByRole("button", { name: "编排方案", exact: true })
-        .click();
+      await openWorkspaceCreationTool(page);
       await page.getByText("编排方案操作", { exact: true }).click();
       await page
         .getByLabel("编排方案名称", { exact: true })
         .fill("地址测试未保存编排方案");
     } else if (draft === "model") {
-      await page.getByRole("button", { name: "模型连接", exact: true }).click();
+      await page.getByRole("button", { name: "模型设置", exact: true }).click();
       await page.getByLabel("配置名称").fill("地址测试未保存模型");
     } else {
       await page

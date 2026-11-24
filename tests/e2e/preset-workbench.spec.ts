@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -64,7 +65,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     });
     await runtime(page, { type: "play.select", presetId: created.preset.id });
     await page.reload();
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByRole("button", { name: "新增提示词", exact: true }).click();
     await page
       .getByLabel("提示词名称", { exact: true })
@@ -174,7 +175,7 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
       followup.artifacts[1]!.renderer,
     );
     await page.reload();
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page
       .getByRole("list", { name: "后置请求" })
       .getByRole("button", { name: /A45 多产物/ })

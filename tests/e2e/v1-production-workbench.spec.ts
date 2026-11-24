@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect as playwrightExpect, type Locator } from "@playwright/test";
 import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
@@ -141,9 +142,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("heading", { name: "世界工作区" })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
-  for (const name of ["内容编辑", "编排方案", "新建世界", "提示词预览"])
+  for (const name of ["我的世界", "内容库", "模型设置", "创作工具"])
     await expect(
-      page.locator(".workspace-navigation").getByRole("button", { name }),
+      page
+        .getByRole("navigation", { name: "工作区导航" })
+        .getByRole("button", { name, exact: true }),
     ).toBeVisible();
 
   await page.getByText("导入内容包 ZIP", { exact: true }).click();
@@ -163,7 +166,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByRole("button", { name: "手动编辑" })).toHaveCount(0);
   await page.getByRole("button", { name: "返回工作区" }).click();
 
-  await page.getByRole("button", { name: "模型连接", exact: true }).click();
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
   await page.getByLabel("Base URL").fill(providerUrl);
   await page.getByLabel("API Key").fill("test-secret");
   await page.getByRole("button", { name: "从端点拉取模型" }).click();
@@ -215,7 +218,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.locator(".model-active-summary")).toContainText("默认模型");
   await page.getByRole("button", { name: "返回工作区" }).click();
 
-  await page.getByRole("button", { name: "编排方案", exact: true }).click();
+  await openWorkspaceCreationTool(page);
   await expect(
     page.getByRole("combobox", { name: "切换编排方案", exact: true }),
   ).toBeVisible();
@@ -281,7 +284,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button", { name: "应用为当前编排方案", exact: true })
     .click();
   await page.reload();
-  await page.getByRole("button", { name: "编排方案", exact: true }).click();
+  await openWorkspaceCreationTool(page);
   await page.getByRole("button", { name: "Before world", exact: true }).click();
   await expect(page.getByLabel("提示词正文", { exact: true })).toHaveValue(
     "ORDERED_BEFORE_WORLD",
@@ -713,7 +716,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByRole("button", { name: "收起对话历史" }).click();
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "提示词预览" }).click();
+  await openWorkspaceCreationTool(page, "preview");
   await expect(page.getByRole("heading", { name: "提示词预览" })).toBeVisible();
   await expect(page.getByText("0 次模型调用")).toBeVisible();
   await page.getByLabel("预览玩家输入").fill("I observe what Alex is doing.");
@@ -988,7 +991,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ]);
 
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "编排方案", exact: true }).click();
+  await openWorkspaceCreationTool(page);
   await page.getByRole("button", { name: "Before world", exact: true }).click();
   await page
     .getByLabel("提示词正文", { exact: true })
@@ -1310,7 +1313,7 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   await page.getByRole("button", { name: "导入 ZIP" }).click();
   await expect(page.getByText(/dialog-scroll-world\.zip/u)).toBeVisible();
   await page.getByRole("button", { name: "返回工作区" }).click();
-  await page.getByRole("button", { name: "模型连接", exact: true }).click();
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
   if ((await page.getByLabel("Base URL").inputValue()).length === 0) {
     await page.getByLabel("Base URL").fill(providerUrl);
     await page.getByLabel("API Key").fill("dialog-scroll-secret");

@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -78,7 +79,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       (world) => world.worldId === worldId,
     )!.title;
     await page.reload();
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByText("编排方案管理", { exact: true }).click();
     await page
       .getByRole("button", { name: "复制推荐状态栏", exact: true })

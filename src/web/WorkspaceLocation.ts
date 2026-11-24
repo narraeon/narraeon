@@ -1,5 +1,5 @@
 export type WorkspaceLocation =
-  | { screen: "home" | "create" | "preview" | "model" }
+  | { screen: "home" | "library" | "create" | "preview" | "model" }
   | { screen: "content"; packageId: string }
   | { screen: "world"; worldId: string }
   | { screen: "plays"; presetId?: string };
@@ -9,6 +9,8 @@ export function parseWorkspaceHash(hash: string): WorkspaceLocation | null {
     case "":
     case "#/":
       return { screen: "home" };
+    case "#/library":
+      return { screen: "library" };
     case "#/create":
       return { screen: "create" };
     case "#/preview":
@@ -42,6 +44,8 @@ export function workspaceHash(location: WorkspaceLocation): string {
   switch (location.screen) {
     case "home":
       return "#/";
+    case "library":
+      return "#/library";
     case "content":
       return `#/content/${encodeURIComponent(location.packageId)}`;
     case "world":

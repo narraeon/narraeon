@@ -295,9 +295,10 @@ describe("主页入口打开新建内容包对话框", () => {
     fireEvent.click(
       within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
         "button",
-        { name: "内容编辑" },
+        { name: "内容库" },
       ),
     );
+    fireEvent.click(await screen.findByRole("button", { name: "新建内容包" }));
     await waitFor(() =>
       expect(screen.getByRole("dialog", { name: "新建内容包" })).toBeTruthy(),
     );

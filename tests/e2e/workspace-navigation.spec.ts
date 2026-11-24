@@ -185,9 +185,8 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     .getByRole("button", { name: "关闭", exact: true })
     .click();
   await page.getByRole("button", { name: "返回工作区", exact: true }).click();
-  await page.getByRole("button", { name: "切换页面" }).click();
   await page
-    .getByRole("navigation", { name: "工作区导航" })
+    .locator(".home-world-library")
     .getByRole("button", { name: "新建世界", exact: true })
     .click();
   await page.getByLabel("创建世界的内容包").selectOption(packages[0]!);
@@ -241,3 +240,133 @@ test("手机地址栏展开和收起时，长页面只在标题栏下方滚动",
     await menu.click();
   }
 });
+
+for (const locale of ["en", "zh-CN"] as const) {
+  test(`primary navigation and creation tools work on desktop and mobile (${locale})`, async ({
+    page,
+  }) => {
+    const t = (zh: string, en: string) => (locale === "zh-CN" ? zh : en);
+    await runtime(page, { type: "preferences.save", locale });
+    await runtime(page, {
+      type: "model.save",
+      connection: {
+        name: "Navigation menu fixture",
+        presetId: "custom",
+        provider: "chat_completions",
+        baseUrl: "http://127.0.0.1:1/v1",
+        apiKey: "fixture",
+        modelId: "fixture",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 8192,
+      },
+    });
+    const pack = await runtime<{ localId: string }>(page, {
+      type: "content.create",
+    });
+    await runtime(page, {
+      type: "content.rename",
+      packageId: pack.localId,
+      name: `Nav ${locale}`,
+    });
+    const nav = page.getByRole("navigation", {
+      name: t("工作区导航", "Workspace navigation"),
+    });
+    const button = (zh: string, en: string) =>
+      nav.getByRole("button", { name: t(zh, en), exact: true });
+    const worlds = button("我的世界", "My worlds");
+    const library = button("内容库", "Content library");
+    const settings = button("模型设置", "Model settings");
+    const tools = button("创作工具", "Creation tools");
+    const plans = button("编排方案", "Orchestrations");
+    const preview = button("提示词预览", "Prompt Preview");
+    const menu = button("切换页面", "Switch page");
+    const androidBack = () =>
+      page.evaluate(() =>
+        (
+          window as Window & { narraeonAndroidBack?: () => boolean }
+        ).narraeonAndroidBack?.(),
+      );
+
+    await page.setViewportSize({ width: 1280, height: 850 });
+    await page.goto("/");
+    await expect(worlds).toHaveAttribute("aria-current", "page");
+    await expect(library).toBeVisible();
+    await expect(settings).toBeVisible();
+    await expect(plans).toBeHidden();
+    await expect(preview).toBeHidden();
+    await expect(button("新建世界", "Create world")).toHaveCount(0);
+    await expect(
+      page.locator(".home-world-library").getByRole("button", {
+        name: t("新建世界", "Create world"),
+        exact: true,
+      }),
+    ).toBeVisible();
+    await tools.focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(plans).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(tools).toBeFocused();
+    await expect(plans).toBeHidden();
+    await page.keyboard.press("Space");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#\/orchestrations(?:\/[^/]+)?$/u);
+    await expect(tools).toHaveAttribute("aria-current", "location");
+    await page.reload();
+    await tools.click();
+    await expect(plans).toHaveAttribute("aria-current", "page");
+    await preview.click();
+    await expect(page).toHaveURL(/#\/preview$/u);
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/orchestrations(?:\/[^/]+)?$/u);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(settings).toBeVisible();
+    await expect(worlds).toBeHidden();
+    await menu.focus();
+    await page.keyboard.press("Enter");
+    await expect(worlds).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(library).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#\/library$/u);
+    await expect(
+      page.getByRole("heading", {
+        name: t("内容库", "Content library"),
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: t(
+          `打开内容包：Nav ${locale}`,
+          `Open content package: Nav ${locale}`,
+        ),
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.reload();
+    await menu.click();
+    await expect(library).toHaveAttribute("aria-current", "page");
+    await tools.click();
+    await expect(plans).toBeVisible();
+    expect(await androidBack()).toBe(true);
+    await expect(tools).toBeFocused();
+    await expect(plans).toBeHidden();
+    expect(await androidBack()).toBe(true);
+    await expect(menu).toBeFocused();
+    await expect(worlds).toBeHidden();
+    expect(await androidBack()).toBe(false);
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/orchestrations(?:\/[^/]+)?$/u);
+    await page.goForward();
+    await expect(page).toHaveURL(/#\/library$/u);
+    await settings.click();
+    await expect(settings).toHaveAttribute("aria-current", "page");
+    await expect(page).toHaveURL(/#\/models$/u);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(390);
+  });
+}

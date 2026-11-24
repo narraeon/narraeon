@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 
@@ -48,7 +49,7 @@ for (const tab of ["游玩", "设定完善"]) {
       expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe(
         "undefined",
       );
-      await page.getByRole("button", { name: "编排方案", exact: true }).click();
+      await openWorkspaceCreationTool(page);
       await page.getByRole("tab", { name: new RegExp(tab, "u") }).click();
       const order = page.getByRole("list", { name: "提示词顺序", exact: true });
       const count = await order.getByRole("listitem").count();
@@ -90,7 +91,7 @@ for (const tab of ["游玩", "设定完善"]) {
         page.getByText("编排方案已保存。", { exact: true }),
       ).toBeVisible();
       await page.reload();
-      await page.getByRole("button", { name: "编排方案", exact: true }).click();
+      await openWorkspaceCreationTool(page);
       await page.getByRole("tab", { name: new RegExp(tab, "u") }).click();
       await page.getByRole("button", { name, exact: true }).click();
       await expect(page.getByLabel("提示词正文", { exact: true })).toHaveValue(

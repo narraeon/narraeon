@@ -548,7 +548,7 @@ for (const late of ["success", "failure"] as const)
     });
     await interruptObservation(page, false);
     await expect.poll(() => captured).toBe(true);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    await page.getByRole("button", { name: "My worlds", exact: true }).click();
     await page
       .getByRole("button", { name: `Open world: ${nextTitle}`, exact: true })
       .click();

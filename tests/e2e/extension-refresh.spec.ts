@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -130,7 +131,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     });
     await runtime(page, { type: "play.select", presetId: preset.preset.id });
     await page.reload();
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page
       .getByRole("list", { name: "后置请求" })
       .getByRole("button", { name: /^first/u })
@@ -378,7 +379,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       "Emit panel and output_3 from the settled story.",
     );
     await page.goto(url);
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByLabel("启用 Edited multi-output request").uncheck();
     await page.getByLabel("启用 second").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -399,7 +400,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect.poll(() => requests).toBe(4);
     expect(pending).toHaveLength(0);
     await page.goto(url);
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByLabel("启用 场景回顾（系统示例）").check();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(
@@ -422,7 +423,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect(recap()).toBeVisible();
     const finalHead = await head();
     await page.goto(url);
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByLabel("启用 场景回顾（系统示例）").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(

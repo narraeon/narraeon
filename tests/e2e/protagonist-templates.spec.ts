@@ -147,9 +147,7 @@ async function setup(page: Page, locale: "en" | "zh-CN", title: string) {
   });
   await page.goto("/");
   await page
-    .getByRole("navigation", {
-      name: locale === "zh-CN" ? "工作区导航" : "Workspace navigation",
-    })
+    .locator(".home-world-library")
     .getByRole("button", {
       name: locale === "zh-CN" ? "新建世界" : "Create world",
       exact: true,
@@ -206,10 +204,6 @@ test("manage templates and apply the automatically opened protagonist revision b
   ).toHaveCount(0);
   await manager.getByRole("button", { name: "关闭", exact: true }).click();
   await page.reload();
-  await page
-    .getByRole("navigation", { name: "工作区导航" })
-    .getByRole("button", { name: "新建世界", exact: true })
-    .click();
   await page.getByLabel("创建世界的内容包").selectOption(source);
   const templates = await runtime<ProtagonistTemplatesView>(page, {
     type: "protagonist-templates.read",
@@ -328,10 +322,6 @@ test("English template revision can be discarded and choosing None retains mecha
   });
   await page.reload();
   await page
-    .getByRole("navigation", { name: "Workspace navigation" })
-    .getByRole("button", { name: "Create world", exact: true })
-    .click();
-  await page
     .getByLabel("Content package for the new world")
     .selectOption(source);
   await page
@@ -382,7 +372,7 @@ test("English template revision can be discarded and choosing None retains mecha
     .getByRole("button", { name: "Back to workspace", exact: true })
     .click();
   await page
-    .getByRole("navigation", { name: "Workspace navigation" })
+    .locator(".home-world-library")
     .getByRole("button", { name: "Create world", exact: true })
     .click();
   await page

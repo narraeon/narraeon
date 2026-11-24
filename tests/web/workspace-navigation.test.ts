@@ -71,6 +71,7 @@ test.each(["model-draft", "reopened-presets"])(
         "button",
         { name: "编排方案" },
       );
+    fireEvent.click(screen.getByRole("button", { name: "创作工具" }));
     fireEvent.click(presets());
     expect(window.location.hash).toBe(`#/orchestrations/${scenario.firstId}`);
     fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
@@ -80,12 +81,13 @@ test.each(["model-draft", "reopened-presets"])(
         expect.objectContaining({ type: "play.copy" }),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+    fireEvent.click(screen.getByRole("button", { name: "模型设置" }));
     if (destination === "model-draft") {
       fireEvent.change(screen.getByLabelText("配置名称"), {
         target: { value: "新的模型草稿" },
       });
     } else {
+      fireEvent.click(screen.getByRole("button", { name: "创作工具" }));
       fireEvent.click(presets());
       fireEvent.change(screen.getByLabelText("切换编排方案"), {
         target: { value: scenario.otherId },
@@ -119,6 +121,7 @@ test("当前编排方案页面的选择和有效复制回调仍替换 URL", asyn
   const scenario = delayedPresetCopyFixture();
   render(createElement(App, { client: scenario.client }));
   await screen.findByRole("heading", { name: "世界工作区" });
+  fireEvent.click(screen.getByRole("button", { name: "创作工具" }));
   fireEvent.click(
     within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
       "button",
@@ -184,7 +187,7 @@ test("后退立即恢复地址并保留模型草稿", async () => {
   const { client, request } = fixture();
   render(createElement(App, { client }));
   await screen.findByRole("heading", { name: "世界工作区" });
-  fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
+  fireEvent.click(screen.getByRole("button", { name: "模型设置" }));
   expect(window.location.hash).toBe("#/models");
   fireEvent.change(screen.getByLabelText("配置名称"), {
     target: { value: "未保存的模型名称" },
@@ -534,7 +537,7 @@ test.each(["receipt", "lost receipt", "rejection"])(
     const draft = await screen.findByRole("textbox", { name: "预览玩家输入" });
     fireEvent.change(draft, { target: { value: "保留这段输入" } });
     const toggle = screen.getByRole("button", { name: "快速切换模型连接" });
-    const edit = screen.getByRole("button", { name: "模型连接" });
+    const edit = screen.getByRole("button", { name: "模型设置" });
     fireEvent.click(toggle);
     const selected = screen.getByRole("menuitemradio", { checked: true });
     expect(selected.textContent).toContain(first.name);
@@ -558,7 +561,9 @@ test.each(["receipt", "lost receipt", "rejection"])(
     const option = screen.getByRole("menuitemradio", { checked: false });
     fireEvent.click(option);
     fireEvent.click(option);
-    expect(edit.textContent).toBe(first.name);
+    expect(edit.querySelector(".workspace-model-label")?.textContent).toBe(
+      first.name,
+    );
     await act(async () => {
       select.resolve();
       await select.promise;
@@ -568,13 +573,17 @@ test.each(["receipt", "lost receipt", "rejection"])(
     ).toHaveLength(1);
     if (reject) {
       expect(screen.getByRole("alert").textContent).toContain("切换失败");
-      expect(edit.textContent).toBe(first.name);
+      expect(edit.querySelector(".workspace-model-label")?.textContent).toBe(
+        first.name,
+      );
       reject = false;
       fireEvent.click(screen.getByRole("menuitemradio", { checked: false }));
       await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
       expect(screen.queryByRole("alert")).toBeNull();
     }
-    expect(edit.textContent).toBe("同模型备用");
+    expect(edit.querySelector(".workspace-model-label")?.textContent).toBe(
+      "同模型备用",
+    );
     expect(draft).toHaveProperty("value", "保留这段输入");
     expect(window.location.hash).toBe("#/preview");
     expect(screen.queryByRole("menu")).toBeNull();
@@ -633,7 +642,7 @@ test.each(["model", "preset"])(
     });
     render(createElement(App, { client }));
     await screen.findByRole("heading", { name: "世界工作区" });
-    const modelButton = screen.getByRole("button", { name: "模型连接" });
+    const modelButton = screen.getByRole("button", { name: "模型设置" });
     expect(within(modelButton).getByText("本地主持")).toBeTruthy();
     fireEvent.click(modelButton);
     fireEvent.click(screen.getByRole("button", { name: "切换到此配置" }));
@@ -643,6 +652,7 @@ test.each(["model", "preset"])(
     };
     await screen.findByText(messages.model);
     expect(within(modelButton).getByText("另一配置")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "创作工具" }));
     fireEvent.click(
       within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
         "button",
@@ -912,12 +922,14 @@ test("迟到的内容包读取不会卸载刚产生模型草稿的页面", async
   );
   render(createElement(App, { client }));
   await screen.findByRole("heading", { name: "世界工作区" });
-  fireEvent.click(screen.getByRole("button", { name: "模型连接" }));
-  fireEvent.click(
-    within(screen.getByRole("navigation", { name: "工作区导航" })).getByRole(
-      "button",
-      { name: "内容编辑" },
-    ),
+  fireEvent.click(screen.getByRole("button", { name: "模型设置" }));
+  window.history.replaceState(null, "", "#/content/first");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({
+      type: "content.read",
+      packageId: "first",
+    }),
   );
   fireEvent.change(screen.getByLabelText("配置名称"), {
     target: { value: "新的未保存名称" },
@@ -961,9 +973,7 @@ test.each(["zh-CN", "en"] as const)(
     });
     fireEvent.click(
       within(
-        screen.getByRole("navigation", {
-          name: t("工作区导航", "Workspace navigation"),
-        }),
+        screen.getByRole("region", { name: t("继续游玩", "Continue playing") }),
       ).getByRole("button", { name: t("新建世界", "Create world") }),
     );
     fireEvent.change(

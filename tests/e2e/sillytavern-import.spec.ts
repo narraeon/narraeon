@@ -1,3 +1,4 @@
+import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -65,7 +66,6 @@ for (const locale of ["zh-CN", "en"] as const)
     const text =
       locale === "en"
         ? {
-            preset: "Orchestrations",
             manage: "Manage orchestrations",
             file: "Choose SillyTavern JSON file",
             wizard: "SillyTavern import wizard",
@@ -77,7 +77,6 @@ for (const locale of ["zh-CN", "en"] as const)
             unordered: "Unordered prompts",
           }
         : {
-            preset: "编排方案",
             manage: "编排方案管理",
             file: "选择 SillyTavern JSON 文件",
             wizard: "SillyTavern 导入向导",
@@ -97,15 +96,7 @@ for (const locale of ["zh-CN", "en"] as const)
       await page
         .locator(".workspace-locale-picker select")
         .selectOption(locale);
-      if (mobile)
-        await page
-          .getByRole("button", {
-            name: locale === "en" ? "Switch page" : "切换页面",
-          })
-          .click();
-      await page
-        .getByRole("button", { name: text.preset, exact: true })
-        .click();
+      await openWorkspaceCreationTool(page);
       await page.getByText(text.manage, { exact: true }).click();
       const before = await runtime<FileNativePlayPresetLibrary>(page, {
         type: "play.read",
@@ -289,8 +280,7 @@ for (const mobile of [false, true]) {
     );
     await page.goto("/");
     await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
-    if (mobile) await page.getByRole("button", { name: "切换页面" }).click();
-    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await openWorkspaceCreationTool(page);
     await page.getByText("编排方案管理", { exact: true }).click();
     const macroSource = {
       prompts: [

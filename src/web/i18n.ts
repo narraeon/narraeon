@@ -134,6 +134,10 @@ const englishMessages: Record<string, string> = {
   选择编辑文件: "Choose a file to edit",
   当前文件: "Current file",
   工作区导航: "Workspace navigation",
+  我的世界: "My worlds",
+  内容库: "Content library",
+  模型设置: "Model settings",
+  创作工具: "Creation tools",
   切换页面: "Switch page",
   内容包读取失败: "Could not load content package",
   "选择一份内容包，从它的开场开始。":

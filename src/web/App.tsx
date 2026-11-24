@@ -827,7 +827,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   function navigate(next: Screen): void {
     if (navigationLocked) return;
-    if (next !== "content" || next === screen) packageOpenRequest.current += 1;
+    packageOpenRequest.current += 1;
     if (next === screen) return;
     if (next === "content") {
       if (selectedPackage === undefined) setPackageDialogOpen(true);
@@ -847,7 +847,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     else if (next === "world") openWorld(worldId);
     else {
       switchLocation({ screen: next });
-      if (next === "home") void refresh().catch(report);
+      if (next === "home" || next === "library") void refresh().catch(report);
     }
   }
 
@@ -1031,8 +1031,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               ))}
             </div>
           )}
-        {screen === "home" && (
+        {(screen === "home" || screen === "library") && (
           <HomeScreen
+            libraryOnly={screen === "library"}
             worldLibrary={{
               worlds: workspace.worlds,
               renderWorldBackupExport: (world) => (
