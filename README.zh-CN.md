@@ -55,9 +55,13 @@ docker run --detach --name narraeon \
   ghcr.io/narraeon/narraeon:latest
 ```
 
-然后打开 <http://127.0.0.1:4317>。命名卷会在重建容器后继续保留世界、配置、凭据、日志和恢复数据。宿主机一侧应继续绑定 `127.0.0.1`；绑定所有网卡会把本地单用户 Runtime 不必要地暴露出去。Narraeon 没有内置 Web 认证，只应运行在回环地址或受信任私网中。稳定版会移动 `latest`，预发布版会移动 `next`，每次发布还会保留精确版本标签。
+然后打开 <http://127.0.0.1:4317>。命名卷会在重建容器后继续保留世界、配置、凭据、日志和恢复数据。`NARRAEON_HOST=0.0.0.0` 让 Runtime 监听容器内的所有 IPv4 网卡。Docker 的 `--publish` 决定宿主机绑定哪个地址，上面的示例绑定到 `127.0.0.1`。
 
-Runtime 默认接受监听端口上的 `127.0.0.1` 和 `localhost`。如果容器映射到不同端口，或在受信任的私网中使用反向代理，请在 `NARRAEON_TRUSTED_ORIGINS` 中填写浏览器实际使用的来源，以逗号分隔，例如 `http://127.0.0.1:8080,https://narraeon.example`。代理应保留传入的 `Host` 和 `Origin` 请求头。
+Narraeon 只应运行在回环地址或受信任的私网中。如果通过反向代理提供私网访问，请让代理先验证访问者身份，再转发请求。限制对 Runtime 端口的直接访问，让访问者只能通过代理连接。运行在 Docker 宿主机上的代理可沿用上面的映射，转发到 `127.0.0.1:4317`。
+
+Runtime 默认接受监听端口上的 `127.0.0.1` 和 `localhost`。如果更改宿主机映射端口，或使用反向代理，请在容器的 `NARRAEON_TRUSTED_ORIGINS` 中按浏览器实际访问的 URL 填写来源，包含协议、主机名和非默认端口。多个来源用逗号分隔，例如 `http://127.0.0.1:8080,https://narraeon.example`。代理应保留传入的 `Host` 和 `Origin` 请求头，供 Runtime 校验请求。Narraeon 没有内置 Web 认证。
+
+稳定版会移动 `latest`，预发布版会移动 `next`，每次发布还会保留精确版本标签。
 
 ## 从源码运行
 
