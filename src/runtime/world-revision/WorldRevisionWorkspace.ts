@@ -1,3 +1,4 @@
+import { planAuthoringRollback } from "../authoring/AuthoringRollback.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -280,7 +281,8 @@ export class WorldRevisionWorkspace {
         throw new WorldRevisionWorkspaceError(
           "The requested file change does not exist in this revision epoch",
         );
-      if (fileMatchesBefore(epoch.files, change))
+      const rollback = planAuthoringRollback(epoch.files, change);
+      if (rollback === null)
         return {
           status: "already_rolled_back",
           changeSetId: input.changeSetId,
@@ -288,8 +290,7 @@ export class WorldRevisionWorkspace {
           changes: [],
           epoch,
         };
-      const inverse = inverseDiff(epoch.files, change);
-      const files = restoreBefore(epoch.files, change);
+      const { files, diff } = rollback;
       assertUsableWorldRevisionFiles(files, epoch.baseFiles);
       epoch.files = files;
       epoch.revision = contentTreeFingerprint(files);
@@ -297,7 +298,7 @@ export class WorldRevisionWorkspace {
         changeSetId: this.#store.createChangeSetId(),
         source: "rollback",
         createdAt: Date.now(),
-        changes: [inverse],
+        changes: [diff],
       });
       epoch.updatedAt = Date.now();
       await this.#store.saveEpoch(epoch);
@@ -305,7 +306,7 @@ export class WorldRevisionWorkspace {
         status: "rolled_back",
         changeSetId: input.changeSetId,
         path: input.path,
-        changes: [inverse],
+        changes: [diff],
         epoch,
       };
     });
@@ -709,46 +710,6 @@ function fileDiff(
         },
       ];
     });
-}
-
-function fileMatchesBefore(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): boolean {
-  const current = files.find(({ path }) => path === change.path);
-  return change.before === null
-    ? current === undefined
-    : current?.contents === change.before && current.encoding === undefined;
-}
-
-function restoreBefore(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): ContentTreeFile[] {
-  const restored = new Map(
-    files.map((file) => [file.path, structuredClone(file)] as const),
-  );
-  if (change.before === null) restored.delete(change.path);
-  else
-    restored.set(change.path, { path: change.path, contents: change.before });
-  return [...restored.values()].sort((left, right) =>
-    left.path.localeCompare(right.path),
-  );
-}
-
-function inverseDiff(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): V1SettingAuthoringDiff {
-  const before =
-    files.find(({ path }) => path === change.path)?.contents ?? null;
-  return {
-    path: change.path,
-    kind:
-      before === null ? "create" : change.before === null ? "delete" : "modify",
-    before,
-    after: change.before,
-  };
 }
 
 function cloneFiles(files: readonly ContentTreeFile[]): ContentTreeFile[] {

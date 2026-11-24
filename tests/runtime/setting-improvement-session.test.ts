@@ -4975,6 +4975,20 @@ authoringTargetContract("content package", async (steps, delay = false) => {
   const service = makeService();
   return {
     send: () => sendFresh(service, fixture.packageId, "original", "Change."),
+    sendNext: (id) =>
+      makeService().send({
+        packageId: fixture.packageId,
+        requestId: "next",
+        message: "Different message.",
+        continuation: { kind: "continue_context", sessionId: id },
+      }),
+    delete: (id) => service.deleteSession(fixture.packageId, id),
+    status: async (id) =>
+      (await service.status(fixture.packageId, id)).selected,
+    preview: (id) => service.preview(fixture.packageId, id),
+    previews: (id) => service.readRequestPreviews(fixture.packageId, id),
+    callContext: (id, callId) =>
+      service.readCallContext(fixture.packageId, id, callId),
     read: (id) => service.readSession(fixture.packageId, id),
     resume: (id) =>
       makeService().resume({

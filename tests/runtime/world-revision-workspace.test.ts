@@ -3781,6 +3781,19 @@ authoringTargetContract("world revision", async (steps, delay = false) => {
         message: "Change.",
         continuation: { kind: "fresh_context" },
       }),
+    sendNext: (id) =>
+      makeService().send({
+        worldId,
+        requestId: "next",
+        message: "Different message.",
+        continuation: { kind: "continue_context", sessionId: id },
+      }),
+    delete: (id) => service.deleteSession(worldId, id),
+    status: async (id) =>
+      service.observeProgress(await service.status(worldId, id)).selected,
+    preview: (id) => service.preview(worldId, id),
+    previews: (id) => service.readRequestPreviews(worldId, id),
+    callContext: (id, callId) => service.readCallContext(worldId, id, callId),
     read: (id) => service.readSession(worldId, id),
     resume: (id) =>
       makeService().resume({ worldId, sessionId: id, requestId: "resume" }),

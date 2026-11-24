@@ -1,28 +1,30 @@
+import {
+  AuthoringLiveScopes,
+  AuthoringSessionBase,
+  assertAuthoringFilePolicy,
+  assertCanSendAuthoringMessage,
+  assertKnownAuthoringOutcome,
+  beginAuthoringRequest,
+  captureAuthoringRequestPreview,
+  finishInterruptedAuthoringRun,
+  recoverLegacyGoogleDispatch,
+  resumeAuthoringRequest,
+  type AuthoringContinuation,
+} from "../authoring/AuthoringSessionBase.ts";
 import type { GenerationActivity } from "../GenerationActivity.ts";
+import { authoringConversationTurns } from "../authoring/AuthoringCallDetails.ts";
 import {
-  authoringConversationTurns,
-  readAuthoringCallContext,
-} from "../authoring/AuthoringCallDetails.ts";
-import { prepareAuthoringPartial } from "../model/AssistantPrefill.ts";
-import {
-  completedAuthoringEdit,
   planAuthoringEdit,
   revertAuthoringChanges,
 } from "../authoring/AuthoringEditPlan.ts";
 import {
   assertCompatibleAuthoring,
   authoringRecovery,
-  canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
   recoverLegacyLengthLimit,
 } from "../authoring/AuthoringRetry.ts";
-import {
-  authoringRequestPreviews,
-  authoringRequestIdentities,
-  confirmedAuthoringRequestIds,
-  authoringActiveBinding,
-} from "../authoring/AuthoringRequestSnapshot.ts";
+import { authoringActiveBinding } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -37,15 +39,11 @@ import type {
   V1WorldRevisionView,
 } from "../../protocol/v1.ts";
 import {
-  appendAuthoringUserMessage,
-  authoringExchange,
   recordAuthoringRetryPreview,
   ModelToolConversation,
   type ModelToolConversationStreaming,
-  rememberAuthoringRequest,
   isResponseCorrection,
   recoverPausedAuthoringCorrection,
-  resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import { contentTreeFingerprint } from "../content/ContentTreeFingerprint.ts";
 import type {
@@ -87,8 +85,7 @@ import type { WorldRevisionWorkspace } from "./WorldRevisionWorkspace.ts";
 import { WorldRevisionWorkspaceError } from "./WorldRevisionWorkspace.ts";
 import { historyEntries } from "../history/HistoryTools.ts";
 
-export type WorldRevisionContinuation =
-  { kind: "fresh_context" } | { kind: "continue_context"; sessionId: string };
+export type WorldRevisionContinuation = AuthoringContinuation;
 
 export class WorldRevisionMessageEditError extends Error {
   readonly reason: "conflict" | "sealed" | "invalid_tree";
@@ -132,15 +129,9 @@ interface WorldRevisionLiveScope {
     StoredWorldRevisionSession,
     V1WorldRevisionView
   >;
-  mutationTail: Promise<void>;
+  mutations: { tail: Promise<void> };
 }
-const liveScopes = new Map<string, WeakRef<WorldRevisionLiveScope>>();
-const releaseScope = new FinalizationRegistry<{
-  scope: string;
-  reference: WeakRef<WorldRevisionLiveScope>;
-}>(({ scope, reference }) => {
-  if (liveScopes.get(scope) === reference) liveScopes.delete(scope);
-});
+const liveScopes = new AuthoringLiveScopes<WorldRevisionLiveScope>();
 
 /** Conversation orchestration over the shared locked revision worktree. */
 export class WorldRevisionSession {
@@ -153,7 +144,10 @@ export class WorldRevisionSession {
   readonly #bindPlayPreset: () => Promise<PlayPresetBinding>;
   readonly #preview: (input: WorldRevisionPreviewInput) => PromptPreview;
   readonly #live: WorldRevisionLiveScope;
-  readonly #conversation: WorldRevisionLiveScope["conversation"];
+  readonly #authoring: AuthoringSessionBase<
+    StoredWorldRevisionSession,
+    V1WorldRevisionView
+  >;
   readonly #changed: (id: string, durable: boolean) => void;
   readonly #generationActivity: GenerationActivity | undefined;
 
@@ -177,21 +171,24 @@ export class WorldRevisionSession {
         /* No observers attached. */
       });
     this.#store = input.store;
-    let live = liveScopes.get(input.store.sessionScope)?.deref();
-    if (live === undefined) {
-      live = {
-        conversation: new ModelToolConversation(),
-        mutationTail: Promise.resolve(),
-      };
-      const reference = new WeakRef(live);
-      liveScopes.set(input.store.sessionScope, reference);
-      releaseScope.register(live, {
-        scope: input.store.sessionScope,
-        reference,
-      });
-    }
+    const live = liveScopes.get(input.store.sessionScope, () => ({
+      conversation: new ModelToolConversation(),
+      mutations: { tail: Promise.resolve() },
+    }));
     this.#live = live;
-    this.#conversation = live.conversation;
+    this.#authoring = new AuthoringSessionBase(
+      this.#live.conversation,
+      {
+        name: "world-revision",
+        inputError: WorldRevisionWorkspaceError,
+        read: (id) => this.#store.readSession(id),
+        assertOwner: assertWorld,
+        bindModelHost: input.bindModelHost,
+        compilePreview: async (targetId, host) =>
+          (await this.#compileCurrent(targetId, host)).bootstrap,
+      },
+      this.#live.mutations,
+    );
     this.#workspace = input.workspace;
     this.#worlds = input.worlds;
     this.#compiler = input.compiler;
@@ -202,7 +199,7 @@ export class WorldRevisionSession {
   }
 
   async open(worldId: string): Promise<V1WorldRevisionOverview> {
-    await this.#mutate(async () => {
+    await this.#authoring.mutate(async () => {
       await this.#recoverWorldSessions(worldId);
       await this.#workspace.open(worldId);
     });
@@ -210,14 +207,14 @@ export class WorldRevisionSession {
   }
 
   async activeEpoch(worldId: string): Promise<V1WorldRevisionEpochView | null> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       const epoch = await this.#workspace.active(worldId);
       return epoch === null ? null : this.#workspace.view(epoch, true);
     });
   }
 
   async overview(worldId: string): Promise<V1WorldRevisionOverview> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       const sessions = await this.#recoverWorldSessions(worldId);
       const [activeEpoch, sealedEpochs] = await Promise.all([
         this.#workspace.active(worldId),
@@ -242,25 +239,14 @@ export class WorldRevisionSession {
   }
 
   observeProgress(status: V1WorldRevisionStatus): V1WorldRevisionStatus {
-    const selected = status.selected;
-    if (selected === null) return status;
-    return {
-      ...status,
-      selected: {
-        ...selected,
-        progress: {
-          ...selected.progress,
-          streaming: this.#conversation.streaming(selected.sessionId),
-        },
-      },
-    };
+    return this.#authoring.observeProgress(status);
   }
 
   async status(
     worldId: string,
     sessionId?: string,
   ): Promise<V1WorldRevisionStatus> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       await this.#workspace.active(worldId);
       const sessions = await this.#store.listSessions(worldId);
       const selectedIndex =
@@ -272,7 +258,7 @@ export class WorldRevisionSession {
       let selected = selectedIndex < 0 ? null : sessions[selectedIndex]!;
       if (
         selected !== null &&
-        !this.#conversation.isRunning(selected.sessionId) &&
+        !this.#authoring.conversation.isRunning(selected.sessionId) &&
         (selected.runStatus === "running" ||
           selected.pendingSettlement !== null)
       ) {
@@ -292,7 +278,7 @@ export class WorldRevisionSession {
     worldId: string,
     sessionId: string,
   ): Promise<V1WorldRevisionView> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       const session = await this.#store.readSession(sessionId);
       assertWorld(session, worldId);
       const recovered = await this.#recoverIfNeeded(session);
@@ -304,8 +290,8 @@ export class WorldRevisionSession {
     worldId: string,
     sessionId: string,
   ): Promise<V1WorldRevisionOverview> {
-    await this.#mutate(async () => {
-      if (this.#conversation.isRunning(sessionId))
+    await this.#authoring.mutate(async () => {
+      if (this.#authoring.conversation.isRunning(sessionId))
         throw new WorldRevisionWorkspaceError(
           "A running world-revision conversation cannot be deleted",
         );
@@ -323,7 +309,7 @@ export class WorldRevisionSession {
     expectedRevision: string;
     files: readonly { path: string; contents: string; encoding?: "base64" }[];
   }): Promise<V1WorldRevisionOverview> {
-    await this.#mutate(async () => {
+    await this.#authoring.mutate(async () => {
       await this.#assertNoRunningConversation(input.worldId);
       await this.#workspace.replace(input);
     });
@@ -336,7 +322,7 @@ export class WorldRevisionSession {
     changeSetId: string;
     path: string;
   }) {
-    const result = await this.#mutate(async () => {
+    const result = await this.#authoring.mutate(async () => {
       await this.#assertNoRunningConversation(input.worldId);
       return this.#workspace.rollback(input);
     });
@@ -353,7 +339,7 @@ export class WorldRevisionSession {
     epochId: string;
     expectedRevision: string;
   }): Promise<V1WorldRevisionOverview> {
-    await this.#mutate(async () => {
+    await this.#authoring.mutate(async () => {
       await this.#assertNoRunningConversation(input.worldId);
       const epoch = await this.#workspace.active(input.worldId);
       if (epoch?.epochId !== input.epochId)
@@ -371,7 +357,7 @@ export class WorldRevisionSession {
     epochId: string;
     expectedRevision?: string;
   }): Promise<V1WorldRevisionOverview> {
-    await this.#mutate(async () => {
+    await this.#authoring.mutate(async () => {
       await this.#assertNoRunningConversation(input.worldId);
       await this.#workspace.discard(input);
     });
@@ -384,9 +370,9 @@ export class WorldRevisionSession {
     message: string;
     continuation: WorldRevisionContinuation;
   }): Promise<V1WorldRevisionView> {
-    const message = requiredMessage(input.message);
-    const requestId = requiredRequestId(input.requestId);
-    const prepared = await this.#mutate(async () => {
+    const message = this.#authoring.message(input.message);
+    const requestId = this.#authoring.requestId(input.requestId);
+    const prepared = await this.#authoring.mutate(async () => {
       let session: StoredWorldRevisionSession | null;
       if (input.continuation.kind === "fresh_context") {
         session = await this.#store.findByCreationRequest(
@@ -399,27 +385,10 @@ export class WorldRevisionSession {
       }
       if (session !== null) {
         session = await this.#recoverIfNeeded(session);
-        if (session.completedRequestIds.includes(requestId))
-          return { session, run: null as Promise<V1WorldRevisionView> | null };
-        const running = this.#conversation.running(session.sessionId);
-        if (running !== null) {
-          if (running.requestId !== requestId)
-            throw new Error(
-              "Another message in this world-revision conversation is still running",
-            );
-          return { session, run: running.promise };
-        }
-        if (session.googleOutcomeUnknown)
-          throw new Error(
-            "The Google request outcome is unknown; start a fresh model context.",
-          );
-        if (
-          session.runStatus === "paused" ||
-          canRetryAuthoringDispatch(session)
-        )
-          throw new Error(
-            "Resume the paused authoring request before sending another message",
-          );
+        const existing = this.#authoring.existingRequest(session, requestId);
+        if (existing !== null) return existing;
+        assertKnownAuthoringOutcome(session);
+        assertCanSendAuthoringMessage(session);
       }
       await this.#assertNoRunningConversation(
         input.worldId,
@@ -441,39 +410,23 @@ export class WorldRevisionSession {
       const { playPreset, bootstrap, preload, modelPrompt } =
         await this.#compileCurrent(input.worldId, host);
       session.schemaVersion = 4;
-      delete session.retryDispatch;
-      session.requests ??= [];
-      session.requests.push({
-        requestId,
-        modelBinding: structuredClone(host.binding()),
-        modelItemStart: session.modelItems.length,
-        bootstrap,
-        playPreset: structuredClone(playPreset),
-        ...(modelPrompt === undefined ? {} : { modelPrompt }),
-        ...(preload === null
-          ? {}
-          : { preload: structuredClone(preload.record) }),
-      });
       if (preload !== null)
         session.authorization = authoringPreloadAuthorization(
           session.authorization,
           preload.record,
         );
-      appendAuthoringUserMessage(session, message, requestId);
-      checkpointNextAuthoringDispatch(session, "dispatching");
-      if (session.modelBinding.provider === "google_interactions")
-        session.googleOutcomeUnknown = false;
+      beginAuthoringRequest(session, host, requestId, message, {
+        bootstrap,
+        playPreset,
+        modelPrompt,
+        preload: preload?.record,
+      });
       const boundaries =
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(session)
           : undefined;
-      if (
-        boundaries !== undefined &&
-        host.previewAuthoringRequest !== undefined
-      )
-        session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(session, requestId, boundaries, host.binding()),
-        );
+      if (boundaries !== undefined)
+        captureAuthoringRequestPreview(session, host, requestId, boundaries);
       await this.#store.saveSession(session);
       return {
         session,
@@ -494,11 +447,10 @@ export class WorldRevisionSession {
     message: string;
     filePolicy: "keep" | "revert";
   }): Promise<V1WorldRevisionView> {
-    const message = requiredMessage(input.message);
-    const requestId = requiredRequestId(input.requestId);
-    if (input.filePolicy !== "keep" && input.filePolicy !== "revert")
-      throw new Error("Invalid file policy");
-    const prepared = await this.#mutate(async () => {
+    const message = this.#authoring.message(input.message);
+    const requestId = this.#authoring.requestId(input.requestId);
+    assertAuthoringFilePolicy(input.filePolicy);
+    const prepared = await this.#authoring.mutate(async () => {
       // Recover the epoch intent before reading the conversation it may replace.
       let epoch = await this.#workspace.active(input.worldId);
       let session = await this.#store.readSession(input.sessionId);
@@ -510,19 +462,9 @@ export class WorldRevisionSession {
         message,
         filePolicy: input.filePolicy,
       };
-      if (completedAuthoringEdit(session, edit)) return { session, run: null };
-      const running = this.#conversation.running(session.sessionId);
-      if (running !== null) {
-        if (running.requestId !== requestId)
-          throw new Error(
-            "Another message in this world-revision conversation is still running",
-          );
-        return { session, run: running.promise };
-      }
-      if (session.googleOutcomeUnknown)
-        throw new Error(
-          "The Google request outcome is unknown; start a fresh model context.",
-        );
+      const existing = this.#authoring.existingEdit(session, edit);
+      if (existing !== null) return existing;
+      assertKnownAuthoringOutcome(session);
       await this.#assertNoRunningConversation(input.worldId, session.sessionId);
       const host = await this.#bindModelHost();
       const { tail, next } = planAuthoringEdit(session, edit);
@@ -584,36 +526,22 @@ export class WorldRevisionSession {
       )
         retargetSession(next, epoch, this.#locale());
       next.epochId = epoch.epochId;
-      next.requests.push({
-        requestId,
-        modelBinding: structuredClone(host.binding()),
-        modelItemStart: next.modelItems.length,
-        bootstrap,
-        playPreset: structuredClone(playPreset),
-        ...(modelPrompt === undefined ? {} : { modelPrompt }),
-        ...(preload === null
-          ? {}
-          : { preload: structuredClone(preload.record) }),
-      });
       next.authorization =
         preload === null
           ? null
           : authoringPreloadAuthorization(null, preload.record);
-      appendAuthoringUserMessage(next, message, requestId);
-      checkpointNextAuthoringDispatch(next, "dispatching");
-      if (next.modelBinding.provider === "google_interactions")
-        next.googleOutcomeUnknown = false;
+      beginAuthoringRequest(next, host, requestId, message, {
+        bootstrap,
+        playPreset,
+        modelPrompt,
+        preload: preload?.record,
+      });
       const boundaries =
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(next)
           : undefined;
-      if (
-        boundaries !== undefined &&
-        host.previewAuthoringRequest !== undefined
-      )
-        next.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(next, requestId, boundaries, host.binding()),
-        );
+      if (boundaries !== undefined)
+        captureAuthoringRequestPreview(next, host, requestId, boundaries);
       await this.#workspace.publishEdit({
         worldId: input.worldId,
         epochId: epoch.epochId,
@@ -640,21 +568,13 @@ export class WorldRevisionSession {
     requestId: string;
     recovery?: "continue_partial";
   }): Promise<V1WorldRevisionView> {
-    const requestId = requiredRequestId(input.requestId);
-    const prepared = await this.#mutate(async () => {
+    const requestId = this.#authoring.requestId(input.requestId);
+    const prepared = await this.#authoring.mutate(async () => {
       let session = await this.#store.readSession(input.sessionId);
       assertWorld(session, input.worldId);
       session = await this.#recoverIfNeeded(session);
-      if (session.completedRequestIds.includes(requestId))
-        return { session, run: null as Promise<V1WorldRevisionView> | null };
-      const running = this.#conversation.running(session.sessionId);
-      if (running !== null) {
-        if (running.requestId !== requestId)
-          throw new Error(
-            "Another message in this world-revision conversation is still running",
-          );
-        return { session, run: running.promise };
-      }
+      const existing = this.#authoring.existingRequest(session, requestId);
+      if (existing !== null) return existing;
       await this.#assertNoRunningConversation(input.worldId, session.sessionId);
       const epoch = await this.#workspace.active(input.worldId);
       if (epoch?.epochId !== session.epochId)
@@ -668,18 +588,7 @@ export class WorldRevisionSession {
         );
       const host = await this.#bindModelHost();
       assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-      if (input.recovery === "continue_partial")
-        prepareAuthoringPartial(session, host);
-      else delete session.partialResponse;
-      if (
-        input.recovery === "continue_partial" ||
-        canRetryAuthoringDispatch(session)
-      ) {
-        session.runStatus = "running";
-        session.activeRequestId = session.requests?.at(-1)?.requestId ?? null;
-        session.lastFailure = null;
-        session.updatedAt = Date.now();
-      } else resumePausedAuthoringConversation(session);
+      resumeAuthoringRequest(session, host, input.recovery);
       const boundaries =
         host.binding().provider === "google_interactions"
           ? await this.#validatedEpochBoundaries(session)
@@ -699,26 +608,15 @@ export class WorldRevisionSession {
   }
 
   async readCallContext(worldId: string, sessionId: string, callId: string) {
-    const session = await this.#store.readSession(sessionId);
-    assertWorld(session, worldId);
-    return readAuthoringCallContext(session, callId);
+    return this.#authoring.readCallContext(worldId, sessionId, callId);
   }
 
   async readRequestPreviews(worldId: string, sessionId: string) {
-    const session = await this.#store.readSession(sessionId);
-    assertWorld(session, worldId);
-    return authoringRequestPreviews(session);
+    return this.#authoring.readRequestPreviews(worldId, sessionId);
   }
 
   async preview(worldId: string, sessionId?: string) {
-    const session =
-      sessionId === undefined ? null : await this.#store.readSession(sessionId);
-    if (session !== null) assertWorld(session, worldId);
-    const host = await this.#bindModelHost();
-    if (session !== null)
-      assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-    const { bootstrap } = await this.#compileCurrent(worldId, host);
-    return bootstrap;
+    return this.#authoring.preview(worldId, sessionId);
   }
 
   async #compileCurrent(
@@ -816,9 +714,7 @@ export class WorldRevisionSession {
   }
 
   async cancel(sessionId: string): Promise<V1WorldRevisionView> {
-    const running = this.#conversation.cancel(sessionId);
-    if (running !== null) return running;
-    return this.#mutate(async () => {
+    return this.#authoring.cancel(sessionId, async () => {
       const session = await this.#recoverIfNeeded(
         await this.#store.readSession(sessionId),
       );
@@ -887,7 +783,7 @@ export class WorldRevisionSession {
     worldRevisionBoundaries?: ModelHostExchange["worldRevisionBoundaries"],
   ): Promise<V1WorldRevisionView> {
     let activeTransaction: ActiveTransaction | null = null;
-    return this.#conversation.run({
+    return this.#authoring.conversation.run({
       ...(this.#generationActivity === undefined
         ? {}
         : { generationActivity: this.#generationActivity }),
@@ -1103,7 +999,8 @@ export class WorldRevisionSession {
     session: StoredWorldRevisionSession,
   ): Promise<StoredWorldRevisionSession> {
     if (session.damagedContinuation) return session;
-    if (this.#conversation.isRunning(session.sessionId)) return session;
+    if (this.#authoring.conversation.isRunning(session.sessionId))
+      return session;
     await this.#workspace.active(session.worldId);
     session = await this.#store.readSession(session.sessionId);
     if (
@@ -1116,25 +1013,10 @@ export class WorldRevisionSession {
     if (session.runStatus === "running") delete session.partialResponse;
     const lastItem = session.modelItems.at(-1);
     if (
-      session.pendingSettlement === null &&
-      session.modelBinding.provider === "google_interactions" &&
-      session.runStatus === "interrupted" &&
-      session.googleOutcomeUnknown !== false &&
-      session.retryDispatch === undefined &&
-      (lastItem?.kind === "user" || lastItem?.kind === "tool")
-    ) {
-      if (session.requests?.at(-1) !== undefined) {
+      recoverLegacyGoogleDispatch(session, () => {
         session.schemaVersion = 4;
-        checkpointNextAuthoringDispatch(session, "retryable");
-        session.googleOutcomeUnknown = false;
-        session.lastFailure =
-          "The previous model response was incomplete; retry from the last settled step.";
-      } else {
-        session.googleOutcomeUnknown = true;
-        session.lastFailure =
-          "The saved request is unavailable; start a fresh model context.";
-      }
-      session.updatedAt = Date.now();
+      })
+    ) {
       await this.#store.saveSession(session);
       return session;
     }
@@ -1152,17 +1034,11 @@ export class WorldRevisionSession {
       );
       if (session.modelBinding.provider === "google_interactions")
         session.googleOutcomeUnknown = false;
-      const requestId = session.activeRequestId;
-      session.runStatus = "interrupted";
-      session.activeRequestId = null;
-      if (requestId !== null)
-        session.completedRequestIds = rememberAuthoringRequest(
-          session.completedRequestIds,
-          requestId,
-        );
-      session.lastFailure =
-        "The complete tool response could not be settled; its calls received failure receipts. Re-read the worktree before editing.";
-      session.updatedAt = Date.now();
+      finishInterruptedAuthoringRun(
+        session,
+        "interrupted",
+        "The complete tool response could not be settled; its calls received failure receipts. Re-read the worktree before editing.",
+      );
       await this.#store.saveSession(session);
       return session;
     }
@@ -1217,7 +1093,6 @@ export class WorldRevisionSession {
     }
     if (session.runStatus !== "running" && !recoveringSettlement)
       return session;
-    const requestId = session.activeRequestId;
     if (settlementPublished && session.requests?.at(-1) !== undefined) {
       session.schemaVersion = 4;
       checkpointNextAuthoringDispatch(session, "retryable");
@@ -1234,17 +1109,11 @@ export class WorldRevisionSession {
     )
       checkpointNextAuthoringDispatch(session, "retryable");
     recoverAuthoringDispatch(session);
-    session.runStatus = "interrupted";
-    session.activeRequestId = null;
-    if (requestId !== null)
-      session.completedRequestIds = rememberAuthoringRequest(
-        session.completedRequestIds,
-        requestId,
-      );
-    session.lastFailure = session.googleOutcomeUnknown
-      ? "The Google request outcome is unknown; start a fresh model context."
-      : "The previous model request stopped after its last settled worktree change. Continue this conversation when ready.";
-    session.updatedAt = Date.now();
+    finishInterruptedAuthoringRun(
+      session,
+      "interrupted",
+      "The previous model request stopped after its last settled worktree change. Continue this conversation when ready.",
+    );
     await this.#store.saveSession(session);
     return session;
   }
@@ -1278,7 +1147,7 @@ export class WorldRevisionSession {
       sessions.some(
         ({ sessionId }) =>
           sessionId !== exceptSessionId &&
-          this.#conversation.isRunning(sessionId),
+          this.#authoring.conversation.isRunning(sessionId),
       )
     )
       throw new WorldRevisionWorkspaceError(
@@ -1290,27 +1159,12 @@ export class WorldRevisionSession {
     session: StoredWorldRevisionSession,
     epoch?: Pick<StoredWorldRevisionEpoch, "epochId" | "revision"> | null,
   ): V1WorldRevisionView {
-    const streaming =
-      session.runStatus === "running"
-        ? this.#conversation.streaming(session.sessionId)
-        : null;
+    const view = this.#authoring.view(session);
     return {
-      requestPreviews: authoringRequestIdentities(session),
-      confirmedRequestIds: confirmedAuthoringRequestIds(session),
-      sessionId: session.sessionId,
+      ...view,
       worldId: session.worldId,
       epochId: session.epochId,
-      runStatus: streaming === null ? session.runStatus : "running",
-      messages: structuredClone(session.messages),
-      turns: conversationTurns(session, streaming),
-      usage: structuredClone(session.usage),
-      progress: {
-        exchange: session.exchange,
-        toolCalls: session.toolCalls,
-        streaming,
-        updatedAt: session.updatedAt,
-      },
-      lastFailure: session.lastFailure,
+      turns: conversationTurns(session, view.progress.streaming),
       ...authoringRecovery(
         session,
         epoch !== undefined && epoch?.epochId !== session.epochId,
@@ -1322,34 +1176,7 @@ export class WorldRevisionSession {
   #statusView(
     session: StoredWorldRevisionSession,
   ): NonNullable<V1WorldRevisionStatus["selected"]> {
-    const streaming =
-      session.runStatus === "running"
-        ? this.#conversation.streaming(session.sessionId)
-        : null;
-    return {
-      sessionId: session.sessionId,
-      runStatus: streaming === null ? session.runStatus : "running",
-      progress: {
-        exchange: session.exchange,
-        toolCalls: session.toolCalls,
-        streaming,
-        updatedAt: session.updatedAt,
-      },
-    };
-  }
-
-  async #mutate<Value>(operation: () => Promise<Value>): Promise<Value> {
-    const previous = this.#live.mutationTail;
-    let release: () => void = () => undefined;
-    this.#live.mutationTail = new Promise<void>((resolveMutation) => {
-      release = resolveMutation;
-    });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
+    return this.#authoring.progress(session);
   }
 }
 
@@ -1540,22 +1367,4 @@ function assertWorld(
     throw new WorldRevisionWorkspaceError(
       "World-revision conversation belongs to another world",
     );
-}
-
-function requiredMessage(message: string): string {
-  if (message.trim().length === 0)
-    throw new WorldRevisionWorkspaceError(
-      "A world-revision message cannot be empty",
-    );
-  if (message.length > 64 * 1024)
-    throw new WorldRevisionWorkspaceError(
-      "World-revision message is too large",
-    );
-  return message;
-}
-
-function requiredRequestId(requestId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(requestId))
-    throw new WorldRevisionWorkspaceError("Invalid world-revision request ID");
-  return requestId;
 }

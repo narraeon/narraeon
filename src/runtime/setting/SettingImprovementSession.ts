@@ -1,28 +1,31 @@
+import { planAuthoringRollback } from "../authoring/AuthoringRollback.ts";
+import {
+  AuthoringLiveScopes,
+  AuthoringSessionBase,
+  assertAuthoringFilePolicy,
+  assertCanSendAuthoringMessage,
+  assertKnownAuthoringOutcome,
+  beginAuthoringRequest,
+  captureAuthoringRequestPreview,
+  finishInterruptedAuthoringRun,
+  recoverLegacyGoogleDispatch,
+  resumeAuthoringRequest,
+  type AuthoringContinuation,
+} from "../authoring/AuthoringSessionBase.ts";
 import type { GenerationActivity } from "../GenerationActivity.ts";
+import { authoringConversationTurns } from "../authoring/AuthoringCallDetails.ts";
 import {
-  authoringConversationTurns,
-  readAuthoringCallContext,
-} from "../authoring/AuthoringCallDetails.ts";
-import { prepareAuthoringPartial } from "../model/AssistantPrefill.ts";
-import {
-  completedAuthoringEdit,
   planAuthoringEdit,
   revertAuthoringChanges,
 } from "../authoring/AuthoringEditPlan.ts";
 import {
   assertCompatibleAuthoring,
   authoringRecovery,
-  canRetryAuthoringDispatch,
   checkpointNextAuthoringDispatch,
   recoverAuthoringDispatch,
   recoverLegacyLengthLimit,
 } from "../authoring/AuthoringRetry.ts";
-import {
-  authoringRequestPreviews,
-  authoringRequestIdentities,
-  confirmedAuthoringRequestIds,
-  authoringActiveBinding,
-} from "../authoring/AuthoringRequestSnapshot.ts";
+import { authoringActiveBinding } from "../authoring/AuthoringRequestSnapshot.ts";
 import { readGameplay } from "../../protocol/gameplay.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -56,15 +59,11 @@ import type {
 } from "../prompt/FileNativePromptCompiler.ts";
 import { WorldDocumentStore } from "../world/WorldDocumentStore.ts";
 import {
-  appendAuthoringUserMessage,
-  authoringExchange,
   recordAuthoringRetryPreview,
   ModelToolConversation,
   type ModelToolConversationStreaming,
-  rememberAuthoringRequest,
   isResponseCorrection,
   recoverPausedAuthoringCorrection,
-  resumePausedAuthoringConversation,
 } from "../authoring/ModelToolConversation.ts";
 import {
   summarizeStoredSettingImprovementSession,
@@ -83,8 +82,7 @@ import {
 } from "./SettingAuthoringTransaction.ts";
 
 export type SettingImprovementView = V1SettingImprovementView;
-export type SettingImprovementContinuation =
-  { kind: "fresh_context" } | { kind: "continue_context"; sessionId: string };
+export type SettingImprovementContinuation = AuthoringContinuation;
 
 interface ActiveTransaction {
   revision: string;
@@ -97,14 +95,7 @@ type SettingConversation = ModelToolConversation<
   StoredSettingImprovementSession,
   SettingImprovementView
 >;
-const liveConversations = new Map<string, WeakRef<SettingConversation>>();
-const releaseConversation = new FinalizationRegistry<{
-  scope: string;
-  reference: WeakRef<SettingConversation>;
-}>(({ scope, reference }) => {
-  if (liveConversations.get(scope) === reference)
-    liveConversations.delete(scope);
-});
+const liveConversations = new AuthoringLiveScopes<SettingConversation>();
 
 export class SettingImprovementRollbackError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -146,13 +137,12 @@ export class SettingImprovementSession {
     playPreset: PlayPresetBinding | undefined,
     modelPrompt?: ModelConnectionPrompt,
   ) => PromptPreview;
-  readonly #conversation: ModelToolConversation<
+  readonly #authoring: AuthoringSessionBase<
     StoredSettingImprovementSession,
     SettingImprovementView
   >;
   readonly #changed: (id: string, durable: boolean) => void;
   readonly #generationActivity: GenerationActivity | undefined;
-  #mutationTail: Promise<void> = Promise.resolve();
 
   constructor(input: {
     changed?: (id: string, durable: boolean) => void;
@@ -178,20 +168,22 @@ export class SettingImprovementSession {
         /* No observers attached. */
       });
     this.#store = input.store;
-    let shared = liveConversations.get(input.store.sessionScope)?.deref();
-    if (shared === undefined) {
-      shared = new ModelToolConversation<
-        StoredSettingImprovementSession,
-        SettingImprovementView
-      >();
-      const reference = new WeakRef(shared);
-      liveConversations.set(input.store.sessionScope, reference);
-      releaseConversation.register(shared, {
-        scope: input.store.sessionScope,
-        reference,
-      });
-    }
-    this.#conversation = shared;
+    const conversation = liveConversations.get(
+      input.store.sessionScope,
+      () => new ModelToolConversation(),
+    );
+    this.#authoring = new AuthoringSessionBase(conversation, {
+      name: "setting-improvement",
+      inputError: Error,
+      read: (id) => this.#store.read(id),
+      assertOwner: assertPackage,
+      bindModelHost: input.bindModelHost,
+      compilePreview: async (targetId, host) => {
+        const package_ =
+          await this.#content.readCurrentTreeContentPackage(targetId);
+        return (await this.#compilePackage(package_, host)).bootstrap;
+      },
+    });
     this.#content = input.content;
     this.#compiler = input.compiler;
     this.#locale = input.locale;
@@ -202,7 +194,7 @@ export class SettingImprovementSession {
 
   /** Latest conversation for compatibility with the original read endpoint. */
   async read(packageId: string): Promise<SettingImprovementView | null> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       const session = await this.#store.findLatestByPackage(packageId);
       return session === null
         ? null
@@ -211,7 +203,7 @@ export class SettingImprovementSession {
   }
 
   async overview(packageId: string): Promise<V1SettingImprovementOverview> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       let summaries = await this.#store.listSummariesByPackage(packageId);
       const latestSummary = summaries.find(
         (summary) => !summary.damagedContinuation,
@@ -240,25 +232,14 @@ export class SettingImprovementSession {
   observeProgress(
     status: V1SettingImprovementStatus,
   ): V1SettingImprovementStatus {
-    const selected = status.selected;
-    if (selected === null) return status;
-    return {
-      ...status,
-      selected: {
-        ...selected,
-        progress: {
-          ...selected.progress,
-          streaming: this.#conversation.streaming(selected.sessionId),
-        },
-      },
-    };
+    return this.#authoring.observeProgress(status);
   }
 
   async status(
     packageId: string,
     sessionId?: string,
   ): Promise<V1SettingImprovementStatus> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       let status = await this.#store.summaryStatusByPackage(
         packageId,
         sessionId,
@@ -266,7 +247,7 @@ export class SettingImprovementSession {
       let selected = status.selected;
       if (
         selected?.needsRecovery === true &&
-        !this.#conversation.isRunning(selected.sessionId)
+        !this.#authoring.conversation.isRunning(selected.sessionId)
       ) {
         const recovered = await this.#recoverIfNeeded(
           await this.#store.read(selected.sessionId),
@@ -285,7 +266,7 @@ export class SettingImprovementSession {
     packageId: string,
     sessionId: string,
   ): Promise<SettingImprovementView> {
-    return this.#mutate(async () => {
+    return this.#authoring.mutate(async () => {
       const stored = await this.#store.read(sessionId);
       assertPackage(stored, packageId);
       return this.#readView(await this.#recoverIfNeeded(stored));
@@ -296,8 +277,8 @@ export class SettingImprovementSession {
     packageId: string,
     sessionId: string,
   ): Promise<V1SettingImprovementOverview> {
-    await this.#mutate(async () => {
-      if (this.#conversation.isRunning(sessionId))
+    await this.#authoring.mutate(async () => {
+      if (this.#authoring.conversation.isRunning(sessionId))
         throw new Error(
           "A running setting-improvement conversation cannot be deleted",
         );
@@ -326,8 +307,8 @@ export class SettingImprovementSession {
     changeSetId: string;
     path: string;
   }): Promise<V1SettingImprovementRollbackResult> {
-    return this.#mutate(async () => {
-      if (this.#conversation.isRunning(input.sessionId))
+    return this.#authoring.mutate(async () => {
+      if (this.#authoring.conversation.isRunning(input.sessionId))
         throw new SettingImprovementRollbackError(
           "A running setting-improvement conversation cannot be rolled back",
         );
@@ -342,18 +323,17 @@ export class SettingImprovementSession {
         input.packageId,
       );
       try {
-        if (treeMatchesChangeBefore(lease.package.files, change))
+        const rollback = planAuthoringRollback(lease.package.files, change);
+        if (rollback === null)
           return {
             status: "already_rolled_back",
             changeSetId: input.changeSetId,
             path: input.path,
             changes: [],
           };
-        const rollbackDiff = diffForRollback(lease.package.files, change);
-        const restoredFiles = restoreChangeBefore(lease.package.files, change);
         try {
-          this.#content.validateCurrentTreeContentPackage(restoredFiles);
-          await lease.replace(restoredFiles);
+          this.#content.validateCurrentTreeContentPackage(rollback.files);
+          await lease.replace(rollback.files);
         } catch (error: unknown) {
           if (!(error instanceof InvalidContentTreeError)) throw error;
           throw new SettingImprovementRollbackError(
@@ -365,7 +345,7 @@ export class SettingImprovementSession {
           status: "rolled_back",
           changeSetId: input.changeSetId,
           path: input.path,
-          changes: [rollbackDiff],
+          changes: [rollback.diff],
         };
       } finally {
         lease.release();
@@ -379,9 +359,9 @@ export class SettingImprovementSession {
     message: string;
     continuation: SettingImprovementContinuation;
   }): Promise<SettingImprovementView> {
-    const message = requiredMessage(input.message);
-    const requestId = requiredRequestId(input.requestId);
-    const prepared = await this.#mutate(async () => {
+    const message = this.#authoring.message(input.message);
+    const requestId = this.#authoring.requestId(input.requestId);
+    const prepared = await this.#authoring.mutate(async () => {
       let session: StoredSettingImprovementSession;
       let selectedHost: ModelHost | undefined;
       if (input.continuation.kind === "fresh_context") {
@@ -406,32 +386,20 @@ export class SettingImprovementSession {
         session,
         requestId,
         async (next, lease, host) => {
-          if (next.runStatus === "paused" || canRetryAuthoringDispatch(next))
-            throw new Error(
-              "Resume the paused authoring request before sending another message",
-            );
+          assertCanSendAuthoringMessage(next);
           const { playPreset, bootstrap, preload, modelPrompt } =
             await this.#compilePackage(lease.package, host);
           next.schemaVersion = 6;
-          next.requests ??= [];
-          next.requests.push({
-            requestId,
-            modelBinding: structuredClone(host.binding()),
-            modelItemStart: next.modelItems.length,
-            bootstrap,
-            playPreset: structuredClone(playPreset),
-            ...(modelPrompt === undefined ? {} : { modelPrompt }),
-            preload: structuredClone(preload.record),
-          });
           next.authorization = authoringPreloadAuthorization(
             next.authorization,
             preload.record,
           );
-          delete next.retryDispatch;
-          appendAuthoringUserMessage(next, message, requestId);
-          checkpointNextAuthoringDispatch(next, "dispatching");
-          if (next.modelBinding.provider === "google_interactions")
-            next.googleOutcomeUnknown = false;
+          beginAuthoringRequest(next, host, requestId, message, {
+            bootstrap,
+            playPreset,
+            modelPrompt,
+            preload: preload.record,
+          });
         },
         selectedHost,
       );
@@ -447,11 +415,10 @@ export class SettingImprovementSession {
     message: string;
     filePolicy: "keep" | "revert";
   }): Promise<SettingImprovementView> {
-    const message = requiredMessage(input.message);
-    const requestId = requiredRequestId(input.requestId);
-    if (input.filePolicy !== "keep" && input.filePolicy !== "revert")
-      throw new Error("Invalid file policy");
-    const prepared = await this.#mutate(async () => {
+    const message = this.#authoring.message(input.message);
+    const requestId = this.#authoring.requestId(input.requestId);
+    assertAuthoringFilePolicy(input.filePolicy);
+    const prepared = await this.#authoring.mutate(async () => {
       let session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
       session = await this.#recoverIfNeeded(session);
@@ -461,19 +428,9 @@ export class SettingImprovementSession {
         message,
         filePolicy: input.filePolicy,
       };
-      if (completedAuthoringEdit(session, edit)) return { session, run: null };
-      const running = this.#conversation.running(session.sessionId);
-      if (running !== null) {
-        if (running.requestId !== requestId)
-          throw new Error(
-            "Another message in this setting-improvement conversation is still running",
-          );
-        return { session, run: running.promise };
-      }
-      if (session.googleOutcomeUnknown)
-        throw new Error(
-          "The Google request outcome is unknown; start a fresh model context.",
-        );
+      const existing = this.#authoring.existingEdit(session, edit);
+      if (existing !== null) return existing;
+      assertKnownAuthoringOutcome(session);
       const host = await this.#bindModelHost();
       const { itemIndex, tail, next } = planAuthoringEdit(session, edit);
       assertCompatibleAuthoring(session.modelBinding, next.modelItems, host);
@@ -538,30 +495,17 @@ export class SettingImprovementSession {
           );
         next.schemaVersion = 6;
         delete next.pendingEdit;
-        next.requests.push({
-          requestId,
-          modelBinding: structuredClone(host.binding()),
-          modelItemStart: itemIndex,
-          bootstrap,
-          playPreset: structuredClone(playPreset),
-          ...(modelPrompt === undefined ? {} : { modelPrompt }),
-          preload: structuredClone(preload.record),
-        });
         next.authorization = authoringPreloadAuthorization(
           null,
           preload.record,
         );
-        appendAuthoringUserMessage(next, message, requestId);
-        checkpointNextAuthoringDispatch(next, "dispatching");
-        if (next.modelBinding.provider === "google_interactions")
-          next.googleOutcomeUnknown = false;
-        if (
-          next.modelBinding.provider === "google_interactions" &&
-          host.previewAuthoringRequest !== undefined
-        )
-          next.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-            authoringExchange(next, requestId, undefined, host.binding()),
-          );
+        beginAuthoringRequest(next, host, requestId, message, {
+          bootstrap,
+          playPreset,
+          modelPrompt,
+          preload: preload.record,
+        });
+        captureAuthoringRequestPreview(next, host, requestId);
         session.schemaVersion = 6;
         session.requests ??= [];
         session.pendingEdit = {
@@ -592,8 +536,8 @@ export class SettingImprovementSession {
     requestId: string;
     recovery?: "continue_partial";
   }): Promise<SettingImprovementView> {
-    const requestId = requiredRequestId(input.requestId);
-    const prepared = await this.#mutate(async () => {
+    const requestId = this.#authoring.requestId(input.requestId);
+    const prepared = await this.#authoring.mutate(async () => {
       const session = await this.#store.read(input.sessionId);
       assertPackage(session, input.packageId);
       return this.#startRequest(session, requestId, (next, lease, host) => {
@@ -606,18 +550,7 @@ export class SettingImprovementSession {
           throw new Error(
             `The saved authoring request cannot be recovered (${recovery.freshContextReason}); use a new context.`,
           );
-        if (input.recovery === "continue_partial")
-          prepareAuthoringPartial(next, host);
-        else delete next.partialResponse;
-        if (
-          input.recovery === "continue_partial" ||
-          canRetryAuthoringDispatch(next)
-        ) {
-          next.runStatus = "running";
-          next.activeRequestId = next.requests?.at(-1)?.requestId ?? null;
-          next.lastFailure = null;
-          next.updatedAt = Date.now();
-        } else resumePausedAuthoringConversation(next);
+        resumeAuthoringRequest(next, host, input.recovery);
       });
     });
     return prepared.run ?? this.#readView(prepared.session);
@@ -637,25 +570,9 @@ export class SettingImprovementSession {
     run: Promise<SettingImprovementView> | null;
   }> {
     const session = await this.#recoverIfNeeded(stored);
-    if (session.completedRequestIds.includes(requestId))
-      return { session, run: null };
-    const running = this.#conversation.running(session.sessionId);
-    if (running !== null) {
-      if (running.requestId !== requestId) {
-        if (session.googleOutcomeUnknown)
-          throw new Error(
-            "The Google request outcome is unknown; start a fresh model context.",
-          );
-        throw new Error(
-          "Another message in this setting-improvement conversation is still running",
-        );
-      }
-      return { session, run: running.promise };
-    }
-    if (session.googleOutcomeUnknown)
-      throw new Error(
-        "The Google request outcome is unknown; start a fresh model context.",
-      );
+    const existing = this.#authoring.existingRequest(session, requestId, true);
+    if (existing !== null) return existing;
+    assertKnownAuthoringOutcome(session);
     const host = selectedHost ?? (await this.#bindModelHost());
     assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
     const lease = await this.#content.beginCurrentTreeContentPackageOperation(
@@ -672,14 +589,7 @@ export class SettingImprovementSession {
       await prepare(session, lease, host);
       if (session.activeRequestId !== requestId)
         recordAuthoringRetryPreview(session, host, requestId);
-      if (
-        session.modelBinding.provider === "google_interactions" &&
-        host.previewAuthoringRequest !== undefined &&
-        session.requests?.at(-1)?.requestId === requestId
-      )
-        session.requests.at(-1)!.wireRequest = host.previewAuthoringRequest(
-          authoringExchange(session, requestId, undefined, host.binding()),
-        );
+      captureAuthoringRequestPreview(session, host, requestId);
       await this.#store.save(session);
       return { session, run: this.#startRun(session, host, requestId) };
     } finally {
@@ -688,28 +598,15 @@ export class SettingImprovementSession {
   }
 
   async readCallContext(packageId: string, sessionId: string, callId: string) {
-    const session = await this.#store.read(sessionId);
-    assertPackage(session, packageId);
-    return readAuthoringCallContext(session, callId);
+    return this.#authoring.readCallContext(packageId, sessionId, callId);
   }
 
   async readRequestPreviews(packageId: string, sessionId: string) {
-    const session = await this.#store.read(sessionId);
-    assertPackage(session, packageId);
-    return authoringRequestPreviews(session);
+    return this.#authoring.readRequestPreviews(packageId, sessionId);
   }
 
   async preview(packageId: string, sessionId?: string) {
-    const session =
-      sessionId === undefined ? null : await this.#store.read(sessionId);
-    if (session !== null) assertPackage(session, packageId);
-    const host = await this.#bindModelHost();
-    if (session !== null)
-      assertCompatibleAuthoring(session.modelBinding, session.modelItems, host);
-    const package_ =
-      await this.#content.readCurrentTreeContentPackage(packageId);
-    const { bootstrap } = await this.#compilePackage(package_, host);
-    return bootstrap;
+    return this.#authoring.preview(packageId, sessionId);
   }
 
   async #compilePackage(
@@ -789,9 +686,7 @@ export class SettingImprovementSession {
   }
 
   async cancel(sessionId: string): Promise<SettingImprovementView> {
-    const running = this.#conversation.cancel(sessionId);
-    if (running !== null) return running;
-    return this.#mutate(async () =>
+    return this.#authoring.cancel(sessionId, async () =>
       this.#readView(
         await this.#recoverIfNeeded(await this.#store.read(sessionId)),
       ),
@@ -858,7 +753,7 @@ export class SettingImprovementSession {
     requestId: string,
   ): Promise<SettingImprovementView> {
     let activeTransaction: ActiveTransaction | null = null;
-    return this.#conversation.run({
+    return this.#authoring.conversation.run({
       ...(this.#generationActivity === undefined
         ? {}
         : { generationActivity: this.#generationActivity }),
@@ -1009,7 +904,8 @@ export class SettingImprovementSession {
   async #recoverIfNeeded(
     original: StoredSettingImprovementSession,
   ): Promise<StoredSettingImprovementSession> {
-    if (this.#conversation.isRunning(original.sessionId)) return original;
+    if (this.#authoring.conversation.isRunning(original.sessionId))
+      return original;
     if (original.pendingEdit !== undefined) {
       const lease = await this.#content.beginCurrentTreeContentPackageOperation(
         original.packageId,
@@ -1043,7 +939,8 @@ export class SettingImprovementSession {
       let latest: StoredSettingImprovementSession;
       try {
         latest = await this.#store.read(session.sessionId);
-        if (this.#conversation.isRunning(session.sessionId)) return latest;
+        if (this.#authoring.conversation.isRunning(session.sessionId))
+          return latest;
         if (isDeepStrictEqual(latest, original)) {
           if (
             session.modelBinding.provider === "google_interactions" &&
@@ -1063,7 +960,6 @@ export class SettingImprovementSession {
           }
           recoverAuthoringDispatch(session);
           markInterruptedAfterRestart(session);
-          session.updatedAt = Date.now();
           if (await this.#store.saveIfUnchanged(original, session))
             return session;
           latest = await this.#store.read(session.sessionId);
@@ -1080,7 +976,6 @@ export class SettingImprovementSession {
         "Runtime found a complete tool response without the persisted current-tree revision that authorized it. The calls were not replayed against a newer tree; read the current tree again before editing.",
       );
       markInterruptedAfterRestart(session);
-      session.updatedAt = Date.now();
       if (await this.#store.saveIfUnchanged(expected, session)) return session;
       return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
     }
@@ -1151,7 +1046,6 @@ export class SettingImprovementSession {
             checkpointNextAuthoringDispatch(session, "retryable");
             session.runStatus = "interrupted";
           }
-          session.updatedAt = Date.now();
           if (!(await this.#store.saveIfUnchanged(expected, session)))
             throw new RecoveryWriteConflictError();
         } catch (error: unknown) {
@@ -1166,26 +1060,12 @@ export class SettingImprovementSession {
       return session;
     }
 
-    const lastItem = session.modelItems.at(-1);
-    const legacyUnknown =
-      session.modelBinding.provider === "google_interactions" &&
-      session.runStatus === "interrupted" &&
-      session.googleOutcomeUnknown !== false &&
-      session.retryDispatch === undefined &&
-      (lastItem?.kind === "user" || lastItem?.kind === "tool");
-    if (!legacyUnknown) return session;
-    if (session.requests?.at(-1) !== undefined) {
-      session.schemaVersion = 6;
-      checkpointNextAuthoringDispatch(session, "retryable");
-      session.googleOutcomeUnknown = false;
-      session.lastFailure =
-        "The previous model response was incomplete; retry from the last settled step.";
-    } else {
-      session.googleOutcomeUnknown = true;
-      session.lastFailure =
-        "The saved request is unavailable; start a fresh model context.";
-    }
-    session.updatedAt = Date.now();
+    if (
+      !recoverLegacyGoogleDispatch(session, () => {
+        session.schemaVersion = 6;
+      })
+    )
+      return session;
     if (await this.#store.saveIfUnchanged(expected, session)) return session;
     return this.#recoverIfNeeded(await this.#store.read(session.sessionId));
   }
@@ -1215,17 +1095,7 @@ export class SettingImprovementSession {
   #statusView(
     summary: StoredSettingImprovementSummary,
   ): NonNullable<V1SettingImprovementStatus["selected"]> {
-    const streaming = this.#conversation.streaming(summary.sessionId);
-    return {
-      sessionId: summary.sessionId,
-      runStatus: streaming === null ? summary.runStatus : "running",
-      progress: {
-        exchange: summary.exchange,
-        toolCalls: summary.toolCalls,
-        streaming,
-        updatedAt: summary.updatedAt,
-      },
-    };
+    return this.#authoring.progress(summary, true);
   }
 
   async #readView(
@@ -1242,46 +1112,17 @@ export class SettingImprovementSession {
     session: StoredSettingImprovementSession,
     currentRevision?: string,
   ): SettingImprovementView {
-    const streaming =
-      session.runStatus === "running"
-        ? this.#conversation.streaming(session.sessionId)
-        : null;
+    const view = this.#authoring.view(session);
     return {
-      requestPreviews: authoringRequestIdentities(session),
-      confirmedRequestIds: confirmedAuthoringRequestIds(session),
-      sessionId: session.sessionId,
+      ...view,
       packageId: session.packageId,
-      runStatus: streaming === null ? session.runStatus : "running",
-      messages: structuredClone(session.messages),
-      turns: settingConversationTurns(session, streaming),
+      turns: settingConversationTurns(session, view.progress.streaming),
       legacyDraft:
         session.legacyDraft === null
           ? null
           : structuredClone(session.legacyDraft),
-      usage: structuredClone(session.usage),
-      progress: {
-        exchange: session.exchange,
-        toolCalls: session.toolCalls,
-        streaming,
-        updatedAt: session.updatedAt,
-      },
-      lastFailure: session.lastFailure,
       ...authoringRecovery(session, false, currentRevision),
     };
-  }
-
-  async #mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = this.#mutationTail;
-    let release: () => void = () => undefined;
-    this.#mutationTail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
   }
 }
 
@@ -1322,37 +1163,16 @@ function markInterruptedAfterRestart(
   session: StoredSettingImprovementSession,
 ): void {
   delete session.partialResponse;
-  const requestId = session.activeRequestId;
-  session.runStatus =
+  const paused =
     !session.settlementConflict &&
     session.modelBinding.provider === "google_interactions" &&
     session.googleOutcomeUnknown === false &&
-    session.retryDispatch === undefined
-      ? "paused"
-      : "interrupted";
-  session.activeRequestId = null;
-  if (requestId !== null)
-    session.completedRequestIds = rememberAuthoringRequest(
-      session.completedRequestIds,
-      requestId,
-    );
-  session.lastFailure = session.googleOutcomeUnknown
-    ? "The Google request outcome is unknown; start a fresh model context."
-    : "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.";
-}
-
-function requiredMessage(message: string): string {
-  if (message.trim().length === 0)
-    throw new Error("A setting-improvement message cannot be empty");
-  if (message.length > 64 * 1024)
-    throw new Error("The setting-improvement message is too large");
-  return message;
-}
-
-function requiredRequestId(requestId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(requestId))
-    throw new Error("Invalid setting-improvement request ID");
-  return requestId;
+    session.retryDispatch === undefined;
+  finishInterruptedAuthoringRun(
+    session,
+    paused ? "paused" : "interrupted",
+    "The previous model request stopped before its next complete response. Every settled current-tree change and complete tool result was retained; continue this conversation when ready.",
+  );
 }
 
 function settingConversationTurns(
@@ -1410,21 +1230,6 @@ function rollbackChangeFor(
   return structuredClone(change);
 }
 
-function treeMatchesChangeBefore(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): boolean {
-  const byPath = new Map(files.map((file) => [file.path, file] as const));
-  const expected = change.before;
-  const current = byPath.get(change.path);
-  if (expected === null) return current === undefined;
-  return (
-    current !== undefined &&
-    current.encoding === undefined &&
-    current.contents === expected
-  );
-}
-
 function afterLegacyBoundary(
   session: StoredSettingImprovementSession,
   itemIndex: number,
@@ -1438,36 +1243,6 @@ function afterLegacyBoundary(
         (receipt) => receipt.requestId === first.requestId,
       ) === true)
   );
-}
-
-function restoreChangeBefore(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): ContentTreeFile[] {
-  const restored = new Map(
-    files.map((file) => [file.path, structuredClone(file)] as const),
-  );
-  if (change.before === null) restored.delete(change.path);
-  else
-    restored.set(change.path, { path: change.path, contents: change.before });
-  return [...restored.values()].sort((left, right) =>
-    left.path.localeCompare(right.path),
-  );
-}
-
-function diffForRollback(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
-): V1SettingAuthoringDiff {
-  const current = files.find(({ path }) => path === change.path);
-  const before = current?.contents ?? null;
-  const after = change.before;
-  return {
-    path: change.path,
-    kind: before === null ? "create" : after === null ? "delete" : "modify",
-    before,
-    after,
-  };
 }
 
 function settingImprovementHistoryItem(
