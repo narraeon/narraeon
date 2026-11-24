@@ -784,15 +784,15 @@ const englishMessages: Record<string, string> = {
   "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
     "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
   "输入 UTF-8 文本内容……": "Enter UTF-8 text…",
-  应用前预览: "Preview before applying",
   确认修正内容: "Review correction",
   份文档会变化: "document(s) will change",
   修正前: "Before correction",
   修正后: "After correction",
-  "查看内容 hash": "View content hash",
-  "查看端点、附加材料和下一次提示词":
-    "View the endpoint, additional material, and next prompt",
+  查看技术校验值: "View technical checksum",
+  "查看修改前版本、附加材料和下一次提示词":
+    "View the previous version, additional material, and next prompt",
   父端点: "Parent endpoint",
+  修改前版本: "Previous version",
   候选版本: "Candidate version",
   完整附加材料清单差异: "Complete additional-material diff",
   下一次真实提示词: "Next real Prompt Preview",
@@ -1658,8 +1658,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
   可视化已同步: "Visual editor synchronized",
   "仅可编辑 YAML": "YAML editing only",
   "当前 YAML 暂时无法可视化": "Current YAML cannot be visualized yet",
-  "下面的高级编辑器会原样保留草稿；修复后可视化页面会自动恢复。":
-    "The advanced editor below preserves the draft exactly. The visual editor returns automatically after repair.",
+  "下面的源码视图会原样保留草稿。修复后可视化页面会自动恢复。":
+    "The source view below preserves the draft exactly. The visual editor returns automatically after repair.",
   "format 不是当前世界框架版本":
     "format is not the current world-frame version",
   "Runtime 只接受": "Runtime accepts only",
@@ -1670,12 +1670,13 @@ const worldFrameEnglishMessages: Record<string, string> = {
   "进入逻辑 role": "Enter logical role",
   精确文档与目录: "Exact documents and directories",
   个材料插槽: "material slot(s)",
-  "01 · 权威绑定": "01 · authority binding",
+  当前场景与常驻视图: "Current scene and pinned views",
   当前情境绑定: "Current-situation binding",
   未解析: "Unresolved",
   已解析: "Resolved",
-  "`current_situation` 插槽会从这里读取唯一当前情境文档，不按文件名或标题猜测。":
-    "The `current_situation` slot reads the one current-situation document bound here; it never guesses from a file name or title.",
+  当前场景文档将从这里读取: "Reads the active scene document from here",
+  "常驻视图在 control/player-views.yaml 中配置。":
+    "Pinned views are configured in control/player-views.yaml.",
   当前情境文档: "Current-situation document",
   选择一份世界文档: "Choose a world document",
   "（当前未解析）": "(currently unresolved)",
@@ -1707,7 +1708,7 @@ const worldFrameEnglishMessages: Record<string, string> = {
   补上附加材料: "Add additional material",
   新增材料类型: "Add material type",
   新增材料插槽: "Add material slot",
-  "高级：直接编辑 frame.yaml": "Advanced: edit frame.yaml directly",
+  "源码视图（frame.yaml）": "Source view (frame.yaml)",
   "可视化修改会把 YAML 重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。":
     "Visual changes rewrite YAML into a stable format. Edit here to repair unknown fields or preserve the current source exactly.",
   "直接编辑 control/frame.yaml": "Edit control/frame.yaml directly",
@@ -2116,7 +2117,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "Complete diff · real Prompt Preview · one Authority revision",
   展开完整读取记录: "Open the complete read record",
   "已修改 · 未预览": "Modified · not previewed",
-  应用前先审阅: "Review before applying",
+  应用前确认修改: "Review before applying",
   建立后追加不重新注入世界材料:
     "Appending after creation does not reinject world materials",
   当前世界: "Current world",
