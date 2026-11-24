@@ -80,6 +80,7 @@ export async function submitPlay<T extends WorldProjection>(
   command: PlayCommand,
   readWorld: (recover: boolean) => Promise<T | null>,
   acceptReceipt: (receipt: V1PlayCallChainView) => void,
+  readObservedChain: () => V1PlayCallChainView | null,
 ) {
   let receipt: V1PlayCallChainView | null = null;
   let chain: V1PlayCallChainView | null;
@@ -90,9 +91,17 @@ export async function submitPlay<T extends WorldProjection>(
     acceptReceipt(receipt);
   } catch (error) {
     sendError = error;
-    chain = (await client
-      .request({ type: "play.chain.inspect", worldId: command.worldId })
-      .catch(() => null)) as V1PlayCallChainView | null;
+    const observed = readObservedChain();
+    const observedInvocation =
+      observed?.chainId === command.chainId &&
+      observed.status === "running" &&
+      observed.activeInvocation?.exchangeId === command.exchangeId;
+    chain =
+      observedInvocation || recordedPlaySubmission(command, observed, undefined)
+        ? observed
+        : ((await client
+            .request({ type: "play.chain.inspect", worldId: command.worldId })
+            .catch(() => null)) as V1PlayCallChainView | null);
   }
 
   // The page target owns retries and synchronization state. Never replay the command.

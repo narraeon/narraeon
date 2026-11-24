@@ -219,63 +219,83 @@ test("a play observation gap recovers live text without losing the draft or writ
   }
 });
 
-test("a committed action survives a lost response without a second write", async ({
-  page,
-}) => {
-  const worldId = await prepareWorld(page, "Lost play receipt");
-  let writes = 0;
-  let committedExchange = "";
-  await page.route("**/api/runtime/v1", async (route) => {
-    const input = runtimeInput(route);
-    if (input?.type !== "play.chain.start") return route.continue();
-    writes++;
-    const response = await route.fetch();
-    const body = (await response.json()) as { result: V1PlayCallChainView };
-    expect(body.result.status).toBe("ready");
-    const player = body.result.events.find((event) => event.kind === "player");
-    expect(player?.committedHead).toBeTruthy();
-    committedExchange = input.exchangeId;
-    expect(player?.kind === "player" && player.exchangeId).toBe(
-      committedExchange,
+for (const observe of [true, false]) {
+  test(`a lost play receipt recovers without a second write (${observe ? "with SSE evidence" : "without SSE"})`, async ({
+    page,
+  }) => {
+    const worldId = await prepareWorld(
+      page,
+      observe ? "Lost play receipt with SSE" : "Lost play receipt without SSE",
     );
-    await route.abort("failed");
-  });
-  const input = page.getByLabel("Your action", { exact: true });
-  await input.fill("I open the door.");
-  await page
-    .getByRole("button", {
-      name: "Send action from a fresh context",
+    if (!observe) await interruptObservation(page, true);
+    const reply = page.getByText("The committed reply is visible.", {
       exact: true,
-    })
-    .click();
-  await expect(
-    page.getByText("The committed reply is visible.", { exact: true }),
-  ).toBeVisible();
-  await expect(input).toHaveValue("");
-  await expect(
-    page.locator(".call-chain-failure, .play-call-failure"),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("Temporarily unable to sync", { exact: true }),
-  ).toHaveCount(0);
-  expect(writes).toBe(1);
-  expect(providerCalls).toBe(1);
-  const chain = await runtime<V1PlayCallChainView>(page, {
-    type: "play.chain.inspect",
-    worldId,
+    });
+    let writes = 0;
+    let inspections = 0;
+    let receiptDropped = false;
+    let recoveryReads = 0;
+    let committedExchange = "";
+    await page.route("**/api/runtime/v1", async (route) => {
+      const input = runtimeInput(route);
+      if (input?.type === "play.chain.inspect") inspections++;
+      if (input?.type === "world.read" && receiptDropped) recoveryReads++;
+      if (input?.type !== "play.chain.start") return route.continue();
+      writes++;
+      const response = await route.fetch();
+      const body = (await response.json()) as { result: V1PlayCallChainView };
+      expect(body.result.status).toBe("ready");
+      const player = body.result.events.find(
+        (event) => event.kind === "player",
+      );
+      expect(player?.committedHead).toBeTruthy();
+      committedExchange = input.exchangeId;
+      expect(player?.kind === "player" && player.exchangeId).toBe(
+        committedExchange,
+      );
+      if (observe) await expect(reply).toBeVisible();
+      receiptDropped = true;
+      await route.abort("failed");
+    });
+    const input = page.getByLabel("Your action", { exact: true });
+    await input.fill("I open the door.");
+    await page
+      .getByRole("button", {
+        name: "Send action from a fresh context",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByText("The committed reply is visible.", { exact: true }),
+    ).toBeVisible();
+    await expect(input).toHaveValue("");
+    await expect(
+      page.locator(".call-chain-failure, .play-call-failure"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Temporarily unable to sync", { exact: true }),
+    ).toHaveCount(0);
+    await expect.poll(() => recoveryReads).toBeGreaterThan(0);
+    expect(inspections).toBe(observe ? 0 : 1);
+    expect(writes).toBe(1);
+    expect(providerCalls).toBe(1);
+    const chain = await runtime<V1PlayCallChainView>(page, {
+      type: "play.chain.inspect",
+      worldId,
+    });
+    expect(
+      chain.events.filter(
+        (event) =>
+          event.kind === "player" && event.exchangeId === committedExchange,
+      ),
+    ).toHaveLength(1);
+    await page.reload();
+    await expect(
+      page.getByText("The committed reply is visible.", { exact: true }),
+    ).toBeVisible();
+    expect(writes).toBe(1);
   });
-  expect(
-    chain.events.filter(
-      (event) =>
-        event.kind === "player" && event.exchangeId === committedExchange,
-    ),
-  ).toHaveLength(1);
-  await page.reload();
-  await expect(
-    page.getByText("The committed reply is visible.", { exact: true }),
-  ).toBeVisible();
-  expect(writes).toBe(1);
-});
+}
 
 test("a terminal observation failure offers a read and reconnect while generation is still running", async ({
   page,

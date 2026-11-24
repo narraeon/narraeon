@@ -60,6 +60,19 @@
   - 连续 **90 秒**无新数据时提示「可能卡住」，不得断言模型内部状态。
 - **待定流式与返回推理**：响应完成前的流式正文明确标作待定输出、不晋升故事、不主动改变玩家当前滚动位置；完整响应无工具调用时晋升为正式叙事，含工具调用时收进默认折叠的技术轨迹。生成中的返回推理可在当前响应下就地展开，随 SSE 增量实时更新并由重连快照恢复，不等待响应完成。
 
+### 3.1 第一方调用与 v1 HTTP 兼容
+
+| 入口 | 用途 |
+| --- | --- |
+| `GET /api/runtime/v1/events` | 网页与 Android WebView 用它观察游玩、设定完善与世界修订的进度。游玩命令回包丢失时，当前观察已确认同一调用链与 exchange 就复用该快照，省去一次 `play.chain.inspect`。 |
+| `play.chain.inspect` | SSE 不可用或尚未确认本次 exchange 时，网页可单次查询。CLI 退出探针也用它在重启后核对持久记录，SSE 性能探针用它预热有订阅及无订阅样本。 |
+| `world.read`、`play.timeline.page`、`setting-improvement.overview`、`world.revision.overview` | 页面首屏、手动读取、分页及故障恢复仍按需读取持久投影。作者工作区的 overview 也提供工作树、会话列表或修订状态等同步所需内容。 |
+| `setting-improvement.read`、`setting-improvement.status`、`world.revision.status` | 已随 v1 HTTP 发布的只读入口。当前第一方页面没有用这些入口轮询生成。 |
+| `play.chain.start`、`play.chain.append` 及作者生成命令 | 主动派发并交付命令回执。浏览器提交使用普通 JSON，未订阅 SSE 的客户端也能生成并取得最终回执。取消由对应的显式命令按调用身份执行。 |
+| `Accept: application/x-ndjson` 下的 `play.chain.start`／`play.chain.append` | 已随 v1 HTTP 发布的可选命令回包。旧调用方在同一请求收到增量与终态帧，CLI 退出探针对完整 EOF 和重启后的结果继续验收。 |
+
+**HTTP 兼容退役发布计划**。在待定发布版本中为旧只读入口与 NDJSON 公布迁移方式，覆盖 SSE 观察、JSON 派发与取消、无订阅回执和错误处理。现有 v1 路径在弃用窗口内与替代路径并行。窗口结束后，通过有版本标记的协议变更退役旧入口；若仍需提供单请求流式终态，版本化方案须保留最终回执与完整 EOF。继续满足 [#279](https://github.com/narraeon/narraeon/issues/279) 验证的在途响应行为。
+
 ## 4. 「本段调用详情」、失败警报与上下文占用提示
 
 ### 4.1 「本段调用详情」统一投影

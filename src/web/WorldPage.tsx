@@ -262,6 +262,11 @@ export function WorldPage({
   const reconcileObservedPlay = useRef<((world: WorldReadView) => void) | null>(
     null,
   );
+  const observedPlayForRecovery = useRef<{
+    worldId: string;
+    chain: V1PlayCallChainView;
+    isCurrent: (() => boolean) | undefined;
+  } | null>(null);
   const [observationStopped, setObservationStopped] = useState(false);
   const [observationRevision, setObservationRevision] = useState(0);
   const [supersededFailure, setSupersededFailure] = useState<{
@@ -556,6 +561,11 @@ export function WorldPage({
       const { chain } = observation;
       if (chain === null) return;
       visibleObservation = observation;
+      observedPlayForRecovery.current = {
+        worldId,
+        chain,
+        isCurrent: observation.isCurrent,
+      };
       applyPlayCallChain(chain);
       if (chain.status === "running") {
         setPlayProgress((current) =>
@@ -617,6 +627,8 @@ export function WorldPage({
         }
         const next = observation.value;
         const verifyFirst = observationNeedsVerification(next);
+        if (next === null || verifyFirst)
+          observedPlayForRecovery.current = null;
         const key =
           next === null
             ? null
@@ -684,6 +696,8 @@ export function WorldPage({
       },
       (connection) => {
         if (!active) return;
+        if (connection !== "synchronized")
+          observedPlayForRecovery.current = null;
         if (connection === "connected" || connection === "synchronized") {
           outage = false;
           hydrated = undefined;
@@ -705,6 +719,7 @@ export function WorldPage({
     );
     return () => {
       active = false;
+      observedPlayForRecovery.current = null;
       reconcileObservedPlay.current = null;
       unsubscribe();
     };
@@ -1179,6 +1194,13 @@ export function WorldPage({
             },
             setPlayTimeline,
           );
+        },
+        () => {
+          const observation = observedPlayForRecovery.current;
+          return observation?.worldId === worldId &&
+            observation.isCurrent?.() !== false
+            ? observation.chain
+            : null;
         },
       );
       // The read target already applied valid projections. Fallback evidence must
