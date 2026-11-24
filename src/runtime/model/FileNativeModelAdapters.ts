@@ -67,7 +67,9 @@ import {
   ModelHostOutcomeUnknownError,
 } from "./ModelHost.ts";
 import {
+  bootstrapPrefixEnd,
   renderPromptDeltaMessage,
+  responsesCacheBreakpointIndex,
   type FileNativePromptInput,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
@@ -1433,7 +1435,7 @@ function googleRequestBody(
       );
   };
   for (const [index, message] of messages.entries()) {
-    if (index === bootstrapPrefixEnd(request)) appendPreload();
+    if (index === bootstrapPrefixEnd(request.bootstrap)) appendPreload();
     if (message.role === "system") {
       if (conversationStarted)
         throw new Error(
@@ -1448,7 +1450,8 @@ function googleRequestBody(
       });
     }
   }
-  if (bootstrapPrefixEnd(request) === messages.length) appendPreload();
+  if (bootstrapPrefixEnd(request.bootstrap) === messages.length)
+    appendPreload();
   const calls = new Map<string, string>();
   const boundaries = request.worldRevisionBoundaries;
   const currentBoundary = boundaries?.entries.findLast(
@@ -1814,7 +1817,7 @@ function chatBootstrapMessages(
   const messages: unknown[] = request.bootstrap.provider.messages.map(
     (message) => cloneProviderValue(message),
   );
-  const prefixEnd = bootstrapPrefixEnd(request);
+  const prefixEnd = bootstrapPrefixEnd(request.bootstrap);
   messages.splice(
     prefixEnd,
     0,
@@ -1842,12 +1845,8 @@ function responsesBootstrapMessages(
         connection.responsesTurnInstructions !== undefined,
       ),
   );
-  const prefixEnd = bootstrapPrefixEnd(request);
-  // Legacy material arrays already mark their stable blocks, and may also contain
-  // player input. Only mark whole messages for the plain-text instruction prefix.
-  const cacheMessageIndex = request.bootstrap.provider.messages
-    .slice(0, prefixEnd)
-    .findLastIndex((message) => typeof message.content === "string");
+  const prefixEnd = bootstrapPrefixEnd(request.bootstrap);
+  const cacheMessageIndex = responsesCacheBreakpointIndex(request.bootstrap);
   const prefix = messages.map((message, index) =>
     explicitCache && index === cacheMessageIndex && isRecord(message)
       ? { ...message, cache_control: { type: "ephemeral" } }
@@ -1861,22 +1860,12 @@ function responsesBootstrapMessages(
   return prefix;
 }
 
-/** Configured User prompts are part of the prefix, not the player's first input. */
-function bootstrapPrefixEnd(request: ModelHostExchange): number {
-  return (
-    request.bootstrap.provider.messages.length -
-    request.bootstrap.logicalMessages.filter(
-      ({ role }) => role === "player_input",
-    ).length
-  );
-}
-
 function anthropicBootstrapMessages(request: ModelHostExchange): unknown[] {
   const messages: unknown[] = request.bootstrap.provider.messages.map(
     (message) => cloneProviderValue(message),
   );
   messages.splice(
-    bootstrapPrefixEnd(request),
+    bootstrapPrefixEnd(request.bootstrap),
     0,
     ...initialWorldContext(request, "anthropic_messages"),
   );

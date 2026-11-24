@@ -3604,40 +3604,7 @@ export function retargetFrozenCompilation(
     result.budget.outputReserveTokens = binding.maxOutputTokens;
   result.budget.contextWindowTokens = binding.contextWindowTokens;
   if (result.cache.strategy === strategy) return result;
-  if (binding.provider === "anthropic_messages") {
-    const blocks: {
-      type: "text";
-      text: string;
-      cache_control?: { type: "ephemeral" };
-    }[] = [];
-    for (const block of result.provider.system ?? []) {
-      delete block.cache_control;
-      blocks.push(block);
-    }
-    for (const message of result.provider.messages) {
-      if (!Array.isArray(message.content)) continue;
-      for (const value of message.content as unknown[]) {
-        if (
-          typeof value !== "object" ||
-          value === null ||
-          !("type" in value) ||
-          value.type !== "text" ||
-          !("text" in value) ||
-          typeof value.text !== "string"
-        )
-          continue;
-        const block = value as {
-          type: "text";
-          text: string;
-          cache_control?: { type: "ephemeral" };
-        };
-        delete block.cache_control;
-        blocks.push(block);
-      }
-    }
-    if (strategy === "explicit_anthropic_blocks" && blocks.length > 0)
-      blocks.at(-1)!.cache_control = { type: "ephemeral" };
-  }
+  const breakpoints = retargetStableCacheBreakpoints(result, strategy);
   result.cache = {
     ...stableCacheBoundary(
       cacheStableText(result.logicalMessages, result.provider),
@@ -3645,14 +3612,104 @@ export function retargetFrozenCompilation(
       result.toolStrategy,
     ),
     strategy,
-    breakpoints:
-      strategy === "explicit_anthropic_blocks"
-        ? ["runtime_system", "author_instruction", "world_context"]
-        : strategy === "explicit_cliproxyapi_message"
-          ? ["author_instruction", "world_context"]
-          : [],
+    breakpoints,
   };
   return result;
+}
+
+/** Configured User prompts belong to the prefix; player input does not. */
+export function bootstrapPrefixEnd(bootstrap: PromptCompilation): number {
+  return (
+    bootstrap.provider.messages.length -
+    bootstrap.logicalMessages.filter(({ role }) => role === "player_input")
+      .length
+  );
+}
+
+export function responsesCacheBreakpointIndex(
+  bootstrap: PromptCompilation,
+): number {
+  // Legacy material arrays can contain both stable material and player input.
+  return bootstrap.provider.messages
+    .slice(0, bootstrapPrefixEnd(bootstrap))
+    .findLastIndex(({ content }) => typeof content === "string");
+}
+
+function retargetStableCacheBreakpoints(
+  bootstrap: PromptCompilation,
+  strategy: ModelPromptCacheStrategy,
+): LogicalRole[] {
+  const { provider, logicalMessages } = bootstrap;
+  const contentBlocks = provider.messages.flatMap(({ content }) =>
+    Array.isArray(content) ? (content as unknown[]).filter(isRecord) : [],
+  );
+  const blocks = [...(provider.system ?? []), ...contentBlocks];
+  if (strategy !== "explicit_cliproxyapi_message")
+    for (const block of blocks) delete block.cache_control;
+  if (strategy === "provider_managed") return [];
+
+  const prefix = logicalMessages.filter(
+    ({ role }) =>
+      role !== "player_input" &&
+      (provider.preload === undefined || role !== "world_context"),
+  );
+  // A migrated authoring bootstrap can encode a separate Runtime block from
+  // a logical message whose other text remains at its original position.
+  const exactOwner = (text: unknown) =>
+    prefix.findLast(
+      ({ markdown, blocks }) =>
+        markdown === text || blocks.some((block) => block.markdown === text),
+    )?.role;
+  const breakpoints = new Set<LogicalRole>();
+  if (strategy === "explicit_anthropic_blocks") {
+    const textBlocks = blocks.filter(
+      ({ type, text }) => type === "text" && typeof text === "string",
+    );
+    // Legacy bootstrap can pack the player and world text in one User message.
+    const embeddedPlayer = Array.isArray(provider.messages.at(-1)?.content)
+      ? logicalMessages.findLast(({ role }) => role === "player_input")
+      : undefined;
+    const lastBlock = textBlocks.at(
+      embeddedPlayer !== undefined &&
+        textBlocks.at(-1)?.text === embeddedPlayer.markdown
+        ? -2
+        : -1,
+    );
+    const owner = exactOwner(lastBlock?.text) ?? prefix.at(-1)?.role;
+    if (lastBlock !== undefined && owner !== undefined) {
+      lastBlock.cache_control = { type: "ephemeral" };
+      breakpoints.add(owner);
+    }
+    // The adapter encodes the stable preload as a marked tool result.
+    if (provider.preload !== undefined) breakpoints.add("world_context");
+  } else {
+    const target =
+      provider.protocol === "chat_completions"
+        ? provider.messages.findLast(({ role }) => role === "system")
+        : provider.messages[responsesCacheBreakpointIndex(bootstrap)];
+    if (
+      provider.protocol === "chat_completions" &&
+      provider.preload !== undefined
+    ) {
+      breakpoints.add("world_context");
+    } else if (target !== undefined) {
+      const owner =
+        exactOwner(target.content) ??
+        prefix.findLast(
+          ({ messageRole, role }) =>
+            (messageRole ?? (role === "world_context" ? "user" : "system")) ===
+            target.role,
+        )?.role;
+      if (owner !== undefined) breakpoints.add(owner);
+    }
+    // Legacy proxy bootstraps can also carry an inline world-material marker.
+    for (const block of contentBlocks) {
+      if (!isRecord(block.cache_control)) continue;
+      const owner = exactOwner(block.text);
+      if (owner !== undefined) breakpoints.add(owner);
+    }
+  }
+  return [...breakpoints];
 }
 
 function cacheStableText(
