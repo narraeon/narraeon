@@ -88,7 +88,6 @@ import {
 import {
   FileNativeWorldOperationCoordinator,
   WorldOperationBusyError,
-  type ContinuityCorrectionWorldClaimHandle,
   type WorldRevisionLockHandle,
 } from "./WorldOperationCoordinator.ts";
 import {
@@ -554,8 +553,8 @@ export class FileNativeWorldStore {
 
   /**
    * Delete a world and everything the runtime keeps under it. The exclusive
-   * world-state mutation prevents deletion from racing an active play or
-   * correction operation. Expired claims do not block cleanup.
+   * world-state mutation serializes deletion with play and respects the
+   * persistent world-revision lock.
    */
   async deleteWorld(
     worldId: string,
@@ -1698,73 +1697,6 @@ export class FileNativeWorldStore {
     });
   }
 
-  async commitCorrection(input: {
-    worldClock?: string;
-    operationId: string;
-    worldId: string;
-    parentHead: string;
-    nextMaterials: MaterialSelection[];
-    stateChanges: FileNativeStateChange[];
-    stateOperationClaim?: ContinuityCorrectionWorldClaimHandle;
-    worldRevisionLock?: WorldRevisionLockHandle;
-  }): Promise<Extract<FileNativeOperationOutcome, { outcome: "committed" }>> {
-    await this.ensureCurrentStorage(input.worldId);
-    try {
-      const commit = async () => {
-        let operationReserved = input.stateOperationClaim !== undefined;
-        if (!operationReserved) {
-          const existing = await this.getOperationOutcome(input.operationId);
-          if (existing.outcome === "not_started")
-            operationReserved = await this.reserveOperation(input.operationId);
-        }
-        return this.#commitHistoryChange({
-          ...(input.worldClock === undefined
-            ? {}
-            : { worldClock: input.worldClock }),
-          operationId: input.operationId,
-          worldId: input.worldId,
-          parentHead: input.parentHead,
-          nextMaterials: worldNeutralMaterials(
-            input.worldId,
-            input.nextMaterials,
-          ),
-          stateChanges: input.stateChanges,
-          mode: "correction",
-          historyAppend: [],
-          operationReserved,
-        });
-      };
-      if (
-        input.stateOperationClaim !== undefined &&
-        input.worldRevisionLock !== undefined
-      )
-        throw new TypeError(
-          "A correction cannot use two world-operation claims",
-        );
-      if (input.worldRevisionLock !== undefined)
-        return await this.operations.withWorldRevisionLock(
-          input.worldRevisionLock,
-          commit,
-        );
-      if (input.stateOperationClaim !== undefined)
-        return await this.operations.withCorrectionWorldClaim(
-          input.stateOperationClaim,
-          commit,
-        );
-      return await this.operations.withExclusiveWorldStateMutation(
-        input.worldId,
-        commit,
-      );
-    } catch (error: unknown) {
-      if (error instanceof WorldOperationBusyError)
-        throw new FileNativeWorldCreationError(
-          "operation_conflict",
-          "This world already has a durable state operation in progress",
-        );
-      throw error;
-    }
-  }
-
   /**
    * 世界修订应用：state 与 control 的改动作为同一轮 `revision_apply` 提交。
    * 操作身份由 epoch 决定，同一身份已是当前端点时直接返回该提交（崩溃后重放不重复推进）。
@@ -2184,37 +2116,6 @@ export class FileNativeWorldStore {
         ...backgroundField(background),
       })),
       additionalMaterials: recovered.additionalMaterials,
-    };
-  }
-
-  async traceCorrections(
-    worldId: string,
-    endpoint: string,
-  ): Promise<{
-    endpoint: string;
-    corrects: string | null;
-    correctedBy: string[];
-  }> {
-    const { commits } = await this.readAuthorityHistory(worldId);
-    const commit = commits.find(({ head }) => head === endpoint);
-    if (endpoint !== "genesis" && commit === undefined)
-      throw new FileNativeWorldCreationError(
-        "world_corrupt",
-        `Historical endpoint does not exist: ${endpoint}`,
-      );
-    return {
-      endpoint,
-      corrects:
-        commit !== undefined && isCorrectionCommit(commit.mode)
-          ? (commit.corrects ?? null)
-          : null,
-      correctedBy: commits
-        .filter(
-          (candidate) =>
-            isCorrectionCommit(candidate.mode) &&
-            candidate.corrects === endpoint,
-        )
-        .map(({ head }) => head),
     };
   }
 

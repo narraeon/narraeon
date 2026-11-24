@@ -402,40 +402,7 @@ export type V1Request =
       key: string;
       value: WorldExtensionChoice;
     }
-  | { type: "world.play-decorations.read"; worldId: string }
-  | { type: "correction.begin"; worldId: string; operationId: string }
-  | { type: "correction.read"; candidateId: string; document: string }
-  | {
-      type: "correction.patch";
-      candidateId: string;
-      expectedVersion: number;
-      target: string;
-      expectedHash: string;
-      edits: unknown[];
-    }
-  | {
-      type: "correction.replace";
-      candidateId: string;
-      expectedVersion: number;
-      target: string;
-      expectedHash: string;
-      contents: string;
-    }
-  | {
-      type: "correction.preview";
-      candidateId: string;
-      expectedVersion: number;
-    }
-  | {
-      type: "correction.apply";
-      candidateId: string;
-      expectedVersion: number;
-    }
-  | {
-      type: "correction.cancel";
-      candidateId: string;
-      expectedVersion: number;
-    };
+  | { type: "world.play-decorations.read"; worldId: string };
 
 export interface V1Response {
   protocol: typeof v1Protocol;
@@ -1086,13 +1053,19 @@ export function parseV1Envelope(value: unknown): V1Envelope {
       "invalid_request",
       "V1 request is missing request.type",
     );
-  if (!requestTypes.has(value.request.type))
-    throw new V1ProtocolError(
-      "invalid_request",
-      `V1 does not support command: ${value.request.type}`,
-    );
+  assertV1RequestType(value.request.type);
   validateRequestFields(value.request);
   return value as unknown as V1Envelope;
+}
+
+export function assertV1RequestType(
+  type: string,
+): asserts type is V1Request["type"] {
+  if (!requestTypes.has(type))
+    throw new V1ProtocolError(
+      "invalid_request",
+      `V1 does not support command: ${type}`,
+    );
 }
 
 const requiredFields: Record<
@@ -1342,25 +1315,6 @@ const requiredFields: Record<
   "world.extensions.read": { worldId: "string" },
   "world.extensions.set": { worldId: "string", key: "string", value: "string" },
   "world.play-decorations.read": { worldId: "string" },
-  "correction.begin": { worldId: "string", operationId: "string" },
-  "correction.read": { candidateId: "string", document: "string" },
-  "correction.patch": {
-    candidateId: "string",
-    expectedVersion: "number",
-    target: "string",
-    expectedHash: "string",
-    edits: "array",
-  },
-  "correction.replace": {
-    candidateId: "string",
-    expectedVersion: "number",
-    target: "string",
-    expectedHash: "string",
-    contents: "string",
-  },
-  "correction.preview": { candidateId: "string", expectedVersion: "number" },
-  "correction.apply": { candidateId: "string", expectedVersion: "number" },
-  "correction.cancel": { candidateId: "string", expectedVersion: "number" },
 };
 
 function validateRequestFields(request: Record<string, unknown>): void {
@@ -2016,13 +1970,6 @@ const requestTypes = new Set([
   "world.extensions.read",
   "world.extensions.set",
   "world.play-decorations.read",
-  "correction.begin",
-  "correction.read",
-  "correction.patch",
-  "correction.replace",
-  "correction.preview",
-  "correction.apply",
-  "correction.cancel",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

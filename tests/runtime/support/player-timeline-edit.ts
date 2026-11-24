@@ -31,3 +31,31 @@ export async function revisePlayerTimeline(
     stateChanges: [],
   });
 }
+
+export async function advanceOutsidePlay(
+  worlds: FileNativeWorldStore,
+  worldId: string,
+  operationId: string,
+  parentHead: string,
+): Promise<void> {
+  const lock = await worlds.acquireWorldRevisionLock(worldId, operationId);
+  if (lock.kind !== "acquired") throw new Error("Missing world revision lock");
+  try {
+    const { additionalMaterials } = await worlds.recoverEndpoint(
+      worldId,
+      parentHead,
+    );
+    const control = await worlds.readSurface(worldId, "control", parentHead);
+    await worlds.commitWorldRevisionApply({
+      worldId,
+      operationId,
+      parentHead,
+      nextMaterials: additionalMaterials,
+      stateChanges: [],
+      control,
+      worldRevisionLock: lock.handle,
+    });
+  } finally {
+    await worlds.releaseWorldRevisionLock(lock.handle);
+  }
+}

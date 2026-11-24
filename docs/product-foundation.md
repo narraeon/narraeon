@@ -122,7 +122,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 
 Runtime 是唯一提交者（[ADR-0001](adr/0001-runtime-is-the-sole-committer.md)）。`state/`、`control/`、`history/` 即当前端点；每次推进先写 `runtime/turns/` 轮前像记录，再逐文件原子替换当前文件，最后推进 `runtime/head.json`（[ADR-0045](adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)）。轮号自 `1` 递增不重用，`commit:N` 为别名，`genesis` 为第 0 轮。打开世界时，轮号大于 `head` 的未完成记录由前像回滚并删除，这是唯一恢复路径（原子 `rename` 无断电 `fsync`）。单进程按世界进程内串行；新建、分叉、归档导入经 `publication.json` 持久去重（含旧指纹兼容），游玩重复发送由持久玩家事件跨重启识别。
 
-### 6.2 历史操作与三种世界外修改机制定位
+### 6.2 历史操作与世界外修改机制定位
 
 | 机制 | 官方定位 | 核心语义与并发边界 |
 | --- | --- | --- |
@@ -130,8 +130,9 @@ Runtime 是唯一提交者（[ADR-0001](adr/0001-runtime-is-the-sole-committer.m
 | **创建分叉** | 唯一新建独立世界的历史操作 | 复制目标端点所需文件至 staging、用前像恢复所选轮、裁剪产物并重分配身份后原子 `rename` 发布；与来源完全独立 |
 | **世界修订（`world.revision.*`）** | **世界外修改主路径与演进目标**（[ADR-0038](adr/0038-world-revision-uses-one-locked-worktree.md)） | 首次编辑／发消息建跨重启持久独占 epoch，手动+AI 共享 `state/*`+`control/*` 工作树，支持单文件回滚与只读历史导航；`apply` 以同一轮 `revision_apply` 提交，`discard` 不改世界 |
 | **控制编辑（`world.control-draft.*`）** | **保留的高级人工修改入口**（「世界控制 · 高级编辑」） | 手动整批编辑并预览 `control/*` 后应用为 `control_apply` 轮（不可改 `gameplay.json`）；仅单次调用串行，草稿留盘但无跨重启互斥锁 |
-| **连续性修正（`correction.*`）** | **已废弃**（[ADR-0016](adr/0016-continuity-corrections-append-authority-commits.md)，由世界修订取代） | 产品上不再作为有效入口（Web 端未挂载）；后端暂存 `correction.begin`（固定文档模式，进程内占用+冻结控制，重启丢弃，底层 `replaceMaterials()` 公开不可达） |
 | **世界归档（`.narraeon-world.zip`）** | 便携完整备份与迁移（[ADR-0042](adr/0042-world-archives-reuse-fork-closures-through-a-quarantine.md)） | 空闲且无活动修订时分叉打包导出；经隔离区校验以分叉发布，清脚本授权并禁旧 Provider 续传 |
+
+旧 `correction.*` 命令已退役，V1 Runtime 对其返回 `invalid_request`。已存在的 `correction` 轮及冻结记录继续按历史格式读取。
 
 ### 6.3 设定完善单对话边界
 

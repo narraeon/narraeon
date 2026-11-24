@@ -26,6 +26,7 @@ import {
   maxPortableContentArchiveBytes,
 } from "../protocol/contentTree.ts";
 import {
+  assertV1RequestType,
   V1ProtocolError,
   v1Protocol,
   type V1PlayCallChainView,
@@ -55,7 +56,6 @@ import {
   ModelConnectionStore,
   ModelConnectionUnavailableError,
 } from "./model/ModelConnectionStore.ts";
-import { FileNativeContinuityCorrection } from "./play/FileNativeContinuityCorrection.ts";
 import { fingerprintControl } from "./play/PlayDocumentTools.ts";
 import {
   PlayCallChain,
@@ -136,7 +136,6 @@ export class V1Runtime {
   readonly #worlds: FileNativeWorldStore;
   readonly #artifacts: FileNativeArtifactStore;
   readonly #models: ModelConnectionStore;
-  readonly #corrections: FileNativeContinuityCorrection;
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #errorLog: FileNativeRuntimeErrorLog | undefined;
@@ -189,9 +188,6 @@ export class V1Runtime {
         : { uploadPolicy: input.archiveUploadPolicy }),
     });
     this.#models = new ModelConnectionStore(input.configRoot);
-    this.#corrections = new FileNativeContinuityCorrection(this.#worlds, {
-      compiler: this.#compiler,
-    });
     const generation =
       input.generationActivity === undefined
         ? {}
@@ -309,6 +305,7 @@ export class V1Runtime {
     request: V1Request,
     playCallChainObserver?: PlayCallChainObserver,
   ): Promise<V1Response> {
+    assertV1RequestType(request.type);
     try {
       const result = await this.#dispatch(request, playCallChainObserver);
       await this.#recordPlayInterruption(request, result);
@@ -1439,46 +1436,6 @@ export class V1Runtime {
           },
         };
       }
-      case "correction.begin":
-        return this.#corrections.begin({
-          worldId: request.worldId,
-          operationId: request.operationId,
-          mode: "documents",
-        });
-      case "correction.read":
-        return this.#corrections.readDocument(
-          request.candidateId,
-          request.document,
-        );
-      case "correction.patch":
-        return this.#corrections.patchDocument(request);
-      case "correction.replace":
-        return this.#corrections.replaceDocument(request);
-      case "correction.preview": {
-        const { hostBinding, modelBinding, playPreset, modelHost } =
-          await this.#continuousBinding();
-        return this.#corrections.preview({
-          candidateId: request.candidateId,
-          expectedVersion: request.expectedVersion,
-          prompt: {
-            hostBinding,
-            modelBinding,
-            playPreset,
-            modelPrompt: modelHost.modelPrompt(),
-          },
-        });
-      }
-      case "correction.apply": {
-        const result = await this.#corrections.apply(request);
-        await this.#reconcileResultArtifacts(result);
-        return result;
-      }
-      case "correction.cancel":
-        await this.#corrections.cancel(
-          request.candidateId,
-          request.expectedVersion,
-        );
-        return { cancelled: true };
     }
   }
 

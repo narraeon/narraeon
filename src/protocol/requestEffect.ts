@@ -47,8 +47,6 @@ const reads = new Set<V1Request["type"]>([
   "play.timeline.detail",
   "artifacts.read",
   "artifacts.debug",
-  "correction.read",
-  "correction.preview",
 ]);
 
 /** An unclassified command may have changed user records even when its response was lost. */

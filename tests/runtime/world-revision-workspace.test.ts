@@ -1461,13 +1461,6 @@ test("持久修订锁阻止游玩与其他写入，重启后仍由同一 epoch �
     name: "WorldOperationBusyError",
   });
   await expect(
-    worlds.operations.claimCorrectionWorld(
-      worldId,
-      "correction-while-revising",
-      () => Promise.resolve(null),
-    ),
-  ).resolves.toEqual({ kind: "busy" });
-  await expect(
     worlds.renameWorld(worldId, "只改本地名称"),
   ).resolves.toMatchObject({
     title: "只改本地名称",

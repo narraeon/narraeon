@@ -3,12 +3,6 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { type WorldQueue, worldQueueFor } from "./WorldQueue.ts";
 
-export interface ContinuityCorrectionWorldClaimHandle {
-  worldId: string;
-  operationId: string;
-  owner: string;
-}
-
 /** Durable, non-expiring ownership of one world-revision epoch. */
 export interface WorldRevisionLockHandle {
   worldId: string;
@@ -39,89 +33,17 @@ interface WorldRevisionLockRecord extends WorldRevisionLockHandle {
  * Coordinates world mutations inside the single service process.
  *
  * Every world-changing operation runs through the data root's `WorldQueue`,
- * so no cross-process lock files exist. A continuity correction candidate
- * holds an in-memory claim until it is applied, discarded, or the process
- * exits. The world-revision epoch is the only persisted marker, because it
- * is edit-mode state that survives restarts.
+ * so no cross-process lock files exist. A world-revision epoch persists
+ * because its edit-mode state survives restarts.
  */
 export class FileNativeWorldOperationCoordinator {
   readonly #revisionLocksRoot: string;
-  readonly #claims: Map<string, ContinuityCorrectionWorldClaimHandle>;
-  readonly #owner: () => string;
   readonly #queue: WorldQueue;
 
-  constructor(
-    dataRoot: string,
-    options: {
-      owner?: () => string;
-    } = {},
-  ) {
-    const root = join(resolve(dataRoot), "operations");
-    this.#revisionLocksRoot = join(root, "world-revision-locks");
-    this.#owner = options.owner ?? randomUUID;
-    this.#queue = worldQueueFor(resolve(dataRoot));
-    this.#claims = claimsFor(resolve(dataRoot));
-  }
-
-  async claimCorrectionWorld<Value>(
-    worldId: string,
-    operationId: string,
-    action: () => Promise<Value>,
-  ): Promise<
-    | {
-        kind: "claimed";
-        handle: ContinuityCorrectionWorldClaimHandle;
-        value: Value;
-      }
-    | { kind: "busy" }
-  > {
-    assertNonEmptyIdentity(worldId, "world ID");
-    assertNonEmptyIdentity(operationId, "correction operation ID");
-    return this.#queue.run(worldId, async () => {
-      if (
-        this.#claims.has(worldId) ||
-        (await this.#readRevisionLock(worldId)) !== null
-      )
-        return { kind: "busy" };
-      const handle: ContinuityCorrectionWorldClaimHandle = {
-        worldId,
-        operationId,
-        owner: this.#owner(),
-      };
-      this.#claims.set(worldId, handle);
-      try {
-        return { kind: "claimed", handle, value: await action() };
-      } catch (error: unknown) {
-        this.#releaseClaim(handle);
-        throw error;
-      }
-    });
-  }
-
-  async withCorrectionWorldClaim<Value>(
-    handle: ContinuityCorrectionWorldClaimHandle,
-    action: () => Promise<Value>,
-  ): Promise<Value> {
-    assertCorrectionClaimHandle(handle);
-    return this.#queue.run(handle.worldId, async () => {
-      const current = this.#claims.get(handle.worldId);
-      if (
-        current?.operationId !== handle.operationId ||
-        current.owner !== handle.owner
-      )
-        throw new WorldOperationClaimLostError();
-      return action();
-    });
-  }
-
-  async releaseCorrectionWorld(
-    handle: ContinuityCorrectionWorldClaimHandle,
-  ): Promise<void> {
-    assertCorrectionClaimHandle(handle);
-    await this.#queue.run(handle.worldId, () => {
-      this.#releaseClaim(handle);
-      return Promise.resolve();
-    });
+  constructor(dataRoot: string) {
+    const root = resolve(dataRoot);
+    this.#revisionLocksRoot = join(root, "operations", "world-revision-locks");
+    this.#queue = worldQueueFor(root);
   }
 
   async withExclusiveWorldStateMutation<Value>(
@@ -130,10 +52,7 @@ export class FileNativeWorldOperationCoordinator {
   ): Promise<Value> {
     assertNonEmptyIdentity(worldId, "world ID");
     return this.#queue.run(worldId, async () => {
-      if (
-        this.#claims.has(worldId) ||
-        (await this.#readRevisionLock(worldId)) !== null
-      )
+      if ((await this.#readRevisionLock(worldId)) !== null)
         throw new WorldOperationBusyError();
       return action();
     });
@@ -161,7 +80,6 @@ export class FileNativeWorldOperationCoordinator {
               handle: revisionLockHandle(existing),
             }
           : { kind: "busy", epochId: existing.epochId };
-      if (this.#claims.has(worldId)) return { kind: "busy" };
       const record: WorldRevisionLockRecord = {
         schemaVersion: 1,
         kind: "world_revision_lock",
@@ -241,15 +159,6 @@ export class FileNativeWorldOperationCoordinator {
     return this.#queue.pendingCount(worldId);
   }
 
-  #releaseClaim(handle: ContinuityCorrectionWorldClaimHandle): void {
-    const current = this.#claims.get(handle.worldId);
-    if (
-      current?.operationId === handle.operationId &&
-      current.owner === handle.owner
-    )
-      this.#claims.delete(handle.worldId);
-  }
-
   async #readRevisionLock(
     worldId: string,
   ): Promise<WorldRevisionLockRecord | null> {
@@ -270,23 +179,6 @@ export class FileNativeWorldOperationCoordinator {
   #revisionLockPath(worldId: string): string {
     return join(this.#revisionLocksRoot, `${digest(worldId)}.json`);
   }
-}
-
-const claimsByDataRoot = new Map<
-  string,
-  Map<string, ContinuityCorrectionWorldClaimHandle>
->();
-
-/** In-memory correction claims, shared by every store under one data root. */
-function claimsFor(
-  dataRoot: string,
-): Map<string, ContinuityCorrectionWorldClaimHandle> {
-  let claims = claimsByDataRoot.get(dataRoot);
-  if (claims === undefined) {
-    claims = new Map();
-    claimsByDataRoot.set(dataRoot, claims);
-  }
-  return claims;
 }
 
 function isWorldRevisionLockRecord(
@@ -318,14 +210,6 @@ function revisionLockHandle(
   record: WorldRevisionLockRecord,
 ): WorldRevisionLockHandle {
   return { worldId: record.worldId, epochId: record.epochId };
-}
-
-function assertCorrectionClaimHandle(
-  handle: ContinuityCorrectionWorldClaimHandle,
-): void {
-  assertNonEmptyIdentity(handle.worldId, "world ID");
-  assertNonEmptyIdentity(handle.operationId, "correction operation ID");
-  assertNonEmptyIdentity(handle.owner, "correction claim owner");
 }
 
 async function publishJson(path: string, value: unknown): Promise<void> {

@@ -141,7 +141,8 @@ test("先替换一个状态文件时，正常读取仍返回旧端点的完整�
     paused.resolve();
     await resume.promise;
   };
-  const advance = worlds.commitCorrection({
+  const advance = worlds.commitPlayStep({
+    historyAppend: [],
     worldId,
     operationId: "replace-both-state-files",
     parentHead: before.head,

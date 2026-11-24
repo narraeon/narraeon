@@ -122,7 +122,7 @@ Runtime 从受限 YAML 当前情境选择精确顶层的历史背景，随每条
 
 - 世界目录中的 `state/`、`control/` 与 `history/` 即当前端点的权威内容，不再维护内容寻址副本或物化检查点。
 - `worldId` 仅属于本地外壳；历史消息使用世界内局部身份，不嵌入 world 或 operation 身份。
-- 每次推进（玩家消息、完整模型响应、连续性修正、世界修订应用 `revision_apply`、控制编辑应用 `control_apply`、回退 `rewind`）为独立一轮，轮号自 `1` 单调递增且**永不重用**，`commit:N` 为端点别名，`genesis` 为第 `0` 轮。
+- 每次推进（玩家消息、完整模型响应、世界修订应用 `revision_apply`、控制编辑应用 `control_apply`、回退 `rewind`）为独立一轮，轮号自 `1` 单调递增且**永不重用**，`commit:N` 为端点别名，`genesis` 为第 `0` 轮。
 - 每轮在 `runtime/turns/` 写一条记录：轮号、模式、本轮改动 `state/` 与 `control/` 文件的前像（新建记空）、附加材料清单前像、追加的历史消息身份、叙事检查点声明、`playContext` 与 `worldClock`。
 - **唯一推进与恢复顺序**：先写本轮记录 → 逐文件原子替换当前文件 → 最后推进 `runtime/head.json`。打开世界时若存在序号大于 `head` 的记录，说明该轮未完成，Runtime 用其前像恢复文件并删除记录。原子 `rename` 是唯一持久化保证，不为断电做 `fsync`。
 - **单进程并发前提**（[ADR-0044](../adr/0044-runtime-is-single-process-and-recovers-by-retry.md)）：一个数据目录假定只有一个服务进程；对同一世界的语义写入在进程内按世界串行，读取不排队、依赖原子发布。已撤销跨进程世界锁、pid 存活检测、心跳与 Provider 结果重放回执（启动时顺手清理历史遗留 pid 锁文件）。删除世界前先中止该世界进行中的生成，再删除目录。
@@ -138,7 +138,7 @@ Runtime 从受限 YAML 当前情境选择精确顶层的历史背景，随每条
 | **3. 归档导入** | 优先读取确定性目标路径的 `publication.json` | 只要 `operationId` 与 `worldId` 匹配即直接幂等返回原导入世界——**既不要求临时上传 ZIP 仍在，也不会将新上传 ZIP 与先前已导入归档做内容比对** | 仅当目标 `publication.json` 中 `operationId` 或 `worldId` 与本次操作不匹配时拒绝（`integrity_failed`） |
 | **4. 游玩重复发送** | 首发入口读取当前调用链持久保存的玩家事件 | `chainId`、`exchangeId`、玩家原文与上下文模式（`fresh`／`append`）全部相符时直接返回已有视图——**进程重启后同样可识别** | 拒绝（报错同一 `exchangeId` 已绑定不同文本或模式） |
 
-## 6. 时间线修订、分叉与三种世界外修改机制
+## 6. 时间线修订、分叉与世界外修改机制
 
 ### 6.1 时间线修订（修改已提交玩家消息）
 
@@ -159,20 +159,22 @@ Runtime 从受限 YAML 当前情境选择精确顶层的历史背景，随每条
 - 目标与来源不共享任何文件，删除来源后完全自足；不调用 Provider 或重新执行工具；编排方案采用创建分叉时的工作区选择；默认名称取来源世界当下显示名称并加「（分叉）」。
 - 若分叉节点属于持久游玩时间线，保留此前完整页面轨迹并截断所选上下文截至该节点的模型 transcript 与调用轨迹（含推理、工具参数与结果）；若截断后末项为玩家消息，玩家可直接空输入点击「追加上下文」重新生成。
 
-### 6.3 三种世界外修改机制精确对照
+### 6.3 世界外修改机制对照
 
-| 维度 | 世界修订 | 控制编辑 | 连续性修正 |
-| --- | --- | --- | --- |
-| **官方定位** | **主路径与后续演进目标**（[ADR-0038](../adr/0038-world-revision-uses-one-locked-worktree.md)） | **保留的高级人工修改入口** | **已废弃**（[ADR-0016](../adr/0016-continuity-corrections-append-authority-commits.md)，由世界修订取代；产品上不再作为有效入口） |
-| **何时开始排斥冲突操作** | 进入修订页仅只读不锁定；**首次实际文件编辑（`world.revision.files.replace`）或发送首条消息（`world.revision.message`）**创建持久 epoch 时起锁定 | 仅在 `save`／`apply` 单次调用执行期间占用进程内按世界串行；草稿存在本身不锁定游玩；`apply` 时若存在进行中游玩／修正／修订锁则被拒绝 | `correction.begin` 立即在进程内占用世界并冻结控制（`claimCorrectionWorld` + `freezeControl`） |
-| **排斥范围** | 游玩、时间线修订、连续性修正、控制草稿保存与应用、分叉、导出、删除世界（只读检查、故事导出与本地重命名仍可用） | 单次写入调用期间按世界串行互斥，无持续排斥 | 并发世界状态写入与控制应用 |
-| **何时释放** | `world.revision.apply`（`revision_apply` 轮落盘且 epoch 标 `applied` 后）或 `world.revision.discard` | 当次 `save`／`apply` 调用结束立即释放（`apply` 成功后删除 `runtime/control-draft`） | `correction.apply` 或 `correction.cancel` |
-| **进程重启后是否保留** | **是**（持久 epoch 与非过期独占锁跨刷新与重启保留） | 草稿目录 `runtime/control-draft` 留盘，但**无跨重启互斥锁** | **否**（候选与占用仅存进程内存，重启即丢弃释放） |
-| **Runtime 命令** | `world.revision.*`（`open` / `overview` / `preview` / `status` / `files.replace` / `rollback` / `apply` / `discard` / `session.*` / `message` / `message.edit` / `cancel` / `resume` / `call.context` / `request.preview`） | `world.control-draft.save`、`world.control-draft.preview`、`world.control-draft.apply` | `correction.begin`（固定 `mode: "documents"`）、`correction.read`、`correction.patch`、`correction.replace`、`correction.preview`、`correction.apply`、`correction.cancel` |
-| **当前 Web 可达入口** | 世界页「世界修订」工作区 | 世界页「世界控制 · 高级编辑」折叠面板 | **无**（`FileNativeCorrectionPanel` 当前未挂载到页面） |
-| **可达能力** | 手动编辑与 AI 对话共享 `state/*` + `control/*` 工作树，支持逐文件回滚、历史只读导航与预览后原子应用（不可改 `control/gameplay.json` 与已提交 `opening.md`） | 手动整批编辑 `control/*`、预览后原子应用为 `control_apply` 轮（不可改 `control/gameplay.json`） | 公开命令仅可达文档修正模式；底层 `FileNativeContinuityCorrection.replaceMaterials()` 存在但经公开命令**不可达** |
+| 维度 | 世界修订 | 控制编辑 |
+| --- | --- | --- |
+| **官方定位** | **主路径与后续演进目标**（[ADR-0038](../adr/0038-world-revision-uses-one-locked-worktree.md)） | **保留的高级人工修改入口** |
+| **何时开始排斥冲突操作** | 进入修订页仅只读不锁定；**首次实际文件编辑（`world.revision.files.replace`）或发送首条消息（`world.revision.message`）**创建持久 epoch 时起锁定 | 仅在 `save`／`apply` 单次调用执行期间占用进程内按世界串行；草稿存在本身不锁定游玩；`apply` 时若存在进行中游玩／修订锁则被拒绝 |
+| **排斥范围** | 游玩、时间线修订、控制草稿保存与应用、分叉、导出、删除世界（只读检查、故事导出与本地重命名仍可用） | 单次写入调用期间按世界串行互斥，无持续排斥 |
+| **何时释放** | `world.revision.apply`（`revision_apply` 轮落盘且 epoch 标 `applied` 后）或 `world.revision.discard` | 当次 `save`／`apply` 调用结束立即释放（`apply` 成功后删除 `runtime/control-draft`） |
+| **进程重启后是否保留** | **是**（持久 epoch 与非过期独占锁跨刷新与重启保留） | 草稿目录 `runtime/control-draft` 留盘，但**无跨重启互斥锁** |
+| **Runtime 命令** | `world.revision.*`（`open` / `overview` / `preview` / `status` / `files.replace` / `rollback` / `apply` / `discard` / `session.*` / `message` / `message.edit` / `cancel` / `resume` / `call.context` / `request.preview`） | `world.control-draft.save`、`world.control-draft.preview`、`world.control-draft.apply` |
+| **当前 Web 可达入口** | 世界页「世界修订」工作区 | 世界页「世界控制 · 高级编辑」折叠面板 |
+| **可达能力** | 手动编辑与 AI 对话共享 `state/*` + `control/*` 工作树，支持逐文件回滚、历史只读导航与预览后原子应用（不可改 `control/gameplay.json` 与已提交 `opening.md`） | 手动整批编辑 `control/*`、预览后原子应用为 `control_apply` 轮（不可改 `control/gameplay.json`） |
 
-> 世界名称重命名仅原子替换世界本地外壳，不改写创建记录或 Authority，与上述三种语义写入正交。
+> 世界名称重命名仅原子替换世界本地外壳，不改写创建记录或 Authority，与上述两种语义写入正交。
+
+旧 `correction.*` 写入协议由世界修订取代。向 `/api/runtime/v1` 发送这些命令返回 HTTP 400，错误码为 `invalid_request`。已发布归档或本地世界中的 `correction` 轮、前像和冻结请求继续通过历史路径读取。旧格式迁移按 [#244](https://github.com/narraeon/narraeon/issues/244) 的发布边界处理。
 
 ## 7. 世界备份归档、故事导出与旧格式迁移边界
 

@@ -78,7 +78,10 @@ import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
-import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
+import {
+  advanceOutsidePlay,
+  revisePlayerTimeline,
+} from "./support/player-timeline-edit.ts";
 import { turnGuideHeader } from "../../src/shared/turn-guide.ts";
 import { PlayCallChainError } from "../../src/runtime/play/PlayCallChainError.ts";
 
@@ -9628,13 +9631,12 @@ test.each(["snapshot_missing", "world_changed"] as const)(
       expect(snapshots).toHaveLength(1);
       await rm(join(requests, snapshots[0]!));
     } else {
-      await worlds.commitCorrection({
+      await advanceOutsidePlay(
+        worlds,
         worldId,
-        operationId: "newer-world",
-        parentHead: interrupted.parentHead,
-        stateChanges: [],
-        nextMaterials: [],
-      });
+        "newer-world",
+        interrupted.parentHead,
+      );
     }
     const restarted = new FileNativeWorldStore(root);
     const chains = new PlayCallChain(restarted);
@@ -11525,7 +11527,8 @@ test("历史查询沿真实时间线修订与分叉恢复位置，状态修正�
       [],
     ).ok,
   ).toBe(true);
-  await worlds.commitCorrection({
+  await worlds.commitPlayStep({
+    historyAppend: [],
     worldId,
     operationId: "history-state-only",
     parentHead: await worlds.currentHead(worldId),
@@ -11867,7 +11870,8 @@ test("历史背景投影丢失时从 Authority 修复，不用修订后的当前
     },
     [],
   );
-  await worlds.commitCorrection({
+  await worlds.commitPlayStep({
+    historyAppend: [],
     operationId: "background-correction",
     worldId,
     parentHead: binding.parentHead,
@@ -12344,13 +12348,12 @@ test("世界在故事外前进后仍可修改或重新生成已提交玩家消�
   // Anything that moves the world head without the chain (an applied world
   // revision, or a timeline revision whose chain publication failed) leaves
   // the persisted chain behind the current world.
-  await worlds.commitCorrection({
+  await advanceOutsidePlay(
+    worlds,
     worldId,
-    operationId: "out-of-story-advance",
-    parentHead: source.parentHead,
-    stateChanges: [],
-    nextMaterials: [],
-  });
+    "out-of-story-advance",
+    source.parentHead,
+  );
   const advancedHead = await worlds.currentHead(worldId);
   expect(advancedHead).not.toBe(source.parentHead);
   await expect(chains.inspectWorld(worldId)).resolves.toMatchObject({

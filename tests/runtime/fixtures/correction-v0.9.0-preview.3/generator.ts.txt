@@ -1,0 +1,45 @@
+import { copyFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { FileNativeContinuityCorrection } from "./src/runtime/play/FileNativeContinuityCorrection.ts";
+import { presetHostBinding } from "./src/runtime/play/FileNativePlayPresetStore.ts";
+import { archiveModelBinding, worldArchiveFixture } from "./tests/support/worldArchiveFixture.ts";
+
+const source = await worldArchiveFixture();
+try {
+  const corrections = new FileNativeContinuityCorrection(source.worlds);
+  const { candidateId, version } = await corrections.begin({
+    worldId: source.worldId,
+    operationId: "released-document-correction",
+    mode: "documents",
+  });
+  const target = "@current-situation";
+  const document = corrections.readDocument(candidateId, target);
+  const changed = corrections.patchDocument({
+    candidateId,
+    expectedVersion: version,
+    target,
+    expectedHash: document.hash,
+    edits: [{
+      op: "replace",
+      locator: { yaml: ["情况"] },
+      value: "Alex在旅店门边点亮了一盏蓝灯。",
+    }],
+  });
+  corrections.preview({
+    candidateId,
+    expectedVersion: changed.version,
+    prompt: {
+      hostBinding: presetHostBinding(source.preset),
+      modelBinding: archiveModelBinding,
+      playPreset: source.preset,
+    },
+  });
+  console.log(await corrections.apply({ candidateId, expectedVersion: changed.version }));
+  await source.archives.exportWorld({
+    worldId: source.worldId,
+    operationId: "export-backup",
+  });
+  await copyFile(join(source.root, "world-archives/exports/export-backup/archive.zip"), process.argv[2]!);
+} finally {
+  await rm(source.root, { recursive: true, force: true });
+}

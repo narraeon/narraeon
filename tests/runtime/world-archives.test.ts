@@ -171,37 +171,6 @@ test("便携归档排除分叉新建的本地活动缓存，导入忽略来源�
   });
 });
 
-test("故事之后的世界修正端点归档保留完整页面轨迹与调用详情", async () => {
-  const source = await fixture();
-  await source.worlds.commitCorrection({
-    worldId: source.worldId,
-    parentHead: await source.worlds.currentHead(source.worldId),
-    operationId: "after-story-correction",
-    nextMaterials: [],
-    stateChanges: [],
-  });
-  const before = await source.worlds.playTimeline.readPage(source.worldId, 40);
-  const archive = await exported(source);
-  const target = await empty();
-  const result = await target.archives.importWorld({
-    operationId: "corrected-import",
-    ...(await target.archives.upload(createReadStream(archive.zip))),
-  });
-  expect(
-    await readdir(join(target.root, "operations")).catch(() => []),
-  ).not.toContainEqual(expect.stringMatching(/^import-/u));
-  const after = await target.worlds.playTimeline.readPage(
-    result.world.worldId,
-    40,
-  );
-  expect(after.items.map((item) => item.kind)).toEqual(
-    before.items.map((item) => item.kind),
-  );
-  expect(await target.chains.inspectWorld(result.world.worldId)).toMatchObject({
-    events: source.story.events,
-  });
-});
-
 test("多上下文世界应用修订后归档保留全部冻结调用详情和最新控制", async () => {
   const source = await fixture();
   await source.chains.start({

@@ -783,20 +783,9 @@ const englishMessages: Record<string, string> = {
   "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
     "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
   "输入 UTF-8 文本内容……": "Enter UTF-8 text…",
-  确认修正内容: "Review correction",
-  份文档会变化: "document(s) will change",
-  修正前: "Before correction",
   修正后: "After correction",
-  查看技术校验值: "View technical checksum",
-  "查看修改前版本、附加材料和下一次提示词":
-    "View the previous version, additional material, and next prompt",
   父端点: "Parent endpoint",
   修改前版本: "Previous version",
-  候选版本: "Candidate version",
-  完整附加材料清单差异: "Complete additional-material diff",
-  下一次真实提示词: "Next real Prompt Preview",
-  应用这笔修正: "Apply this correction",
-  放弃修正草稿: "Discard correction draft",
   世界文件: "World files",
   "当前 state 文档": "Current state documents",
   尚无已提交叙事: "No committed narrative yet",
@@ -1812,12 +1801,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   "世界控制修改已预览，可以一次性应用。":
     "World-control changes have been previewed and can now be applied together.",
   "世界控制已整批应用。": "World control was applied as a whole.",
-  "修正草稿已预览；应用前世界状态没有变化。":
-    "The correction draft was previewed. World state remains unchanged until application.",
-  "连续性修正已作为一笔新提交应用，旧历史保持不变。":
-    "The continuity correction was applied as a new commit; previous history remains unchanged.",
-  "修正草稿已放弃，世界端点没有推进。":
-    "The correction draft was discarded and the world endpoint did not advance.",
   "修改后的玩家提交不能为空。": "The edited player message cannot be empty.",
   "正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…":
     "Saving the edit in the current world and leaving the later current timeline behind…",
@@ -1966,16 +1949,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在应用…": "Applying…",
   整批应用世界控制: "Apply all world-control changes",
   查看真实提示词预览结果: "View real Prompt Preview result",
-  连续性修正: "Continuity correction",
-  "在故事之外修正当前文档。修正会追加一笔新提交，不会改写旧叙事。":
-    "Correct current documents outside the story. A correction appends a new commit and does not rewrite earlier narrative.",
-  要修正的文档: "Document to correct",
-  "例如：衣着 或 关系.秦龙.好感":
-    "For example: clothing or relationships.Alex.trust",
-  新值: "New value",
-  修正后的新值: "Corrected value",
-  预览整笔修正: "Preview complete correction",
-  取消修正草稿: "Cancel correction draft",
   运行详情: "Runtime details",
   "用于排查本地恢复问题，不参与普通游玩。":
     "Used to diagnose local recovery issues; not part of normal play.",
@@ -2122,12 +2095,9 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "当前世界已推进；这条追加上下文不能再继续。":
     "The current world has advanced; this append context can no longer continue.",
   当前世界文档: "Current world documents",
-  "当前世界没有可修订的状态文档。":
-    "The current world has no state documents that can be revised.",
   当前冻结上下文: "Current frozen context",
   暂无当前对话记录: "No current conversation record",
   恢复默认: "Restore defaults",
-  手动修正: "Manual correction",
   "找到 {visible} / {total} 份": "Found {visible} / {total}",
   按需读取: "On-demand reads",
   排版密度: "Layout density",

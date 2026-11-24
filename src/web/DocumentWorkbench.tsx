@@ -4,7 +4,6 @@ import { gameplayPath } from "../protocol/gameplay.ts";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
-import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
 
 export interface DocumentWorkbenchIssue {
   code: string;
@@ -22,15 +21,6 @@ interface ContentPackageWorkspace {
   onSave: () => void;
 }
 
-interface WorldCorrectionWorkspace {
-  kind: "world-correction";
-  files: readonly ContentTreeFile[];
-  dirty: boolean;
-  pending: boolean;
-  onFilesChange: (files: ContentTreeFile[]) => void;
-  onPreview: () => void;
-}
-
 interface WorldRevisionWorkspace {
   kind: "world-revision";
   files: readonly ContentTreeFile[];
@@ -41,8 +31,7 @@ interface WorldRevisionWorkspace {
   onSave: () => void;
 }
 
-type DocumentWorkspace =
-  ContentPackageWorkspace | WorldCorrectionWorkspace | WorldRevisionWorkspace;
+type DocumentWorkspace = ContentPackageWorkspace | WorldRevisionWorkspace;
 type DocumentWorkspaceKind = DocumentWorkspace["kind"];
 
 export function DocumentWorkbench({
@@ -67,24 +56,15 @@ export function DocumentWorkbench({
       ),
     [files, workspace.kind],
   );
-  const managesTree = workspace.kind !== "world-correction";
   const preferredPath =
-    workspace.kind === "content-package"
+    (workspace.kind === "content-package"
       ? (orderedFiles.find(({ path }) => path === "opening.md")?.path ??
         orderedFiles.find(({ path }) => path === "world/current-situation.yaml")
-          ?.path ??
-        orderedFiles[0]?.path ??
-        "")
-      : workspace.kind === "world-revision"
-        ? (orderedFiles.find(
-            ({ path }) => path === "state/current-situation.yaml",
-          )?.path ??
-          orderedFiles[0]?.path ??
-          "")
-        : (orderedFiles.find(({ path }) => path === "current-situation.yaml")
-            ?.path ??
-          orderedFiles[0]?.path ??
-          "");
+          ?.path)
+      : orderedFiles.find(({ path }) => path === "state/current-situation.yaml")
+          ?.path) ??
+    orderedFiles[0]?.path ??
+    "";
   const requested = controlledPath ?? requestedPath;
   const selectedPath = files.some(({ path }) => path === requested)
     ? requested
@@ -92,25 +72,26 @@ export function DocumentWorkbench({
   const selectedFile = files.find(({ path }) => path === selectedPath);
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
-  const issues = workspace.kind === "world-correction" ? [] : workspace.issues;
+  const { issues } = workspace;
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
   const visibleFiles =
     normalizedQuery.length === 0
       ? orderedFiles
       : orderedFiles.filter((file) =>
-          searchableText(workspace.kind, file)
-            .toLocaleLowerCase("zh-CN")
-            .includes(normalizedQuery),
+          file.path.toLocaleLowerCase("zh-CN").includes(normalizedQuery),
         );
   const groups = groupsFor(workspace.kind, visibleFiles);
   const selectedIssues = issues.filter(({ path }) => path === selectedPath);
   const pathError =
-    managesTree && selectedFile !== undefined
+    selectedFile !== undefined
       ? validateDraftPath(pathDraft, selectedFile.path, files, workspace.kind)
       : "";
-  const newPathError = managesTree
-    ? validateDraftPath(newPath, undefined, files, workspace.kind)
-    : "";
+  const newPathError = validateDraftPath(
+    newPath,
+    undefined,
+    files,
+    workspace.kind,
+  );
 
   function select(path: string): void {
     if (controlledPath === undefined) setRequestedPath(path);
@@ -127,8 +108,7 @@ export function DocumentWorkbench({
   }
 
   function renameSelected(): void {
-    if (!managesTree || selectedFile === undefined || pathError.length > 0)
-      return;
+    if (selectedFile === undefined || pathError.length > 0) return;
     const nextPath = pathDraft.trim();
     if (nextPath === selectedFile.path) return;
     workspace.onFilesChange(
@@ -143,7 +123,6 @@ export function DocumentWorkbench({
   }
 
   function addFile(): void {
-    if (!managesTree) return;
     setNewPathTouched(true);
     if (newPathError.length > 0) return;
     const path = newPath.trim();
@@ -157,7 +136,7 @@ export function DocumentWorkbench({
   }
 
   function removeSelected(): void {
-    if (!managesTree || selectedFile === undefined) return;
+    if (selectedFile === undefined) return;
     const remaining = files
       .filter(({ path }) => path !== selectedFile.path)
       .map((file) => ({ ...file }));
@@ -167,9 +146,7 @@ export function DocumentWorkbench({
 
   function saveShortcut(): void {
     if (!workspace.dirty) return;
-    if (workspace.kind === "world-correction") {
-      if (!workspace.pending) workspace.onPreview();
-    } else if (workspace.kind === "content-package" || !workspace.pending)
+    if (workspace.kind === "content-package" || !workspace.pending)
       workspace.onSave();
   }
 
@@ -196,9 +173,7 @@ export function DocumentWorkbench({
         aria-label={
           workspace.kind === "content-package"
             ? uiText("内容包文件")
-            : workspace.kind === "world-revision"
-              ? uiText("世界修订文件")
-              : uiText("当前世界文档")
+            : uiText("世界修订文件")
         }
       >
         <header>
@@ -206,9 +181,7 @@ export function DocumentWorkbench({
             <span className="content-editor-kicker">
               {workspace.kind === "content-package"
                 ? uiText("当前草稿")
-                : workspace.kind === "world-revision"
-                  ? uiText("修订工作树")
-                  : uiText("当前世界")}
+                : uiText("修订工作树")}
             </span>
             <h4>{uiText("文件")}</h4>
           </div>
@@ -234,9 +207,7 @@ export function DocumentWorkbench({
           aria-label={
             workspace.kind === "content-package"
               ? uiText("内容包文件树")
-              : workspace.kind === "world-revision"
-                ? uiText("世界修订文件树")
-                : uiText("当前世界文档")
+              : uiText("世界修订文件树")
           }
         >
           {visibleFiles.length === 0 ? (
@@ -256,7 +227,6 @@ export function DocumentWorkbench({
                     const issueCount = issues.filter(
                       ({ path }) => path === file.path,
                     ).length;
-                    const presentation = worldDocumentPresentation(file);
                     return (
                       <li key={file.path}>
                         <button
@@ -279,17 +249,7 @@ export function DocumentWorkbench({
                           >
                             {fileKind(file)}
                           </span>
-                          {workspace.kind === "world-correction" ? (
-                            <span className="world-document-list-copy">
-                              <span className="world-document-list-heading">
-                                <strong>{presentation.title}</strong>
-                                <code>{file.path}</code>
-                              </span>
-                              <small>{presentation.summary}</small>
-                            </span>
-                          ) : (
-                            <code>{file.path}</code>
-                          )}
+                          <code>{file.path}</code>
                           {issueCount > 0 && (
                             <span className="content-file-issue-count">
                               {issueCount}
@@ -304,47 +264,41 @@ export function DocumentWorkbench({
             ))
           )}
         </nav>
-        {managesTree ? (
-          <details className="content-new-file">
-            <summary>{uiText("新建文件")}</summary>
-            <div>
-              <label>
-                {uiText("新文件路径")}
-                <input
-                  value={newPath}
-                  placeholder={
-                    workspace.kind === "world-revision"
-                      ? "state/characters/name.yaml"
-                      : "world/characters/name.yaml"
-                  }
-                  onChange={(event) => {
-                    setNewPath(event.target.value);
-                    setNewPathTouched(true);
-                  }}
-                />
-              </label>
-              {newPathTouched && newPathError.length > 0 && (
-                <p role="alert">{newPathError}</p>
+        <details className="content-new-file">
+          <summary>{uiText("新建文件")}</summary>
+          <div>
+            <label>
+              {uiText("新文件路径")}
+              <input
+                value={newPath}
+                placeholder={
+                  workspace.kind === "world-revision"
+                    ? "state/characters/name.yaml"
+                    : "world/characters/name.yaml"
+                }
+                onChange={(event) => {
+                  setNewPath(event.target.value);
+                  setNewPathTouched(true);
+                }}
+              />
+            </label>
+            {newPathTouched && newPathError.length > 0 && (
+              <p role="alert">{newPathError}</p>
+            )}
+            <p>
+              {uiText(
+                "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
               )}
-              <p>
-                {uiText(
-                  "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
-                )}
-              </p>
-              <button
-                type="button"
-                disabled={newPathError.length > 0}
-                onClick={addFile}
-              >
-                {uiText("加入草稿")}
-              </button>
-            </div>
-          </details>
-        ) : (
-          <p className="world-correction-scope-note">
-            {uiText("只修订已有世界文档；临时出现的地点不需要先建立档案。")}
-          </p>
-        )}
+            </p>
+            <button
+              type="button"
+              disabled={newPathError.length > 0}
+              onClick={addFile}
+            >
+              {uiText("加入草稿")}
+            </button>
+          </div>
+        </details>
       </aside>
 
       <section
@@ -362,9 +316,7 @@ export function DocumentWorkbench({
             <p>
               {workspace.kind === "content-package"
                 ? uiText("从左侧新建第一份文件，或返回工作区导入已有内容包。")
-                : workspace.kind === "world-revision"
-                  ? uiText("从左侧新建状态或控制文件。")
-                  : uiText("当前世界没有可修订的状态文档。")}
+                : uiText("从左侧新建状态或控制文件。")}
             </p>
           </div>
         ) : (
@@ -372,74 +324,47 @@ export function DocumentWorkbench({
             <header className="content-file-editor-header">
               <div>
                 <span className="content-editor-kicker">
-                  {workspace.kind === "content-package" ||
-                  workspace.kind === "world-revision"
-                    ? describeFile(selectedFile, workspace.kind)
-                    : uiText("全文编辑")}
+                  {describeFile(selectedFile, workspace.kind)}
                 </span>
-                <h4>
-                  {workspace.kind === "content-package" ||
-                  workspace.kind === "world-revision"
-                    ? leafName(selectedFile.path)
-                    : worldDocumentPresentation(selectedFile).title}
-                </h4>
-                {workspace.kind === "world-correction" ? (
-                  <small>{selectedFile.path}</small>
-                ) : null}
+                <h4>{leafName(selectedFile.path)}</h4>
               </div>
-              {managesTree ? (
+              <button
+                type="button"
+                className="danger-button content-remove-file"
+                onClick={removeSelected}
+              >
+                {uiText("删除文件")}
+              </button>
+            </header>
+            <details className="content-rename-file" key={selectedFile.path}>
+              <summary>{uiText("重命名文件")}</summary>
+              <div className="content-path-editor">
+                <label>
+                  {uiText("文件路径")}
+                  <input
+                    value={pathDraft}
+                    onChange={(event) =>
+                      setPathEdit({
+                        sourcePath: selectedFile.path,
+                        value: event.target.value,
+                      })
+                    }
+                  />
+                </label>
                 <button
                   type="button"
-                  className="danger-button content-remove-file"
-                  onClick={removeSelected}
-                >
-                  {uiText("删除文件")}
-                </button>
-              ) : (
-                <span
-                  className={
-                    workspace.dirty
-                      ? "document-workbench-dirty is-dirty"
-                      : "document-workbench-dirty"
+                  className="secondary-button"
+                  disabled={
+                    pathError.length > 0 ||
+                    pathDraft.trim() === selectedFile.path
                   }
+                  onClick={renameSelected}
                 >
-                  {workspace.dirty
-                    ? uiText("已修改 · 未预览")
-                    : uiText("无本地修改")}
-                </span>
-              )}
-            </header>
-            {managesTree ? (
-              <details className="content-rename-file" key={selectedFile.path}>
-                <summary>{uiText("重命名文件")}</summary>
-                <div className="content-path-editor">
-                  <label>
-                    {uiText("文件路径")}
-                    <input
-                      value={pathDraft}
-                      onChange={(event) =>
-                        setPathEdit({
-                          sourcePath: selectedFile.path,
-                          value: event.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={
-                      pathError.length > 0 ||
-                      pathDraft.trim() === selectedFile.path
-                    }
-                    onClick={renameSelected}
-                  >
-                    {uiText("应用新路径")}
-                  </button>
-                </div>
-                {pathError.length > 0 ? <p role="alert">{pathError}</p> : null}
-              </details>
-            ) : null}
+                  {uiText("应用新路径")}
+                </button>
+              </div>
+              {pathError.length > 0 ? <p role="alert">{pathError}</p> : null}
+            </details>
             {selectedFile.encoding === "base64" ? (
               <div className="content-binary-note" role="note">
                 <strong>{uiText("二进制资源不在文本编辑器展开")}</strong>
@@ -449,7 +374,7 @@ export function DocumentWorkbench({
                   )}
                 </span>
               </div>
-            ) : managesTree && selectedFile.path === "control/frame.yaml" ? (
+            ) : selectedFile.path === "control/frame.yaml" ? (
               <WorldFrameEditor
                 contents={selectedFile.contents}
                 files={files}
@@ -477,10 +402,7 @@ export function DocumentWorkbench({
                     workspace.kind,
                   )}
                   value={selectedFile.contents}
-                  placeholder={editorPlaceholder(
-                    selectedFile.path,
-                    workspace.kind,
-                  )}
+                  placeholder={editorPlaceholder(selectedFile.path)}
                   aria-label={uiText("编辑 {path}", {
                     path: selectedFile.path,
                   })}
@@ -530,39 +452,11 @@ export function DocumentWorkbench({
                 </ul>
               </section>
             )}
-            {workspace.kind === "world-correction" ? (
-              <footer className="document-workbench-review">
-                <div>
-                  <strong>{uiText("应用前确认修改")}</strong>
-                  <span>
-                    {uiText(
-                      "完整差异 · 真实 Prompt Preview · 一笔 Authority 修订",
-                    )}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  disabled={!workspace.dirty || workspace.pending}
-                  onClick={workspace.onPreview}
-                >
-                  {uiText("预览修订")}
-                </button>
-              </footer>
-            ) : null}
           </>
         )}
       </section>
     </div>
   );
-}
-
-function searchableText(
-  kind: DocumentWorkspaceKind,
-  file: ContentTreeFile,
-): string {
-  if (kind !== "world-correction") return file.path;
-  const presentation = worldDocumentPresentation(file);
-  return `${file.path}\n${presentation.title}\n${presentation.summary}\n${presentation.ref}`;
 }
 
 function groupsFor(
@@ -577,21 +471,11 @@ function groupsFor(
           ["control", "控制"],
           ["other", "其他资源"],
         ]
-      : kind === "world-revision"
-        ? [
-            ["state", "世界状态"],
-            ["control", "控制"],
-            ["other", "其他"],
-          ]
-        : [
-            ["current", "当前情境"],
-            ["characters", "人物"],
-            ["locations", "地点"],
-            ["relationships", "关系"],
-            ["items", "物品"],
-            ["rules", "规则"],
-            ["other", "其他"],
-          ];
+      : [
+          ["state", "世界状态"],
+          ["control", "控制"],
+          ["other", "其他"],
+        ];
   return definitions.flatMap(([id, label]) => {
     const selected = files.filter(({ path }) => groupFor(kind, path) === id);
     return selected.length === 0
@@ -607,21 +491,9 @@ function groupFor(kind: DocumentWorkspaceKind, path: string): string {
     if (path.startsWith("control/")) return "control";
     return "other";
   }
-  if (kind === "world-revision") {
-    if (path.startsWith("state/")) return "state";
-    if (path.startsWith("control/")) return "control";
-    return "other";
-  }
-  if (path === "current-situation.yaml" || path === "current-situation.md")
-    return "current";
-  const group = path.split("/")[0];
-  return group === "characters" ||
-    group === "locations" ||
-    group === "relationships" ||
-    group === "items" ||
-    group === "rules"
-    ? group
-    : "other";
+  if (path.startsWith("state/")) return "state";
+  if (path.startsWith("control/")) return "control";
+  return "other";
 }
 
 function validateDraftPath(
@@ -688,23 +560,11 @@ function comparePaths(
       if (path.startsWith("control/")) return 4;
       return 5;
     }
-    if (kind === "world-revision") {
-      if (path === "state/current-situation.yaml") return 0;
-      if (path.startsWith("state/")) return 1;
-      if (path === "control/frame.yaml") return 2;
-      if (path.startsWith("control/")) return 3;
-      return 4;
-    }
-    const groups = [
-      "current",
-      "characters",
-      "locations",
-      "relationships",
-      "items",
-      "rules",
-      "other",
-    ];
-    return groups.indexOf(groupFor(kind, path));
+    if (path === "state/current-situation.yaml") return 0;
+    if (path.startsWith("state/")) return 1;
+    if (path === "control/frame.yaml") return 2;
+    if (path.startsWith("control/")) return 3;
+    return 4;
   };
   return (
     rank(left.path) - rank(right.path) || left.path.localeCompare(right.path)
@@ -762,8 +622,7 @@ function describeFile(
   return uiText("内容包文本资源");
 }
 
-function editorPlaceholder(path: string, kind: DocumentWorkspaceKind): string {
-  if (kind === "world-correction") return uiText("输入完整 UTF-8 文档内容……");
+function editorPlaceholder(path: string): string {
   if (path === "opening.md")
     return uiText("写下玩家首次行动前立即看到的局面……");
   if (

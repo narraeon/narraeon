@@ -83,13 +83,13 @@ AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `se
 
 ## 4. 世界修订工作区与跨 Epoch 会话
 
-运行中世界的世界修订（`world.revision.*`）是官方主路径与演进目标（[ADR-0038](../adr/0038-world-revision-uses-one-locked-worktree.md)），与控制编辑和已废弃连续性修正的边界对照见 [游玩与世界生命周期规格 §6.3](play-history-and-world-lifecycle.md#63-三种世界外修改机制精确对照)。
+运行中世界的世界修订（`world.revision.*`）是官方主路径与演进目标（[ADR-0038](../adr/0038-world-revision-uses-one-locked-worktree.md)），与控制编辑的边界对照见 [游玩与世界生命周期规格 §6.3](play-history-and-world-lifecycle.md#63-世界外修改机制对照)。
 
 ### 4.1 独占 Epoch 与共享工作树
 
 - 进入修订页面（`world.revision.open`／`overview`）仅读取当前世界与修订历史，**不创建 epoch、不锁定世界**。
 - 首次实际文件编辑（`world.revision.files.replace`）或发送首条修订消息（`world.revision.message`）时，Runtime 从固定当前端点和控制指纹创建唯一 `state/*` + `control/*` 工作树，并持久化非过期独占锁。`opening.md` 已提交为 genesis 叙事，无可写当前文件；`control/gameplay.json` 禁止更改。
-- 锁有效期间排斥游玩、时间线修订、连续性修正、控制草稿保存与应用、分叉、导出与删除世界；只读检查、故事导出与本地世界名称修改仍可用。浏览器关闭与 Runtime 重启恢复同一活动 epoch，不释放锁，也不重基工作树。
+- 锁有效期间排斥游玩、时间线修订、控制草稿保存与应用、分叉、导出与删除世界；只读检查、故事导出与本地世界名称修改仍可用。浏览器关闭与 Runtime 重启恢复同一活动 epoch，不释放锁，也不重基工作树。
 - 手动保存与每份完整 AI 工具响应串行结算至同一工作树 revision，并共同追加精确逐文件 before／after 至同一改动历史（无独立手动／AI 模式）。物理删除与移动沿用设定完善规则（删除需已完整读取且无任何引用阻挡，以文档身份判断既有文档改写）。
 - 活动 epoch 内支持按文件独立回滚为任一历史改动的 before-image（追加新的 rollback 改动，不删对话或旧差异）。
 

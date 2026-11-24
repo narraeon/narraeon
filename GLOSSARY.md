@@ -97,7 +97,7 @@ _Avoid_：创建分叉、连续性修正、保留被替换分支
 _Avoid_：派生世界、原世界回滚、继续同一 world ID、物理闭包、hardlink
 
 **连续性修正**：
-（**已废弃，由世界修订取代**；[ADR-0016](docs/adr/0016-continuity-corrections-append-authority-commits.md)）早期在故事外直接替换当前文档并追加提交的机制；产品上不再作为有效入口（Web 端未挂载），仅后端暂留 `correction.*` 命令现状待清理。
+（**已废弃，由世界修订取代**；[ADR-0016](docs/adr/0016-continuity-corrections-append-authority-commits.md)）早期在故事外直接替换当前文档并追加提交的机制；旧 `correction.*` 命令已退役。已提交的 `correction` 轮可随历史和归档读取。
 _Avoid_：世界修订、历史改写、剧情圆场、直接覆盖存档
 
 **世界修订**：

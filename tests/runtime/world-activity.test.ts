@@ -85,7 +85,7 @@ test("创建和每次玩家／主持提交更新本地缓存，摘录按 Unicode
   expect(await activity(fixture.root, fixture.worldId)).toEqual(cached);
 });
 
-test("连续性修正、时间线修订、旧端点分叉和世界修订应用的摘要使用当前时间线", async () => {
+test("时间线修订、旧端点分叉和世界修订应用的摘要使用当前时间线", async () => {
   const clock = vi.spyOn(Date, "now").mockReturnValue(now);
   const fixture = await world();
   const first = await play(
@@ -102,21 +102,6 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
     first.head,
     now + 2000,
   );
-  clock.mockReturnValue(now + 3000);
-  const correction = await fixture.store.commitCorrection({
-    operationId: "correction",
-    worldId: fixture.worldId,
-    parentHead: second.head,
-    nextMaterials: [],
-    stateChanges: [],
-  });
-  expect(await activity(fixture.root, fixture.worldId)).toMatchObject({
-    head: correction.head,
-    lastActivityAt: now + 3000,
-    excerpt: "船已经离港。",
-    playerTurns: 1,
-  });
-  // 修订会丢弃 second 之后的端点，所以先从仍可达的 second 分叉。
   clock.mockReturnValue(now + 3500);
   const fork = await fixture.store.deriveWorld({
     operationId: "fork-old-endpoint",
@@ -133,7 +118,7 @@ test("连续性修正、时间线修订、旧端点分叉和世界修订应用�
   const revision = await revisePlayerTimeline(fixture.store, {
     operationId: "edit-player",
     worldId: fixture.worldId,
-    expectedCurrentHead: correction.head,
+    expectedCurrentHead: second.head,
     restoresHead: "genesis",
     replacesHead: first.head,
     replacementText: "我留在码头。",
