@@ -1,6 +1,7 @@
 import { mayChangeUserState } from "../protocol/requestEffect.ts";
 import { observeConversation } from "./ConversationObserver.ts";
-import { v1Protocol, type V1Request } from "../protocol/v1.ts";
+import type { V1Request } from "../protocol/v1.ts";
+import { v1Protocol } from "../protocol/v1Version.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { runtimeConnectionErrorText } from "./RuntimeErrorText.ts";
 import {

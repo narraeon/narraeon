@@ -4,7 +4,7 @@ import {
   type ConversationTarget,
   type ConversationUpdate,
 } from "../protocol/conversationObservation.ts";
-import { v1Protocol } from "../protocol/v1.ts";
+import { v1Protocol } from "../protocol/v1Version.ts";
 import { uiText } from "./i18n.ts";
 import { runtimeErrorText } from "./RuntimeErrorText.ts";
 
