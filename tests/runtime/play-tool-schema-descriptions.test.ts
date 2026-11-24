@@ -141,6 +141,42 @@ test.each(
     expect(fetch_).toHaveBeenCalledTimes(1);
     const sent = wireTools(fetch_.mock.calls[0]![1]!.body as string, provider);
     expect(sent).toEqual(bootstrap.toolUniverse);
+    const patch = sent.find(({ name }) => name === "world_patch")!;
+    const historySearch = sent.find(({ name }) => name === "history_search")!;
+    const contextSearch = sent.find(({ name }) => name === "context_search")!;
+    const read = sent.find(({ name }) => name === "context_read")!;
+    const zh = locale === "zh-CN";
+    expect(patch.description).toContain(
+      zh ? "按顺序逐条独立结算" : "Runtime settles edits in order",
+    );
+    expect(historySearch.description).toContain(
+      zh
+        ? "零命中不证明事件未发生"
+        : "Zero matches do not prove an event never happened",
+    );
+    expect(contextSearch.description).toContain(
+      zh
+        ? "零命中不证明事实不存在"
+        : "Zero matches do not prove that a fact is absent",
+    );
+    expect(read.inputSchema.properties?.ref?.description).toContain(
+      zh
+        ? "已有材料只在需要补齐正文"
+        : "Re-read available material only for missing content",
+    );
+    const wirePrompt = JSON.parse(fetch_.mock.calls[0]![1]!.body as string) as {
+      tools?: WireTool[];
+    };
+    delete wirePrompt.tools;
+    const promptText = JSON.stringify(wirePrompt);
+    expect(promptText).not.toMatch(
+      /零命中|搜索未命中不代表|zero (?:literal-search )?matches|逐条独立结算|settles edits independently/iu,
+    );
+    expect(promptText).toContain(
+      zh
+        ? "只在缺少必要证据或写入授权时读取"
+        : "reading only for missing evidence or required write authorization",
+    );
 
     const tools = toolNames.map((name) =>
       sent.find((tool) => tool.name === name)!,

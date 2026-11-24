@@ -22,13 +22,13 @@ const currentHistoryUseGuidance: Record<AppLocale, string> = {
   "zh-CN": `## 历史读取
 - **按需查阅**：现有上下文够用时不查；只在缺失细节会影响人物反应、承诺、因果或玩家选择时检索，查清即停。
 - **查阅方式**：缺近期内容直接用 \`history_read({latest: 4})\`；记不清原词用 \`history_search\` 传 1–3 个候选关键词（\`any\`/\`all\`，\`all\` 要求同条命中），再按需读前后文，无需机械执行 \`list -> search -> read\`。
-- **结果边界**：搜索未命中不代表事情没发生，可换词、放宽为 \`any\` 或读邻近段落。历史附带的背景只记录当时采集的状态，不代表当前世界状态，也不代表对话里提到“明天”“昨晚”时的实际故事时间；搜索只匹配原文。
+- **结果边界**：需要继续确认时，可换词、放宽为 \`any\` 或读邻近段落。历史附带的背景只记录当时采集的状态，不代表当前世界状态，也不代表对话里提到“明天”“昨晚”时的实际故事时间；搜索只匹配原文。
 - **区分证据**：玩家原文可能是尝试或主张，结果看后续叙事；主持人原文可能包含角色谎言、猜测或梦境，\`role=narrator\` 不等于事实成立。当前明确修订优先于旧叙事；主持人查到的历史不等于角色知道。
 - 注入的历史是已提交的过去内容，不是本轮新输入，不要重复最后一条历史玩家行动。`,
   en: `## History reading
 - **Read on demand**: Skip searches when current context is enough; query only when missing details affect character behavior, promises, causality, or player choices, and stop once verified.
 - **How to look up**: For recent gaps, call \`history_read({latest: 4})\` directly; when exact wording is unclear, try 1–3 candidate keywords with \`history_search\` (\`any\`/\`all\`, where \`all\` matches within one message) and read nearby context. No fixed \`list -> search -> read\` ritual is needed.
-- **Limits**: Zero matches do not prove something never happened—try different terms, relax to \`any\`, or read adjacent turns. Saved historical background captures state at commit time only, not current state or relative times spoken inside dialogue; search matches original text only.
+- **Limits**: To check further, try different terms, relax to \`any\`, or read adjacent turns. Saved historical background captures state at commit time only, not current state or relative times spoken inside dialogue; search matches original text only.
 - **Weighing evidence**: Player text may be an attempt or claim (check later prose); narrator text may include lies, guesses, or dreams (\`role=narrator\` is not proof). Current explicit revisions override older narrative, and what the GM looks up does not automatically become character knowledge.
 - Injected history is committed past narrative, not a new request; never repeat the last historical player action.`,
 };

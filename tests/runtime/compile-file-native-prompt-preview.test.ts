@@ -1389,7 +1389,7 @@ context:
         /neither certifies facts nor grants character knowledge/gu,
       ),
     ).toHaveLength(1);
-    expect(contextRead?.inputSchema).toEqual({
+    expect(contextRead?.inputSchema).toMatchObject({
       type: "object",
       additionalProperties: false,
       required: ["ref"],
@@ -2210,10 +2210,10 @@ context:
       /^- (current_situation|document|node): .*continue with context_read$/mu,
     );
     expect(worldContext).toContain(
-      "`context_read` returns that same body and additionally exposes the current title, summary, and aliases",
+      "`full body injected` covers the entire supplied body and authorizes writing it.",
     );
     expect(worldContext).toContain(
-      "`world_patch` preserves metadata fields omitted from `set_metadata`",
+      "`node injected` covers only the named node and authorizes writing that scope.",
     );
     // Injected text is already writable; headings expose the codec needed for locators.
     expect(worldContext).toContain(
@@ -2759,7 +2759,7 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
   );
 
   test.each(["zh-CN", "en"] as const)(
-    "%s world_patch, world_create and play.mechanics preserve batch scope, refHint semantics and valid top-level add_section shape",
+    "%s tool definitions own batch settlement and preserve refHint and add_section",
     (locale) => {
       const [patch, create] = fileNativeToolsForNames(
         ["world_patch", "world_create"],
@@ -2821,10 +2821,11 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
           "properties.refHint.description",
           expect.stringMatching(/建议短引用.*ASCII.*回执中的 @短引用/u),
         );
-        expect(runtimeText).toContain(
+        expect(runtimeText).not.toContain(
           "单次 world_patch 先校验目标、edits 数组、写入授权与 $ref 形态",
         );
-        expect(runtimeText).toContain("单条 edit 格式或执行失败会被跳过");
+        expect(runtimeText).not.toContain("单条 edit 格式或执行失败会被跳过");
+        expect(runtimeText).toContain("以真实回执的结算状态为准");
       } else {
         expect(patch?.description).toContain(
           "Before the first edit, Runtime checks the target, edits array, write authorization for the whole batch, and the shape of every $ref object",
@@ -2841,12 +2842,13 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
             /Suggested short reference.*ASCII.*returned @short-ref/u,
           ),
         );
-        expect(runtimeText).toContain(
+        expect(runtimeText).not.toContain(
           "A single world_patch first checks target, the edits array, write authorization, and $ref handle syntax",
         );
-        expect(runtimeText).toContain(
+        expect(runtimeText).not.toContain(
           "an invalid or failed individual edit is skipped while others apply",
         );
+        expect(runtimeText).toContain("Actual receipts determine settlement");
       }
     },
   );

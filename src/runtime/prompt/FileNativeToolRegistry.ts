@@ -399,7 +399,16 @@ function createToolDefinitions(
     },
     context_read: {
       description: descriptions.context_read,
-      inputSchema: object({ ref: string }, ["ref"]),
+      inputSchema: object(
+        {
+          ref: describe(
+            string,
+            "Use a Runtime-returned @document or @node handle. Re-read available material only for missing content, required write authorization, or unseen metadata (a full-document read includes the current title, summary, and aliases).",
+            "使用 Runtime 返回的 @文档或 @节点句柄。已有材料只在需要补齐正文、取得写入资格或查看未显示的元数据时才重读（整份文档的读取结果包含当前 title、summary 和 aliases）。",
+          ),
+        },
+        ["ref"],
+      ),
     },
     world_patch: {
       description: descriptions.world_patch,

@@ -225,14 +225,10 @@ describe("旧格式默认提示词职责", () => {
       {
         locale: "zh-CN" as const,
         playerInput: "夜深了，我回到宿舍。",
-        coverage: [
-          "已注入完整正文",
-          "会返回同一正文，并额外显示当前 title、summary 和 aliases",
-          "未提供的元数据字段",
-          "不要只为照抄未改变的元数据而读取",
-        ],
+        coverage: "已注入完整正文",
         patch: ["只传有变化的元数据字段", "至少传一项", "省略的字段原样保留"],
-        read: ["YAML 正文不含 $document 头"],
+        read: "YAML 正文不含 $document 头",
+        readRef: "整份文档的读取结果包含当前 title、summary 和 aliases",
         absent: [
           "已注入全文",
           "context_read 只会原样返回你已经看到的字节",
@@ -242,18 +238,15 @@ describe("旧格式默认提示词职责", () => {
       {
         locale: "en" as const,
         playerInput: "Night falls, and I return to the dorm.",
-        coverage: [
-          "full body injected",
-          "returns that same body and additionally exposes the current title, summary, and aliases",
-          "preserves metadata fields omitted from",
-          "do not read merely to copy unchanged metadata",
-        ],
+        coverage: "full body injected",
         patch: [
           "only changed metadata fields",
           "at least one of title, summary, or aliases",
           "Omitted fields are preserved",
         ],
-        read: ["YAML bodies omit $document"],
+        read: "YAML bodies omit $document",
+        readRef:
+          "a full-document read includes the current title, summary, and aliases",
         absent: [
           "full text injected",
           "context_read would return the same bytes",
@@ -290,22 +283,27 @@ describe("旧格式默认提示词职责", () => {
       );
       const read = compilation.tools.find(
         ({ name }) => name === "context_read",
-      )?.description;
+      );
       const completeContract = [
         runtimePrompt,
         worldPrompt,
         JSON.stringify(patch),
-        read,
+        JSON.stringify(read),
       ].join("\n");
 
-      for (const phrase of scenario.coverage)
-        expect(worldPrompt).toContain(phrase);
+      expect(worldPrompt).toContain(scenario.coverage);
+      expect(runtimePrompt).not.toContain(scenario.readRef);
+      expect(worldPrompt).not.toContain(scenario.readRef);
       for (const phrase of scenario.patch)
         expect(patch?.inputSchema).toHaveProperty(
           "properties.edits.items.oneOf.6.properties.op.description",
           expect.stringContaining(phrase),
         );
-      for (const phrase of scenario.read) expect(read).toContain(phrase);
+      expect(read?.description).toContain(scenario.read);
+      expect(read?.inputSchema).toHaveProperty(
+        "properties.ref.description",
+        expect.stringContaining(scenario.readRef),
+      );
       for (const phrase of scenario.absent)
         expect(completeContract).not.toContain(phrase);
     }
