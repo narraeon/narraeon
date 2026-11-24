@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 
 const history = [
@@ -13,6 +13,39 @@ const history = [
 const documents = new FileNativePlayDocuments({});
 const call = (name: string, args: unknown) =>
   documents.execute({ id: name, name, arguments: args }, history);
+
+test("没有 Intl.Segmenter 时仍能从历史及世界状态返回中文原文", () => {
+  const unavailable = vi
+    .spyOn(Intl, "Segmenter")
+    .mockImplementation(function () {
+      throw new Error("Intl.Segmenter unavailable");
+    });
+  try {
+    const world = new FileNativePlayDocuments({
+      "state/bridge.yaml":
+        "$document:\n  id: place.bridge\n  ref: bridge\n  title: 石桥\n  summary: 河边的石桥。\n  aliases: []\n线索: 青铜钥匙在桥上。\n",
+    });
+    const found = call("history_search", { queries: ["那封信"], limit: 1 });
+    expect(found).toMatchObject({ ok: true });
+    expect(found.markdown).toContain(history[3]!.contents);
+    const cursor = /nextCursor: (\S+)/u.exec(found.markdown)![1];
+    expect(call("history_search", { cursor }).markdown).toContain(
+      history[2]!.contents,
+    );
+    expect(
+      world.execute(
+        {
+          id: "state-search",
+          name: "context_search",
+          arguments: { source: "state", query: "青铜钥匙" },
+        },
+        history,
+      ).markdown,
+    ).toContain("线索: 青铜钥匙在桥上。");
+  } finally {
+    unavailable.mockRestore();
+  }
+});
 
 test("生产历史搜索命中可直接读取完整前后文及相邻导航", () => {
   const found = call("history_search", { queries: ["那封信"], limit: 1 });

@@ -62,6 +62,7 @@
     "env-paths": "^4.0.0",
     "fastify": "^5.11.3",
     "open": "^11.0.1",
+    "unicode-segmenter": "^0.17.3",
     "yaml": "^2.8.1",
     "yauzl": "^3.4.0",
     "yazl": "^3.3.1"

@@ -17,6 +17,7 @@ import {
   type Pair,
   type YAMLMap,
 } from "yaml";
+import { mapLiteralSource, normalizeLiteral } from "../LiteralSearch.ts";
 import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
 
 /**
@@ -1788,7 +1789,7 @@ export class WorldDocumentStore {
         ]);
     }
 
-    const query = normalizeSearchQuery(request.query, caseSensitive);
+    const query = normalizeLiteral(request.query, caseSensitive);
     if (query.length === 0)
       return this.#failure("literal_search", request, [
         diagnostic({
@@ -3285,38 +3286,24 @@ function trimTrailingWhitespaceOffset(
   return end;
 }
 
-function normalizeSearchQuery(value: string, caseSensitive: boolean): string {
-  const normalized = value.normalize("NFKC");
-  return caseSensitive ? normalized : normalized.toLocaleLowerCase("und");
-}
-
 function literalMatches(
   source: string,
   normalizedQuery: string,
   caseSensitive: boolean,
 ): { start: number; end: number }[] {
-  const segmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
-  let normalized = "";
-  const starts: number[] = [];
-  const ends: number[] = [];
-  for (const segment of segmenter.segment(source)) {
-    const folded = normalizeSearchQuery(segment.segment, caseSensitive);
-    normalized += folded;
-    let remainingCodeUnits = folded.length;
-    while (remainingCodeUnits > 0) {
-      starts.push(segment.index);
-      ends.push(segment.index + segment.segment.length);
-      remainingCodeUnits -= 1;
-    }
-  }
+  const { normalized, ranges } = mapLiteralSource(
+    source,
+    caseSensitive,
+    "codeUnits",
+  );
   const result: { start: number; end: number }[] = [];
   const seen = new Set<string>();
   let from = 0;
   while (from <= normalized.length - normalizedQuery.length) {
     const found = normalized.indexOf(normalizedQuery, from);
     if (found < 0) break;
-    const start = starts[found];
-    const end = ends[found + normalizedQuery.length - 1];
+    const start = ranges[found]?.start;
+    const end = ranges[found + normalizedQuery.length - 1]?.end;
     if (start !== undefined && end !== undefined) {
       const key = `${start}:${end}`;
       if (!seen.has(key)) {
