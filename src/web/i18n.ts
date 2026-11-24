@@ -77,7 +77,7 @@ const englishMessages: Record<string, string> = {
   主角模板读取失败: "Could not load protagonist templates",
   重新读取主角模板: "Reload protagonist templates",
   "放弃未保存的主角模板修改？": "Discard unsaved protagonist template changes?",
-  "删除这个主角模板？": "Delete this protagonist template?",
+  "删除主角模板“{name}”？": "Delete protagonist template “{name}”?",
   应用并开始游玩: "Apply and start playing",
   "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}":
     "Please modify this world’s protagonist using the template below.\n\n- Find the protagonist document representing the player in this world, and update the name, appearance, background, personality, and other relevant content according to the template.\n- Where the template conflicts with this world’s setting, preserve its intent while adapting it to the world’s rules.\n- Modify only protagonist-related content. Do not modify other characters, locations, rules, or world control.\n- If there is no clear protagonist document, explain this in your reply and ask me first. Do not create one on your own.\n\nProtagonist template:\n\n{body}",
@@ -2342,8 +2342,8 @@ const worldRevisionEnglishMessages: Record<string, string> = {
     "The world revision was applied and unlocked, but refreshing the world failed. Please reopen the world: {message}",
   "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：{message}":
     "This world revision was discarded. The original world is unchanged and unlocked, but refreshing failed. Please reopen the world: {message}",
-  "放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。":
-    "Discard this world revision? Every unapplied manual and model change will be lost.",
+  "放弃“{name}”的这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。":
+    "Discard this revision of “{name}”? Every unapplied manual and model change will be lost.",
   "这次世界修订已放弃，原世界保持不变并已解锁。":
     "This world revision was discarded. The original world is unchanged and unlocked.",
   "世界正在修订，游玩和其他世界修改已锁定；应用或放弃后会解锁。":

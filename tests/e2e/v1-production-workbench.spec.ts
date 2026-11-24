@@ -690,11 +690,16 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByLabel("继续这段对话")).toBeVisible();
 
   await page.getByRole("button", { name: "历史" }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", {
       name: "删除对话：Repair the damaged character document.",
     })
+    .click();
+  await page
+    .getByRole("dialog", {
+      name: /删除对话“Repair the damaged character document/,
+    })
+    .getByRole("button", { name: "删除", exact: true })
     .click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
     "内容包当前树没有回滚",
@@ -1359,9 +1364,12 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
   await expectCanScrollVertically(revisionEditor);
   await editorRail.getByRole("button", { name: "放弃未保存修改" }).click();
   await editorRail.getByRole("button", { name: "收起文件面板" }).click();
-  page.once("dialog", (dialog) => void dialog.accept());
   await page
     .getByRole("navigation", { name: "世界修订工具" })
+    .getByRole("button", { name: "放弃", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: /尚未应用的手动和 AI 修改都会丢失/ })
     .getByRole("button", { name: "放弃", exact: true })
     .click();
   await expect(page.getByLabel("你的行动")).toBeVisible();

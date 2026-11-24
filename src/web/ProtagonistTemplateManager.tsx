@@ -10,6 +10,22 @@ import { useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
+
+type TemplateAction =
+  | { type: "close" }
+  | { type: "select"; templateId: string | null }
+  | { type: "copy" | "delete"; template: ProtagonistTemplate };
+
+interface TemplateConfirmation {
+  next: TemplateAction;
+  templateId: string | undefined;
+  name: string;
+  body: string;
+}
 
 export function ProtagonistTemplateManager({
   client,
@@ -30,6 +46,9 @@ export function ProtagonistTemplateManager({
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [failure, setFailure] = useState("");
+  const [confirmation, setConfirmation] =
+    useState<ConfirmationRequest<TemplateConfirmation> | null>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const applyTemplates = useRef(onChange);
   useEffect(() => {
     applyTemplates.current = onChange;
@@ -57,15 +76,70 @@ export function ProtagonistTemplateManager({
     onNavigationLockChange?.(dirty || pending);
     return () => onNavigationLockChange?.(false);
   }, [dirty, pending, onNavigationLockChange]);
-  function mayLeave(): boolean {
-    return (
-      !pendingRef.current &&
-      (!dirty || globalThis.confirm(uiText("放弃未保存的主角模板修改？")))
-    );
+  function perform(action: TemplateAction): void {
+    if (pendingRef.current) return;
+    if (action.type === "close") {
+      onClose();
+    } else if (action.type === "select") {
+      const template = templates.find(({ id }) => id === action.templateId);
+      if (action.templateId === null || template !== undefined)
+        select(template ?? null);
+    } else {
+      const template = templates.find(({ id }) => id === action.template.id);
+      if (template === undefined) return;
+      if (
+        action.type === "delete" &&
+        (template.name !== action.template.name ||
+          template.body !== action.template.body ||
+          template.updatedAt !== action.template.updatedAt)
+      )
+        return;
+      void mutate({
+        type:
+          action.type === "delete"
+            ? "protagonist-templates.delete"
+            : "protagonist-templates.copy",
+        id: template.id,
+      });
+    }
+  }
+
+  function requestAction(
+    next: TemplateAction,
+    opener: HTMLElement | null,
+  ): void {
+    if (pendingRef.current || confirmation !== null) return;
+    const deleting = next.type === "delete";
+    if (!dirty && !deleting) {
+      perform(next);
+      return;
+    }
+    setConfirmation({
+      action: { next, templateId: baseline?.id, name, body },
+      opener,
+      fallback: closeButton.current,
+      message: deleting
+        ? uiText("删除主角模板“{name}”？", { name: next.template.name })
+        : uiText("放弃未保存的主角模板修改？"),
+      confirmLabel: uiText(deleting ? "删除" : "放弃"),
+    });
+  }
+
+  function decideAction(confirmed: boolean): void {
+    setConfirmation(null);
+    if (!confirmed || confirmation === null) return;
+    const {
+      next,
+      templateId,
+      name: shownName,
+      body: shownBody,
+    } = confirmation.action;
+    if (templateId === baseline?.id && shownName === name && shownBody === body)
+      perform(next);
   }
   // Back closes like the Close button, which stays inert while a save is pending.
   useAndroidBack(true, () => {
-    if (!pending && mayLeave()) onClose();
+    requestAction({ type: "close" }, closeButton.current);
   });
   function select(template: ProtagonistTemplate | null): void {
     setBaseline(template);
@@ -111,11 +185,12 @@ export function ProtagonistTemplateManager({
         <header>
           <h2 id="protagonist-templates-title">{uiText("管理主角模板")}</h2>
           <button
+            ref={closeButton}
             type="button"
             disabled={pending}
-            onClick={() => {
-              if (mayLeave()) onClose();
-            }}
+            onClick={(event) =>
+              requestAction({ type: "close" }, event.currentTarget)
+            }
           >
             {uiText("关闭")}
           </button>
@@ -125,9 +200,12 @@ export function ProtagonistTemplateManager({
             <button
               type="button"
               disabled={pending}
-              onClick={() => {
-                if (mayLeave()) select(null);
-              }}
+              onClick={(event) =>
+                requestAction(
+                  { type: "select", templateId: null },
+                  event.currentTarget,
+                )
+              }
             >
               {uiText("新建主角模板")}
             </button>
@@ -137,9 +215,12 @@ export function ProtagonistTemplateManager({
                 key={template.id}
                 disabled={pending}
                 aria-pressed={baseline?.id === template.id}
-                onClick={() => {
-                  if (mayLeave()) select(template);
-                }}
+                onClick={(event) =>
+                  requestAction(
+                    { type: "select", templateId: template.id },
+                    event.currentTarget,
+                  )
+                }
               >
                 {template.name}
               </button>
@@ -197,12 +278,12 @@ export function ProtagonistTemplateManager({
               <button
                 type="button"
                 disabled={pending || baseline === null}
-                onClick={() => {
-                  if (baseline !== null && mayLeave())
-                    void mutate({
-                      type: "protagonist-templates.copy",
-                      id: baseline.id,
-                    });
+                onClick={(event) => {
+                  if (baseline !== null)
+                    requestAction(
+                      { type: "copy", template: baseline },
+                      event.currentTarget,
+                    );
                 }}
               >
                 {uiText("复制")}
@@ -211,16 +292,12 @@ export function ProtagonistTemplateManager({
                 type="button"
                 className="danger-button"
                 disabled={pending || baseline === null}
-                onClick={() => {
-                  if (
-                    baseline !== null &&
-                    !pendingRef.current &&
-                    globalThis.confirm(uiText("删除这个主角模板？"))
-                  )
-                    void mutate({
-                      type: "protagonist-templates.delete",
-                      id: baseline.id,
-                    });
+                onClick={(event) => {
+                  if (baseline !== null)
+                    requestAction(
+                      { type: "delete", template: baseline },
+                      event.currentTarget,
+                    );
                 }}
               >
                 {uiText("删除")}
@@ -229,6 +306,9 @@ export function ProtagonistTemplateManager({
           </form>
         </div>
       </section>
+      {confirmation !== null && (
+        <ConfirmationDialog request={confirmation} onDecision={decideAction} />
+      )}
     </div>
   );
 }

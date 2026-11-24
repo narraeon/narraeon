@@ -1475,14 +1475,10 @@ export function WorldPage({
     }
   }
 
-  async function discardRevision(): Promise<void> {
-    if (
-      !globalThis.confirm(
-        uiText("放弃这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。"),
-      )
-    )
-      return;
-    const result = await revisionWorkspace.finish("discard");
+  async function discardRevision(
+    epoch: Pick<V1WorldRevisionEpochView, "epochId" | "revision">,
+  ): Promise<void> {
+    const result = await revisionWorkspace.finish("discard", epoch);
     if (result === null) return;
     worldTarget.accept({ complete: false });
     revisionWorkspace.close();
@@ -1935,7 +1931,10 @@ export function WorldPage({
         (revisionOverview?.sealedEpochs.length ?? 0) > 0
           ? {
               revisionActions: {
-                active: epoch?.locked === true,
+                discardTarget:
+                  epoch?.locked === true
+                    ? { epochId: epoch.epochId, revision: epoch.revision }
+                    : null,
                 ...(protagonistRevision === undefined
                   ? {}
                   : { applyLabel: uiText("应用并开始游玩") }),

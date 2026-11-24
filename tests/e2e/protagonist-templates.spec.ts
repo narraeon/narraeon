@@ -196,8 +196,11 @@ test("manage templates and apply the automatically opened protagonist revision b
   await expect(
     manager.getByRole("button", { name: "临时副本", exact: true }),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await manager.getByRole("button", { name: "删除", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "删除主角模板“临时副本”？" })
+    .getByRole("button", { name: "删除", exact: true })
+    .click();
   await expect(
     manager.getByRole("button", { name: "临时副本", exact: true }),
   ).toHaveCount(0);
@@ -354,8 +357,11 @@ test("English template revision can be discarded and choosing None retains mecha
     type: "world.read",
     worldId,
   });
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Discard", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: /Every unapplied manual and model change/ })
+    .getByRole("button", { name: "Discard", exact: true })
+    .click();
   await expect(page.getByLabel("Your action", { exact: true })).toBeVisible();
   const after = await runtime<{ head: string; worldRevision: unknown }>(page, {
     type: "world.read",
