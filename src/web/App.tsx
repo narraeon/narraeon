@@ -45,7 +45,10 @@ import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
-import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
+import {
+  authoringConversationActions,
+  useAuthoringWorkspace,
+} from "./useAuthoringWorkspace.ts";
 import { WorldPage } from "./WorldPage.tsx";
 import {
   parseWorkspaceHash,
@@ -115,8 +118,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [samplePending, setSamplePending] = useState(false);
   const samplePendingRef = useRef(false);
   const [archivePending, setArchivePending] = useState(false);
-  const { workspace: authoringWorkspace, state: authoring } =
-    useAuthoringWorkspace(client, "setting", selected, screen === "content");
+  const {
+    workspace: authoringWorkspace,
+    state: authoring,
+    conversation,
+  } = useAuthoringWorkspace(client, "setting", selected, screen === "content");
   const filesDirty = authoring.dirty;
   const files = authoring.files;
   const packageDetail = authoring.target?.packageDetail ?? null;
@@ -808,7 +814,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageDetail?.localId === selected ? packageDetail : null;
   const selectedGameplay =
     selectedPackageDetail?.gameplay ?? selectedPackage?.gameplay;
-  const displayedImprovementView = authoring.view;
   const selectedWorld = workspace.worlds.find(
     (world) => world.worldId === worldId,
   );
@@ -894,13 +899,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       <SettingImprovementPanel
         showWorkspaceBack={false}
         key={selected}
-        onPreview={() => authoringWorkspace.preview()}
-        onCallContext={(sessionId, callId) =>
-          authoringWorkspace.callContext(sessionId, callId)
-        }
-        onRequestPreview={(sessionId, requestId) =>
-          authoringWorkspace.requestPreview(sessionId, requestId)
-        }
         packageName={
           selectedPackage?.title ?? selectedPackageDetail?.title ?? selected
         }
@@ -918,19 +916,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
         onNavigationLockChange={setChildNavigationLocked}
-        view={displayedImprovementView}
-        history={authoring.target?.history ?? []}
-        latestSessionId={
-          authoring.target?.latest?.sessionId ??
-          authoring.target?.history[0]?.sessionId ??
-          null
-        }
+        conversation={conversation}
+        conversationActions={authoringConversationActions(
+          authoringWorkspace,
+          () => setNotice(""),
+        )}
         notice={notice || authoring.notice}
-        requestFailure={authoring.requestFailure}
-        syncFailed={authoring.syncFailed}
-        syncError={authoring.syncError}
-        onRead={() => void authoringWorkspace.reread()}
-        now={authoring.now}
         contentEditor={{
           scriptPermission: (
             <PackageScriptPermissionControl
@@ -968,33 +959,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           title:
             selectedPackage?.title ?? selectedPackageDetail?.title ?? selected,
           onRename: (name) => void renamePackage(name),
-        }}
-        onSend={(message, requestId) => {
-          setNotice("");
-          return authoringWorkspace.send(message, requestId);
-        }}
-        onEditMessage={(messageId, message, filePolicy, requestId) =>
-          authoringWorkspace.editMessage(
-            messageId,
-            message,
-            filePolicy,
-            requestId,
-          )
-        }
-        onCancel={() => authoringWorkspace.cancel()}
-        onResume={(recovery) => {
-          setNotice("");
-          return authoringWorkspace.resume(recovery);
-        }}
-        onFreshContext={() => authoringWorkspace.startFresh()}
-        onSelectSession={(id) => authoringWorkspace.selectSession(id)}
-        onDeleteSession={(id) => {
-          setNotice("");
-          return authoringWorkspace.deleteSession(id);
-        }}
-        onRollbackFile={(id, change, path) => {
-          setNotice("");
-          return authoringWorkspace.rollbackFile(id, change, path);
         }}
         onConfigureModel={() => navigate("model")}
         onBack={() => navigate("home")}
@@ -1069,73 +1033,81 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           )}
         {screen === "home" && (
           <HomeScreen
-            sillyTavernContentImport={
-              <SillyTavernContentImport
-                client={client}
-                onFailure={() => workspaceTarget.recover()}
-                onImported={(receipt) => {
-                  acceptPackage(receipt);
-                  switchLocation({
-                    screen: "content",
-                    packageId: receipt.localId,
-                  });
-                }}
-              />
-            }
-            contentPackages={workspace.contentPackages}
-            worlds={workspace.worlds}
-            selectedPackageId={selected}
-            modelConfigured={workspace.model.configured}
-            activeModelName={activeModel?.name ?? null}
+            worldLibrary={{
+              worlds: workspace.worlds,
+              renderWorldBackupExport: (world) => (
+                <WorldBackupExportButton
+                  client={client}
+                  worldId={world.worldId}
+                  label="导出备份"
+                  disabled={importPending || archivePending || samplePending}
+                  onBusyChange={setArchivePending}
+                  onFailure={() => workspaceTarget.recover()}
+                />
+              ),
+              onCreateWorld: () => navigate("create"),
+              onOpenWorld: openWorld,
+              onRenameWorld: async (world, name) => {
+                try {
+                  await renameWorld(world.worldId, name);
+                  return true;
+                } catch (error) {
+                  report(error);
+                  return false;
+                }
+              },
+              onDeleteWorld: (world) => void deleteWorld(world),
+            }}
+            contentLibrary={{
+              contentPackages: workspace.contentPackages,
+              selectedPackageId: selected,
+              samplePending,
+              onCreatePackage: () => setPackageDialogOpen(true),
+              onCreateSamplePackage: () => void createSamplePackage(),
+              onOpenPackage: (packageId) => void openPackage(packageId),
+              onRenamePackage: (item, name) =>
+                renamePackage(name, item.localId),
+              onDeletePackage: (item) =>
+                void contentCommand("content.delete", item.localId),
+            }}
+            imports={{
+              worldBackupImport: (
+                <WorldBackupImportButton
+                  client={client}
+                  disabled={importPending || samplePending || archivePending}
+                  onBusyChange={setArchivePending}
+                  onImported={acceptWorld}
+                  onFailure={() => workspaceTarget.recover()}
+                />
+              ),
+              sillyTavernContentImport: (
+                <SillyTavernContentImport
+                  client={client}
+                  onFailure={() => workspaceTarget.recover()}
+                  onImported={(receipt) => {
+                    acceptPackage(receipt);
+                    switchLocation({
+                      screen: "content",
+                      packageId: receipt.localId,
+                    });
+                  }}
+                />
+              ),
+              importArchive,
+              importPending: importPending || archivePending,
+              onImportArchiveChange: (archive) => {
+                setImportArchive(archive);
+                setNotice("");
+              },
+              onImportPackage: () => void importPackage(),
+            }}
+            model={{
+              modelConfigured: workspace.model.configured,
+              activeModelName: activeModel?.name ?? null,
+              onConfigureModel: () => navigate("model"),
+            }}
             currentPresetName={currentPresetName}
-            importArchive={importArchive}
-            importPending={importPending || archivePending}
-            worldBackupImport={
-              <WorldBackupImportButton
-                client={client}
-                disabled={importPending || samplePending || archivePending}
-                onBusyChange={setArchivePending}
-                onImported={acceptWorld}
-                onFailure={() => workspaceTarget.recover()}
-              />
-            }
-            renderWorldBackupExport={(world) => (
-              <WorldBackupExportButton
-                client={client}
-                worldId={world.worldId}
-                label="导出备份"
-                disabled={importPending || archivePending || samplePending}
-                onBusyChange={setArchivePending}
-                onFailure={() => workspaceTarget.recover()}
-              />
-            )}
-            samplePending={samplePending}
-            onImportArchiveChange={(archive) => {
-              setImportArchive(archive);
-              setNotice("");
-            }}
             onOpenPlayPresets={() => navigate("plays")}
-            onCreateWorld={() => navigate("create")}
-            onCreatePackage={() => setPackageDialogOpen(true)}
-            onCreateSamplePackage={() => void createSamplePackage()}
-            onConfigureModel={() => navigate("model")}
-            onImportPackage={() => void importPackage()}
-            onOpenPackage={(packageId) => void openPackage(packageId)}
-            onRenamePackage={(item, name) => renamePackage(name, item.localId)}
-            onDeletePackage={(item) =>
-              void contentCommand("content.delete", item.localId)
-            }
-            onOpenWorld={openWorld}
-            onRenameWorld={async (world, name) => {
-              try {
-                await renameWorld(world.worldId, name);
-                return true;
-              } catch (error) {
-                report(error);
-                return false;
-              }
-            }}
-            onDeleteWorld={(world) => void deleteWorld(world)}
           />
         )}
         {screen === "plays" && (

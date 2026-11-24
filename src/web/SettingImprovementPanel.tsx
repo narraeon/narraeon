@@ -80,44 +80,48 @@ interface SettingImprovementPanelProps {
   modelConfigured: boolean;
   hasUnsavedFileDraft: boolean;
   loading: boolean;
-  view: SettingImprovementView | null;
-  history: V1SettingImprovementHistoryItem[];
-  latestSessionId: string | null;
+  conversation: {
+    view: SettingImprovementView | null;
+    history: V1SettingImprovementHistoryItem[];
+    latestSessionId: string | null;
+    requestFailure: string | null;
+    syncFailed?: boolean;
+    syncError?: unknown;
+    now: number;
+  };
   notice: string;
-  requestFailure: string | null;
-  syncFailed?: boolean;
-  syncError?: unknown;
-  onRead?: () => void;
-  now: number;
   contentEditor: ContentTreeEditorProps;
-  onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
-  onCallContext?: (
-    sessionId: string,
-    callId: string,
-  ) => Promise<PlayRequestContext>;
-  onRequestPreview?: (
-    sessionId: string,
-    requestId: string,
-  ) => Promise<V1AuthoringRequestPreview | null>;
-  onSend: (message: string, requestId: string) => Promise<void>;
-  onEditMessage?: (
-    messageId: string,
-    message: string,
-    filePolicy: "keep" | "revert",
-    requestId: string,
-  ) => Promise<void>;
+  conversationActions: {
+    onRead?: () => void;
+    onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
+    onCallContext?: (
+      sessionId: string,
+      callId: string,
+    ) => Promise<PlayRequestContext>;
+    onRequestPreview?: (
+      sessionId: string,
+      requestId: string,
+    ) => Promise<V1AuthoringRequestPreview | null>;
+    onSend: (message: string, requestId: string) => Promise<void>;
+    onEditMessage?: (
+      messageId: string,
+      message: string,
+      filePolicy: "keep" | "revert",
+      requestId: string,
+    ) => Promise<void>;
+    onCancel: () => Promise<void>;
+    onResume: (recovery?: "continue_partial") => Promise<void>;
+    onFreshContext: () => void;
+    onSelectSession: (sessionId: string) => Promise<void>;
+    onDeleteSession: (sessionId: string) => Promise<void>;
+    onRollbackFile: (
+      sessionId: string,
+      changeSetId: string,
+      path: string,
+    ) => Promise<V1SettingImprovementRollbackResult>;
+  };
   initialMessage?: string;
   onInitialMessageStarted?: () => void;
-  onCancel: () => Promise<void>;
-  onResume: (recovery?: "continue_partial") => Promise<void>;
-  onFreshContext: () => void;
-  onSelectSession: (sessionId: string) => Promise<void>;
-  onDeleteSession: (sessionId: string) => Promise<void>;
-  onRollbackFile: (
-    sessionId: string,
-    changeSetId: string,
-    path: string,
-  ) => Promise<V1SettingImprovementRollbackResult>;
   onConfigureModel: () => void;
   onBack: () => void;
   showWorkspaceBack?: boolean;
@@ -150,29 +154,33 @@ export function SettingImprovementPanel({
   modelConfigured,
   hasUnsavedFileDraft,
   loading,
-  view,
-  history,
-  latestSessionId,
+  conversation: {
+    view,
+    history,
+    latestSessionId,
+    requestFailure,
+    syncFailed = false,
+    syncError,
+    now,
+  },
   notice,
-  requestFailure,
-  syncFailed = false,
-  syncError,
-  onRead,
-  now,
   contentEditor,
-  onSend,
-  onEditMessage,
+  conversationActions: {
+    onRead,
+    onSend,
+    onEditMessage,
+    onPreview,
+    onCallContext,
+    onRequestPreview,
+    onCancel,
+    onResume,
+    onFreshContext,
+    onSelectSession,
+    onDeleteSession,
+    onRollbackFile,
+  },
   initialMessage,
   onInitialMessageStarted,
-  onPreview,
-  onCallContext,
-  onRequestPreview,
-  onCancel,
-  onResume,
-  onFreshContext,
-  onSelectSession,
-  onDeleteSession,
-  onRollbackFile,
   onConfigureModel,
   onBack,
   showWorkspaceBack = true,

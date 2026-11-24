@@ -1,5 +1,22 @@
-import { ModelRetryStatus } from "./ModelRetryStatus.tsx";
-import { PlayTurnCallDetails } from "./PlayTurnCallDetails.tsx";
+import {
+  applyPlayTimelineFrame,
+  assistantResponseKind,
+  legacyTimelinePage,
+  projectPlayContextUsage,
+  requestRuntime,
+  useWorldPlayStore,
+  useWorldSurfaceRead,
+  type PlayerRevisionContinuation,
+  type WorldMessage,
+  type WorldPageClient,
+  type WorldReadView,
+} from "./WorldPlayStore.ts";
+import { PlayTimeline, Transcript } from "./PlayTimeline.tsx";
+import { PlayComposer } from "./PlayComposer.tsx";
+import {
+  WorldHeaderChrome,
+  type WorldReadingRail,
+} from "./WorldHeaderChrome.tsx";
 import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { useReadTarget } from "./useReadTarget.ts";
@@ -9,7 +26,6 @@ import {
   submitPlay,
   type PlayCommand,
 } from "./PlaySubmission.ts";
-import { turnGuideLineSoftLimit } from "../shared/ordered-play-prompts.ts";
 import { playFailureDescription } from "./PlayFailureText.ts";
 import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
 import {
@@ -29,8 +45,10 @@ import {
 } from "./PlayerViewFoldState.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import { type ObserveConversation } from "./ConversationObserver.ts";
-import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
+import {
+  authoringConversationActions,
+  useAuthoringWorkspace,
+} from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
 import {
@@ -38,26 +56,17 @@ import {
   rememberHandledCheckpoint,
 } from "./CheckpointContextPreferences.ts";
 import {
-  Fragment,
   useCallback,
   useEffect,
-  useEffectEvent,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
 
 import type {
   ContentTreeFile,
-  V1PlayCallChainEvent,
-  V1PlayCallChainStreamFrame,
   V1PlayCallChainView,
   V1PlayContextReadingView,
-  V1PlayTimelineEventSummary,
-  V1PlayTimelineItem,
   V1PlayTimelinePage,
   V1Request,
   V1StoryExport,
@@ -69,10 +78,7 @@ import {
   type AppPreferences,
   type AppReadingPreferences,
 } from "../protocol/appPreferences.ts";
-import type {
-  PlayerViewDiagnostic,
-  RenderedPlayerView,
-} from "../protocol/playerViews.ts";
+import type { RenderedPlayerView } from "../protocol/playerViews.ts";
 import { createClientId } from "./ClientId.ts";
 import {
   AiReadingDialog,
@@ -84,35 +90,18 @@ import {
 import {
   ArtifactExtensionHost,
   ArtifactExtensionMount,
-  type FrontendArtifactProjection,
-  type FrontendPlayerViewPanelProjection,
 } from "./ArtifactExtensionHost.tsx";
-import {
-  ArtifactDebugger,
-  type FrontendArtifactExtensionSummary,
-  type FrontendArtifactDebugRecord,
-} from "./ArtifactDebugger.tsx";
+import { ArtifactDebugger } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { PlayContextUsage } from "./PlayContextUsage.tsx";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
-import { ResolutionCard } from "./ResolutionCard.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
   createPlayRunProgress,
   progressFromCallChain,
-  type PlayRunProgressValue,
 } from "./PlayRunProgressState.ts";
 
-type RightRailTab = "documents" | "ai-reading";
-type PlayContextUsageProjection = Pick<
-  V1PlayCallChainView,
-  "worldId" | "chainId" | "contextWindowTokens" | "latestCompletedResponse"
->;
 type WorldDialog = "revision" | "reading" | "manage" | null;
-type PlayerRevisionContinuation = Extract<
-  V1Request,
-  { type: "play.chain.revise-player" }
->["continuation"];
 type PendingAction =
   | "play-fresh"
   | "play-append"
@@ -125,58 +114,11 @@ type PendingAction =
   | "derive"
   | "archive-export";
 
-interface WorldMessage {
-  role: "player" | "narrator";
-  exactText: string;
-  messageId?: string;
-  head?: string;
-}
-
-interface WorldReadView {
-  archiveNeedsFreshContext?: boolean;
-  extensionControls?: WorldExtensionsView;
-  suppressedPlayerViewIds?: string[];
-  worldId: string;
-  head: string;
-  state: ContentTreeFile[];
-  control: ContentTreeFile[];
-  history: ContentTreeFile[];
-  runtime: unknown;
-  playerViews: {
-    views: RenderedPlayerView[];
-    diagnostics: PlayerViewDiagnostic[];
-  };
-  artifacts?: FrontendArtifactProjection[];
-  playerViewPanels?: FrontendPlayerViewPanelProjection[];
-  artifactDebug?: FrontendArtifactDebugRecord[];
-  extensions?: FrontendArtifactExtensionSummary[];
-  committedMessages: WorldMessage[];
-  playCallChain: V1PlayCallChainView | null;
-  playTimeline?: V1PlayTimelinePage;
-  worldRevision?: V1WorldRevisionEpochView | null;
-}
-
-interface WorldPlayDecorationsView {
-  extensionControls?: WorldExtensionsView;
-  suppressedPlayerViewIds?: string[];
-  playerViewPanels?: FrontendPlayerViewPanelProjection[];
-  playerViews?: WorldReadView["playerViews"];
-  head: string;
-  artifacts: FrontendArtifactProjection[];
-  extensions: FrontendArtifactExtensionSummary[];
-  artifactDebug: FrontendArtifactDebugRecord[];
-}
-
 interface Feedback {
   kind: "status" | "error";
   text: string;
   technical?: boolean;
   submission?: string;
-}
-
-interface WorldPageClient {
-  observeConversation?: ObserveConversation;
-  request(request: V1Request): Promise<unknown>;
 }
 
 export function WorldPage({
@@ -214,16 +156,6 @@ export function WorldPage({
   onProtagonistRevisionStarted?: () => void;
   onProtagonistRevisionFinished?: () => void;
 }): React.JSX.Element {
-  const [world, setWorld] = useState<WorldReadView | null>(null);
-  const [stateHead, setStateHead] = useState<string | null>(null);
-  const [controlHead, setControlHead] = useState<string | null>(null);
-  const [runtimeHead, setRuntimeHead] = useState<string | null>(null);
-  // Decorations have their own lifetime: lightweight world reads intentionally
-  // contain empty artifact arrays and must not replace this loaded projection.
-  const [decorations, setDecorations] = useState<
-    (WorldPlayDecorationsView & { worldId: string }) | null
-  >(null);
-  const [decorationRevision, setDecorationRevision] = useState(0);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
   const playerViewFold = usePlayerViewFoldController();
@@ -238,7 +170,8 @@ export function WorldPage({
     );
   }
   const [rightRailOpen, setRightRailOpen] = useState(false);
-  const [rightRailTab, setRightRailTab] = useState<RightRailTab>("documents");
+  const [rightRailTab, setRightRailTab] =
+    useState<WorldReadingRail>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
   useAndroidBack(leftRailOpen || rightRailOpen, () => {
     setLeftRailOpen(false);
@@ -257,18 +190,6 @@ export function WorldPage({
   const [turnNote, setTurnNote] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const worldProjectionVersion = useRef(0);
-  const initializedWorldId = useRef<string | null>(null);
-  const reconcileObservedPlay = useRef<((world: WorldReadView) => void) | null>(
-    null,
-  );
-  const observedPlayForRecovery = useRef<{
-    worldId: string;
-    chain: V1PlayCallChainView;
-    isCurrent: (() => boolean) | undefined;
-  } | null>(null);
-  const [observationStopped, setObservationStopped] = useState(false);
-  const [observationRevision, setObservationRevision] = useState(0);
   const [supersededFailure, setSupersededFailure] = useState<{
     worldId: string;
     chainId: string;
@@ -281,10 +202,6 @@ export function WorldPage({
     eventId: number;
     originalText: string;
   } | null>(null);
-  const [playProgress, setPlayProgress] = useState<PlayRunProgressValue | null>(
-    null,
-  );
-  const [playProgressNow, setPlayProgressNow] = useState(0);
   const cancelledExchangeRef = useRef<string | null>(null);
   const playSubmissionInFlight = useRef(false);
   const unconfirmedSubmission = useRef<PlayCommand | null>(null);
@@ -296,13 +213,7 @@ export function WorldPage({
       current === lastWorldTitle ? worldTitle : current,
     );
   }
-  const [playCallChain, setPlayCallChain] =
-    useState<V1PlayCallChainView | null>(null);
-  const [playContextUsage, setPlayContextUsage] =
-    useState<PlayContextUsageProjection | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
-  const submissionModeId = useId();
-  const composerMoreRef = useRef<HTMLDetailsElement>(null);
   const [checkpointPreference, setCheckpointPreference] = useState<{
     worldId: string;
     head: string;
@@ -313,9 +224,6 @@ export function WorldPage({
     manualFreshContext ||
     (checkpointPreference?.worldId === worldId && checkpointPreference.fresh);
   const [observedCheckpoints, setObservedCheckpoints] = useState<string[]>([]);
-  const [playTimeline, setPlayTimeline] = useState<V1PlayTimelinePage | null>(
-    null,
-  );
   const [selectedDocument, setSelectedDocument] = useState("");
   const [controlFiles, setControlFiles] = useState("[]");
   const [authoringLocked, setAuthoringLocked] = useState(false);
@@ -325,8 +233,11 @@ export function WorldPage({
     controlDirtyRef.current = controlDirty;
   }, [controlDirty]);
   const [controlPreview, setControlPreview] = useState<unknown>(null);
-  const { workspace: revisionWorkspace, state: authoring } =
-    useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
+  const {
+    workspace: revisionWorkspace,
+    state: authoring,
+    conversation,
+  } = useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
   const revisionOverview =
     dialog === "revision" ? (authoring.target?.revision ?? null) : null;
   const revisionFiles = authoring.files;
@@ -348,42 +259,21 @@ export function WorldPage({
   useEffect(() => {
     if (turnNoteOpen) turnNoteInputRef.current?.focus();
   }, [turnNoteOpen]);
-  const worldHead = world?.head;
-  const openedWorldId = world?.worldId;
   useEffect(() => {
     onNavigationLockChange?.(revisionDirty || controlDirty || authoringLocked);
     return () => onNavigationLockChange?.(false);
   }, [onNavigationLockChange, revisionDirty, controlDirty, authoringLocked]);
 
-  const applyWorld = useCallback(
-    (
-      next: WorldReadView,
-      preserveControlDraft: boolean,
-      mergeTimeline = false,
-    ): void => {
-      worldProjectionVersion.current++;
-      const nextChain = next.playCallChain;
-      const nextTimeline = next.playTimeline ?? legacyTimelinePage(next);
-      setWorld((current) =>
-        current?.worldId === next.worldId &&
-        next.state.length === 0 &&
-        next.control.length === 0
-          ? {
-              ...next,
-              state: current.state,
-              control: current.control,
-              runtime: current.runtime,
-            }
-          : next,
-      );
-      if (next.state.length > 0) setStateHead(next.head);
-      if (next.control.length > 0) setControlHead(next.head);
-      if (!isResponseRecord(next.runtime) || next.runtime.surfaces !== "lazy")
-        setRuntimeHead(next.head);
+  const onWorldRead = useCallback(
+    (next: WorldReadView, preserveControlDraft: boolean) => {
       const submission = unconfirmedSubmission.current;
       if (
         submission?.worldId === next.worldId &&
-        recordedPlaySubmission(submission, nextChain, next.playTimeline)
+        recordedPlaySubmission(
+          submission,
+          next.playCallChain,
+          next.playTimeline,
+        )
       ) {
         unconfirmedSubmission.current = null;
         setPlayerText((current) =>
@@ -398,46 +288,6 @@ export function WorldPage({
         setControlDirty(false);
         setControlPreview(null);
       }
-      // Retain only usage metadata across lightweight reads, never the old
-      // endpoint or running/retry state that would override the new timeline.
-      setPlayCallChain(nextChain);
-      setPlayContextUsage((current) =>
-        nextChain !== null
-          ? projectPlayContextUsage(nextChain)
-          : current?.worldId === next.worldId &&
-              current.chainId === nextTimeline.activeChainId
-            ? current
-            : null,
-      );
-      setPlayTimeline((current) =>
-        mergeTimeline && next.playTimeline !== undefined
-          ? mergePlayTimelinePage(current, nextTimeline)
-          : nextTimeline,
-      );
-      const runningChainId = nextChain?.chainId ?? nextTimeline.activeChainId;
-      if (
-        (nextChain?.status ?? nextTimeline.activeStatus) === "running" &&
-        runningChainId !== null
-      ) {
-        setPlayProgress((current) => {
-          const exchangeId =
-            nextTimeline.activeInvocationExchangeId !== undefined
-              ? nextTimeline.activeInvocationExchangeId
-              : (nextChain?.activeInvocation?.exchangeId ??
-                (current?.chainId === runningChainId
-                  ? current.exchangeId
-                  : null));
-          return exchangeId === null
-            ? null
-            : progressFromCallChain(
-                runningChainId,
-                exchangeId,
-                nextChain,
-                current,
-              );
-        });
-        setPlayProgressNow(Date.now());
-      } else setPlayProgress(null);
       if (next.state.length > 0)
         setSelectedDocument((current) =>
           selectedStateDocument(next.state, current),
@@ -445,32 +295,53 @@ export function WorldPage({
     },
     [],
   );
-
-  function applyPlayCallChain(next: V1PlayCallChainView): void {
-    worldProjectionVersion.current++;
-    setPlayCallChain(next);
-    setPlayContextUsage(projectPlayContextUsage(next));
-  }
-
-  const loadWorld = useCallback(
-    () =>
-      requestRuntime<WorldReadView>(client, { type: "world.read", worldId }),
-    [client, worldId],
-  );
-  const applyReadWorld = useCallback(
-    (next: WorldReadView) => {
-      const initialized = initializedWorldId.current === next.worldId;
-      initializedWorldId.current = next.worldId;
-      applyWorld(next, initialized, true);
-      reconcileObservedPlay.current?.(next);
-    },
-    [applyWorld],
-  );
+  const onCancellationObserved = useCallback(() => {
+    if (cancelledExchangeRef.current !== null)
+      setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
+  }, []);
   const {
-    target: worldTarget,
+    world,
+    setWorld,
+    worldHead,
+    openedWorldId,
+    worldTarget,
     syncFailed,
-    syncError: worldSyncError,
-  } = useReadTarget(loadWorld, applyReadWorld);
+    worldSyncError,
+    worldProjectionVersion,
+    observationStopped,
+    refreshWorld,
+    recoverPlay,
+    confirmedObservedChain,
+    stateHead,
+    setStateHead,
+    controlHead,
+    setControlHead,
+    runtimeHead,
+    setRuntimeHead,
+    displayedDecorations,
+    setDecorations,
+    invalidateDecorations,
+    decorationTarget,
+    decorationFailed,
+    decorationError,
+    playCallChain,
+    setPlayCallChain,
+    playContextUsage,
+    setPlayContextUsage,
+    playTimeline,
+    setPlayTimeline,
+    applyPlayCallChain,
+    playProgress,
+    setPlayProgress,
+    playProgressNow,
+    setPlayProgressNow,
+  } = useWorldPlayStore({
+    client,
+    worldId,
+    onWorldRead,
+    onCancellationObserved,
+  });
+
   const readingChange = useRef(onReadingPreferencesChange);
   useEffect(() => {
     readingChange.current = onReadingPreferencesChange;
@@ -504,229 +375,6 @@ export function WorldPage({
     applyReadingPreferences(initialReadingPreferences);
   }, [initialReadingPreferences, readingTarget, applyReadingPreferences]);
   useEffect(() => {
-    void worldTarget.read();
-  }, [worldTarget]);
-
-  const {
-    target: decorationTarget,
-    syncFailed: decorationFailed,
-    syncError: decorationError,
-  } = useReadTarget(
-    useCallback(
-      () => requestPlayDecorations(client, worldId),
-      [client, worldId],
-    ),
-    useCallback(
-      (next: WorldPlayDecorationsView) => {
-        if (next.head === worldHead) setDecorations({ ...next, worldId });
-      },
-      [worldId, worldHead],
-    ),
-  );
-  useEffect(() => {
-    if (openedWorldId === worldId)
-      void (decorationRevision > 0
-        ? decorationTarget.recover()
-        : decorationTarget.read());
-  }, [decorationTarget, openedWorldId, worldId, decorationRevision]);
-
-  const displayedDecorations =
-    decorations?.worldId === worldId && decorations.head === worldHead
-      ? decorations
-      : null;
-
-  const observationNeedsVerification = useEffectEvent(
-    (chain: V1PlayCallChainView | null) =>
-      playTimeline?.worldId === worldId &&
-      playTimeline.activeChainId !== null &&
-      (chain === null || timelineHasNewerActivity(playTimeline, chain)),
-  );
-  useEffect(() => {
-    if (client.observeConversation === undefined || openedWorldId !== worldId)
-      return;
-    interface PlayObservation {
-      key: string | null;
-      verification: string | undefined;
-      chain: V1PlayCallChainView | null;
-      isCurrent: (() => boolean) | undefined;
-    }
-    type Hydration = Omit<PlayObservation, "chain">;
-    let pendingHydration: { observation: PlayObservation } | undefined;
-    let hydrated: Hydration | undefined;
-    let visibleObservation: PlayObservation | undefined;
-    let active = true;
-    let observedDecorations: string | undefined;
-    let observedExtensions: number | undefined;
-    let outage = false;
-    const showObservation = (observation: PlayObservation) => {
-      const { chain } = observation;
-      if (chain === null) return;
-      visibleObservation = observation;
-      observedPlayForRecovery.current = {
-        worldId,
-        chain,
-        isCurrent: observation.isCurrent,
-      };
-      applyPlayCallChain(chain);
-      if (chain.status === "running") {
-        setPlayProgress((current) =>
-          progressFromCallChain(
-            chain.chainId,
-            chain.activeInvocation?.exchangeId ??
-              (current?.chainId === chain.chainId ? current.exchangeId : null),
-            chain,
-            current,
-          ),
-        );
-        setPlayProgressNow(Date.now());
-      } else setPlayProgress(null);
-      applyPlayTimelineFrame(
-        { kind: "snapshot", value: chain, final: chain.status !== "running" },
-        setPlayTimeline,
-      );
-      if (
-        cancelledExchangeRef.current !== null &&
-        (chain.lastCancelled === true ||
-          chain.events.at(-1)?.kind === "cancellation")
-      ) {
-        setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
-      }
-    };
-    reconcileObservedPlay.current = (projection) => {
-      const observation = pendingHydration?.observation;
-      if (observation === undefined || observation.isCurrent?.() === false)
-        return;
-      const { key, verification, isCurrent } = observation;
-      hydrated = { key, verification, isCurrent };
-      const page = projection.playTimeline ?? legacyTimelinePage(projection);
-      // A durable read can trail live events in the same invocation. An
-      // older frame being verified cannot replace a newer frame already shown.
-      const latest =
-        verification !== undefined &&
-        visibleObservation?.key === key &&
-        visibleObservation.isCurrent?.() !== false &&
-        visibleObservation.chain !== null &&
-        !timelineHasNewerActivity(page, visibleObservation.chain)
-          ? visibleObservation
-          : observation;
-      // Apply the newest compatible live text after the durable timeline, in
-      // the same update as the read so an older streaming prefix cannot flash.
-      if (
-        latest.chain !== null &&
-        !timelineHasNewerActivity(page, latest.chain)
-      )
-        showObservation(latest);
-    };
-    const unsubscribe = client.observeConversation(
-      { kind: "play", id: worldId },
-      (observation, _changed, isCurrent) => {
-        if (!active || observation.kind !== "play") return;
-        setObservationStopped(false);
-        if (observation.extensionsRevision !== observedExtensions) {
-          observedExtensions = observation.extensionsRevision;
-          setDecorationRevision((current) => current + 1);
-        }
-        const next = observation.value;
-        const verifyFirst = observationNeedsVerification(next);
-        if (next === null || verifyFirst)
-          observedPlayForRecovery.current = null;
-        const key =
-          next === null
-            ? null
-            : JSON.stringify([
-                next.chainId,
-                next.parentHead,
-                next.status,
-                next.activeInvocation?.exchangeId,
-              ]);
-        if (next !== null) {
-          // Follow-up outcomes can update decorations without changing the world endpoint.
-          const revision = JSON.stringify([
-            key,
-            next.events
-              .filter((event) => event.kind === "followup")
-              .map((event) => event.id),
-          ]);
-          if (observedDecorations !== revision) {
-            observedDecorations = revision;
-            setDecorationRevision((current) => current + 1);
-          }
-        }
-        const lastEvent = next?.events.at(-1);
-        const verification = verifyFirst
-          ? JSON.stringify([
-              lastEvent?.id,
-              lastEvent?.kind,
-              lastEvent?.kind === "assistant" ? lastEvent.status : undefined,
-            ])
-          : undefined;
-        const latest = { key, verification, chain: next, isCurrent };
-        const matches = (read: Hydration | undefined) =>
-          read?.key === key &&
-          read.isCurrent?.() !== false &&
-          (verification === undefined || read.verification === verification);
-        const needsHydration =
-          (verifyFirst || next !== null) && !matches(hydrated);
-        const shared = matches(pendingHydration?.observation)
-          ? pendingHydration
-          : undefined;
-        // A revision can legitimately shorten a chain. Verify an older-looking
-        // snapshot before exposing it in place of a newer visible event.
-        if (!verifyFirst && next !== null) {
-          if (shared === undefined)
-            worldTarget.accept({ complete: !needsHydration });
-          showObservation(latest);
-        }
-        if (shared !== undefined) {
-          shared.observation = latest;
-          return;
-        }
-        if (!needsHydration) {
-          pendingHydration = undefined;
-          return;
-        }
-        if (verifyFirst && pendingHydration !== undefined)
-          worldTarget.accept({ complete: false });
-        const requested = { observation: latest };
-        hydrated = undefined;
-        pendingHydration = requested;
-        // Keep receiving live frames while the world read is in flight.
-        void worldTarget.read().then(() => {
-          if (pendingHydration === requested) pendingHydration = undefined;
-        });
-      },
-      (connection) => {
-        if (!active) return;
-        if (connection !== "synchronized")
-          observedPlayForRecovery.current = null;
-        if (connection === "connected" || connection === "synchronized") {
-          outage = false;
-          hydrated = undefined;
-          pendingHydration = undefined;
-          observedDecorations = undefined;
-          setDecorationRevision((current) => current + 1);
-        } else {
-          if (connection === "failed") setObservationStopped(true);
-          if (!outage) {
-            outage = true;
-            if (pendingHydration !== undefined) {
-              pendingHydration = undefined;
-              worldTarget.accept({ complete: false });
-            }
-            void worldTarget.recover();
-          }
-        }
-      },
-    );
-    return () => {
-      active = false;
-      observedPlayForRecovery.current = null;
-      reconcileObservedPlay.current = null;
-      unsubscribe();
-    };
-  }, [client, worldId, openedWorldId, worldTarget, observationRevision]);
-
-  useEffect(() => {
     if (openedWorldId === undefined) return;
     historyEndRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [openedWorldId]);
@@ -738,19 +386,12 @@ export function WorldPage({
     target: stateTarget,
     syncFailed: stateFailed,
     syncError: stateError,
-  } = useReadTarget(
-    useCallback(
-      () =>
-        stateVisible && worldHead !== undefined
-          ? requestRuntime<ContentTreeFile[]>(client, {
-              type: "world.surface.read",
-              worldId,
-              surface: "state",
-              head: worldHead,
-            })
-          : Promise.resolve(null),
-      [client, worldId, worldHead, stateVisible],
-    ),
+  } = useWorldSurfaceRead<ContentTreeFile[]>(
+    client,
+    worldId,
+    "state",
+    worldHead,
+    stateVisible,
     useCallback(
       (state: ContentTreeFile[] | null) => {
         if (state === null) return;
@@ -762,26 +403,19 @@ export function WorldPage({
         setStateHead(worldHead ?? null);
         setSelectedDocument((current) => selectedStateDocument(state, current));
       },
-      [worldHead],
+      [worldHead, setStateHead, setWorld],
     ),
   );
   const {
     target: controlTarget,
     syncFailed: controlFailed,
     syncError: controlError,
-  } = useReadTarget(
-    useCallback(
-      () =>
-        managementVisible && worldHead !== undefined
-          ? requestRuntime<ContentTreeFile[]>(client, {
-              type: "world.surface.read",
-              worldId,
-              surface: "control",
-              head: worldHead,
-            })
-          : Promise.resolve(null),
-      [client, worldId, worldHead, managementVisible],
-    ),
+  } = useWorldSurfaceRead<ContentTreeFile[]>(
+    client,
+    worldId,
+    "control",
+    worldHead,
+    managementVisible,
     useCallback(
       (control: ContentTreeFile[] | null) => {
         if (control === null) return;
@@ -794,26 +428,19 @@ export function WorldPage({
         if (!controlDirtyRef.current)
           setControlFiles(JSON.stringify(control, null, 2));
       },
-      [worldHead],
+      [worldHead, setControlHead, setWorld],
     ),
   );
   const {
     target: runtimeTarget,
     syncFailed: runtimeFailed,
     syncError: runtimeError,
-  } = useReadTarget(
-    useCallback(
-      () =>
-        managementVisible && worldHead !== undefined
-          ? requestRuntime<unknown>(client, {
-              type: "world.surface.read",
-              worldId,
-              surface: "runtime",
-              head: worldHead,
-            })
-          : Promise.resolve(null),
-      [client, worldId, worldHead, managementVisible],
-    ),
+  } = useWorldSurfaceRead<unknown>(
+    client,
+    worldId,
+    "runtime",
+    worldHead,
+    managementVisible,
     useCallback(
       (runtime: unknown) => {
         if (runtime === null) return;
@@ -824,7 +451,7 @@ export function WorldPage({
         );
         setRuntimeHead(worldHead ?? null);
       },
-      [worldHead],
+      [worldHead, setRuntimeHead, setWorld],
     ),
   );
   useEffect(() => {
@@ -886,7 +513,7 @@ export function WorldPage({
             },
       );
     });
-  }, [revisionWorkspace]);
+  }, [revisionWorkspace, setWorld]);
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
@@ -1079,21 +706,7 @@ export function WorldPage({
     if (!playProgressActive) return;
     const timer = setInterval(() => setPlayProgressNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [playProgressActive]);
-
-  async function refreshWorld(
-    preserveControlDraft = true,
-  ): Promise<WorldReadView> {
-    const next = await worldTarget.read();
-    if (next === null) throw new Error(uiText("暂时无法同步"));
-    if (!preserveControlDraft) applyWorld(next, false);
-    return next;
-  }
-
-  function recoverPlay(): void {
-    void worldTarget.recover();
-    if (observationStopped) setObservationRevision((current) => current + 1);
-  }
+  }, [playProgressActive, setPlayProgressNow]);
 
   function consumeCheckpointPreference(): void {
     setManualFreshContext(false);
@@ -1196,13 +809,7 @@ export function WorldPage({
             setPlayTimeline,
           );
         },
-        () => {
-          const observation = observedPlayForRecovery.current;
-          return observation?.worldId === worldId &&
-            observation.isCurrent?.() !== false
-            ? observation.chain
-            : null;
-        },
+        confirmedObservedChain,
       );
       // The read target already applied valid projections. Fallback evidence must
       // not overwrite a newer observation that arrived while reconciling.
@@ -1360,20 +967,23 @@ export function WorldPage({
             }),
       [client, worldId, timelineCursor],
     ),
-    useCallback((earlier: V1PlayTimelinePage | null) => {
-      if (earlier === null) return;
-      setPlayTimeline((current) =>
-        current === null
-          ? earlier
-          : current.generation !== earlier.generation
-            ? current
-            : {
-                ...current,
-                items: [...earlier.items, ...current.items],
-                nextCursor: earlier.nextCursor,
-              },
-      );
-    }, []),
+    useCallback(
+      (earlier: V1PlayTimelinePage | null) => {
+        if (earlier === null) return;
+        setPlayTimeline((current) =>
+          current === null
+            ? earlier
+            : current.generation !== earlier.generation
+              ? current
+              : {
+                  ...current,
+                  items: [...earlier.items, ...current.items],
+                  nextCursor: earlier.nextCursor,
+                },
+        );
+      },
+      [setPlayTimeline],
+    ),
   );
   async function loadEarlierTimeline(): Promise<void> {
     if (timelineCursor === null) return;
@@ -1869,32 +1479,18 @@ export function WorldPage({
 
   if (dialog === "revision") {
     const epoch = activeRevisionEpoch;
-    const panelView = authoring.view;
     return (
       <SettingImprovementPanel
         onNavigationLockChange={setAuthoringLocked}
         key={worldId}
-        onPreview={() => revisionWorkspace.preview()}
-        onCallContext={(sessionId, callId) =>
-          revisionWorkspace.callContext(sessionId, callId)
-        }
-        onRequestPreview={(sessionId, requestId) =>
-          revisionWorkspace.requestPreview(sessionId, requestId)
-        }
         target="world-revision"
         packageName={worldTitle}
         modelConfigured={modelConfigured}
         hasUnsavedFileDraft={revisionDirty}
         loading={authoring.loading}
-        view={panelView}
-        history={revisionOverview?.history ?? []}
-        latestSessionId={revisionOverview?.latest?.sessionId ?? null}
+        conversation={conversation}
+        conversationActions={authoringConversationActions(revisionWorkspace)}
         notice={authoring.notice}
-        requestFailure={authoring.requestFailure}
-        syncFailed={authoring.syncFailed}
-        syncError={authoring.syncError}
-        onRead={() => void revisionWorkspace.reread()}
-        now={authoring.now}
         contentEditor={{
           mode: "world-revision",
           files: revisionFiles,
@@ -1929,25 +1525,6 @@ export function WorldPage({
                 revisionWorkspace.startFresh();
               },
             })}
-        onSend={(message, requestId) =>
-          revisionWorkspace.send(message, requestId)
-        }
-        onEditMessage={(messageId, message, filePolicy, requestId) =>
-          revisionWorkspace.editMessage(
-            messageId,
-            message,
-            filePolicy,
-            requestId,
-          )
-        }
-        onCancel={() => revisionWorkspace.cancel()}
-        onResume={(recovery) => revisionWorkspace.resume(recovery)}
-        onFreshContext={() => revisionWorkspace.startFresh()}
-        onSelectSession={(id) => revisionWorkspace.selectSession(id)}
-        onDeleteSession={(id) => revisionWorkspace.deleteSession(id)}
-        onRollbackFile={(id, change, path) =>
-          revisionWorkspace.rollbackFile(id, change, path)
-        }
         onConfigureModel={onConfigureModel}
         onBack={() => {
           revisionWorkspace.close();
@@ -2044,86 +1621,24 @@ export function WorldPage({
         }
       >
         <div className="world-reader-shell">
-          <nav
-            className="world-floating-chrome world-floating-chrome-left"
-            aria-label={uiText("世界与状态")}
-          >
-            {showWorkspaceBack && (
-              <button
-                type="button"
-                onClick={onBack}
-                aria-label={uiText("返回工作区")}
-              >
-                ←
-              </button>
-            )}
-            <button
-              type="button"
-              className={leftRailOpen ? "is-current" : ""}
-              aria-pressed={leftRailOpen}
-              onClick={() => setLeftRailOpen((open) => !open)}
-            >
-              {uiText("此刻")}
-            </button>
-          </nav>
-
-          <h1 className="world-floating-title" title={worldTitle}>
-            {worldTitle}
-          </h1>
-
-          <nav
-            className="world-floating-chrome world-floating-chrome-right"
-            aria-label={uiText("世界阅读工具")}
-          >
-            <button
-              type="button"
-              className={
-                rightRailOpen && rightRailTab === "documents"
-                  ? "is-current"
-                  : ""
-              }
-              onClick={() => {
-                setRightRailTab("documents");
-                setRightRailOpen(true);
-                setReadingOpen(false);
-              }}
-            >
-              {uiText("世界")}
-            </button>
-            <button
-              type="button"
-              className={
-                rightRailOpen && rightRailTab === "ai-reading"
-                  ? "is-current"
-                  : ""
-              }
-              onClick={() => {
-                setRightRailTab("ai-reading");
-                setRightRailOpen(true);
-                setReadingOpen(false);
-              }}
-            >
-              {uiText("AI 读取")}
-            </button>
-            <button
-              type="button"
-              className={readingOpen ? "is-current" : ""}
-              aria-label={uiText("阅读设置")}
-              onClick={() => {
-                setReadingOpen((open) => !open);
-                setRightRailOpen(false);
-              }}
-            >
-              Aa
-            </button>
-            <button
-              type="button"
-              aria-label={uiText("世界管理")}
-              onClick={(event) => openPlayDialog("manage", event.currentTarget)}
-            >
-              ···
-            </button>
-          </nav>
+          <WorldHeaderChrome
+            worldTitle={worldTitle}
+            leftRailOpen={leftRailOpen}
+            rightRail={rightRailOpen ? rightRailTab : null}
+            readingOpen={readingOpen}
+            onBack={showWorkspaceBack ? onBack : undefined}
+            onToggleNow={() => setLeftRailOpen((open) => !open)}
+            onOpenRail={(tab) => {
+              setRightRailTab(tab);
+              setRightRailOpen(true);
+              setReadingOpen(false);
+            }}
+            onToggleReading={() => {
+              setReadingOpen((open) => !open);
+              setRightRailOpen(false);
+            }}
+            onManage={(opener) => openPlayDialog("manage", opener)}
+          />
 
           <section
             className="world-reader-scroll"
@@ -2260,8 +1775,34 @@ export function WorldPage({
             </article>
           </section>
 
-          <footer ref={composerRef} className="world-composer-dock">
-            <ArtifactExtensionMount mount="composer_above" />
+          <PlayComposer
+            dockRef={composerRef}
+            action={{
+              text: playerText,
+              onChange: setPlayerText,
+              attach: composerTextareaAttach,
+              ref: composerTextareaRef,
+            }}
+            note={{
+              text: turnNote,
+              setText: setTurnNote,
+              open: turnNoteOpen,
+              setOpen: setTurnNoteOpen,
+              ref: turnNoteInputRef,
+            }}
+            submission={{
+              composer,
+              canAppend: canAppend && modelConfigured,
+              canStartFresh: canStartFresh && modelConfigured,
+              defaultSubmitFresh,
+              defaultSubmitEnabled: defaultSubmitEnabled && modelConfigured,
+              submitting: pending === "play-fresh" || pending === "play-append",
+              onSubmitAlternate: submitPlayChain,
+            }}
+            disabled={!playIdle || !modelConfigured}
+            showTechnicalInfo={readingPreferences.showTechnicalInfo}
+            activeCanRetry={activeCanRetry}
+          >
             <SyncNotice
               failed={decorationFailed}
               reason={decorationError}
@@ -2448,216 +1989,7 @@ export function WorldPage({
               freshContextDisabled={!playIdle || !modelConfigured}
               onUseFreshContext={openFreshComposer}
             />
-            {turnNoteOpen ? (
-              <div className="world-turn-note">
-                <div className="world-turn-note-field">
-                  <span>{uiText("本轮")}</span>
-                  <input
-                    ref={turnNoteInputRef}
-                    type="text"
-                    aria-label={uiText("本轮临时要求内容")}
-                    value={turnNote}
-                    placeholder={uiText("只对这一轮生效，不进入故事")}
-                    disabled={
-                      pending !== null ||
-                      !modelConfigured ||
-                      activeStatus === "running" ||
-                      worldRevisionLocked
-                    }
-                    onChange={(event) =>
-                      setTurnNote(
-                        event.currentTarget.value.replace(/[\r\n]/gu, ""),
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (event.nativeEvent.isComposing) return;
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        composerTextareaRef.current?.focus();
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        setTurnNoteOpen(false);
-                        composerTextareaRef.current?.focus();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="world-turn-note-clear"
-                    aria-label={uiText("清空并收起本轮临时要求")}
-                    disabled={
-                      pending !== null ||
-                      !modelConfigured ||
-                      activeStatus === "running" ||
-                      worldRevisionLocked
-                    }
-                    onClick={() => {
-                      setTurnNote("");
-                      setTurnNoteOpen(false);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-                {turnNote.length > turnGuideLineSoftLimit ? (
-                  <span className="field-note" role="status">
-                    {uiText("超过 120 字；仍会发送，但请尽量简短。")}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="world-composer-row">
-              <details
-                ref={composerMoreRef}
-                className="world-composer-mode"
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape" || !event.currentTarget.open)
-                    return;
-                  event.preventDefault();
-                  event.currentTarget.open = false;
-                  event.currentTarget.querySelector("summary")?.focus();
-                }}
-              >
-                <summary
-                  aria-label={uiText("更多")}
-                  className={turnNote === "" ? undefined : "has-turn-note"}
-                >
-                  ⋯
-                </summary>
-                <div>
-                  <button
-                    type="button"
-                    aria-labelledby={submissionModeId + "-note"}
-                    aria-describedby={submissionModeId + "-note-description"}
-                    aria-pressed={turnNoteOpen}
-                    disabled={!playIdle || !modelConfigured}
-                    onClick={() => {
-                      if (composerMoreRef.current)
-                        composerMoreRef.current.open = false;
-                      setTurnNoteOpen((open) => !open);
-                      if (turnNoteOpen) composerTextareaRef.current?.focus();
-                    }}
-                  >
-                    <strong id={submissionModeId + "-note"}>
-                      {uiText("本轮临时要求")}
-                    </strong>
-                    <span id={submissionModeId + "-note-description"}>
-                      {uiText("只对这一轮生效，不进入故事")}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!playIdle || !modelConfigured}
-                    onClick={() => {
-                      if (composerMoreRef.current)
-                        composerMoreRef.current.open = false;
-                      const note = uiText(
-                        "这段就在这里收尾，保存后续需要的信息，并登记检查点。",
-                      );
-                      setTurnNote((current) =>
-                        current.includes(note)
-                          ? current
-                          : current.trim() === ""
-                            ? note
-                            : `${current} ${note}`,
-                      );
-                      setTurnNoteOpen(true);
-                      turnNoteInputRef.current?.focus();
-                    }}
-                  >
-                    <strong>{uiText("在此收尾")}</strong>
-                  </button>
-                  <button
-                    type="button"
-                    aria-labelledby={submissionModeId + "-append"}
-                    aria-describedby={submissionModeId + "-append-description"}
-                    disabled={!canAppend || !modelConfigured}
-                    onClick={(event) => {
-                      event.currentTarget
-                        .closest("details")
-                        ?.removeAttribute("open");
-                      void submitPlayChain("append");
-                    }}
-                  >
-                    <strong id={submissionModeId + "-append"}>
-                      {uiText("接着当前对话继续")}
-                    </strong>
-                    <span id={submissionModeId + "-append-description"}>
-                      {uiText("保留原生对话，重新编译当前提示和材料")}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-labelledby={submissionModeId + "-fresh"}
-                    aria-describedby={submissionModeId + "-fresh-description"}
-                    disabled={!canStartFresh || !modelConfigured}
-                    onClick={(event) => {
-                      event.currentTarget
-                        .closest("details")
-                        ?.removeAttribute("open");
-                      void submitPlayChain("fresh");
-                    }}
-                  >
-                    <strong id={submissionModeId + "-fresh"}>
-                      {uiText("用新对话继续（保留故事进度）")}
-                    </strong>
-                    <span id={submissionModeId + "-fresh-description"}>
-                      {uiText("从当前世界重新编译材料")}
-                    </span>
-                  </button>
-                </div>
-              </details>
-              <label>
-                <span className="visually-hidden">{uiText("你的行动")}</span>
-                <textarea
-                  ref={composerTextareaAttach}
-                  aria-label={uiText("你的行动")}
-                  rows={1}
-                  placeholder={uiText("接下来，你要做什么？")}
-                  value={playerText}
-                  disabled={
-                    pending !== null ||
-                    !modelConfigured ||
-                    activeStatus === "running" ||
-                    worldRevisionLocked
-                  }
-                  onChange={(event) => setPlayerText(event.target.value)}
-                  onKeyDown={composer.onKeyDown}
-                  enterKeyHint="enter"
-                  title={uiText(
-                    composer.enterInsertsNewline
-                      ? "回车换行，点击发送按钮发送"
-                      : "Enter 发送，Shift + Enter 换行",
-                  )}
-                />
-              </label>
-              <button
-                type="button"
-                className="world-composer-send"
-                aria-label={
-                  defaultSubmitFresh
-                    ? uiText("从全新上下文发送行动")
-                    : uiText("追加行动")
-                }
-                disabled={!defaultSubmitEnabled || !modelConfigured}
-                onClick={() => void composer.submit()}
-              >
-                {pending === "play-fresh" || pending === "play-append"
-                  ? "…"
-                  : "↑"}
-              </button>
-            </div>
-            {readingPreferences.showTechnicalInfo ? (
-              <p className="world-composer-hint">
-                {uiText(
-                  activeCanRetry
-                    ? "原样重试使用已保存请求，不采用新编排方案。"
-                    : "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
-                )}
-              </p>
-            ) : null}
-            <ArtifactExtensionMount mount="composer_below" />
-          </footer>
+          </PlayComposer>
 
           <button
             type="button"
@@ -2975,9 +2307,7 @@ export function WorldPage({
                   kind="world"
                   id={worldId}
                   dirty={controlDirty}
-                  onChange={() =>
-                    setDecorationRevision((current) => current + 1)
-                  }
+                  onChange={() => invalidateDecorations()}
                 />
               }
               feedback={feedbackNotice}
@@ -3019,790 +2349,6 @@ export function WorldPage({
       </ArtifactExtensionHost>
     </main>
   );
-}
-
-function PlayTimeline({
-  activeFailure,
-  liveChain,
-  failureRecovery,
-  client,
-  worldId,
-  items,
-  restartDisabled,
-  freshContextDisabled,
-  showTechnicalInfo,
-  onRestartFrom,
-  onEditPlayer,
-  onRegeneratePlayer,
-  onRegenerateNarrative,
-}: {
-  client: WorldPageClient;
-  worldId: string;
-  items: readonly V1PlayTimelineItem[];
-  liveChain: V1PlayCallChainView | null;
-  activeFailure?: { chainId: string; eventId: number } | undefined;
-  failureRecovery?: (PlayFailureRecovery & { chainId: string }) | undefined;
-  restartDisabled: boolean;
-  freshContextDisabled: boolean;
-  showTechnicalInfo: boolean;
-  onRestartFrom: (head: string) => void;
-  onEditPlayer: (
-    chainId: string,
-    eventId: number,
-    editedText: string,
-    continuation: PlayerRevisionContinuation,
-  ) => void;
-  onRegenerateNarrative: (chainId: string, eventId: number) => void;
-  onRegeneratePlayer: (
-    chainId: string,
-    eventId: number,
-    originalText: string,
-    requiresFreshContext: boolean,
-  ) => void;
-}): React.JSX.Element {
-  const groups = groupPlayTimelineItems(items);
-  const latestNarrativeIndex = items.findLastIndex(
-    (item) =>
-      item.kind === "event" &&
-      item.event.kind === "assistant" &&
-      item.event.status === "completed" &&
-      assistantResponseKind(item.event) === "narrative" &&
-      item.event.committedHead !== undefined,
-  );
-  const latestNarrative = items[latestNarrativeIndex];
-  const previousStory =
-    latestNarrative?.kind === "event"
-      ? items
-          .slice(0, latestNarrativeIndex)
-          .findLast(
-            (item) =>
-              item.kind === "event" &&
-              item.chainId === latestNarrative.chainId &&
-              timelineEventBelongsInStory(item.event),
-          )
-      : undefined;
-  const regeneratePlayer =
-    previousStory?.kind === "event" &&
-    previousStory.event.kind === "player" &&
-    previousStory.event.committedHead !== undefined &&
-    previousStory.event.committedHead !== "genesis"
-      ? {
-          chainId: previousStory.chainId,
-          event: previousStory.event,
-          requiresFreshContext: previousStory.requiresFreshContext,
-        }
-      : undefined;
-  const lastActiveItem = items.findLast(
-    (item) =>
-      item.kind === "event" && item.chainId === failureRecovery?.chainId,
-  );
-  return (
-    <ol
-      className="call-chain-events play-timeline-events"
-      aria-label={uiText("模型调用链")}
-    >
-      {groups.map((group) => {
-        if (group.kind === "turn") {
-          return (
-            <Fragment key={group.key}>
-              {group.items.map((item) =>
-                item.event.kind !== "followup" &&
-                timelineEventBelongsInStory(item.event) &&
-                (item.event.kind !== "failure" ||
-                  (activeFailure?.chainId === item.chainId &&
-                    activeFailure.eventId === item.event.id)) ? (
-                  <TimelineEvent
-                    key={`${item.chainId}:${item.event.id}`}
-                    client={client}
-                    worldId={worldId}
-                    chainId={item.chainId}
-                    event={item.event}
-                    requiresFreshContext={item.requiresFreshContext}
-                    restartDisabled={restartDisabled}
-                    freshContextDisabled={freshContextDisabled}
-                    showTechnicalInfo={showTechnicalInfo}
-                    onRestartFrom={onRestartFrom}
-                    onEditPlayer={onEditPlayer}
-                    onRegenerateNarrative={
-                      item === latestNarrative
-                        ? () =>
-                            onRegenerateNarrative(item.chainId, item.event.id)
-                        : undefined
-                    }
-                    onRegenerate={
-                      item === latestNarrative && regeneratePlayer !== undefined
-                        ? () =>
-                            onRegeneratePlayer(
-                              regeneratePlayer.chainId,
-                              regeneratePlayer.event.id,
-                              regeneratePlayer.event.text,
-                              item.requiresFreshContext === true ||
-                                regeneratePlayer.requiresFreshContext ===
-                                  true ||
-                                (item.event.kind === "assistant" &&
-                                  item.event.continuation === "unavailable"),
-                            )
-                        : undefined
-                    }
-                    failureRecovery={
-                      lastActiveItem === item ? failureRecovery : undefined
-                    }
-                  />
-                ) : null,
-              )}
-              {Array.from(
-                new Set(
-                  group.items
-                    .filter(
-                      (item) =>
-                        item.event.kind === "followup" && item.event.failed,
-                    )
-                    .map((item) =>
-                      item.event.kind === "followup"
-                        ? `${item.chainId}:${item.event.replyEventId ?? "legacy"}`
-                        : "",
-                    ),
-                ),
-              ).map((key) => {
-                const failed = group.items.filter(
-                  (item) =>
-                    item.event.kind === "followup" &&
-                    item.event.failed &&
-                    `${item.chainId}:${item.event.replyEventId ?? "legacy"}` ===
-                      key,
-                );
-                return (
-                  <li
-                    key={`failed-followups:${key}`}
-                    className="call-chain-followup-summary"
-                  >
-                    <details>
-                      <summary>
-                        {uiText("{count} 个后置请求未完成", {
-                          count: failed.length,
-                        })}
-                      </summary>
-                      <ol>
-                        {failed.map((item) => (
-                          <TimelineEvent
-                            key={`${item.chainId}:${item.event.id}`}
-                            client={client}
-                            worldId={worldId}
-                            chainId={item.chainId}
-                            event={item.event}
-                            restartDisabled={restartDisabled}
-                            freshContextDisabled={freshContextDisabled}
-                            showTechnicalInfo={showTechnicalInfo}
-                            onRestartFrom={onRestartFrom}
-                            onEditPlayer={onEditPlayer}
-                          />
-                        ))}
-                      </ol>
-                    </details>
-                  </li>
-                );
-              })}
-              {showTechnicalInfo ? (
-                <PlayTurnCallDetails
-                  items={group.items}
-                  worldId={worldId}
-                  liveChain={liveChain}
-                  request={(request) => requestRuntime(client, request)}
-                />
-              ) : null}
-            </Fragment>
-          );
-        }
-        const item = group.item;
-        if (item.kind === "context_boundary")
-          return (
-            <li
-              key={group.key}
-              className="story-context-boundary"
-              role="separator"
-              aria-label={uiText("全新上下文从这里开始")}
-            >
-              {showTechnicalInfo ? (
-                <>
-                  <span>{uiText("全新上下文从这里开始")}</span>
-                  <small>{item.playPreset.name}</small>
-                  <details className="call-chain-summary">
-                    <summary>{uiText("本上下文已提交的世界变化")}</summary>
-                    {item.changedDocuments.length === 0 ? (
-                      <span>{uiText("没有文档变化")}</span>
-                    ) : (
-                      <ul>
-                        {item.changedDocuments.map((change) => (
-                          <li key={`${change.kind}:${change.path}`}>
-                            {change.kind === "create"
-                              ? uiText("新建")
-                              : uiText("更新")}{" "}
-                            {change.ref} · {change.path}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </details>
-                </>
-              ) : null}
-            </li>
-          );
-        if (item.kind === "genesis")
-          return (
-            <li key={group.key} className={`${item.role}-message`}>
-              <article>
-                <header>
-                  <strong>
-                    {item.role === "player" ? uiText("你") : uiText("主持")}
-                  </strong>
-                </header>
-                <p>{item.exactText}</p>
-              </article>
-            </li>
-          );
-        return null;
-      })}
-    </ol>
-  );
-}
-
-type PlayTimelineEventItem = Extract<V1PlayTimelineItem, { kind: "event" }>;
-type PlayTimelineStandaloneItem = Exclude<
-  V1PlayTimelineItem,
-  { kind: "event" }
->;
-type PlayTimelineGroup =
-  | {
-      kind: "standalone";
-      key: string;
-      item: PlayTimelineStandaloneItem;
-    }
-  | {
-      kind: "turn";
-      key: string;
-      items: PlayTimelineEventItem[];
-    };
-
-function groupPlayTimelineItems(
-  items: readonly V1PlayTimelineItem[],
-): PlayTimelineGroup[] {
-  const groups: PlayTimelineGroup[] = [];
-  let turn: PlayTimelineEventItem[] = [];
-  const flushTurn = (): void => {
-    const first = turn[0];
-    if (first === undefined) return;
-    groups.push({
-      kind: "turn",
-      key: `turn:${first.chainId}:${first.event.id}`,
-      items: turn,
-    });
-    turn = [];
-  };
-
-  for (const item of items) {
-    if (item.kind !== "event") {
-      flushTurn();
-      groups.push({
-        kind: "standalone",
-        key:
-          item.kind === "context_boundary"
-            ? `context:${item.chainId}`
-            : `genesis:${item.messageId}`,
-        item,
-      });
-      continue;
-    }
-    const beginsTurn =
-      item.event.kind === "player" ||
-      (item.event.kind === "assistant" && turnHasCompletedNarrative(turn));
-    if (beginsTurn) flushTurn();
-    turn.push(item);
-  }
-  flushTurn();
-  return groups;
-}
-
-function turnHasCompletedNarrative(
-  items: readonly PlayTimelineEventItem[],
-): boolean {
-  return items.some(
-    ({ event }) =>
-      event.kind === "assistant" &&
-      event.status === "completed" &&
-      assistantResponseKind(event) === "narrative",
-  );
-}
-
-function timelineEventBelongsInStory(
-  event: V1PlayTimelineEventSummary,
-): boolean {
-  if (
-    event.kind === "player" ||
-    event.kind === "failure" ||
-    event.kind === "cancellation"
-  )
-    return true;
-  if (event.kind === "followup") return event.failed;
-  // Only tabletop resolutions are story material; other tool results stay in the trace.
-  if (event.kind === "tool_result") return event.resolution !== undefined;
-  if (event.kind !== "assistant") return false;
-  return (
-    event.status === "streaming" || assistantResponseKind(event) === "narrative"
-  );
-}
-
-function TimelineEvent({
-  failureRecovery,
-  client,
-  worldId,
-  chainId,
-  event,
-  requiresFreshContext = false,
-  restartDisabled,
-  freshContextDisabled,
-  showTechnicalInfo,
-  onRestartFrom,
-  onEditPlayer,
-  onRegenerate,
-  onRegenerateNarrative,
-}: {
-  client: WorldPageClient;
-  worldId: string;
-  chainId: string;
-  event: V1PlayTimelineEventSummary;
-  requiresFreshContext?: boolean | undefined;
-  failureRecovery?: PlayFailureRecovery | undefined;
-  restartDisabled: boolean;
-  freshContextDisabled: boolean;
-  showTechnicalInfo: boolean;
-  onRestartFrom: (head: string) => void;
-  onEditPlayer: (
-    chainId: string,
-    eventId: number,
-    editedText: string,
-    continuation: PlayerRevisionContinuation,
-  ) => void;
-  onRegenerate?: (() => void) | undefined;
-  onRegenerateNarrative?: (() => void) | undefined;
-}): React.JSX.Element | null {
-  const [detail, setDetail] = useState<V1PlayCallChainEvent | null>(null);
-  const [detailPending, setDetailPending] = useState(false);
-  const [editedText, setEditedText] = useState<string | null>(null);
-  const [revisionContinuation, setRevisionContinuation] =
-    useState<PlayerRevisionContinuation>("auto");
-  const eventId = event.id;
-  const {
-    target: detailTarget,
-    syncFailed: detailFailed,
-    syncError: detailError,
-  } = useReadTarget(
-    useCallback(
-      () =>
-        requestRuntime<V1PlayCallChainEvent>(client, {
-          type: "play.timeline.detail",
-          worldId,
-          chainId,
-          eventId,
-        }),
-      [client, worldId, chainId, eventId],
-    ),
-    useCallback((value: V1PlayCallChainEvent) => setDetail(value), []),
-  );
-  const loadDetail = async (): Promise<void> => {
-    if (detail !== null || detailPending) return;
-    setDetailPending(true);
-    await detailTarget.read();
-    setDetailPending(false);
-  };
-
-  if (event.kind === "player")
-    return (
-      <li className="call-chain-player">
-        <article>
-          <header>
-            <strong>{uiText("玩家")}</strong>
-            {showTechnicalInfo ? (
-              <span>
-                {event.context === "fresh"
-                  ? uiText("全新上下文")
-                  : uiText("追加上下文")}
-              </span>
-            ) : null}
-            {event.committedHead === undefined ? null : (
-              <span className="history-message-actions">
-                {event.committedHead === "genesis" ? null : (
-                  <button
-                    type="button"
-                    className="history-restart-button"
-                    disabled={restartDisabled}
-                    onClick={() => {
-                      setEditedText(event.text);
-                      setRevisionContinuation("auto");
-                    }}
-                  >
-                    {uiText("修改")}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(event.committedHead!)}
-                >
-                  {uiText("创建分叉")}
-                </button>
-              </span>
-            )}
-          </header>
-          {editedText === null ? (
-            <p>{event.text}</p>
-          ) : (
-            <div className="history-player-edit">
-              <label>
-                <span>{uiText("修改后的行动")}</span>
-                <textarea
-                  aria-label={uiText("修改后的行动")}
-                  rows={3}
-                  value={editedText}
-                  disabled={restartDisabled}
-                  onChange={(change) => setEditedText(change.target.value)}
-                />
-              </label>
-              <p>
-                {uiText(
-                  "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
-                )}
-              </p>
-              {requiresFreshContext ? (
-                <p>
-                  {uiText(
-                    freshContextDisabled
-                      ? "这次修改需要开启新对话。请先配置模型，再保存修改。"
-                      : "此上下文来自备份；修改后须以本机选择开启全新上下文。",
-                  )}
-                </p>
-              ) : null}
-              <details className="history-player-edit-options">
-                <summary>{uiText("修改后如何继续")}</summary>
-                <fieldset className="history-player-edit-continuation">
-                  <legend className="visually-hidden">
-                    {uiText("修改后如何继续")}
-                  </legend>
-                  <label>
-                    <input
-                      type="radio"
-                      name={`revision-continuation-${chainId}-${event.id}`}
-                      value="auto"
-                      checked={revisionContinuation === "auto"}
-                      disabled={restartDisabled}
-                      onChange={() => setRevisionContinuation("auto")}
-                    />
-                    <span>
-                      <strong>{uiText("自动选择")}</strong>
-                      <small>
-                        {uiText("优先接着原对话；无法续传时开启新对话。")}
-                      </small>
-                    </span>
-                  </label>
-                  <label>
-                    <input
-                      type="radio"
-                      name={`revision-continuation-${chainId}-${event.id}`}
-                      value="continue_context"
-                      checked={revisionContinuation === "continue_context"}
-                      disabled={restartDisabled || requiresFreshContext}
-                      onChange={() =>
-                        setRevisionContinuation("continue_context")
-                      }
-                    />
-                    <span>
-                      <strong>{uiText("接着原对话继续")}</strong>
-                      <small>
-                        {uiText("保留修改点以前的模型对话和原生续传。")}
-                      </small>
-                    </span>
-                  </label>
-                  <label>
-                    <input
-                      type="radio"
-                      name={`revision-continuation-${chainId}-${event.id}`}
-                      value="fresh_context"
-                      checked={revisionContinuation === "fresh_context"}
-                      disabled={restartDisabled || freshContextDisabled}
-                      onChange={() => setRevisionContinuation("fresh_context")}
-                    />
-                    <span>
-                      <strong>{uiText("用新对话继续")}</strong>
-                      <small>
-                        {uiText("修改稿会成为新对话的第一条玩家消息。")}
-                      </small>
-                    </span>
-                  </label>
-                </fieldset>
-              </details>
-              <div className="button-row">
-                <button
-                  type="button"
-                  disabled={
-                    restartDisabled ||
-                    editedText.trim().length === 0 ||
-                    (freshContextDisabled &&
-                      (requiresFreshContext ||
-                        revisionContinuation === "fresh_context"))
-                  }
-                  onClick={() =>
-                    onEditPlayer(
-                      chainId,
-                      event.id,
-                      editedText,
-                      revisionContinuation,
-                    )
-                  }
-                >
-                  {freshContextDisabled && !requiresFreshContext
-                    ? uiText("保存修改")
-                    : revisionContinuation === "fresh_context"
-                      ? uiText("保存修改并用新对话继续")
-                      : uiText("保存修改并继续")}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={restartDisabled}
-                  onClick={() => setEditedText(null)}
-                >
-                  {uiText("取消")}
-                </button>
-              </div>
-            </div>
-          )}
-        </article>
-      </li>
-    );
-
-  if (event.kind === "assistant") {
-    const responseKind = assistantResponseKind(event);
-    const responseClass =
-      responseKind === "tool_step" ? "tool-step" : responseKind;
-    return (
-      <li
-        className={`call-chain-assistant is-${event.status} is-${responseClass}`}
-      >
-        <article>
-          <header>
-            {showTechnicalInfo ? (
-              <>
-                <strong>
-                  {event.status === "streaming"
-                    ? uiText("模型响应中")
-                    : responseKind === "tool_step"
-                      ? uiText("模型工具步骤")
-                      : responseKind === "empty"
-                        ? uiText("空模型响应")
-                        : uiText("AI 响应")}
-                </strong>
-                <span>{callChainAssistantStatusLabel(event.status)}</span>
-              </>
-            ) : event.status === "interrupted" ? (
-              <strong>{uiText("中断片段")}</strong>
-            ) : null}
-            {event.committedHead === undefined ? null : (
-              <span className="history-message-actions">
-                {onRegenerateNarrative === undefined ? null : (
-                  <button
-                    type="button"
-                    className="history-restart-button"
-                    disabled={restartDisabled || freshContextDisabled}
-                    onClick={onRegenerateNarrative}
-                  >
-                    {uiText("只重新生成叙事")}
-                  </button>
-                )}
-                {onRegenerate === undefined ? null : (
-                  <button
-                    type="button"
-                    className="history-restart-button"
-                    disabled={restartDisabled}
-                    onClick={onRegenerate}
-                  >
-                    {uiText("重新生成")}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(event.committedHead!)}
-                >
-                  {uiText("创建分叉")}
-                </button>
-              </span>
-            )}
-          </header>
-          {responseKind === "tool_step" && event.text.length > 0 ? (
-            <details className="call-chain-tool-step-text">
-              <summary>{uiText("查看工具步骤文本（未进入故事）")}</summary>
-              <p>{event.text}</p>
-            </details>
-          ) : (
-            <p>
-              {event.text.length > 0
-                ? event.text
-                : event.status === "streaming"
-                  ? uiText("正在接收模型输出…")
-                  : responseKind === "tool_step"
-                    ? uiText("（本次响应只调用了工具）")
-                    : uiText("（本次响应没有文本）")}
-            </p>
-          )}
-          {event.committedHead !== undefined ? (
-            <ArtifactExtensionMount
-              mount="story"
-              reply={{ chainId, eventId: event.id }}
-            />
-          ) : null}
-          {responseKind === "pending" ? (
-            <small>{uiText("待定输出；响应完成前不会进入故事")}</small>
-          ) : null}
-          {showTechnicalInfo &&
-          event.checkpoint === true &&
-          event.status === "completed" &&
-          responseKind === "narrative" ? (
-            <small className="play-checkpoint-marker">{uiText("检查点")}</small>
-          ) : null}
-        </article>
-      </li>
-    );
-  }
-
-  if (event.kind === "tool_call") return null;
-  if (event.kind === "tool_result")
-    return event.resolution === undefined ? null : (
-      <li className="call-chain-resolution">
-        <ResolutionCard receipt={event.resolution} />
-      </li>
-    );
-
-  if (event.kind === "followup") {
-    const full = detail?.kind === "followup" ? detail : null;
-    return (
-      <li
-        className={`call-chain-followup ${event.failed ? "is-error" : "is-ok"}`}
-      >
-        <details
-          onToggle={(change) => change.currentTarget.open && void loadDetail()}
-        >
-          <summary>
-            <strong>
-              {uiText("后置请求 ·")}
-              {event.displayName}
-            </strong>
-            <span>
-              {event.failed
-                ? uiText("未完成")
-                : uiText("{count} 项产物", { count: event.toolCallCount })}
-            </span>
-          </summary>
-          {detailPending ? <p>{uiText("正在加载…")}</p> : null}
-          <SyncNotice
-            failed={detailFailed}
-            reason={detailError}
-            onRead={() => void detailTarget.recover()}
-          />
-          {full?.failure === undefined ? null : <p>{full.failure}</p>}
-          <ModelRetryStatus
-            retries={full?.retries ?? event.retries}
-            active={event.status === "streaming"}
-          />
-        </details>
-      </li>
-    );
-  }
-
-  if (event.kind === "cancellation")
-    return (
-      <li className="call-chain-cancellation" role="status">
-        <strong>{uiText("生成已取消")}</strong>
-        <p>
-          {uiText(
-            "本轮生成已停止；已提交的玩家原文保留，未完成的模型输出不会进入故事。",
-          )}
-        </p>
-      </li>
-    );
-
-  return (
-    <li className="call-chain-failure" role="alert">
-      <PlayFailureNotice
-        failureKind={event.failureKind}
-        canRetry={failureRecovery?.canRetry ?? false}
-        message={event.message}
-        recovery={failureRecovery}
-      />
-    </li>
-  );
-}
-
-function Transcript({
-  messages,
-  restartDisabled = false,
-  onRestartFrom,
-}: {
-  messages: readonly (WorldMessage & { pending: boolean })[];
-  restartDisabled?: boolean;
-  onRestartFrom?: (head: string) => void;
-}): React.JSX.Element {
-  return (
-    <ol className="narrative-list">
-      {messages.map((message, index) => (
-        <li
-          key={message.messageId ?? `${index}-${message.role}`}
-          className={`${message.role}-message ${message.pending ? "pending-message" : ""}`}
-        >
-          <article>
-            <header>
-              <strong>
-                {message.role === "player" ? uiText("你") : uiText("主持")}
-              </strong>
-              {message.pending ? <span>{uiText("未结算")}</span> : null}
-              {message.head === undefined ||
-              onRestartFrom === undefined ? null : (
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(message.head!)}
-                >
-                  {uiText("创建分叉")}
-                </button>
-              )}
-            </header>
-            <p>{message.exactText}</p>
-          </article>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function callChainAssistantStatusLabel(
-  status: Extract<V1PlayCallChainEvent, { kind: "assistant" }>["status"],
-): string {
-  if (status === "streaming") return uiText("接收中");
-  if (status === "interrupted") return uiText("中断片段");
-  return uiText("已完成");
-}
-
-function assistantResponseKind(
-  event: Extract<V1PlayTimelineEventSummary, { kind: "assistant" }>,
-): NonNullable<
-  Extract<V1PlayCallChainEvent, { kind: "assistant" }>["responseKind"]
-> {
-  if (event.responseKind !== undefined) return event.responseKind;
-  if (event.status === "streaming" || event.status === "interrupted")
-    return "pending";
-  if (event.text.trim().length === 0) return "empty";
-  return event.committedHead === undefined ? "tool_step" : "narrative";
 }
 
 function PlayerViewCard({
@@ -3866,376 +2412,4 @@ function errorMessage(reason: unknown): string {
       "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
     );
   return reason instanceof Error ? reason.message : uiText("操作失败");
-}
-
-function requestRuntime<T>(
-  client: WorldPageClient,
-  request: V1Request,
-): Promise<T> {
-  return client.request(request) as Promise<T>;
-}
-
-function timelineHasNewerActivity(
-  page: V1PlayTimelinePage,
-  chain: V1PlayCallChainView,
-): boolean {
-  if (page.activeChainId !== chain.chainId) return true;
-
-  const item = page.items.findLast(
-    (item) => item.kind === "event" && item.chainId === chain.chainId,
-  );
-  if (item?.kind !== "event") return false;
-  const event = chain.events.at(-1);
-  if (event === undefined || item.event.id > event.id) return true;
-  if (item.event.id !== event.id) return false;
-  if (
-    item.event.kind === "assistant" &&
-    item.event.status !== "completed" &&
-    event.kind === "assistant" &&
-    event.status === "completed"
-  )
-    return false;
-  if (
-    page.activeStatus === "running" &&
-    page.activeInvocationExchangeId !== undefined &&
-    page.activeInvocationExchangeId !==
-      (chain.activeInvocation?.exchangeId ?? null)
-  )
-    return true;
-  return (
-    (chain.status === "running" && page.activeStatus !== "running") ||
-    (item.event.kind === "assistant" &&
-      item.event.status === "completed" &&
-      event.kind === "assistant" &&
-      event.status !== "completed")
-  );
-}
-
-function projectPlayContextUsage(
-  next: V1PlayCallChainView,
-): PlayContextUsageProjection {
-  return {
-    worldId: next.worldId,
-    chainId: next.chainId,
-    ...(next.contextWindowTokens === undefined
-      ? {}
-      : { contextWindowTokens: next.contextWindowTokens }),
-    ...(next.latestCompletedResponse === undefined
-      ? {}
-      : { latestCompletedResponse: next.latestCompletedResponse }),
-  };
-}
-
-function mergePlayTimelinePage(
-  current: V1PlayTimelinePage | null,
-  page: V1PlayTimelinePage,
-): V1PlayTimelinePage {
-  if (current?.generation !== page.generation) return page;
-  const key = (item: V1PlayTimelineItem): string =>
-    item.kind === "genesis"
-      ? `genesis:${item.messageId}`
-      : item.kind === "context_boundary"
-        ? `context:${item.chainId}`
-        : `event:${item.chainId}:${item.event.id}`;
-  const incoming = new Map(page.items.map((item) => [key(item), item]));
-  const items = current.items
-    .filter(
-      (item) =>
-        item.kind !== "event" ||
-        !page.supersededEvents?.some(
-          (entry) =>
-            entry.chainId === item.chainId &&
-            entry.eventIds.includes(item.event.id),
-        ),
-    )
-    .map((item) => {
-      const replacement = incoming.get(key(item));
-      incoming.delete(key(item));
-      return (
-        replacement ??
-        (item.kind === "genesis"
-          ? item
-          : { ...item, current: item.chainId === page.activeChainId })
-      );
-    });
-  return {
-    ...page,
-    items: [...items, ...incoming.values()],
-    nextCursor: current.nextCursor,
-  };
-}
-
-function applyPlayTimelineFrame(
-  frame: V1PlayCallChainStreamFrame,
-  setTimeline: Dispatch<SetStateAction<V1PlayTimelinePage | null>>,
-): void {
-  if (frame.kind === "snapshot") {
-    setTimeline((current) => {
-      if (current === null) return current;
-      const chain = frame.value;
-      const previousActiveChainId = current.activeChainId;
-      const items = current.items
-        .filter(
-          (item) =>
-            item.kind !== "event" ||
-            item.chainId !== chain.chainId ||
-            !chain.supersededEventIds?.includes(item.event.id),
-        )
-        .map((item) => {
-          if (item.kind === "genesis") return item;
-          if (item.kind === "context_boundary")
-            return item.chainId === chain.chainId
-              ? {
-                  ...item,
-                  playPreset: structuredClone(chain.playPreset),
-                  changedDocuments: structuredClone(chain.changedDocuments),
-                  current: true,
-                }
-              : { ...item, current: false };
-          return { ...item, current: item.chainId === chain.chainId };
-        });
-      if (
-        previousActiveChainId !== chain.chainId &&
-        !items.some(
-          (item) =>
-            item.kind === "context_boundary" && item.chainId === chain.chainId,
-        )
-      )
-        items.push({
-          kind: "context_boundary",
-          chainId: chain.chainId,
-          playPreset: structuredClone(chain.playPreset),
-          changedDocuments: structuredClone(chain.changedDocuments),
-          current: true,
-        });
-      const loadedIds = items.flatMap((item) =>
-        item.kind === "event" && item.chainId === chain.chainId
-          ? [item.event.id]
-          : [],
-      );
-      const earliestLoadedId =
-        loadedIds.length === 0 ? 0 : Math.min(...loadedIds);
-      for (const event of chain.events) {
-        if (event.id < earliestLoadedId) continue;
-        const summary = summarizeTimelineEvent(event);
-        const index = items.findIndex(
-          (item) =>
-            item.kind === "event" &&
-            item.chainId === chain.chainId &&
-            item.event.id === event.id,
-        );
-        const next: V1PlayTimelineItem = {
-          kind: "event",
-          chainId: chain.chainId,
-          current: true,
-          event: summary,
-          ...(chain.requiresFreshContext ? { requiresFreshContext: true } : {}),
-        };
-        if (index < 0) items.push(next);
-        else {
-          const existing = items[index]!;
-          if (
-            existing.kind === "event" &&
-            existing.event.kind === "assistant" &&
-            summary.kind === "assistant"
-          ) {
-            summary.hasReasoning ||= existing.event.hasReasoning;
-            summary.hasToolFragment ||= existing.event.hasToolFragment;
-            summary.hasUsage ||= existing.event.hasUsage;
-            summary.detailsAvailable ||= existing.event.detailsAvailable;
-          }
-          items[index] = next;
-        }
-      }
-      return {
-        ...current,
-        activeChainId: chain.chainId,
-        activeStatus: chain.status,
-        activeInvocationExchangeId: chain.activeInvocation?.exchangeId ?? null,
-        activeCanRetry: chain.canRetry,
-        activeCanContinuePartial: chain.canContinuePartial ?? false,
-        activeFreshContextReason: chain.freshContextReason,
-        activeLastFailure: chain.lastFailure,
-        activeLastFailureKind: chain.lastFailureKind,
-        items,
-      };
-    });
-    return;
-  }
-  if (frame.kind !== "assistant_delta") return;
-  setTimeline((current) => {
-    if (current?.activeChainId == null) return current;
-    const activeChainId = current.activeChainId;
-    return {
-      ...current,
-      items: current.items.map((item) => {
-        if (
-          item.kind !== "event" ||
-          item.chainId !== activeChainId ||
-          item.event.kind !== "assistant" ||
-          item.event.id !== frame.eventId
-        )
-          return item;
-        if (frame.deltaKind === "text")
-          return {
-            ...item,
-            event: { ...item.event, text: item.event.text + frame.text },
-          };
-        if (frame.deltaKind === "reasoning")
-          return {
-            ...item,
-            event: {
-              ...item.event,
-              hasReasoning: true,
-              detailsAvailable: true,
-            },
-          };
-        return {
-          ...item,
-          event: {
-            ...item.event,
-            hasToolFragment: true,
-            detailsAvailable: true,
-          },
-        };
-      }),
-    };
-  });
-}
-
-function summarizeTimelineEvent(
-  event: V1PlayCallChainEvent,
-): V1PlayTimelineEventSummary {
-  if (
-    event.kind === "player" ||
-    event.kind === "failure" ||
-    event.kind === "cancellation"
-  )
-    return structuredClone(event);
-  if (event.kind === "assistant") {
-    const { reasoning, toolFragment, ...summary } = event;
-    const hasReasoning = event.reasoningRecorded === true || Boolean(reasoning);
-    return {
-      ...summary,
-      hasReasoning,
-      hasToolFragment: toolFragment !== undefined && toolFragment.length > 0,
-      hasUsage: event.usage !== undefined,
-      detailsAvailable:
-        hasReasoning ||
-        (toolFragment !== undefined && toolFragment.length > 0) ||
-        event.usage !== undefined ||
-        event.stopReason !== undefined ||
-        event.continuation !== undefined,
-    };
-  }
-  if (event.kind === "tool_call") {
-    const { arguments: _arguments, ...summary } = event;
-    void _arguments;
-    return { ...summary, detailsAvailable: true };
-  }
-  if (event.kind === "tool_result") {
-    const { markdown: _markdown, ...summary } = event;
-    void _markdown;
-    return { ...summary, detailsAvailable: true };
-  }
-  return {
-    id: event.id,
-    kind: "followup",
-    followupId: event.followupId,
-    displayName: event.displayName,
-    toolCallCount: event.toolCalls.length,
-    hasReasoning: event.reasoningRecorded === true || Boolean(event.reasoning),
-    ...(event.replyEventId === undefined
-      ? {}
-      : { replyEventId: event.replyEventId }),
-    ...(event.status === undefined ? {} : { status: event.status }),
-    failed: event.failure !== undefined,
-    ...(event.usage === undefined
-      ? {}
-      : { usage: structuredClone(event.usage) }),
-    detailsAvailable: true,
-  };
-}
-
-function legacyTimelinePage(world: WorldReadView): V1PlayTimelinePage {
-  const chain = world.playCallChain;
-  if (chain === null)
-    return {
-      worldId: world.worldId,
-      generation: `legacy:${world.worldId}`,
-      activeChainId: null,
-      activeStatus: null,
-      activeCanRetry: false,
-      activeLastFailure: null,
-      items: [],
-      nextCursor: null,
-    };
-  const contexts = [...chain.previousContexts, chain];
-  const firstPlayerHead = contexts[0]?.events.find(
-    (
-      event,
-    ): event is Extract<V1PlayCallChainEvent, { kind: "player" }> & {
-      committedHead: string;
-    } => event.kind === "player" && event.committedHead !== undefined,
-  )?.committedHead;
-  const inferredBaseline =
-    firstPlayerHead === undefined
-      ? 0
-      : world.committedMessages.findIndex(
-          ({ head }) => head === firstPlayerHead,
-        );
-  const baselineHistoryLength =
-    contexts[0]?.baselineHistoryLength ?? Math.max(0, inferredBaseline);
-  const baseline: V1PlayTimelineItem[] = world.committedMessages
-    .slice(0, baselineHistoryLength)
-    .map((message, index) => ({
-      kind: "genesis",
-      messageId: message.messageId ?? `legacy-message-${index + 1}`,
-      role: message.role,
-      exactText: message.exactText,
-    }));
-  return {
-    worldId: world.worldId,
-    generation: `legacy:${world.worldId}:${chain.chainId}`,
-    activeChainId: chain.chainId,
-    activeStatus: chain.status,
-    activeCanRetry: chain.canRetry,
-    activeCanContinuePartial: chain.canContinuePartial ?? false,
-    activeFreshContextReason: chain.freshContextReason,
-    activeLastFailure: chain.lastFailure,
-    activeLastFailureKind: chain.lastFailureKind,
-    items: [
-      ...baseline,
-      ...contexts.flatMap((context) => [
-        {
-          kind: "context_boundary" as const,
-          chainId: context.chainId,
-          playPreset: structuredClone(context.playPreset),
-          changedDocuments: structuredClone(context.changedDocuments),
-          current: context.chainId === chain.chainId,
-        },
-        ...context.events.map((event): V1PlayTimelineItem => ({
-          kind: "event",
-          chainId: context.chainId,
-          current: context.chainId === chain.chainId,
-          event: summarizeTimelineEvent(event),
-          ...(context.requiresFreshContext
-            ? { requiresFreshContext: true }
-            : {}),
-        })),
-      ]),
-    ],
-    nextCursor: null,
-  };
-}
-
-async function requestPlayDecorations(
-  client: WorldPageClient,
-  worldId: string,
-): Promise<WorldPlayDecorationsView> {
-  const result = await client.request({
-    type: "world.play-decorations.read",
-    worldId,
-  });
-  return result as WorldPlayDecorationsView;
 }

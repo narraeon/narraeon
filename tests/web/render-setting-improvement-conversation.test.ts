@@ -181,12 +181,7 @@ function renderWith({
       modelConfigured: true,
       hasUnsavedFileDraft: false,
       loading: false,
-      view: value,
-      history,
-      latestSessionId,
       notice: "",
-      requestFailure: null,
-      now: Date.now(),
       contentEditor: {
         files: [{ path: "opening.md", contents: "Opening" }],
         status: "usable",
@@ -201,21 +196,34 @@ function renderWith({
         title: "Test",
         onRename: () => undefined,
       },
-      onSend: () => Promise.resolve(),
-      onCancel: () => Promise.resolve(),
-      onResume: () => Promise.resolve(),
-      onFreshContext: () => undefined,
-      onSelectSession: () => Promise.resolve(),
-      onDeleteSession: () => Promise.resolve(),
-      onRollbackFile: (_sessionId: string, changeSetId: string, path: string) =>
-        Promise.resolve({
-          status: "rolled_back" as const,
-          changeSetId,
-          path,
-          changes: [],
-        }),
       onConfigureModel: () => undefined,
       onBack: () => undefined,
+      conversation: {
+        view: value,
+        history,
+        latestSessionId,
+        requestFailure: null,
+        now: Date.now(),
+      },
+      conversationActions: {
+        onSend: () => Promise.resolve(),
+        onCancel: () => Promise.resolve(),
+        onResume: () => Promise.resolve(),
+        onFreshContext: () => undefined,
+        onSelectSession: () => Promise.resolve(),
+        onDeleteSession: () => Promise.resolve(),
+        onRollbackFile: (
+          _sessionId: string,
+          changeSetId: string,
+          path: string,
+        ) =>
+          Promise.resolve({
+            status: "rolled_back" as const,
+            changeSetId,
+            path,
+            changes: [],
+          }),
+      },
     }),
   );
 }

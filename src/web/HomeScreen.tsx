@@ -32,63 +32,75 @@ interface HomeDeletion {
 }
 
 export function HomeScreen({
-  contentPackages,
-  worlds,
-  worldBackupImport,
-  sillyTavernContentImport,
-  renderWorldBackupExport,
-  selectedPackageId,
-  modelConfigured,
-  activeModelName,
+  worldLibrary: {
+    worlds,
+    renderWorldBackupExport,
+    onCreateWorld,
+    onOpenWorld,
+    onRenameWorld,
+    onDeleteWorld,
+  },
+  contentLibrary: {
+    contentPackages,
+    selectedPackageId,
+    samplePending = false,
+    onCreatePackage,
+    onCreateSamplePackage,
+    onOpenPackage,
+    onRenamePackage,
+    onDeletePackage,
+  },
+  imports: {
+    worldBackupImport,
+    sillyTavernContentImport,
+    importArchive,
+    importPending,
+    onImportArchiveChange,
+    onImportPackage,
+  },
+  model: { modelConfigured, activeModelName, onConfigureModel },
   currentPresetName,
-  importArchive,
-  importPending,
-  samplePending = false,
-  onImportArchiveChange,
   onOpenPlayPresets = () => undefined,
-  onCreateWorld,
-  onCreatePackage,
-  onCreateSamplePackage,
-  onConfigureModel,
-  onImportPackage,
-  onOpenPackage,
-  onOpenWorld,
-  onRenamePackage,
-  onDeletePackage,
-  onRenameWorld,
-  onDeleteWorld,
 }: {
-  worldBackupImport?: ReactNode;
-  sillyTavernContentImport?: ReactNode;
-  renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
-  contentPackages: HomeContentPackage[];
-  worlds: HomeWorld[];
-  selectedPackageId: string;
-  modelConfigured: boolean;
-  activeModelName: string | null;
+  worldLibrary: {
+    worlds: HomeWorld[];
+    renderWorldBackupExport?: (world: HomeWorld) => ReactNode;
+    onCreateWorld: () => void;
+    onOpenWorld: (worldId: string) => void;
+    onRenameWorld: (
+      world: HomeWorld,
+      name: string,
+    ) => void | boolean | Promise<void | boolean>;
+    onDeleteWorld: (world: HomeWorld) => void;
+  };
+  contentLibrary: {
+    contentPackages: HomeContentPackage[];
+    selectedPackageId: string;
+    samplePending?: boolean;
+    onCreatePackage: () => void;
+    onCreateSamplePackage: () => void;
+    onOpenPackage: (packageId: string) => void;
+    onRenamePackage: (
+      item: HomeContentPackage,
+      name: string,
+    ) => void | boolean | Promise<void | boolean>;
+    onDeletePackage: (item: HomeContentPackage) => void;
+  };
+  imports: {
+    worldBackupImport?: ReactNode;
+    sillyTavernContentImport?: ReactNode;
+    importArchive: File | null;
+    importPending: boolean;
+    onImportArchiveChange: (archive: File | null) => void;
+    onImportPackage: () => void;
+  };
+  model: {
+    modelConfigured: boolean;
+    activeModelName: string | null;
+    onConfigureModel: () => void;
+  };
   currentPresetName: string | null;
-  importArchive: File | null;
-  importPending: boolean;
-  samplePending?: boolean;
-  onImportArchiveChange: (archive: File | null) => void;
   onOpenPlayPresets?: () => void;
-  onCreateWorld: () => void;
-  onCreatePackage: () => void;
-  onCreateSamplePackage: () => void;
-  onConfigureModel: () => void;
-  onImportPackage: () => void;
-  onOpenPackage: (packageId: string) => void;
-  onOpenWorld: (worldId: string) => void;
-  onRenamePackage: (
-    item: HomeContentPackage,
-    name: string,
-  ) => void | boolean | Promise<void | boolean>;
-  onDeletePackage: (item: HomeContentPackage) => void;
-  onRenameWorld: (
-    world: HomeWorld,
-    name: string,
-  ) => void | boolean | Promise<void | boolean>;
-  onDeleteWorld: (world: HomeWorld) => void;
 }): React.JSX.Element {
   const [renamingWorldId, setRenamingWorldId] = useState<string | null>(null);
   const [worldNameDraft, setWorldNameDraft] = useState("");

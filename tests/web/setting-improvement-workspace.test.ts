@@ -391,83 +391,7 @@ function renderPanel(
       modelConfigured: true,
       hasUnsavedFileDraft: options.unsaved ?? false,
       loading: false,
-      view: {
-        sessionId: "setting-test",
-        runStatus:
-          options.retryable || options.continuable ? "interrupted" : "ready",
-        ...(options.freshContextReason && {
-          freshContextReason: options.freshContextReason,
-        }),
-        canRetry: options.retryable ?? false,
-        canContinuePartial: options.continuable ?? false,
-        messages: [],
-        turns: [
-          {
-            id: "turn-1",
-            user: {
-              id: "user-1",
-              role: "user",
-              text: "修改开场",
-              createdAt: 1,
-            },
-            exchanges: [
-              {
-                id: "exchange-1",
-                exchange: 1,
-                text: "",
-                reasoning: "先检查开场。",
-                toolCalls: [
-                  {
-                    callId: "write-opening",
-                    name: "setting_write_file",
-                    arguments: { path: "opening.md" },
-                    result: {
-                      markdown: "Write accepted",
-                      isError: false,
-                      changeSetId: "change-set:3",
-                      changes: [
-                        {
-                          path: "opening.md",
-                          kind: "modify",
-                          before: "Old opening",
-                          after: "New opening",
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        legacyDraft: null,
-        usage: emptyAggregatedModelUsage(),
-        progress: {
-          exchange: 1,
-          toolCalls: 1,
-          streaming: null,
-          updatedAt: 2,
-        },
-        lastFailure:
-          options.retryable || options.continuable ? "Stream stopped" : null,
-      },
-      history: options.history ?? [
-        {
-          sessionId: "setting-test",
-          runStatus: "ready",
-          createdAt: 1,
-          updatedAt: 2,
-          excerpt: "修改开场",
-          turnCount: 1,
-          exchangeCount: 1,
-          toolCallCount: 1,
-          changedFileCount: 1,
-        },
-      ],
-      latestSessionId: "setting-test",
       notice: "",
-      requestFailure: null,
-      now: 2,
       contentEditor: {
         files: [
           {
@@ -490,26 +414,106 @@ function renderPanel(
       ...(options.onCreateWorld === undefined
         ? {}
         : { onCreateWorld: options.onCreateWorld }),
-      onSend: options.onSend ?? (() => Promise.resolve()),
-      ...(options.onEditMessage === undefined
-        ? {}
-        : { onEditMessage: options.onEditMessage }),
-      onCancel: () => Promise.resolve(),
-      onResume: options.onResume ?? (() => Promise.resolve()),
-      onFreshContext: options.onFreshContext ?? (() => undefined),
-      onSelectSession: options.onSelectSession ?? (() => Promise.resolve()),
-      onDeleteSession,
-      onRollbackFile:
-        options.onRollbackFile ??
-        ((_sessionId: string, changeSetId: string, path: string) =>
-          Promise.resolve({
-            status: "rolled_back" as const,
-            changeSetId,
-            path,
-            changes: [],
-          })),
       onConfigureModel: () => undefined,
       onBack: () => undefined,
+      conversation: {
+        view: {
+          sessionId: "setting-test",
+          runStatus:
+            options.retryable || options.continuable ? "interrupted" : "ready",
+          ...(options.freshContextReason && {
+            freshContextReason: options.freshContextReason,
+          }),
+          canRetry: options.retryable ?? false,
+          canContinuePartial: options.continuable ?? false,
+          messages: [],
+          turns: [
+            {
+              id: "turn-1",
+              user: {
+                id: "user-1",
+                role: "user",
+                text: "修改开场",
+                createdAt: 1,
+              },
+              exchanges: [
+                {
+                  id: "exchange-1",
+                  exchange: 1,
+                  text: "",
+                  reasoning: "先检查开场。",
+                  toolCalls: [
+                    {
+                      callId: "write-opening",
+                      name: "setting_write_file",
+                      arguments: { path: "opening.md" },
+                      result: {
+                        markdown: "Write accepted",
+                        isError: false,
+                        changeSetId: "change-set:3",
+                        changes: [
+                          {
+                            path: "opening.md",
+                            kind: "modify",
+                            before: "Old opening",
+                            after: "New opening",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          legacyDraft: null,
+          usage: emptyAggregatedModelUsage(),
+          progress: {
+            exchange: 1,
+            toolCalls: 1,
+            streaming: null,
+            updatedAt: 2,
+          },
+          lastFailure:
+            options.retryable || options.continuable ? "Stream stopped" : null,
+        },
+        history: options.history ?? [
+          {
+            sessionId: "setting-test",
+            runStatus: "ready",
+            createdAt: 1,
+            updatedAt: 2,
+            excerpt: "修改开场",
+            turnCount: 1,
+            exchangeCount: 1,
+            toolCallCount: 1,
+            changedFileCount: 1,
+          },
+        ],
+        latestSessionId: "setting-test",
+        requestFailure: null,
+        now: 2,
+      },
+      conversationActions: {
+        ...(options.onEditMessage === undefined
+          ? {}
+          : { onEditMessage: options.onEditMessage }),
+        onSend: options.onSend ?? (() => Promise.resolve()),
+        onCancel: () => Promise.resolve(),
+        onResume: options.onResume ?? (() => Promise.resolve()),
+        onFreshContext: options.onFreshContext ?? (() => undefined),
+        onSelectSession: options.onSelectSession ?? (() => Promise.resolve()),
+        onDeleteSession,
+        onRollbackFile:
+          options.onRollbackFile ??
+          ((_sessionId: string, changeSetId: string, path: string) =>
+            Promise.resolve({
+              status: "rolled_back" as const,
+              changeSetId,
+              path,
+              changes: [],
+            })),
+      },
     }),
   );
 }

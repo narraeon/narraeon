@@ -31,48 +31,56 @@ describe("玩法标签", () => {
   test("主页的内容包卡片与世界卡片显示玩法标签", () => {
     render(
       createElement(HomeScreen, {
-        contentPackages: [
-          {
-            localId: "package-tabletop",
-            title: "雾港来信",
-            status: "usable" as const,
-            gameplay: tabletopD20,
-          },
-          {
-            localId: "package-fiction",
-            title: "旧塔草稿",
-            status: "usable" as const,
-            gameplay: fiction,
-          },
-        ],
-        worlds: [
-          {
-            worldId: "world-1",
-            title: "雾港第一夜",
-            gameplay: tabletopBag,
-            lastActivityAt: null,
-            excerpt: null,
-            playerTurns: 0,
-          },
-        ],
-        selectedPackageId: "package-tabletop",
-        modelConfigured: true,
-        activeModelName: null,
         currentPresetName: null,
-        importArchive: null,
-        importPending: false,
-        onImportArchiveChange: vi.fn(),
-        onCreateWorld: vi.fn(),
-        onCreatePackage: vi.fn(),
-        onCreateSamplePackage: vi.fn(),
-        onConfigureModel: vi.fn(),
-        onImportPackage: vi.fn(),
-        onOpenPackage: vi.fn(),
-        onRenamePackage: vi.fn(),
-        onDeletePackage: vi.fn(),
-        onOpenWorld: vi.fn(),
-        onRenameWorld: vi.fn(),
-        onDeleteWorld: vi.fn(),
+        worldLibrary: {
+          worlds: [
+            {
+              worldId: "world-1",
+              title: "雾港第一夜",
+              gameplay: tabletopBag,
+              lastActivityAt: null,
+              excerpt: null,
+              playerTurns: 0,
+            },
+          ],
+          onCreateWorld: vi.fn(),
+          onOpenWorld: vi.fn(),
+          onRenameWorld: vi.fn(),
+          onDeleteWorld: vi.fn(),
+        },
+        contentLibrary: {
+          contentPackages: [
+            {
+              localId: "package-tabletop",
+              title: "雾港来信",
+              status: "usable" as const,
+              gameplay: tabletopD20,
+            },
+            {
+              localId: "package-fiction",
+              title: "旧塔草稿",
+              status: "usable" as const,
+              gameplay: fiction,
+            },
+          ],
+          selectedPackageId: "package-tabletop",
+          onCreatePackage: vi.fn(),
+          onCreateSamplePackage: vi.fn(),
+          onOpenPackage: vi.fn(),
+          onRenamePackage: vi.fn(),
+          onDeletePackage: vi.fn(),
+        },
+        imports: {
+          importArchive: null,
+          importPending: false,
+          onImportArchiveChange: vi.fn(),
+          onImportPackage: vi.fn(),
+        },
+        model: {
+          modelConfigured: true,
+          activeModelName: null,
+          onConfigureModel: vi.fn(),
+        },
       }),
     );
 
