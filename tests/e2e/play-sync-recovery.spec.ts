@@ -1,6 +1,7 @@
 import { expect, type Page, type Request, type Route } from "@playwright/test";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import type { ConversationUpdate } from "../../src/protocol/conversationObservation.ts";
 import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
 
 test.use({ runtimeScope: "play-sync-recovery" });
@@ -11,10 +12,18 @@ let hold = false;
 let rejectModel = false;
 let providerCalls = 0;
 
-function finish(response: ServerResponse): void {
-  response.writeHead(200, { "content-type": "text/event-stream" });
+function textFrame(text: string): string {
+  return `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+}
+
+function finish(
+  response: ServerResponse,
+  text = "The committed reply is visible.",
+): void {
+  if (!response.headersSent)
+    response.writeHead(200, { "content-type": "text/event-stream" });
   response.end(
-    `data: ${JSON.stringify({ choices: [{ delta: { content: "The committed reply is visible." } }] })}\n\n` +
+    textFrame(text) +
       `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
       "data: [DONE]\n\n",
   );
@@ -63,15 +72,49 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const sources: EventSource[] = [];
     const opened = new WeakSet<EventSource>();
+    let gapText: string | undefined;
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {
       constructor(url: string | URL, configuration?: EventSourceInit) {
         super(url, configuration);
         sources.push(this);
         this.addEventListener("open", () => opened.add(this));
+        this.addEventListener(
+          "observation",
+          (event) => {
+            if (gapText === undefined || !this.url.includes("kind=play"))
+              return;
+            const { data, lastEventId } = event as MessageEvent<string>;
+            const { update } = JSON.parse(data) as {
+              update: ConversationUpdate;
+            };
+            if (
+              update.kind !== "play_delta" ||
+              !update.deltas.some((delta) => delta.text === gapText)
+            )
+              return;
+            gapText = undefined;
+            event.stopImmediatePropagation();
+            this.dispatchEvent(
+              new MessageEvent("observation", {
+                data,
+                lastEventId: lastEventId.replace(
+                  /:(\d+)$/,
+                  (_match, sequence: string) => `:${Number(sequence) + 1}`,
+                ),
+              }),
+            );
+          },
+          { capture: true },
+        );
       }
     };
     Object.assign(window, {
+      skipPlayDeltaSequence: (text: string) => {
+        gapText = text;
+      },
+      playObservationCount: () =>
+        sources.filter((source) => source.url.includes("kind=play")).length,
       isPlayObservationReady: () =>
         sources.some(
           (source) =>
@@ -93,6 +136,87 @@ test.beforeEach(async ({ page }) => {
       },
     });
   });
+});
+
+test("a play observation gap recovers live text without losing the draft or writing again", async ({
+  page,
+}) => {
+  const worldId = await prepareWorld(page, "Missing play observation snapshot");
+  const draft = page.getByLabel("Your action", { exact: true });
+  await draft.fill("Keep this action draft.");
+  hold = true;
+  const run = runtime<V1PlayCallChainView>(page, {
+    type: "play.chain.start",
+    worldId,
+    chainId: "play-observation-gap",
+    exchangeId: "play-gap-exchange",
+    playerText: "Wait beside the door.",
+  });
+  const initialText = "Alex raises a hand.";
+  const missedText = " Alex unlocks the door.";
+  const finalText = " The door opens.";
+  const running = page.getByRole("button", { name: "Cancel generation" });
+  const observationCount = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as { playObservationCount(): number }
+      ).playObservationCount(),
+    );
+  const requests: V1Request["type"][] = [];
+  try {
+    await expect.poll(() => heldResponse !== null).toBe(true);
+    const response = heldResponse!;
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(textFrame(initialText));
+    await expect(page.getByText(initialText, { exact: true })).toBeVisible();
+    await expect(running).toBeVisible();
+    const opened = await observationCount();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/runtime/v1")) return;
+      const input = (request.postDataJSON() as { request: V1Request }).request;
+      requests.push(input.type);
+    });
+    await page.evaluate((text) => {
+      (
+        window as unknown as { skipPlayDeltaSequence(text: string): void }
+      ).skipPlayDeltaSequence(text);
+    }, missedText);
+    response.write(textFrame(missedText));
+    await expect.poll(observationCount).toBe(opened + 1);
+    await expect(
+      page.getByText(initialText + missedText, { exact: true }),
+    ).toBeVisible();
+    await expect(running).toBeVisible();
+    await expect(draft).toHaveValue("Keep this action draft.");
+    finish(response, finalText);
+    heldResponse = null;
+    const result = await run;
+    expect(result.status).toBe("ready");
+    expect(result.events.filter(({ kind }) => kind === "player")).toHaveLength(
+      1,
+    );
+    expect(
+      result.events.filter(({ kind }) => kind === "assistant"),
+    ).toHaveLength(1);
+    await expect(
+      page.getByText(initialText + missedText + finalText, { exact: true }),
+    ).toBeVisible();
+    await expect(running).toHaveCount(0);
+    await expect(draft).toHaveValue("Keep this action draft.");
+    expect(providerCalls).toBe(1);
+    expect(
+      requests.filter(
+        (type) =>
+          type !== "world.read" && type !== "world.play-decorations.read",
+      ),
+    ).toEqual([]);
+  } finally {
+    if (heldResponse !== null) {
+      finish(heldResponse, finalText);
+      heldResponse = null;
+      await run;
+    }
+  }
 });
 
 test("a committed action survives a lost response without a second write", async ({

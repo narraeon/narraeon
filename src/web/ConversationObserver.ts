@@ -24,6 +24,9 @@ export type ObserveConversation = (
   connection?: (state: ConversationConnection, message?: string) => void,
 ) => () => void;
 
+const initialSnapshotRetryDelay = 200;
+const maxSnapshotRetryDelay = 5_000;
+
 /** Owns transport identity, reset/delta reconciliation, and serial delivery.
  * A slow projection keeps the newest observation instead of losing updates
  * while an overview request is in flight. Disposal invalidates every callback. */
@@ -34,6 +37,8 @@ export const observeConversation: ObserveConversation = (
 ) => {
   let disposed = false;
   let source: EventSource;
+  let snapshotRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let snapshotRetryDelay = initialSnapshotRetryDelay;
   let state: ConversationState | null = null;
   let pending: ConversationState | null = null;
   let delivering = false;
@@ -145,13 +150,22 @@ export const observeConversation: ObserveConversation = (
           state = null;
           epoch = "";
           sequence = 0;
-          connect();
+          snapshotRetryTimer = setTimeout(() => {
+            snapshotRetryTimer = undefined;
+            if (!disposed) connect();
+          }, snapshotRetryDelay);
+          snapshotRetryDelay = Math.min(
+            snapshotRetryDelay * 2,
+            maxSnapshotRetryDelay,
+          );
           return;
         }
         if (nextEpoch !== epoch) invalidateDelivery();
         state = applyConversationUpdate(state, payload.update);
         if (state.kind !== target.kind)
           throw new Error("Conversation target changed unexpectedly");
+        if (payload.update.kind === "snapshot")
+          snapshotRetryDelay = initialSnapshotRetryDelay;
         epoch = nextEpoch;
         sequence = nextSequence;
         pending = state;
@@ -170,6 +184,7 @@ export const observeConversation: ObserveConversation = (
   connect();
   return () => {
     disposed = true;
+    clearTimeout(snapshotRetryTimer);
     pending = null;
     source.close();
   };
