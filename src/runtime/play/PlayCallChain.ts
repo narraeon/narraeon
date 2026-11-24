@@ -37,7 +37,9 @@ import {
   narrativeBackground,
   type HistoryBackground,
 } from "../history/HistoryBackground.ts";
-import { historyEntries } from "../history/HistoryTools.ts";
+import { historyEntries, type HistoryEntry } from "../history/HistoryTools.ts";
+import { historyInputs } from "../history/HistoryQuery.ts";
+import { appendHistoryVersion } from "../history/HistorySnapshotVersion.ts";
 import { isDeepStrictEqual } from "node:util";
 import { hasLegacyHistoryTools } from "../prompt/FileNativeToolRegistry.ts";
 import {
@@ -165,7 +167,8 @@ type CompletedToolCall = PersistedCompletedToolCall;
 interface PlayCallChainSession extends PersistedPlayCallChain {
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
   documents: FileNativePlayDocuments;
-  history: { path: string; contents: string; background?: HistoryBackground }[];
+  history: HistoryEntry[];
+  historyVersion: string;
   completedToolMap: Map<string, CompletedToolCall>;
   persistenceCursor: PlayContextPersistenceCursor;
 }
@@ -485,6 +488,7 @@ export class PlayCallChain {
       updatedAt: now,
       documents: fresh.documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),
+      historyVersion: binding.historyVersion,
       narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(),
       persistenceCursor: {
@@ -734,6 +738,7 @@ export class PlayCallChain {
       binding.history,
       binding.historyBackgrounds,
     );
+    session.historyVersion = binding.historyVersion;
     session.narrativeCheckpoint = binding.narrativeCheckpoint;
     session.nextMaterials = structuredClone(binding.additionalMaterials);
     const previousRun = session.promptRuns?.at(-1);
@@ -3435,6 +3440,7 @@ export class PlayCallChain {
       nextMaterials: structuredClone(binding.additionalMaterials),
       documents,
       history: historyEntries(binding.history, binding.historyBackgrounds),
+      historyVersion: binding.historyVersion,
       narrativeCheckpoint: binding.narrativeCheckpoint,
       completedToolMap: new Map(
         persisted.completedTools.map((item) => [
@@ -3591,12 +3597,14 @@ export class PlayCallChain {
     const {
       documents: _documents,
       history: _history,
+      historyVersion: _historyVersion,
       completedToolMap: _completedToolMap,
       persistenceCursor: _persistenceCursor,
       ...persisted
     } = session;
     void _documents;
     void _history;
+    void _historyVersion;
     void _completedToolMap;
     void _persistenceCursor;
     session.persistenceCursor = await this.#worlds.playTimeline.persist(
@@ -3761,7 +3769,7 @@ function finalizeWriteReceipts(settlement: {
 }
 
 function appendCommittedHistory(
-  session: Pick<PlayCallChainSession, "history">,
+  session: Pick<PlayCallChainSession, "history" | "historyVersion">,
   head: string,
   messages: readonly {
     role: "player" | "narrator";
@@ -3783,13 +3791,18 @@ function appendCommittedHistory(
         );
       continue;
     }
-    session.history.push({
+    const entry: HistoryEntry = {
       path,
       contents: message.exactText,
       ...(message.background === undefined
         ? {}
         : { background: structuredClone(message.background) }),
-    });
+    };
+    session.history.push(entry);
+    session.historyVersion = appendHistoryVersion(
+      session.historyVersion,
+      historyInputs([entry]),
+    );
   }
 }
 
@@ -3862,6 +3875,7 @@ function prepareTool(
               session.history,
               {
                 historyScope: session.worldId,
+                historyVersion: session.historyVersion,
                 locale,
                 legacyHistoryTools: hasLegacyHistoryTools(
                   currentPlayPrompt(session).tools,

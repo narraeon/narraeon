@@ -74,6 +74,7 @@ import {
   WorldAuthorityError,
   WorldLedgerAuthority,
   type WorldCommitMode,
+  type WorldRecoveredEndpoint,
   type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
 import {
@@ -192,6 +193,7 @@ export interface FileNativePlayBinding {
   files: Record<string, string>;
   additionalMaterials: MaterialSelection[];
   history: Record<string, string>;
+  historyVersion: string;
   historyBackgrounds?: Record<string, HistoryBackground>;
   narrativeCheckpoint?: NarrativeCheckpoint | undefined;
 }
@@ -1221,6 +1223,7 @@ export class FileNativeWorldStore {
             ]),
           ),
           historyBackgrounds: historyBackgroundRecord(recovered.history),
+          historyVersion: recovered.historyVersion,
           narrativeCheckpoint: recovered.narrativeCheckpoint,
         };
       });
@@ -1245,7 +1248,7 @@ export class FileNativeWorldStore {
   ): Promise<FileNativePlayBinding> {
     assertIdentity(worldId, "World ID");
     const [endpoint, control] = await Promise.all([
-      this.recoverEndpoint(worldId, head),
+      this.#recoverAuthorityEndpoint(worldId, head),
       this.#recoverEndpointControl(worldId, head),
     ]);
     return {
@@ -1263,6 +1266,7 @@ export class FileNativeWorldStore {
       additionalMaterials: structuredClone(endpoint.additionalMaterials),
       narrativeCheckpoint: endpoint.narrativeCheckpoint,
       historyBackgrounds: historyBackgroundRecord(endpoint.history),
+      historyVersion: endpoint.historyVersion,
       history: Object.fromEntries(
         endpoint.history.map(({ messageId, exactText }) => [
           messageId,
@@ -1310,20 +1314,27 @@ export class FileNativeWorldStore {
     worldId: string,
     head?: string,
   ): Promise<FileNativeRecoveredEndpoint> {
+    const recovered = await this.#recoverAuthorityEndpoint(worldId, head);
+    return {
+      worldId,
+      head: recovered.head,
+      state: recovered.state,
+      history: recovered.history,
+      additionalMaterials: recovered.additionalMaterials,
+      narrativeCheckpoint: recovered.narrativeCheckpoint,
+    };
+  }
+
+  async #recoverAuthorityEndpoint(
+    worldId: string,
+    head?: string,
+  ): Promise<WorldRecoveredEndpoint> {
     assertIdentity(worldId, "World ID");
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     try {
-      const recovered = await new WorldLedgerAuthority(root).recover(head);
-      return {
-        worldId,
-        head: recovered.head,
-        state: recovered.state,
-        history: recovered.history,
-        additionalMaterials: recovered.additionalMaterials,
-        narrativeCheckpoint: recovered.narrativeCheckpoint,
-      };
+      return await new WorldLedgerAuthority(root).recover(head);
     } catch (error: unknown) {
       throw endpointReadError(error, head);
     }
@@ -1487,6 +1498,7 @@ export class FileNativeWorldStore {
             }, {}),
             additionalMaterials: structuredClone(selected.additionalMaterials),
             historyBackgrounds: historyBackgroundRecord(selected.history),
+            historyVersion: selected.historyVersion,
             history: Object.fromEntries(
               selected.history.map(({ messageId, exactText }) => [
                 messageId,

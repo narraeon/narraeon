@@ -36,8 +36,9 @@ export function historyEntries(
 export function createHistoryQuery(
   scope: string,
   entries: readonly HistoryEntry[],
+  version?: string,
 ): HistoryQuery {
-  return new HistoryQuery(scope, historyInputs(entries));
+  return new HistoryQuery(scope, historyInputs(entries), version);
 }
 
 export function runHistoryTool(

@@ -1,10 +1,6 @@
 import type { HistoryBackground } from "./HistoryBackground.ts";
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
+import { appendHistoryVersion } from "./HistorySnapshotVersion.ts";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   mapLiteralSource,
   normalizeHistoryText,
@@ -88,16 +84,6 @@ export interface HistorySearch {
   nextCursor: string | null;
 }
 
-export interface HistoryLegacyList {
-  ok: true;
-  kind: "legacy_list";
-  total: number;
-  order: "newest_first" | "oldest_first";
-  offset: number;
-  messages: readonly HistoryMessage[];
-  nextCursor: string | null;
-}
-
 interface CursorPayload {
   version: 1;
   world: string;
@@ -115,14 +101,21 @@ const cursorSecret = randomBytes(32);
 
 export class HistoryQuery {
   readonly messages: readonly HistoryMessage[];
-  readonly snapshotId: string;
+  #snapshotId: string | undefined;
   readonly #world: string;
 
-  constructor(world: string, inputs: readonly HistoryMessageInput[]) {
+  constructor(
+    world: string,
+    inputs: readonly HistoryMessageInput[],
+    version?: string,
+  ) {
     this.#world = world;
     const refs = inputs.map(({ id }) => historyMessageRef(id));
-    this.messages = inputs.map((message, index) =>
-      Object.freeze({
+    this.#snapshotId = version;
+    this.messages = inputs.map((message, index) => {
+      const { text } = message;
+      let length: number | undefined;
+      return Object.freeze({
         ...message,
         ...(message.background === undefined
           ? {}
@@ -132,22 +125,15 @@ export class HistoryQuery {
         isOpening: message.isOpening === true,
         previous: refs[index - 1] ?? null,
         next: refs[index + 1] ?? null,
-        length: Array.from(message.text).length,
-      }),
-    );
-    this.snapshotId = createHash("sha256")
-      .update(
-        JSON.stringify(
-          inputs.map(({ id, role, isOpening, text, background }) => [
-            id,
-            role,
-            isOpening === true,
-            text,
-            background ?? null,
-          ]),
-        ),
-      )
-      .digest("hex");
+        get length() {
+          return (length ??= Array.from(text).length);
+        },
+      });
+    });
+  }
+
+  get snapshotId(): string {
+    return (this.#snapshotId ??= appendHistoryVersion("", this.messages));
   }
 
   list(args: unknown): HistoryList | HistoryFailure {
@@ -165,7 +151,7 @@ export class HistoryQuery {
       let anchor: string | null;
       if (input.cursor !== undefined) {
         cursorOnly(input);
-        const cursor = this.#decodeCursor(input.cursor, "history_list");
+        const cursor = this.decodeCursor(input.cursor, "history_list");
         query = cursor.query;
         limit = Number(query.limit);
         anchor = typeof query.anchor === "string" ? query.anchor : null;
@@ -216,114 +202,23 @@ export class HistoryQuery {
         earlierCursor:
           start === 0
             ? null
-            : this.#cursor("history_list", query, start, "earlier"),
+            : this.encodeCursor("history_list", query, start, "earlier"),
         laterCursor:
           end === this.messages.length
             ? null
-            : this.#cursor("history_list", query, end, "later"),
+            : this.encodeCursor("history_list", query, end, "later"),
       };
     } catch (error) {
       return queryFailure(error);
     }
   }
 
-  search(args: unknown): HistorySearch | HistoryFailure {
-    return this.#search(args, "history_search");
-  }
-
-  legacyList(
+  search(
     args: unknown,
-    tool: "context_list" | "history_list",
-  ): HistoryLegacyList | HistoryFailure {
-    try {
-      const input = argumentsObject(args, ["order", "limit", "cursor"]);
-      if (input.order !== "newest_first" && input.order !== "oldest_first")
-        invalid(
-          "Legacy history listing requires newest_first or oldest_first order.",
-        );
-      const limit = integer(input.limit, 20, 1, 100, "limit");
-      const query = { order: input.order, limit };
-      let offset = 0;
-      if (input.cursor !== undefined && input.cursor !== null) {
-        const cursor = this.#decodeCursor(input.cursor, `legacy_${tool}`);
-        if (JSON.stringify(cursor.query) !== JSON.stringify(query))
-          invalid(
-            "Keep the original legacy order and limit, or run a new query.",
-          );
-        offset = cursor.offset;
-      }
-      const ordered =
-        input.order === "newest_first"
-          ? [...this.messages].reverse()
-          : this.messages;
-      const page = ordered.slice(offset, offset + limit);
-      return {
-        ok: true,
-        kind: "legacy_list",
-        total: this.messages.length,
-        order: input.order,
-        offset,
-        messages: page,
-        nextCursor:
-          offset + page.length >= ordered.length
-            ? null
-            : this.#cursor(
-                `legacy_${tool}`,
-                query,
-                offset + page.length,
-                "later",
-              ),
-      };
-    } catch (error) {
-      return queryFailure(error);
-    }
-  }
-
-  legacySearch(args: unknown): HistorySearch | HistoryFailure {
-    try {
-      const input = argumentsObject(args, [
-        "query",
-        "caseSensitive",
-        "within",
-        "limit",
-        "cursor",
-      ]);
-      const { cursor, query, within, ...options } = input;
-      if (within !== undefined && typeof within !== "string")
-        invalid("Legacy within must be a Runtime history handle.");
-      const request = { queries: [query], ...options, order: "oldest_first" };
-      if (cursor !== undefined && cursor !== null) {
-        const saved = this.#decodeCursor(cursor, "legacy_context_search");
-        if (
-          normalizeLiteral(String(query), options.caseSensitive === true) !==
-            normalizeLiteral(
-              String((saved.query.queries as string[])[0]),
-              options.caseSensitive === true,
-            ) ||
-          (within ?? null) !== saved.query.within ||
-          integer(options.limit, 10, 1, 50, "limit") !== saved.query.limit ||
-          (options.caseSensitive === true) !== saved.query.caseSensitive
-        )
-          invalid(
-            "Keep the original legacy search parameters, or run a new query.",
-          );
-        return this.#search({ cursor }, "legacy_context_search");
-      }
-      return this.#search(
-        request,
-        "legacy_context_search",
-        typeof within === "string" ? within : null,
-      );
-    } catch (error) {
-      return queryFailure(error);
-    }
-  }
-
-  #search(
-    args: unknown,
-    tool: string,
-    within: string | null = null,
+    legacy?: { within: string | null },
   ): HistorySearch | HistoryFailure {
+    const tool =
+      legacy === undefined ? "history_search" : "legacy_context_search";
     try {
       const input = argumentsObject(args, [
         "queries",
@@ -339,7 +234,7 @@ export class HistoryQuery {
       let offset = 0;
       if (input.cursor !== undefined) {
         cursorOnly(input);
-        const cursor = this.#decodeCursor(input.cursor, tool);
+        const cursor = this.decodeCursor(input.cursor, tool);
         query = cursor.query;
         offset = cursor.offset;
       } else {
@@ -404,7 +299,7 @@ export class HistoryQuery {
           limit: integer(input.limit, 10, 1, 50, "limit"),
           start,
           end,
-          within,
+          within: legacy?.within ?? null,
         };
       }
       const queries = query.queries as string[];
@@ -447,7 +342,7 @@ export class HistoryQuery {
         match,
         order,
         within: scope,
-        legacy: tool === "legacy_context_search",
+        legacy: legacy !== undefined,
         matches,
         messages: page.map(({ message, normalized }) =>
           searchHit(message, normalized, terms, caseSensitive),
@@ -455,7 +350,7 @@ export class HistoryQuery {
         nextCursor:
           offset + page.length >= matches
             ? null
-            : this.#cursor(tool, query, offset + page.length, "later"),
+            : this.encodeCursor(tool, query, offset + page.length, "later"),
       };
     } catch (error) {
       return queryFailure(error);
@@ -517,7 +412,7 @@ export class HistoryQuery {
     return message;
   }
 
-  #cursor(
+  encodeCursor(
     tool: string,
     query: Record<string, unknown>,
     offset: number,
@@ -539,7 +434,7 @@ export class HistoryQuery {
     return `${encoded}.${signature}`;
   }
 
-  #decodeCursor(value: unknown, tool: string): CursorPayload {
+  decodeCursor(value: unknown, tool: string): CursorPayload {
     const bad = () =>
       new HistoryQueryError(
         "history_invalid_cursor",
@@ -616,15 +511,15 @@ class HistoryQueryError extends Error {
     this.recovery = recovery;
   }
 }
-function queryFailure(error: unknown): HistoryFailure {
+export function queryFailure(error: unknown): HistoryFailure {
   if (error instanceof HistoryQueryError)
     return { ok: false, code: error.code, recovery: error.recovery };
   throw error;
 }
-function invalid(message: string): never {
+export function invalid(message: string): never {
   throw new HistoryQueryError("history_invalid_arguments", message);
 }
-function argumentsObject(
+export function argumentsObject(
   args: unknown,
   allowed: readonly string[],
 ): Record<string, unknown> {
@@ -643,7 +538,7 @@ function cursorOnly(input: Record<string, unknown>): void {
       "Continuation needs only {cursor}; omit all first-query arguments.",
     );
 }
-function integer(
+export function integer(
   value: unknown,
   fallback: number,
   min: number,

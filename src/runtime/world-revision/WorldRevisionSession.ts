@@ -940,6 +940,7 @@ export class WorldRevisionSession {
       history: {
         scope: epoch.worldId,
         entries: historyEntries(binding.history, binding.historyBackgrounds),
+        version: binding.historyVersion,
       },
       locale: session.locale,
       revision: epoch.revision,

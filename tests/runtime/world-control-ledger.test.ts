@@ -112,6 +112,7 @@ test("控制编辑应用是一轮 control_apply：只推进一轮，回退到应
     return createHistoryQuery(
       fixture.worldId,
       historyEntries(binding.history, binding.historyBackgrounds),
+      binding.historyVersion,
     );
   };
   const firstPage = (await searchHistory()).search({

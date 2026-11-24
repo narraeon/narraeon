@@ -56,7 +56,11 @@ export class WorldRevisionAuthoringTransaction {
     baseFiles: readonly ContentTreeFile[];
     immutableBaseFiles: readonly ContentTreeFile[];
     /** Committed history of the epoch's fixed base; read-only to revision. */
-    history: { scope: string; entries: readonly HistoryEntry[] };
+    history: {
+      scope: string;
+      entries: readonly HistoryEntry[];
+      version?: string;
+    };
     locale?: AppLocale;
     revision?: string;
     authorization?: SettingAuthoringAuthorization | null;
@@ -66,6 +70,7 @@ export class WorldRevisionAuthoringTransaction {
     this.#history = createHistoryQuery(
       input.history.scope,
       input.history.entries,
+      input.history.version,
     );
     this.#inner = new SettingAuthoringTransaction({
       baseFiles: input.baseFiles,

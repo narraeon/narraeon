@@ -4,12 +4,12 @@ import type { HistoryBackground } from "./HistoryBackground.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type {
   HistoryFailure,
-  HistoryLegacyList,
   HistoryList,
   HistoryMessage,
   HistoryRead,
   HistorySearch,
 } from "./HistoryQuery.ts";
+import type { HistoryLegacyList } from "./LegacyHistoryQuery.ts";
 
 export type HistoryResult =
   | HistoryFailure

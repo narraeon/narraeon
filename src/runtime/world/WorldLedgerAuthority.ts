@@ -13,6 +13,8 @@ import { dirname, join, posix } from "node:path";
 
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
+import { historyInputs } from "../history/HistoryQuery.ts";
+import { appendHistoryVersion } from "../history/HistorySnapshotVersion.ts";
 import type { MaterialSelection } from "../prompt/MaterialSelection.ts";
 import type {
   NarrativeCheckpoint,
@@ -93,6 +95,7 @@ export interface WorldRecoveredEndpoint {
   head: string;
   state: ContentTreeFile[];
   history: WorldHistoryMessage[];
+  historyVersion: string;
   additionalMaterials: MaterialSelection[];
   narrativeCheckpoint?: NarrativeCheckpoint;
 }
@@ -290,17 +293,25 @@ export class WorldLedgerAuthority {
       { dirs: ["state"], paths: [materialsFile], includeTurns: true },
     );
     const commits = commitsFromTurns(turns);
-    // Genesis is parsed for this read. Only committed messages may be shared
-    // with the ledger view and need to be copied for the caller.
-    const history = [
-      ...(await this.#genesisHistory()),
-      ...structuredClone(commits.flatMap((commit) => commit.historyAppend)),
-    ];
+    const genesis = await this.#genesisHistory();
+    let historyVersion = appendHistoryVersion(
+      "",
+      historyInputsAtCommit(genesis),
+    );
+    for (const { historyAppend } of commits) {
+      if (historyAppend.length !== 0)
+        historyVersion = versionAfterCommit(historyVersion, historyAppend);
+    }
     const checkpoint = this.#checkpointAt(commits);
     return {
       head: headName(sequence),
       state: surfaceFiles(files, "state"),
-      history,
+      // Committed messages are borrowed from the cached ledger view.
+      history: [
+        ...genesis,
+        ...structuredClone(commits.flatMap((commit) => commit.historyAppend)),
+      ],
+      historyVersion,
       additionalMaterials: this.#materialsFrom(files.get(materialsFile)),
       ...(checkpoint === undefined ? {} : { narrativeCheckpoint: checkpoint }),
     };
@@ -594,6 +605,37 @@ export class WorldLedgerAuthority {
     });
     return { commit, commitDigest };
   }
+}
+
+function historyInputsAtCommit(messages: readonly WorldHistoryMessage[]) {
+  return historyInputs(
+    messages.map(({ messageId, exactText, background }) => ({
+      path: messageId,
+      contents: exactText,
+      ...(background === undefined ? {} : { background }),
+    })),
+  );
+}
+
+// Turn payloads are immutable and reused by the ledger view. The prefix check
+// also covers a newly opened or replaced genesis. Eviction follows the ledger.
+const turnHistoryVersions = new WeakMap<
+  readonly WorldHistoryMessage[],
+  { previous: string; version: string }
+>();
+
+function versionAfterCommit(
+  previous: string,
+  messages: readonly WorldHistoryMessage[],
+): string {
+  const cached = turnHistoryVersions.get(messages);
+  if (cached?.previous === previous) return cached.version;
+  const version = appendHistoryVersion(
+    previous,
+    historyInputsAtCommit(messages),
+  );
+  turnHistoryVersions.set(messages, { previous, version });
+  return version;
 }
 
 function commitsFromTurns(

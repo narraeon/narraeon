@@ -1,8 +1,15 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { createHash } from "node:crypto";
 import type { ResolutionReceipt } from "../../protocol/resolution.ts";
-import type { HistoryBackground } from "../history/HistoryBackground.ts";
-import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
+import type { HistoryQuery } from "../history/HistoryQuery.ts";
+import {
+  createHistoryQuery,
+  type HistoryEntry,
+} from "../history/HistoryTools.ts";
+import {
+  legacyHistoryList,
+  legacyHistorySearch,
+} from "../history/LegacyHistoryQuery.ts";
 import { renderHistoryResult } from "../history/HistoryRendering.ts";
 import {
   stateDirectoryHandle,
@@ -80,6 +87,13 @@ class PlayDocumentToolFailure extends Error {
   }
 }
 
+interface PlayDocumentToolOptions {
+  historyScope?: string;
+  historyVersion?: string;
+  locale?: AppLocale;
+  legacyHistoryTools?: boolean;
+}
+
 /**
  * One operation-bound document context for the play call chain. Product flows
  * submit tool calls here; document parsing, identity, lookup, locator semantics
@@ -90,6 +104,7 @@ export class FileNativePlayDocuments {
   #committedSnapshot: WorldDocumentStore;
   #reads: WriteAuthorizations;
   #declaredDirectories: string[] = [];
+  #historyQuery?: { scope: string; version: string; query: HistoryQuery };
   constructor(files: Readonly<Record<string, string>>) {
     this.#candidate = openPlayCandidate({ ...files });
     this.#committedSnapshot = this.#candidate.snapshot;
@@ -170,16 +185,8 @@ export class FileNativePlayDocuments {
 
   execute(
     call: ModelHostToolCall,
-    history: {
-      path: string;
-      contents: string;
-      background?: HistoryBackground;
-    }[],
-    options: {
-      historyScope?: string;
-      locale?: AppLocale;
-      legacyHistoryTools?: boolean;
-    } = {},
+    history: readonly HistoryEntry[],
+    options: PlayDocumentToolOptions = {},
   ): PlayDocumentToolResult {
     const schema = runtimeToolInputSchema(call.name);
     if (schema === null) return this.#dispatch(call, history, options);
@@ -199,23 +206,20 @@ export class FileNativePlayDocuments {
 
   #dispatch(
     call: ModelHostToolCall,
-    history: {
-      path: string;
-      contents: string;
-      background?: HistoryBackground;
-    }[],
-    options: {
-      historyScope?: string;
-      locale?: AppLocale;
-      legacyHistoryTools?: boolean;
-    },
+    history: readonly HistoryEntry[],
+    options: PlayDocumentToolOptions,
   ): PlayDocumentToolResult {
-    let historyQuery: HistoryQuery | undefined;
-    const query = () =>
-      (historyQuery ??= new HistoryQuery(
-        options.historyScope ?? "local-document-context",
-        historyInputs(history),
-      ));
+    const query = () => {
+      const scope = options.historyScope ?? "local-document-context";
+      const version = options.historyVersion;
+      if (version === undefined) return createHistoryQuery(scope, history);
+      const cached = this.#historyQuery;
+      if (cached?.scope === scope && cached.version === version)
+        return cached.query;
+      const next = createHistoryQuery(scope, history, version);
+      this.#historyQuery = { scope, version, query: next };
+      return next;
+    };
     const render = (result: Parameters<typeof renderHistoryResult>[0]) =>
       renderHistoryResult(result, options.locale ?? "en");
     const legacy = options.legacyHistoryTools !== false;
@@ -225,7 +229,7 @@ export class FileNativePlayDocuments {
     if (call.name === "history_list") {
       return render(
         legacy && record(args) && args.order !== undefined
-          ? query().legacyList(args, "history_list")
+          ? legacyHistoryList(query(), args, "history_list")
           : query().list(args),
       );
     }
@@ -237,7 +241,7 @@ export class FileNativePlayDocuments {
       const { source: _source, ...parameters } = args;
       void _source;
       return legacy
-        ? render(query().legacyList(parameters, "context_list"))
+        ? render(legacyHistoryList(query(), parameters, "context_list"))
         : toolFailure("Use history_list for committed history.");
     }
     if (
@@ -248,7 +252,7 @@ export class FileNativePlayDocuments {
       const { source: _source, ...parameters } = args;
       void _source;
       return legacy
-        ? render(query().legacySearch(parameters))
+        ? render(legacyHistorySearch(query(), parameters))
         : toolFailure("Use history_search for committed history.");
     }
     if (

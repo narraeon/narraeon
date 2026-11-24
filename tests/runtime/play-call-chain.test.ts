@@ -11453,8 +11453,8 @@ test("冻结旧历史工具会话冷启动后继续，不添加新历史工具�
 });
 
 test("历史查询沿真实时间线修订与分叉恢复位置，状态修正不使历史 cursor 失效", async () => {
-  const { HistoryQuery, historyInputs } =
-    await import("../../src/runtime/history/HistoryQuery.ts");
+  const { createHistoryQuery, historyEntries } =
+    await import("../../src/runtime/history/HistoryTools.ts");
   const { worlds, worldId } = await createWorld("history-query-real-timeline");
   const first = await worlds.commitPlayStep({
     worldId,
@@ -11477,14 +11477,10 @@ test("历史查询沿真实时间线修订与分叉恢复位置，状态修正�
   });
   const open = async (id: string) => {
     const binding = await worlds.bindPlayCallChain(id);
-    return new HistoryQuery(
+    return createHistoryQuery(
       id,
-      historyInputs(
-        Object.entries(binding.history).map(([path, contents]) => ({
-          path,
-          contents,
-        })),
-      ),
+      historyEntries(binding.history, binding.historyBackgrounds),
+      binding.historyVersion,
     );
   };
   const before = await open(worldId);
@@ -11576,6 +11572,92 @@ test("历史查询沿真实时间线修订与分叉恢复位置，状态修正�
     total: 2,
     messages: [{ position: 1 }, { position: 2, text: "我把那封信带走。" }],
   });
+});
+
+test("生产游玩工具与已提交账本使用同一历史版本，追加后可从新游标继续", async () => {
+  const { createHistoryQuery, historyEntries } =
+    await import("../../src/runtime/history/HistoryTools.ts");
+  const { worlds, worldId } = await createWorld("live-history-version");
+  await worlds.commitPlayStep({
+    worldId,
+    operationId: "seed-history",
+    parentHead: "genesis",
+    nextMaterials: [],
+    stateChanges: [],
+    historyAppend: [{ role: "narrator", exactText: "The earlier story." }],
+  });
+  const pageFromAuthority = async () => {
+    const binding = await worlds.bindPlayCallChain(worldId);
+    return createHistoryQuery(
+      worldId,
+      historyEntries(binding.history, binding.historyBackgrounds),
+      binding.historyVersion,
+    ).list({ limit: 1 });
+  };
+  const old = await pageFromAuthority();
+  if (!old.ok || old.earlierCursor === null)
+    throw new Error("Expected an earlier page before the player commits");
+
+  let scripted: ScriptedModelHost | undefined;
+  let currentCursor: string;
+  const host: ModelHost = {
+    binding: modelBinding,
+    async exchange(request, observer) {
+      if (scripted === undefined) {
+        const page = await pageFromAuthority();
+        if (!page.ok || page.earlierCursor === null)
+          throw new Error("Expected an earlier page after the player commits");
+        currentCursor = page.earlierCursor;
+        scripted = new ScriptedModelHost({
+          binding: modelBinding(),
+          steps: [
+            {
+              outcome: "response",
+              toolCalls: [
+                {
+                  id: "old-page",
+                  name: "history_list",
+                  arguments: { cursor: old.earlierCursor },
+                },
+                { id: "latest", name: "history_list", arguments: { limit: 1 } },
+              ],
+            },
+            {
+              outcome: "response",
+              toolCalls: [
+                {
+                  id: "earlier",
+                  name: "history_list",
+                  arguments: { cursor: currentCursor },
+                },
+              ],
+            },
+            { outcome: "response", text: "The atlas is open." },
+          ],
+        });
+      }
+      return scripted.exchange(request, observer);
+    },
+  };
+  const result = await new PlayCallChain(worlds).start({
+    worldId,
+    chainId: "live-history",
+    exchangeId: "first",
+    playerText: "I open the atlas.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(result.status).toBe("ready");
+  const tools = scripted?.requests
+    .at(-1)
+    ?.appended.filter((item) => item.kind === "tool");
+  const receipt = (id: string) =>
+    tools?.find(({ toolCallId }) => toolCallId === id)?.markdown;
+  expect(receipt("old-page")).toContain("history_changed");
+  expect(receipt("latest")).toContain(`earlierCursor: ${currentCursor!}`);
+  expect(receipt("earlier")).toContain("The earlier story.");
 });
 
 function backgroundWorldFiles() {
