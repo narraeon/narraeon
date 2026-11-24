@@ -746,13 +746,23 @@ describe("Default policy block independence with adjacent blocks disabled", () =
         for (const phrase of phrases) expect(body).toContain(phrase);
       }
 
-      const negativeFactPolicy =
-        locale === "zh-CN"
-          ? "更新当前情境时，保留仍然成立的明确否定事实或未成立状态，不要因为某个角色提出了新说法就覆盖掉原本的客观边界。"
-          : "When updating the current situation, keep explicit negative facts and unmet conditions that still hold—never overwrite an established objective boundary just because a character makes a new claim.";
-      expect(situation.split("\n\n")[1]?.endsWith(negativeFactPolicy)).toBe(
-        true,
-      );
+      if (locale === "zh-CN") {
+        expect(situation.split("\n\n")[2]?.split("\n")).toEqual([
+          expect.stringMatching(/^- \*\*写什么\*\*：/u),
+          expect.stringMatching(
+            /^- \*\*改写时什么不能丢\*\*：.*就必须原意保留.*不要擅自改窄范围.*覆盖客观事实。$/u,
+          ),
+          expect.stringMatching(/^- \*\*移出什么\*\*：/u),
+        ]);
+      } else {
+        expect(
+          situation
+            .split("\n\n")[1]
+            ?.endsWith(
+              "When updating the current situation, keep explicit negative facts and unmet conditions that still hold—never overwrite an established objective boundary just because a character makes a new claim.",
+            ),
+        ).toBe(true);
+      }
     },
   );
 });
