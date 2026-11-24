@@ -202,6 +202,9 @@ for (const removed of [false, true])
         exact: true,
       }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "返回工作区", exact: true }),
+    ).toBeEnabled();
     await page.goForward();
     if (removed) {
       await expect(page).toHaveURL(/#\/$/u);
