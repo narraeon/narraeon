@@ -2218,6 +2218,16 @@ export function WorldPage({
                 />
               )}
               <div ref={historyEndRef} />
+              <ArtifactDebugger
+                records={displayedDecorations?.artifactDebug ?? []}
+                extensions={displayedDecorations?.extensions ?? []}
+                playerViewPanels={
+                  displayedDecorations?.playerViewPanels ??
+                  world.playerViewPanels ??
+                  []
+                }
+                bridgeEvents={bridgeEvents}
+              />
             </article>
           </section>
 
@@ -2960,16 +2970,6 @@ export function WorldPage({
 
           <ArtifactExtensionMount mount="overlay" />
           <ArtifactExtensionMount mount="debug" />
-          <ArtifactDebugger
-            records={displayedDecorations?.artifactDebug ?? []}
-            extensions={displayedDecorations?.extensions ?? []}
-            playerViewPanels={
-              displayedDecorations?.playerViewPanels ??
-              world.playerViewPanels ??
-              []
-            }
-            bridgeEvents={bridgeEvents}
-          />
         </div>
       </ArtifactExtensionHost>
     </main>

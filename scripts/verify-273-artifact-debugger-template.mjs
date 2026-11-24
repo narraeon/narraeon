@@ -11,6 +11,13 @@ import { startWebServer } from "../src/server/startWebServer.ts";
 const expect = playwrightExpect.configure({ timeout: 15000 });
 const evidence = resolve(process.argv[2] ?? ".test-data/verify-273");
 const scratch = await mkdtemp(join(tmpdir(), "narraeon-273-"));
+const narrative = [
+  "273 narrative fixture.",
+  ...Array.from(
+    { length: 18 },
+    (_, index) => `The path passes milestone ${index + 1}.`,
+  ),
+].join("\n\n");
 const outputs = {
   markdown_panel: "**273 Markdown fixture**",
   html_panel: "<p>273 HTML fixture</p>",
@@ -23,6 +30,7 @@ const finalContents = {
   debug_panel: "<p>273 debug fixture</p>",
 };
 const calls = [];
+const debuggerFailures = [];
 const provider = createServer(async (request, response) => {
   let body = "";
   for await (const chunk of request) body += chunk;
@@ -40,7 +48,7 @@ const provider = createServer(async (request, response) => {
   calls.push(selected);
   const delta =
     selected.length === 0
-      ? { content: "273 narrative fixture." }
+      ? { content: narrative }
       : {
           tool_calls: selected.map((output, index) => ({
             index,
@@ -341,6 +349,7 @@ try {
         "html_panel",
         "markdown_panel",
       ]);
+      await captureDebugger(page, ui, view, folder);
       for (const [output, status, channel, mount, save, projection] of [
         [
           "markdown_panel",
@@ -387,9 +396,9 @@ try {
           finalContents[output],
           "[]",
         ]);
+        await row.press("Enter");
       }
       await expect(page.locator('[data-extension-mount="debug"]')).toBeEmpty();
-      await captureDebugger(page, ui, view, folder);
       await json(join(folder, "artifacts-debug.json"), debug);
       await json(join(folder, "artifacts-active.json"), active);
       console.log(
@@ -430,7 +439,7 @@ try {
     const requestIndex = calls.length;
     await play(page, url, ui, worldId);
     const view = page.getByRole("region", { name: ui.debugger, exact: true });
-    await view.getByText(/recap · active/u).press("Enter");
+    await expect(view.locator(".artifact-debugger-entry")).toHaveCount(1);
     assert.deepEqual(calls.slice(requestIndex), [[], ["recap"]]);
     const debug = await command(page, { type: "artifacts.debug", worldId });
     assert.equal(debug.length, 1);
@@ -444,6 +453,7 @@ try {
       `${ui.id} control: same debugger with a built-in recap on the system orchestration`,
     );
   }
+  assert.deepEqual(debuggerFailures, [], "Artifact debugger pointer failures");
 } catch (error) {
   await page
     ?.screenshot({ path: join(evidence, "failure.png") })
@@ -512,87 +522,128 @@ async function play(page, url, ui, worldId) {
   const send = button(page, ui.send);
   await expect(send).toBeEnabled();
   await send.click();
-  await expect(
-    page.getByText("273 narrative fixture.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^273 narrative fixture\./u)).toBeVisible();
   await expect(action).toBeEnabled({ timeout: 15000 });
 }
 
-// In the baseline, the fixed reader covers the debugger. Preserve the actual
-// viewport and hit-test result before exposing the existing DOM for inspection.
 async function captureDebugger(page, ui, view, folder) {
-  const coverage = {};
+  const coverage = { viewport: page.viewportSize() };
+  const scroller = page.locator(".world-reader-scroll");
+  const rows = view.locator(".artifact-debugger-entry > summary");
+  const firstRow = rows.first();
+
   for (const mode of ["story", "detailed"]) {
-    const technical = mode === "detailed";
     const world = page.locator(".world-reader-page");
     await expect(world).toHaveClass(new RegExp(`is-${mode}-mode`, "u"));
-    const row = view.locator(".artifact-debugger-entry > summary").first();
-    await row.scrollIntoViewIfNeeded();
-    coverage[mode] = await row.evaluate((summary) => {
-      const { x, y, width, height } = summary.getBoundingClientRect();
-      const doc = summary.ownerDocument;
-      const points = [x + 12, x + width / 2, x + width - 12];
-      const hits = points.map((point) => {
-        const hit = doc.elementFromPoint(point, y + height / 2);
-        return {
-          node: hit ? hit.outerHTML.split(">")[0] + ">" : null,
-          storyReader: Boolean(hit?.closest(".world-reader-scroll")),
-          debugger: Boolean(hit?.closest(".artifact-debugger")),
-        };
-      });
-      return {
-        summary: summary.textContent,
-        openedByKeyboard: summary.parentElement.open,
-        position: [x, y, width, height],
-        hits,
-      };
-    });
-    assert.equal(coverage[mode].openedByKeyboard, true);
-    assert.ok(
-      coverage[mode].hits.every(
-        ({ storyReader, debugger: debuggerHit }) => storyReader && !debuggerHit,
-      ),
-      JSON.stringify(coverage[mode]),
+
+    const now = button(page, ui.now);
+    await expect(now).toHaveAttribute("aria-pressed", "false");
+    await now.click();
+    await expect(now).toHaveAttribute("aria-pressed", "true");
+    await now.click();
+    await expect(now).toHaveAttribute("aria-pressed", "false");
+
+    // Use a wheel over the reader margin, away from the dock and detail panes.
+    const scrollTop = () => scroller.evaluate((element) => element.scrollTop);
+    await page.mouse.move(
+      coverage.viewport.width - 50,
+      coverage.viewport.height / 2,
     );
-    await page.screenshot({ path: join(folder, `world-${mode}.png`) });
+    await page.mouse.wheel(0, -4000);
+    await expect.poll(scrollTop).toBe(0);
+    await expect(page.getByText(/^273 narrative fixture\./u)).toBeInViewport();
+    await page.mouse.wheel(0, 4000);
+    await expect.poll(scrollTop).toBeGreaterThan(100);
+    const wheelScrollTop = await scrollTop();
+
+    const records = [];
+    const rowLocators = await rows.all();
+    for (const [index, row] of rowLocators.entries()) {
+      const entry = row.locator("..");
+      const details = entry.locator("dl");
+      const isOpen = () => entry.evaluate((element) => element.open);
+      await expect(entry).not.toHaveAttribute("open", "");
+      const points = await row.evaluate((summary) => {
+        const { x, y, width, height } = summary.getBoundingClientRect();
+        return [x + 12, x + width / 2, x + width - 12].map((point) => ({
+          x: point,
+          y: y + height / 2,
+        }));
+      });
+      const hits = [];
+      for (const [pointIndex, { x, y }] of points.entries()) {
+        const hit = await row.evaluate(
+          (summary, point) => {
+            const target = summary.ownerDocument.elementFromPoint(
+              point.x,
+              point.y,
+            );
+            return {
+              node: target?.localName ?? null,
+              className: target?.getAttribute("class") ?? null,
+              storyReader: Boolean(target?.closest(".world-reader-scroll")),
+              summary: summary.contains(target),
+            };
+          },
+          { x, y },
+        );
+        await page.mouse.click(x, y);
+        const opened = await isOpen();
+        const detailsVisible = await details.isVisible();
+        if (index === 0 && pointIndex === 1)
+          await page.screenshot({
+            path: join(folder, `world-${mode}-clicked.png`),
+          });
+
+        await page.mouse.click(x, y);
+        const closed = !(await isOpen()) && !(await details.isVisible());
+        if (index === 0 && pointIndex === 1)
+          await page.screenshot({
+            path: join(folder, `world-${mode}-closed.png`),
+          });
+
+        hits.push({ x, y, ...hit, opened, detailsVisible, closed });
+        if (!hit.summary || !opened || !detailsVisible || !closed) {
+          debuggerFailures.push(
+            `${folder} ${mode} row ${index + 1} point ${pointIndex + 1}`,
+          );
+        }
+      }
+      records.push({ title: await row.textContent(), hits });
+    }
+
+    await firstRow.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(firstRow).not.toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(firstRow).toBeFocused();
+    await page.keyboard.press("Enter");
+    const keyboardDetails = firstRow.locator("..").locator("dl");
+    await expect(keyboardDetails).toBeVisible();
+    await page.keyboard.press("Space");
+    await expect(keyboardDetails).toBeHidden();
+
+    const action = page.getByRole("textbox", { name: ui.action });
+    await action.click();
+    await expect(action).toBeFocused();
+    coverage[mode] = {
+      records,
+      wheelScrollTop,
+      keyboardToggled: true,
+      nowToggled: true,
+      composerFocused: true,
+    };
+
     await button(page, ui.reading).click();
     await page
       .getByRole("checkbox", { name: ui.technical })
-      .setChecked(!technical);
+      .setChecked(mode === "story");
     await button(
       page.getByLabel(ui.reading, { exact: true }),
       ui.close,
     ).click();
   }
   await json(join(folder, "debugger-hit-test.json"), coverage);
-  const originalStyle = await view.getAttribute("style");
-  try {
-    await view.evaluate((section) => {
-      Object.assign(section.style, {
-        position: "absolute",
-        inset: "74px 24px 90px",
-        zIndex: "50",
-        overflow: "auto",
-      });
-    });
-    await view.screenshot({
-      path: join(folder, "world-debugger-layers-adjusted.png"),
-    });
-    const debugOutput = view.getByText(/^debug_panel · /u);
-    if (await debugOutput.count()) {
-      await debugOutput.evaluate((summary) =>
-        summary.scrollIntoView({ block: "start" }),
-      );
-      await view.screenshot({
-        path: join(folder, "debug-record-layer-adjusted.png"),
-      });
-    }
-  } finally {
-    await view.evaluate((section, style) => {
-      if (style === null) section.removeAttribute("style");
-      else section.setAttribute("style", style);
-    }, originalStyle);
-  }
 }
 
 function json(path, value) {
