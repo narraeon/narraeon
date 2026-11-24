@@ -73,6 +73,10 @@ adb logcat -s NARRAEON-NODE NARRAEON-SERVICE
 Node stdout and stderr appear under `NARRAEON-NODE`. The mobile entry prints
 `NARRAEON_READY <port>` once the server is listening.
 
+With the SDK and libnode set up, run `./android/scripts/test-native-startup.sh <adb-serial>`
+from the repository root to check JNI arguments, log forwarding and cleanup after
+injected `pipe2`, `dup2` and `pthread_create` failures on an arm64 device or emulator.
+
 ## File inputs
 
 `<input type="file">` opens the system document picker (`ACTION_OPEN_DOCUMENT`). The

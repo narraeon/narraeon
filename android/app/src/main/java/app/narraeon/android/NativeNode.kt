@@ -8,9 +8,9 @@ object NativeNode {
     }
 
     /**
-     * @param arguments argv for node, e.g. ["node", "<path>/server/mobile.js"].
-     * @param environment entries in "KEY=VALUE" form, applied with setenv before node starts.
+     * @param arguments Node argv, including the bootstrap script and its configuration pipe fd.
+     * @param stderrPath private file to preserve a copy of Node stderr for diagnostic export.
      */
     @JvmStatic
-    external fun startNode(arguments: Array<String>, environment: Array<String>): Int
+    external fun startNode(arguments: Array<String>, stderrPath: String): Int
 }
