@@ -1283,8 +1283,12 @@ export class FileNativeWorldStore {
     worldId: string,
     operationId: string,
     outcome: CommittedOperationOutcome,
-  ): void {
-    this.#operationOutcomes.set(operationId, { phase: "done", outcome });
+  ): CommittedOperationOutcome {
+    const snapshot = structuredClone(outcome);
+    this.#operationOutcomes.set(operationId, {
+      phase: "done",
+      outcome: snapshot,
+    });
     const retained = this.#retainedOperationIds.get(worldId) ?? [];
     retained.push(operationId);
     while (retained.length > RETAINED_OPERATION_OUTCOMES_PER_WORLD) {
@@ -1292,6 +1296,7 @@ export class FileNativeWorldStore {
       if (evicted !== undefined) this.#operationOutcomes.delete(evicted);
     }
     this.#retainedOperationIds.set(worldId, retained);
+    return snapshot;
   }
 
   releaseOperationReservation(operationId: string): Promise<void> {
@@ -1843,7 +1848,7 @@ export class FileNativeWorldStore {
           "operation_conflict",
           "The same play operation ID is bound to a different complete commit payload",
         );
-      return outcome;
+      return structuredClone(outcome);
     }
     if (existing?.phase === "in_progress" && input.operationReserved !== true)
       throw new FileNativeWorldCreationError(
@@ -1870,7 +1875,7 @@ export class FileNativeWorldStore {
                 "operation_conflict",
                 "The same play operation ID is bound to a different complete commit payload",
               );
-            return outcome;
+            return structuredClone(outcome);
           }
           if (
             concurrent?.phase === "in_progress" &&
@@ -1971,20 +1976,19 @@ export class FileNativeWorldStore {
                 }
               : {}),
           });
-          const outcome: CommittedOperationOutcome = {
-            outcome: "committed",
-            worldId: input.worldId,
-            parentHead: input.parentHead,
-            head: commit.head,
-            commitDigest,
-            historyAppend: structuredClone(input.historyAppend),
-            nextAdditionalMaterials: structuredClone(input.nextMaterials),
-            mode: input.mode,
-          };
-          this.#rememberOperationOutcome(
+          const outcome = this.#rememberOperationOutcome(
             input.worldId,
             input.operationId,
-            outcome,
+            {
+              outcome: "committed",
+              worldId: input.worldId,
+              parentHead: input.parentHead,
+              head: commit.head,
+              commitDigest,
+              historyAppend: input.historyAppend,
+              nextAdditionalMaterials: input.nextMaterials,
+              mode: input.mode,
+            },
           );
           const recovered = await authorityStore.recover(commit.head);
           await updateWorldActivity(
@@ -1993,7 +1997,7 @@ export class FileNativeWorldStore {
             recovered.history,
             Date.now(),
           );
-          return outcome;
+          return structuredClone(outcome);
         },
       );
     } catch (error: unknown) {
@@ -2030,18 +2034,21 @@ export class FileNativeWorldStore {
         "operation_conflict",
         "The same operation ID is bound to a different complete commit payload",
       );
-    const outcome: CommittedOperationOutcome = {
-      outcome: "committed",
-      worldId: input.worldId,
-      parentHead: fact.commit.parentHead,
-      head: fact.commit.head,
-      commitDigest: fact.digest,
-      historyAppend: structuredClone(input.historyAppend),
-      nextAdditionalMaterials: structuredClone(input.nextMaterials),
-      mode: input.mode,
-    };
-    this.#rememberOperationOutcome(input.worldId, input.operationId, outcome);
-    return outcome;
+    const outcome = this.#rememberOperationOutcome(
+      input.worldId,
+      input.operationId,
+      {
+        outcome: "committed",
+        worldId: input.worldId,
+        parentHead: fact.commit.parentHead,
+        head: fact.commit.head,
+        commitDigest: fact.digest,
+        historyAppend: input.historyAppend,
+        nextAdditionalMaterials: input.nextMaterials,
+        mode: input.mode,
+      },
+    );
+    return structuredClone(outcome);
   }
 
   async readAuthorityHistory(
@@ -2051,8 +2058,7 @@ export class FileNativeWorldStore {
     await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
-    const authority = await new WorldLedgerAuthority(root).readHistory();
-    return structuredClone(authority);
+    return new WorldLedgerAuthority(root).readHistory();
   }
 
   async inspectDocumentMaintenance(

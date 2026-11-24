@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdtemp,
@@ -14,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   applyChanges,
   appendTurn,
+  appendTurnWithDigest,
   beginTurn,
   commitTurnHead,
   forgetLedger,
@@ -55,6 +57,76 @@ async function snapshot(): Promise<Record<string, string | null>> {
 }
 
 describe("world turn ledger", () => {
+  test("publishes the validated JSON and hashes the exact bytes written", async () => {
+    const serialized = {
+      sequence: 1,
+      head: "commit:1",
+      parentHead: "genesis",
+      mode: "play",
+      operationId: "serialized",
+      historyAppend: [],
+      stateChanges: [],
+      nextAdditionalMaterials: [],
+    };
+    const payload = {
+      ...serialized,
+      operationId: "unserialized",
+      toJSON: () => serialized,
+    };
+    const change = { path: "state/a.yaml", content: "next-a\n" };
+    const { record, digest } = await appendTurnWithDigest(root, {
+      mode: "play",
+      changes: [change, change],
+      payload,
+    });
+    const bytes = await readFile(join(root, "runtime/turns/00000001.json"));
+    expect(digest).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(record.files).toHaveLength(2);
+    const expected = {
+      ...record,
+      files: [{ path: change.path, before: "v0-a\n" }],
+      payload: { ...serialized },
+    };
+    payload.operationId = "mutated";
+    serialized.operationId = "mutated";
+    record.files[0]!.before = "mutated";
+    const [warm] = await listTurns(root);
+    expect(warm).toEqual(expected);
+    warm!.files[0]!.before = "also mutated";
+    expect(await listTurns(root)).toEqual([expected]);
+    forgetLedger(root);
+    expect(await listTurns(root)).toEqual([expected]);
+  });
+
+  test("split publication uses the on-disk record and rejects damaged journals", async () => {
+    const path = join(root, "runtime/turns/00000001.json");
+    const begun = await beginTurn(root, { mode: "correction", changes: [] });
+    await listTurns(root); // Make the split publish check the journal even with a warm view.
+    await writeFile(path, "{");
+    await expect(commitTurnHead(root, begun)).rejects.toMatchObject({
+      code: "corrupt",
+    });
+    expect(await readHead(root)).toBe(0);
+
+    // A released Windows writer stored this path with a backslash.
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...begun,
+        files: [{ path: "runtime\\additional-materials.json", before: null }],
+      }),
+    );
+    begun.mode = "play";
+    await commitTurnHead(root, begun);
+    expect(await listTurns(root)).toMatchObject([
+      {
+        mode: "correction",
+        files: [{ path: "runtime/additional-materials.json", before: null }],
+      },
+    ]);
+    expect(await recoverIncomplete(root)).toBe(false);
+  });
+
   test("appends turns and reads any reachable endpoint", async () => {
     await appendTurn(root, {
       mode: "play",
