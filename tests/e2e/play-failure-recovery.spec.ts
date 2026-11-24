@@ -371,7 +371,9 @@ for (const locale of ["zh-CN", "en"] as const)
       .click();
     await page
       .getByRole("button", {
-        name: english ? "New context" : "全新上下文",
+        name: english
+          ? "Continue in a new chat (keep story progress)"
+          : "用新对话继续（保留故事进度）",
         exact: true,
       })
       .click();

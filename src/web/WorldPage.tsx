@@ -42,6 +42,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -295,6 +296,7 @@ export function WorldPage({
   const [playContextUsage, setPlayContextUsage] =
     useState<PlayContextUsageProjection | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
+  const submissionModeId = useId();
   const [checkpointPreference, setCheckpointPreference] = useState<{
     worldId: string;
     head: string;
@@ -1641,13 +1643,15 @@ export function WorldPage({
         await refreshRevisedTimeline(revised.playCallChain, world);
         setFeedback({
           kind: "status",
-          text: regenerate
-            ? uiText(
-                "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。",
-              )
-            : uiText(
-                "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。",
-              ),
+          text: uiText(
+            regenerate
+              ? "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可重新生成。"
+              : "修改已保存。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可继续生成。",
+            {
+              menu: uiText("选择提交方式"),
+              action: uiText("追加当前上下文"),
+            },
+          ),
         });
         return;
       }
@@ -2449,7 +2453,8 @@ export function WorldPage({
                 <div>
                   <button
                     type="button"
-                    aria-label={uiText("追加上下文")}
+                    aria-labelledby={submissionModeId + "-append"}
+                    aria-describedby={submissionModeId + "-append-description"}
                     disabled={!canAppend || !modelConfigured}
                     onClick={(event) => {
                       event.currentTarget
@@ -2458,14 +2463,17 @@ export function WorldPage({
                       void submitPlayChain("append");
                     }}
                   >
-                    <strong>{uiText("追加当前上下文")}</strong>
-                    <span>
+                    <strong id={submissionModeId + "-append"}>
+                      {uiText("追加当前上下文")}
+                    </strong>
+                    <span id={submissionModeId + "-append-description"}>
                       {uiText("保留原生对话，重新编译当前提示和材料")}
                     </span>
                   </button>
                   <button
                     type="button"
-                    aria-label={uiText("全新上下文")}
+                    aria-labelledby={submissionModeId + "-fresh"}
+                    aria-describedby={submissionModeId + "-fresh-description"}
                     disabled={!canStartFresh || !modelConfigured}
                     onClick={(event) => {
                       event.currentTarget
@@ -2474,8 +2482,12 @@ export function WorldPage({
                       void submitPlayChain("fresh");
                     }}
                   >
-                    <strong>{uiText("使用全新上下文")}</strong>
-                    <span>{uiText("从当前世界重新编译材料")}</span>
+                    <strong id={submissionModeId + "-fresh"}>
+                      {uiText("用新对话继续（保留故事进度）")}
+                    </strong>
+                    <span id={submissionModeId + "-fresh-description"}>
+                      {uiText("从当前世界重新编译材料")}
+                    </span>
                   </button>
                 </div>
               </details>

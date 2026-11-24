@@ -433,6 +433,21 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
       ).head,
     ).toBe(before.head);
     expect(requests).toBe(2);
+
+    await expect(
+      page
+        .getByRole("region", { name: "产物调试器", exact: true })
+        .getByText("扩展诊断", { exact: true }),
+    ).toBeVisible();
+    await page.goto(url);
+    await page.locator(".workspace-locale-picker select").selectOption("en");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await page.goto(`${url}/#/world/${fork.world.worldId}`);
+    await expect(
+      page
+        .getByRole("region", { name: "Artifact debugger", exact: true })
+        .getByText("Extension diagnostics", { exact: true }),
+    ).toBeVisible();
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await stop();

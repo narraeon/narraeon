@@ -389,7 +389,7 @@ export function ModelConnectionScreen({
     <section className="model-connection-screen" aria-labelledby="model-title">
       <header className="config-header">
         <div>
-          <p className="eyebrow">WORKSPACE SETTING</p>
+          <p className="eyebrow">{uiText("工作区设置")}</p>
           <h2 id="model-title">{uiText("模型连接")}</h2>
           <p className="field-note">
             {uiText(

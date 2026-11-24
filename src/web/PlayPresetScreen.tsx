@@ -707,7 +707,7 @@ export function PlayPresetScreen({
     >
       <header className="play-preset-header">
         <div>
-          <p className="eyebrow">PLAY WORKBENCH · FILE NATIVE</p>
+          <p className="eyebrow">{uiText("提示词编排")}</p>
           <h2 id="play-preset-title">{uiText("玩法预设工作台")}</h2>
           <p className="play-preset-lede">
             {uiText("在同一处编辑设定完善方法、主持规则、后置请求与界面展示。")}

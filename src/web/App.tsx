@@ -601,7 +601,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setImportArchive(null);
       acceptPackage(imported);
       switchLocation({ screen: "content", packageId: imported.localId });
-      setNotice(uiText("ZIP 内容包已导入为新的本地身份。"));
+      setNotice(uiText("已将内容包导入为独立副本，现有内容包未被覆盖。"));
     } catch (error: unknown) {
       await workspaceTarget.recover();
       report(error);

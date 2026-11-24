@@ -48,7 +48,7 @@ export function FileNativeCorrectionPanel({
     >
       <header>
         <div>
-          <p className="eyebrow">REVIEW BEFORE APPLY</p>
+          <p className="eyebrow">{uiText("应用前预览")}</p>
           <h4 id="continuity-correction-title">{uiText("确认修正内容")}</h4>
         </div>
         <span>

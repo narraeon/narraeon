@@ -541,8 +541,8 @@ const englishMessages: Record<string, string> = {
   "每次正常发送重新编译，工具往返使用本轮快照":
     "Each normal send recompiles; tool exchanges use the same run snapshot.",
   下一次发送候选: "Next send candidate",
-  "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。":
-    "Inspect the latest request, accumulated historical reads, and next candidate separately. Past reads do not prove current field values.",
+  "这里可以查看最近一次请求、这段对话各轮读过的内容，以及下一次可能发送的材料。":
+    "See the latest request, what the AI has read across turns in this conversation, and what might be sent next.",
   本次请求快照的真实覆盖: "Actual coverage of this request snapshot",
   "查看下一次发送候选的完整 Prompt Preview":
     "Inspect the complete next-send Prompt Preview",
@@ -552,9 +552,9 @@ const englishMessages: Record<string, string> = {
     "· Play changes take effect on the next normal send",
   "保留原生对话，重新编译当前提示和材料":
     "Preserve the native conversation and recompile current prompts and materials",
-  "累计实际读取（当时内容）": "Accumulated reads (historical content)",
-  "累计读取的当时内容，不代表当前字段值":
-    "Historical content read at the time, not current field values",
+  "AI 在这段对话中读过": "What the AI has read in this conversation",
+  "这是读取时的内容，可能与当前值不同":
+    "This is what was read at the time. Current values may differ.",
   查看各次请求保存的提示材料: "Inspect saved prompt materials for each request",
   "原样重试使用已保存请求，不采用新预设。":
     "Exact retry uses the saved request and does not apply a new preset.",
@@ -599,8 +599,8 @@ const englishMessages: Record<string, string> = {
   "内容包已重命名。": "The content package has been renamed.",
   "内容包 ZIP 自身大小超过安全上限。":
     "The content package ZIP exceeds the safety limit.",
-  "ZIP 内容包已导入为新的本地身份。":
-    "The ZIP content package was imported with a new local identity.",
+  "已将内容包导入为独立副本，现有内容包未被覆盖。":
+    "The content package was imported as an independent copy. Existing packages were left untouched.",
   "请先保存手动编辑，再开始 AI 设定完善。":
     "Save manual edits before starting setting improvement.",
   "请先保存并启用一份模型配置。": "Save and enable a model connection first.",
@@ -610,6 +610,7 @@ const englishMessages: Record<string, string> = {
   "世界已从本机删除。": "The world has been deleted from this device.",
   操作失败: "Operation failed",
   未命名世界: "Untitled world",
+  工作区设置: "Workspace settings",
   模型连接: "Model connection",
   完成原因: "Provider completion reason",
   原生续传载荷: "Provider-native continuation payload",
@@ -637,6 +638,7 @@ const englishMessages: Record<string, string> = {
     "Each follow-up is dispatched once after the main call chain. They share the same frozen prefix, cannot see one another, and never enter later model context. Edit each request prompt, artifact format, and display location here.",
   "上次模型请求没有完整返回。保持输入框为空并点击“追加上下文”，就会原样发送已保存的请求；不会追加玩家指令，中断片段也不会进入模型上下文。":
     "The previous model request did not return completely. Leave the input empty and append context to resend the saved request unchanged. No player instruction is appended, and the interrupted fragment does not enter model context.",
+  扩展诊断: "Extension diagnostics",
   产物调试器: "Artifact debugger",
   扩展状态: "Extension status",
   核心已提交: "Core committed",
@@ -779,6 +781,7 @@ const englishMessages: Record<string, string> = {
   "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
     "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
   "输入 UTF-8 文本内容……": "Enter UTF-8 text…",
+  应用前预览: "Preview before applying",
   确认修正内容: "Review correction",
   份文档会变化: "document(s) will change",
   修正前: "Before correction",
@@ -860,8 +863,8 @@ const englishMessages: Record<string, string> = {
   "内容包由 opening.md、world 与 control 组成，可以从空白新建，也可以上传一份内容包 ZIP。":
     "A content package contains opening.md, world, and control. Create one from scratch or upload a content-package ZIP.",
   "导入 ZIP": "Import ZIP",
-  "选择本应用导出或遵循相同结构的内容包 ZIP；导入会创建新的本地身份，不覆盖同名内容包。":
-    "Choose a ZIP exported by this app or one with the same structure. Import creates a new local identity and never overwrites a package with the same name.",
+  "选择本应用导出或结构相同的内容包 ZIP。导入会创建独立副本，不会覆盖现有内容包。":
+    "Choose a content package ZIP exported by this app or with the same structure. Importing creates an independent copy and leaves existing packages untouched.",
   "内容包 ZIP": "Content-package ZIP",
   "内容包 ZIP 文件": "Content-package ZIP file",
   "选择 ZIP 文件": "Choose ZIP file",
@@ -953,6 +956,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   导入玩法: "Import play preset",
   "玩法预设已导入为新的本地身份；请显式启用其中的 JavaScript。":
     "The play preset was imported as a new local identity. Enable its JavaScript explicitly if you trust it.",
+  提示词编排: "Prompt orchestration",
   玩法预设工作台: "Play presets",
   "在同一处管理设定完善方法、主持规则、调用链、界面产物与可信本地代码。":
     "Manage setting-improvement methods, host rules, call chains, interface artifacts, and trusted local code in one place.",
@@ -1825,8 +1829,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "修改后的玩家提交不能为空。": "The edited player message cannot be empty.",
   "正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…":
     "Saving the edit in the current world and leaving the later current timeline behind…",
-  "修改已保存在当前世界；配置模型后点击“追加上下文”即可继续生成。":
-    "The edit was saved in the current world. After configuring a model, append context to continue generation.",
+  "修改已保存。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可继续生成。":
+    "Your edit was saved. After configuring a model, leave the input empty and choose “{action}” under “{menu}” (+) to continue generating.",
   "修改已保存，正在从修改稿继续生成…":
     "Edit saved; continuing from the edited message…",
   "修改已保存，正在从全新上下文继续生成…":
@@ -1954,8 +1958,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在重新生成…": "Regenerating…",
   "已重新生成；原回复已离开当前时间线":
     "Regenerated; the original reply is no longer on the current timeline",
-  "原回复已离开当前时间线；配置模型后点击“追加上下文”即可重新生成。":
-    'The original reply is no longer on the current timeline. Configure a model, then click "Append context" to regenerate.',
+  "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可重新生成。":
+    "The original reply was removed from the current story. After configuring a model, leave the input empty and choose “{action}” under “{menu}” (+) to regenerate.",
   世界控制: "World control",
   "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。":
     "Edit the host frame and player views. The draft must pass a real Prompt Preview before it can be applied as a whole.",
@@ -2086,7 +2090,8 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   从全新上下文发送行动: "Send action from a fresh context",
   从当前世界重新编译材料: "Recompile materials from the current world",
   从当前端点创建分叉: "Fork from the current endpoint",
-  使用全新上下文: "Use a fresh context",
+  "用新对话继续（保留故事进度）":
+    "Continue in a new chat (keep story progress)",
   "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。":
     "Based on the frozen bootstrap and committed tool-read records. A document existing in the world is never presented as proof that the model read it.",
   保留这条调用链已经看到的内容: "Keep what this call chain has already seen",

@@ -155,7 +155,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(page.getByText(/dormitory-world\.zip/u)).toBeVisible();
   await page.getByRole("button", { name: "导入 ZIP" }).click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
-    "ZIP 内容包已导入为新的本地身份",
+    "已将内容包导入为独立副本",
   );
   await expect(
     page.getByRole("heading", { name: /dormitory-world · AI 设定完善/u }),
@@ -928,7 +928,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   );
   await page.getByLabel("你的行动").fill("I ask Alex to write down the time.");
   await page.getByLabel("选择提交方式").click();
-  await page.getByRole("button", { name: "全新上下文", exact: true }).click();
+  await page
+    .getByRole("button", { name: "用新对话继续（保留故事进度）", exact: true })
+    .click();
   await expect(
     page.getByText("Alex saves the training time on the phone."),
   ).toBeVisible();
@@ -1075,7 +1077,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByLabel("你的行动")
     .fill("Start again after the pause and continue from here.");
   await page.getByLabel("选择提交方式").click();
-  await page.getByRole("button", { name: "全新上下文", exact: true }).click();
+  await page
+    .getByRole("button", { name: "用新对话继续（保留故事进度）", exact: true })
+    .click();
   await expect(
     page.getByText("Alex waits and lets the moment pass."),
   ).toBeVisible();

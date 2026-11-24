@@ -405,7 +405,7 @@ function AiReadingAudit({
           <strong>{uiText("AI 实际收到了哪些世界内容")}</strong>
           <p>
             {uiText(
-              "分别展示最近一次请求、累计当时读取和下一次候选；旧读取不代表当前字段值。",
+              "这里可以查看最近一次请求、这段对话各轮读过的内容，以及下一次可能发送的材料。",
             )}
           </p>
         </div>
@@ -448,7 +448,7 @@ function AiReadingAudit({
       <EvidenceTable title={uiText("最近一次请求材料")} rows={currentRows} />
       <EvidenceTable title={uiText("下一次发送候选")} rows={nextRows} />
       <EvidenceTable
-        title={uiText("累计实际读取（当时内容）")}
+        title={uiText("AI 在这段对话中读过")}
         rows={documentEvidence(reading, documents, "cumulative")}
       />
       <WorldMaintenancePanel
@@ -581,7 +581,7 @@ function documentEvidence(
             : directRead.complete
               ? uiText("精确节点")
               : uiText("节点片段"),
-        detail: uiText("累计读取的当时内容，不代表当前字段值"),
+        detail: uiText("这是读取时的内容，可能与当前值不同"),
         tone: directRead.complete ? "good" : "warning",
       };
     const coverage =
@@ -603,7 +603,7 @@ function documentEvidence(
             : uiText("节点"),
         detail:
           target === "cumulative"
-            ? uiText("累计读取的当时内容，不代表当前字段值")
+            ? uiText("这是读取时的内容，可能与当前值不同")
             : target === "current"
               ? uiText("本次请求快照的真实覆盖")
               : uiText("下一次 Prompt Preview 的真实 coverage"),

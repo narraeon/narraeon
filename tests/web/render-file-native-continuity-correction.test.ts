@@ -2,15 +2,18 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { FileNativeCorrectionPanel } from "../../src/web/FileNativeCorrectionPanel.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
 
 describe("文件原生连续性修正界面", () => {
+  afterEach(() => setWebLocale("zh-CN"));
+
   test("应用前显示父端点、完整前后内容、hash、清单和真实 Prompt Preview", () => {
     const apply = vi.fn();
     const cancel = vi.fn();
-    render(
+    const panel = () =>
       createElement(FileNativeCorrectionPanel, {
         preview: {
           parentHead: "commit:7",
@@ -85,9 +88,11 @@ describe("文件原生连续性修正界面", () => {
         },
         onApply: apply,
         onCancel: cancel,
-      }),
-    );
+      });
+    const { rerender } = render(panel());
 
+    expect(screen.getByRole("region", { name: "确认修正内容" })).toBeTruthy();
+    expect(screen.getByText("应用前预览", { exact: true })).toBeTruthy();
     expect(screen.getByText("commit:7")).toBeTruthy();
     expect(screen.getByText("衣着: 白色背心")).toBeTruthy();
     expect(screen.getByText("衣着: 蓝色训练外套")).toBeTruthy();
@@ -97,5 +102,14 @@ describe("文件原生连续性修正界面", () => {
     fireEvent.click(screen.getByRole("button", { name: "放弃修正草稿" }));
     expect(apply).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
+
+    setWebLocale("en");
+    rerender(panel());
+    expect(
+      screen.getByRole("region", { name: "Review correction" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Preview before applying", { exact: true }),
+    ).toBeTruthy();
   });
 });

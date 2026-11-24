@@ -80,7 +80,7 @@ export function ArtifactDebugger({
       aria-label={uiText("产物调试器")}
     >
       <header>
-        <p className="eyebrow">EXTENSION DEBUG</p>
+        <p className="eyebrow">{uiText("扩展诊断")}</p>
         <h2>{uiText("产物调试器")}</h2>
       </header>
       {records.some(
