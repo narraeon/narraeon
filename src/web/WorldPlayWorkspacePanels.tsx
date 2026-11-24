@@ -884,9 +884,7 @@ export function WorldManagementDialog({
           <article className="manage-card control-card">
             <div className="manage-card-copy">
               <h3>{uiText("世界控制")}</h3>
-              <p>
-                {uiText("世界控制修改需先预览，再一次性应用。")}
-              </p>
+              <p>{uiText("世界控制修改需先预览，再一次性应用。")}</p>
             </div>
             <span className="control-draft-state">
               {controlDirty
