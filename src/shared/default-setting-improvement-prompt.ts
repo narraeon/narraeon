@@ -12,22 +12,16 @@ export const defaultSettingImprovementPromptPath =
   "prompts/setting-improvement.md";
 
 /** Content-package-only paragraphs; a running-world revision omits them. */
-const contentPackageWorldStartZhCN =
-  "内容包设定完善定义开场结束处的世界起点，可以包含已有历史、当前状态、持续过程和各人的认知。简单起点足以开玩，普通未定义内容可在游玩中生长；不预写未来必然发生的经历或强制剧情阶段。";
-const contentPackageCorePlayZhCN =
-  "新建内容包或用户要求完善玩法方向时，根据作者意图，用一两句话把本世界的核心体验写进实际由 control/frame.yaml 的 instructions 引用的世界主持块：玩家能亲自做什么，哪些人物关系或局面提供机会。可以多线并存，也可以只是日常相处，不规定必经路线或结局。仅完善已有世界的玩法方向时，只需补或改该块里的一两句；只有作者也要求补足素材，或确有落实该方向所需的缺口，才动相关文档。已有合适段落就沿用；定向修改一个道具不需要顺手重写世界方向。这段写给主持，不复制开场原文、当前事实、谜底或人物秘密；它们仍在相应世界文档与开场中维护。";
-const contentPackageOpeningZhCN =
-  "仅在内容包分支检查 opening.md：新建内容包、完善开场或改动起始知情时，让首次游玩的玩家单读开场，就明白主角是谁、眼前发生什么、当前选择所需而角色已知的前提，以及交接或请求。只交代眼前所需、足以采取第一步的信息，保留待回应请求及必要原话，不替玩家决定行动、台词或内心。独处、安静和等待也可开场，无任务不造任务。私下真相、谜底、未来安排和待发现事项留在对应资料，可给当下可感知的发现入口。已有合适内容就沿用，定向修改无关道具不需重写开场。开场与文档停在同一时点，将约束首次行动的结果写给自然所有者，无需复制整篇叙事。";
-const contentPackageWorldStartEn =
-  "Content-package setting improvement defines the world where the opening ends, including established history, current state, ongoing processes and individual knowledge. A simple starting point can be playable and ordinary undefined content can grow during play. Do not prewrite inevitable future experiences or mandatory plot stages.";
-const contentPackageCorePlayEn =
-  "When creating a content package or asked to develop its play direction, follow the author's intent and put its core experience in one or two sentences in a world GM block actually referenced by control/frame.yaml instructions: what the player can personally do, and which relationships or situations offer opportunities. Several threads may coexist, or play may consist only of everyday companionship, without mandatory routes or endings. When only developing an existing world's play direction, just add or revise those one or two sentences; change related documents only if the author also asks for more material or an actual gap must be filled to support that direction. Reuse a suitable existing paragraph; a targeted prop edit need not rewrite the world's direction. This paragraph addresses the GM: do not copy opening prose, current facts, solutions or character secrets into it; maintain them in their corresponding world documents and opening.";
-const contentPackageOpeningEn =
-  "Inspect opening.md only in the content-package branch. When creating a package, developing its opening or changing starting knowledge, let a first-time player understand from the opening alone who the protagonist is, what is happening, premises the character knows that the current choice requires, and any handover or request. Include only what the present scene needs, enough to take a first step, retaining unanswered requests and consequential wording without choosing player action, speech or inner thoughts. Solitude, quiet and waiting can also open a story; do not invent tasks. Private truths, solutions, future plans and matters meant to be discovered stay in their corresponding material; offer a currently perceptible discovery entry point where appropriate. Reuse suitable existing content; a targeted edit to an unrelated prop need not rewrite the opening. Documents and opening stop at the same moment; give outcomes constraining the first action to natural owners without copying the whole narrative.";
+const contentPackageWorldStartZhCN = `内容包设定用来确定“开场结束那一刻”的世界起点，包含既有历史、当前状态、进行中的事和各人认知。简单起点就能开玩，普通未定义内容可以在游玩中自然生长，不要预写必然发生的未来剧情或强制阶段。`;
+const contentPackageCorePlayZhCN = `新建内容包或调整玩法方向时，按作者意图用一两句话把核心体验写进 \`control/frame.yaml\` 实际引用的世界主持块里：玩家能亲自做什么，哪些关系或局面提供空间。可以多线并行，也可以只是日常相处，不规定必经路线或结局。这里只写给主持人看，不复制开场原文、当前事实、谜底或秘密。`;
+const contentPackageOpeningZhCN = `仅在编辑内容包时检查 \`opening.md\`：让首次游玩的玩家单读开场，就能明白主角是谁、眼前正发生什么、当前选择所需且角色已知的前提，以及待回应的交接或请求。只写眼下迈出第一步所需的信息，保留关键原话，不替玩家决定行动、台词或内心。独处、安静和等待同样可以开场，没有任务就不硬造任务。开场与设定文档停在同一时间点。`;
+const contentPackageWorldStartEn = `Content-package authoring defines the world at the exact moment the opening ends: established history, current state, ongoing threads, and each character's knowledge. A lean start is playable, and ordinary undefined details can grow during play—do not script inevitable future events or mandatory plot stages.`;
+const contentPackageCorePlayEn = `When creating a package or refining its play direction, state the core experience in one or two sentences inside a world GM block referenced by \`control/frame.yaml\`: what the player can do, and which relationships or situations create room for play. Multiple threads or quiet everyday companionship are equally valid, with no forced routes or endings. Address the GM only—do not copy opening prose, current facts, solutions, or secrets into this note.`;
+const contentPackageOpeningEn = `Inspect \`opening.md\` only in content packages: let a first-time player understand from the opening alone who they play, what is happening right now, the character-known premises needed for the first choice, and any open request or handover. Include only what the first step needs, keep consequential wording, and never choose the player's action, speech, or inner thoughts. Quiet, solitude, and waiting are valid openings; never invent tasks. Stop the opening and world files at the exact same moment.`;
 
-export const defaultSettingImprovementPromptZhCN = `# 系统推荐的创作方法
+export const defaultSettingImprovementPromptZhCN = `# 推荐创作方法
 
-以当前编辑目标、已有内容和用户目标为起点。讨论时说明必要判断，落实时定向修改；用户要求审查或重组时，相关结构与重复表达也在范围内。不为填满结构制造内容，无需修改也是合法结果。
+一切从当前编辑目标、现有文件和用户意图出发：讨论时直接给出判断，动手时只改需要改的地方；若用户要求审查或整理，一并处理结构问题与重复表达。不要为了填满模板硬编设定——原本就够用时，保持原样完全没问题。
 
 ## 编辑目标与世界起点
 
@@ -35,80 +29,66 @@ ${contentPackageWorldStartZhCN}
 
 ${contentPackageCorePlayZhCN}
 
-运行中世界修订维护当前已经演变的世界，按用户要求调整并保留未受影响的事实、经历与认知，不退回初始取值。明确修订不是世界内事件，不需虚构行动解释它。
+运行中世界修订维护已经演变的世界：按用户要求调整，保留未受影响的事实、经历与认知，不退回初始值。修订属于世界外修改，无需编造剧情去解释。
 
-涉及结构、材料发现或更新位置时，以本请求 bootstrap 已提供的目录、控制文档与注入文档为起点；未提供而受影响的文档再用工具读取。实际操作遵守本轮工具边界。
+涉及结构或文件位置时，先以本次请求已注入的目录和文档为准，缺少的再调工具读取。
 
-## 世界信息怎样组织
+## 世界信息怎么组织
 
-世界文档承载事实与语义：当前值归自然所有者；持续过程记录实际进展与条件；意图、承诺、日程保留主体和已知条件，其目标尚未实现。角色声称、猜测与真实发生的事分开。人物的认知和态度属于各自主体，不随事实变化自动同步，也不互相对称；不代填玩家未表达的感情。
+- **状态归对应主体**：人物、物品、地点、组织和规则各自保存当前状态；进行中的事记进展和条件；意图、承诺和日程未实现前不写为已完成。把角色声称、猜测与客观事实分开。人物认知与态度各自独立，不随事实自动同步，也不代填玩家未表达的感情。
+- **重要事件集中建档**：需要多人引用、持续追溯或重新解读的往事，放进独立事件文档，按事情组织而非按回合记流水账。事件只记当时的经过与结果；最新状态、待办和各人看法留在各自文档里并用引用关联。已经形成的状态和态度也要直接保存，不要每次开玩都从旧事件重推。
+- **当前情境保持精简**：只写眼前的地点、在场者、正在发生的事和待回应事项，不塞进全部历史或未来分支。若当前情境用受限 YAML 的顶层 \`背景\`（或 \`background\`）记录简短时间/地点，Runtime 会将其随叙事保存以供日后理解“明天”“这里”；采用后就在该节点维护现值，不在别处重复保存。
+- **\`summary\` 只做目录简介**：写清识别文档所需的简短身份或主题即可，不把具体状态和剧情经过塞进 \`summary\`。
 
-重要事件的经过集中承载，需要多人引用、持续追溯或重新解释时安排独立可引用的事件文档。事件记载当时的经过和结果；最新状态、待办与看法留在各自文档，用引用关联，事件不充当滚动状态表。对象保存当前结果，个人保存认知、关系评价与简短依据，引用相关事件而不各抄经过。已经形成的状态和态度也要保存，不能只存事件再让每次游玩重新推算。事件按事情组织，不按回合建档；普通细节可以只留在叙事。
+## 保存位置与发现路径一起安排
 
-这些区别适用于物品、伤病、地点、组织、交易、调查与人物关系，不要求固定目录、字段或数量。独立引用、自身状态或生命周期需要独立文档；小规模信息可集中在合适载体中。当前情境只承接眼前地点、在场者、进行中的事及待回应事项，不承担全部历史或未来分支。
+每项长期信息都要明确放哪里、在哪更新、以及游玩时怎么被发现或注入。高频当前值按需注入，长事件通过目录和引用按需读取。查看真实的 \`frame.yaml\` 和写后覆盖情况，不要默认所有文档都会自动进入游玩请求。
 
-当前情境的受限 YAML 可选用精确顶层「背景」保存简短定位值，例如「背景: {时间: 青历三年六月初八，夜间, 地点: 南门客栈}」。Runtime 会将该节点的完整值随已提交叙事保存，用于解释旧原文的“明天”“这里”；缺失、null、空白字符串、空映射或空数组不采集，0 和 false 保留。字段内部不设固定 schema，在场名单、待办和长局面留在其他字段；采用后在背景中维护对应现值，避免同一时间地点的第二份现值。无需为未采用的既有内容创建或搬迁字段；运行中修订不会改写旧历史背景。
-
-summary 是目录简介：只写识别文档所需的简短身份、主题或稳定线索，不复述具体状态和事件经过。具体事实放在正文，仅在识别信息改变时更新标题与简介。
-
-## 承载与发现一起安排
-
-每项持续信息确定自然所有者、更新位置及实际的发现或注入路径。常用当前值按需全文或节点注入；较长事件通过目录和引用按需读取。重要事件应有实际可用的集中承载位置，不能只有无法创建的目录设想。查看真实 frame 和写后覆盖，不假定所有正文都已进入游玩请求。
-
-同一时点、同一含义的事实尽量只维护一份；过去取值、当前结果和不同主体的理解不按重复删去。当前情境、叙事及界面只承担各自用途，避免重复强化同一概念。
-
-world/ 或 state/ 承载虚构事实，control/ 安排本世界的取材、规则运用、保存位置与呈现，不复制当前值。未来游玩参考只代表实际启用的作者块；它不是本轮叙事要求，可选政策也未必始终启用。世界指令补充本世界特有约束，不重复通用规则或工具流程，不擅自改写世界外预设。
+同一时点、同一含义的事实尽量只维护一份；过去取值、当前结果和不同角色的看法不算重复。\`world/\`（或 \`state/\`）放故事事实，\`control/\` 放本世界的取材、规则、保存约定与视图绑定，不复制当前值，也不重复通用规则或工具流程。
 
 ## 开场与整理
 
 ${contentPackageOpeningZhCN}
 
-整理结束已完成或失效的进程、约定和限制，保留仍有意义的成果、后遗影响、经历与引用。补录、去重和归档不让事情再发生。长材料按需发现，软体积提示不授权截断；暂时离场不等于退役，退役也不会移除显式全文槽。
+整理时，收尾已完成或失效的事项、约定和限制，保留仍有影响的成果、后遗症、经历和引用。补录、去重和归档不代表事情重新发生。长材料留作按需读取，不要为了字数提示强行截断；角色暂时离场不算退场。
 
-检查实际玩家视图选择器。容器会显示子树，隐藏认知不能混进公开节点；重组绑定结构时同步更新选择器。审计先对应概念、时间与主体，再处理重复句子；最后用实际写后覆盖检查发现路径，不默认输出整份内部审计表。
+最后检查玩家视图选择器：容器会展示整个子树，隐藏认知不能混进公开节点；调整字段结构时同步更新选择器，无需默认输出冗长的内部审计表。
 `;
 
 export const defaultSettingImprovementPromptEn = `# Recommended authoring method
 
-Start with the editing target, existing content and the user's goal. Discuss necessary judgments when asked to discuss; apply targeted changes when asked to implement. An audit or restructuring request includes relevant structure and duplicated expression. Do not invent content to fill a structure; no change needed is valid.
+Start from the editing target, existing files, and the user's goal. Give clear judgment when asked to discuss, and make targeted edits when asked to implement; when asked to audit or reorganize, address structural issues and duplicate phrasing too. Never invent content just to fill a template—leaving things unchanged is fine when they already work.
 
-## Editing target and world starting point
+## Target and starting point
 
 ${contentPackageWorldStartEn}
 
 ${contentPackageCorePlayEn}
 
-Running-world revision maintains the world as it has evolved: apply requested changes while preserving unaffected facts, events and knowledge instead of resetting initial values. Explicit revision is not an in-world event and needs no invented action to explain it.
+Running-world revision updates an already evolving world: apply requested edits while preserving unaffected facts, history, and knowledge instead of resetting to initial values. Revision is out-of-world and needs no invented in-story explanation.
 
-When structure, discovery or update locations are affected, start from the directory, control documents and injected documents this request's bootstrap already provides; read affected documents with tools only when they were not provided. Follow this request's actual tool boundary.
+When structure or file locations are involved, start from the directory and files already provided in this request, and read additional files with tools only when needed.
 
 ## Organizing world information
 
-World documents carry facts and semantics. Current values belong to natural owners; ongoing processes retain actual progress and conditions; intentions, promises and schedules retain subjects and known conditions while their goals remain unrealized. Separate claims and guesses from what actually happened. Knowledge and attitudes belong to their holders, do not automatically follow world changes, and need not be mutual. Do not invent unexpressed player feelings.
+- **Keep facts with their owners**: People, items, places, groups, and rules each hold their own current state. Ongoing processes record progress and conditions; intentions, promises, and schedules stay unrealized until fulfilled. Separate claims and guesses from objective facts. Character knowledge and attitudes belong to their holders, do not auto-sync with world changes, and never invent unexpressed player feelings.
+- **Give major events one home**: Put shared past events that multiple characters will reference, recall, or reinterpret in dedicated event documents, grouped by what happened rather than turn by turn. Record what happened and the outcomes at that time; keep latest states, pending work, and personal views on their own owners linked to the event. Persist formed states and attitudes directly instead of making play re-infer them every session.
+- **Keep the current situation focused**: Hold only the immediate location, people present, active events, and unanswered requests—not full history or future branches. If a restricted-YAML current situation uses a top-level \`background\` (or \`背景\`) node for brief time/place context, Runtime saves it alongside committed narrative to anchor relative references like "tomorrow" or "here"; once adopted, maintain those values there without a second copy.
+- **Keep \`summary\` brief**: Use \`summary\` only to identify who or what a document is about; put concrete states and event accounts in the body.
 
-Keep important event accounts in one place, using independently referenceable event documents for shared reference, continued retrieval or reinterpretation. Events record what happened and the outcomes at that time; latest states, pending work and views stay in their own documents, connected by references rather than copied into a rolling event-state table. Objects retain current outcomes; people retain knowledge, relationship appraisals and a brief basis, linking relevant events instead of copying their accounts. Persist formed states and attitudes too, rather than saving only events and asking each play request to infer everything again. Organize events by what happened, not by turn; ordinary details may remain narrative-only.
+## Plan storage and discovery together
 
-These distinctions apply to objects, injuries, places, organizations, trades, investigations and personal relationships without fixed directories, fields or counts. Independent reference, evolving state or lifecycle tracking warrants a separate document; smaller records may share a suitable home. The current situation holds the immediate location, people present, ongoing matters and unanswered requests, not all history or future branches.
+Give every durable fact a clear owner, update spot, and real discovery or injection path. Inject frequently needed current values and keep long event accounts discoverable via catalogs and references. Check the actual \`frame.yaml\` and post-write coverage instead of assuming every body enters play automatically.
 
-Restricted YAML current situations may optionally use the exact top-level field 背景 for brief positioning values, for example \`背景: {时间: night on day eight, 地点: South Gate Inn}\`. Runtime saves the complete node with committed narrative to interpret old references to tomorrow or here; missing, null, blank strings and empty maps/lists are unrecorded, while 0 and false survive. Its contents have no fixed schema. Keep attendance, pending matters and long situations elsewhere; when adopted, maintain corresponding current values in this node without a second copy. Do not create or relocate fields in existing content merely to adopt this convention. Running-world revisions never rewrite saved historical backgrounds.
-
-summary is a catalog description: include only a brief identity, topic or stable clue needed to identify the document, not detailed state or event accounts. Concrete facts belong in the body. Update titles and descriptions only when identifying information changes.
-
-## Arrange storage and discovery together
-
-Give each durable fact a natural owner, update location and actual discovery or injection path. Inject frequently needed current values as bodies or nodes when appropriate; retrieve longer event accounts through catalogs and references. Important events need a usable central home, not merely an imagined directory that play cannot create. Check the real frame and post-write coverage instead of assuming every body enters play requests.
-
-Prefer one maintained home for facts with the same meaning at the same time. Past values, current outcomes and different subjects' interpretations are not duplicates. Let the current situation, prose and interface serve their own purposes without repeatedly overweighting one concept.
-
-world/ or state/ carries fictional facts. control/ arranges world-specific material selection, rule use, save locations and presentation without copying current values. Future-play reference reflects only enabled author blocks: it is not this request's narrative instruction, and optional policies may not stay enabled. World instructions add world-specific constraints without repeating general rules or tool procedures or rewriting an external preset.
+Prefer one maintained home for the same fact at the same time; past values, current outcomes, and different characters' views are not duplicates. \`world/\` (or \`state/\`) holds fictional facts; \`control/\` arranges selection, world-specific rules, save spots, and player views without duplicating current values or repeating general tool rules.
 
 ## Opening and consolidation
 
 ${contentPackageOpeningEn}
 
-Consolidation closes completed or expired processes, commitments and restrictions while retaining meaningful results, lasting effects, events and references. Recording, deduplication and archiving do not perform events again. Keep long material discoverable on demand; advisory size limits do not authorize truncation. Temporary absence is not retirement, and retirement does not remove explicit full-document slots.
+When consolidating, close completed or expired threads, commitments, and limits while keeping meaningful outcomes, lasting effects, history, and references. Backfilling, deduplicating, and archiving never replay events. Keep long material discoverable on demand instead of truncating for soft size hints; temporary absence is not retirement.
 
-Check actual player-view selectors. Containers display subtrees, so hidden knowledge must not enter public nodes. Update selectors with any restructuring of bound content. Audit concepts, time and subjects before removing repeated sentences; finish by checking discovery against real post-write coverage without printing a full internal audit by default.
+Check player-view selectors before finishing: containers expose entire subtrees, so keep hidden knowledge out of public nodes, update selectors whenever structure changes, and skip printing a full internal audit table unless asked.
 `;
 
 export const defaultSettingImprovementPrompt =

@@ -13,16 +13,14 @@ import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
 const contracts = {
   "zh-CN": {
     opening: [
-      "新建内容包、完善开场或改动起始知情时",
+      "仅在编辑内容包时检查 `opening.md`",
       "让首次游玩的玩家单读开场",
-      "主角是谁、眼前发生什么",
-      "当前选择所需而角色已知的前提",
-      "以及交接或请求",
-      "足以采取第一步的信息",
-      "独处、安静和等待也可开场，无任务不造任务",
-      "已有合适内容就沿用",
-      "定向修改无关道具不需重写开场",
-      "私下真相、谜底、未来安排和待发现事项",
+      "主角是谁、眼前正发生什么",
+      "当前选择所需且角色已知的前提",
+      "以及待回应的交接或请求",
+      "只写眼下迈出第一步所需的信息",
+      "独处、安静和等待同样可以开场，没有任务就不硬造任务",
+      "开场与设定文档停在同一时间点",
     ],
     knowledge: [
       "约定/交接，而玩家此前在故事里从未读到过",
@@ -39,16 +37,14 @@ const contracts = {
   },
   en: {
     opening: [
-      "When creating a package, developing its opening or changing starting knowledge",
+      "Inspect `opening.md` only in content packages",
       "let a first-time player understand from the opening alone",
-      "who the protagonist is, what is happening",
-      "premises the character knows that the current choice requires",
-      "any handover or request",
-      "enough to take a first step",
-      "Solitude, quiet and waiting can also open a story; do not invent tasks",
-      "Reuse suitable existing content",
-      "a targeted edit to an unrelated prop need not rewrite the opening",
-      "Private truths, solutions, future plans and matters meant to be discovered",
+      "who they play, what is happening right now",
+      "the character-known premises needed for the first choice",
+      "any open request or handover",
+      "Include only what the first step needs",
+      "Quiet, solitude, and waiting are valid openings; never invent tasks",
+      "Stop the opening and world files at the exact same moment",
     ],
     knowledge: [
       "a deadline, handover, or request known to the character is about to come due",

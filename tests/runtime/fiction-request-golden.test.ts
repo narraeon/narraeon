@@ -99,6 +99,8 @@ import { settingImprovementToolDefinitions } from "../../src/runtime/setting/Set
  * #265 adopts the bilingual candidate play blocks and history-use guidance.
  * All 72 fresh bootstrap, chain and preview digests moved. The four authoring
  * digests stayed the same.
+ * #287 updates the bilingual built-in authoring guidance. Only the four
+ * authoring digests moved.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -391,11 +393,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "53f7b4009b533f4cebbbe9a5f0ab3522c591259ea5674d10e0d28aebfa42a30e",
   "revision/en":
-    "5c92d09c0a2c6b1fa8e6c9594059182f9aedcb622e076c80246f51229fdd2523",
+    "026ddc81c425eaf14f639b5306f6a5bc642b2ef02135d4ba7d4d961269d50513",
   "revision/zh-CN":
-    "9e79b6033aa8fcb12f4c8fa99ba14457aa32a352d3243392232356ce473e85e9",
+    "7d3cacbfbce98652535719d39041ab71c9671ff368f5e700c63c7ac007d0e880",
   "setting/en":
-    "5f5f3a1dde418d6ea699dcbb1dec3be692dfc62bab7113d6b4161d8e0af471b1",
+    "20b2b0b7d6dd63b15590181c2afb04be2e9ded4996fe3b03dc2c81e59034a70e",
   "setting/zh-CN":
-    "555da28fd9aaed5b5e44220409c3c7fa12b50106656574cd125fe20866e1261b",
+    "b7bf06f743d16e594dbc3b90c51d97e1b19d6b36dfc68ed231593c32f77926e0",
 };

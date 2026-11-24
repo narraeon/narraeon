@@ -22,11 +22,10 @@ import { previewInputWithGameplay } from "../support/tabletopFixtures.ts";
 const contracts = {
   "zh-CN": {
     author: [
-      "新建内容包或用户要求完善玩法方向时",
-      "实际由 control/frame.yaml 的 instructions 引用的世界主持块",
-      "定向修改一个道具不需要顺手重写世界方向",
-      "仅完善已有世界的玩法方向时，只需补或改该块里的一两句",
-      "这段写给主持，不复制开场原文、当前事实、谜底或人物秘密",
+      "新建内容包或调整玩法方向时",
+      "用一两句话把核心体验写进 `control/frame.yaml` 实际引用的世界主持块里",
+      "可以多线并行，也可以只是日常相处，不规定必经路线或结局",
+      "这里只写给主持人看，不复制开场原文、当前事实、谜底或秘密",
     ],
     focus: "顺着玩家此刻最投入的事推进",
     selection: [
@@ -40,11 +39,10 @@ const contracts = {
   },
   en: {
     author: [
-      "When creating a content package or asked to develop its play direction",
-      "world GM block actually referenced by control/frame.yaml instructions",
-      "a targeted prop edit need not rewrite the world's direction",
-      "When only developing an existing world's play direction, just add or revise those one or two sentences",
-      "This paragraph addresses the GM: do not copy opening prose, current facts, solutions or character secrets into it",
+      "When creating a package or refining its play direction",
+      "state the core experience in one or two sentences inside a world GM block referenced by `control/frame.yaml`",
+      "Multiple threads or quiet everyday companionship are equally valid, with no forced routes or endings",
+      "Address the GM only—do not copy opening prose, current facts, solutions, or secrets into this note",
     ],
     focus: "Follow what the player is invested in right now",
     selection: [

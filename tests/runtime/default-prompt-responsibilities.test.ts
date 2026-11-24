@@ -99,12 +99,12 @@ describe("旧格式默认提示词职责", () => {
 
   test("运行中世界修订指导省略内容包专属段落，内容包指导保留它们", () => {
     const contentPackageOnly = {
-      "zh-CN": "仅在内容包分支检查 opening.md",
-      en: "Inspect opening.md only in the content-package branch",
+      "zh-CN": "仅在编辑内容包时检查 `opening.md`",
+      en: "Inspect `opening.md` only in content packages",
     } as const;
     const worldStart = {
-      "zh-CN": "内容包设定完善定义开场结束处的世界起点",
-      en: "Content-package setting improvement defines the world where the opening ends",
+      "zh-CN": "内容包设定用来确定“开场结束那一刻”的世界起点",
+      en: "Content-package authoring defines the world at the exact moment the opening ends",
     } as const;
     for (const locale of ["zh-CN", "en"] as const) {
       const contentPackage = defaultSettingImprovementPromptForLocale(locale);

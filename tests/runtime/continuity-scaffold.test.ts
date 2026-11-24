@@ -34,16 +34,16 @@ for (const locale of ["en", "zh-CN"] as const) {
         expect(worldBlock).not.toContain("叙事提交前");
         expect(worldBlock).toContain("## 连续性文档与保存位置");
         expect(worldBlock).toContain("持续变化需要保存时");
-        expect(worldBlock).toContain("@pending-matters 的「未了事项」");
+        expect(worldBlock).toContain("`@pending-matters` 的“未了事项”");
         expect(worldBlock).toContain(
           'context_read({ref: "@relationships#/人物/人物键"})',
         );
         expect(worldBlock).toContain(
           'context_read({ref: "@important-events#/事件/事件键"})',
         );
-        expect(worldBlock).toContain("新增键前先读父映射");
+        expect(worldBlock).toContain("新增键前先读父节点");
         expect(worldBlock).toContain(
-          "人物文档的「认知」段只记影响该人物行动的内容",
+          "人物文档的“认知”段只记影响该人物行动的内容",
         );
       } else {
         expect(worldBlock).not.toContain("Before submitting narration");
@@ -60,9 +60,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         expect(worldBlock).toContain(
           'context_read({ref: "@important-events#/events/event-key"})',
         );
-        expect(worldBlock).toContain(
-          "read the parent mapping before adding keys",
-        );
+        expect(worldBlock).toContain("read the parent node before adding keys");
         expect(worldBlock).toContain(
           "A character document's Knowledge section records only what affects that character's actions",
         );
@@ -112,6 +110,11 @@ for (const locale of ["en", "zh-CN"] as const) {
         "@current-situation",
       ])
         expect(text).toContain(ref);
+      expect(text).toContain(
+        locale === "zh-CN"
+          ? "按人物稳定键保存各人对彼此的信任、立场、义务、边界及依据（单向分开记录）。"
+          : "One-way trust, stance, obligations, boundaries, and reasons indexed by stable person keys.",
+      );
       expect(text).toContain("ACTIVE_RETURN_KEY");
       for (const secret of [
         "EVENT_PRIVATE_ACCOUNT",

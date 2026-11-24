@@ -22,8 +22,8 @@ export function withContinuityScaffold(
       "continuity.relationships",
       zh ? "人物关系" : "Relationships",
       zh
-        ? "按人物稳定键保存有方向的信任、立场、义务与边界及其依据。"
-        : "Directional trust, stance, obligations, boundaries, and their reasons by stable person keys.",
+        ? "按人物稳定键保存各人对彼此的信任、立场、义务、边界及依据（单向分开记录）。"
+        : "One-way trust, stance, obligations, boundaries, and reasons indexed by stable person keys.",
       zh ? "人物" : "people",
     ],
     [
@@ -37,8 +37,8 @@ export function withContinuityScaffold(
     ],
   ];
   const guidance = zh
-    ? `\n## 连续性文档与保存位置\n\n持续变化需要保存时，写入对应的自然所有者文档。眼前的短期局面记在 @current-situation。@pending-matters 的「未了事项」只保留仍有效的承诺、约定与未决事项；已兑现、撤销或失效的条目移出，需要共同追溯的经过记入 @important-events。\n\n@important-events 的「事件」按稳定事件键保存共同往事；@relationships 的「人物」按稳定人物键保存有方向的信任、立场、义务、边界及依据。已有独立事件或关系记录时沿用并引用，避免重复维护。两份文档按需局部读取，例如 context_read({ref: "@relationships#/人物/人物键"}) 或 context_read({ref: "@important-events#/事件/事件键"})；新增键前先读父映射。\n\n人物文档的「认知」段只记影响该人物行动的内容：此人知道什么、猜测或误解了什么、依据是什么，以及哪些事仍不清楚。\n`
-    : `\n## Continuity documents and save locations\n\nWhen a lasting change needs to be saved, write it to its natural owner document. Immediate short-term circumstances go in @current-situation. In @pending-matters, the pending mapping holds only active promises, arrangements, and unresolved matters; remove fulfilled, withdrawn, or invalidated entries, and record accounts that need shared recall in @important-events.\n\nIn @important-events, index the events mapping by stable event keys; in @relationships, index the people mapping by stable person keys for directional trust, stance, obligations, boundaries, and reasons. Reuse and reference existing independent event or relationship records instead of duplicating them. Read both on demand, e.g. context_read({ref: "@relationships#/people/person-key"}) or context_read({ref: "@important-events#/events/event-key"}); read the parent mapping before adding keys.\n\nA character document's Knowledge section records only what affects that character's actions: what they know, what they guess or misunderstand, their basis, and what remains unknown to them.\n`;
+    ? `\n## 连续性文档与保存位置\n\n持续变化需要保存时，写入对应的主体文档。眼前的短期局面记在 \`@current-situation\`。\`@pending-matters\` 的“未了事项”只保留仍有效的承诺、约定与未决事项；已兑现、撤销或失效的条目移出，需要共同追溯的经过记入 \`@important-events\`。\n\n\`@important-events\` 的“事件”按稳定事件键保存共同往事；\`@relationships\` 的“人物”按稳定人物键分别记录各人对彼此的信任、立场、义务、边界及依据。已有独立事件或关系记录时直接沿用并引用，避免重复维护。两份文档按需局部读取，例如 \`context_read({ref: "@relationships#/人物/人物键"})\` 或 \`context_read({ref: "@important-events#/事件/事件键"})\`；新增键前先读父节点。\n\n人物文档的“认知”段只记影响该人物行动的内容：知道什么、猜测或误解了什么、依据是什么，以及仍不清楚什么。\n`
+    : `\n## Continuity documents and save locations\n\nWhen a lasting change needs to be saved, write it to its natural owner document. Immediate short-term circumstances go in @current-situation. In @pending-matters, the pending mapping holds only active promises, arrangements, and unresolved matters; remove fulfilled, withdrawn, or invalidated entries, and record accounts that need shared recall in @important-events.\n\nIn @important-events, index the events mapping by stable event keys; in @relationships, index the people mapping by stable person keys to record each person’s trust, stance, obligations, boundaries, and reasons toward others separately. Reuse and reference existing independent event or relationship records instead of duplicating them. Read both on demand, e.g. context_read({ref: "@relationships#/people/person-key"}) or context_read({ref: "@important-events#/events/event-key"}); read the parent node before adding keys.\n\nA character document's Knowledge section records only what affects that character's actions: what they know, what they guess or misunderstand, their basis, and what remains unknown to them.\n`;
   return [
     ...files.map((file) => {
       if (file.path === "control/blocks/world.md")
