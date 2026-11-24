@@ -860,17 +860,28 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       body.includes("ORDERED_BEFORE_WORLD") &&
       body.includes("I ask Alex whether we are training tonight."),
   );
-  expect(orderedPlayRequest).toBeDefined();
+  if (orderedPlayRequest === undefined)
+    throw new Error("Expected the first play request with the ordered prompts");
+  const stoppingHeading = "# 停笔：一拍停";
+  const stoppingMessages = providerRequest(orderedPlayRequest).messages?.filter(
+    ({ content }) => content?.startsWith(stoppingHeading),
+  );
+  expect(stoppingMessages).toHaveLength(1);
+  expect(stoppingMessages?.[0]?.role).toBe("system");
+  expect(stoppingMessages?.[0]?.content).toContain(
+    "有分量的沉默、独处、休息和等待同样适合停笔",
+  );
   const orderedTokens = [
     "ORDERED_BEFORE_WORLD",
+    stoppingHeading,
     "# World Narration Rules",
     "ORDERED_AFTER_WORLD",
     "# 工具与响应结算",
     "I ask Alex whether we are training tonight.",
   ];
   for (let i = 1; i < orderedTokens.length; i++)
-    expect(orderedPlayRequest!.indexOf(orderedTokens[i]!)).toBeGreaterThan(
-      orderedPlayRequest!.indexOf(orderedTokens[i - 1]!),
+    expect(orderedPlayRequest.indexOf(orderedTokens[i]!)).toBeGreaterThan(
+      orderedPlayRequest.indexOf(orderedTokens[i - 1]!),
     );
   await callChain.getByText("本段调用详情", { exact: true }).click();
   const toolStep = callChain.locator(".model-call").first();
@@ -921,9 +932,6 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   expect(JSON.stringify(firstPlayRequest)).toContain("玩家已经读过的开场白");
   expect(JSON.stringify(firstPlayRequest)).not.toContain(
     "本次没有可注入的非开场白原文",
-  );
-  expect(JSON.stringify(firstPlayRequest)).toContain(
-    "有意义的沉默、独处、休息和等待也可以自然结束",
   );
 
   responses.push(
@@ -1477,12 +1485,12 @@ function tool(name: string, arguments_: object) {
   };
 }
 
-function providerRequest(): {
-  messages?: { role?: string }[];
+function providerRequest(body = providerRequests.at(-1) ?? "{}"): {
+  messages?: { role?: string; content?: string | null }[];
   tools?: { function?: { name?: string }; name?: string }[];
 } {
-  return JSON.parse(providerRequests.at(-1) ?? "{}") as {
-    messages?: { role?: string }[];
+  return JSON.parse(body) as {
+    messages?: { role?: string; content?: string | null }[];
     tools?: { function?: { name?: string }; name?: string }[];
   };
 }
