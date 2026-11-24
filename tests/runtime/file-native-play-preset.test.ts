@@ -1018,7 +1018,7 @@ extensions:
     );
     expect(previewText).toContain("Opening already seen by the player");
     expect(previewText).toContain(
-      "Meaningful silence, solitude, rest and waiting",
+      "Weighted silence, solitude, rest, and waiting",
     );
     const copied = await runtime.handle({
       type: "play.copy",

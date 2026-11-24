@@ -155,16 +155,12 @@ describe("旧格式默认提示词职责", () => {
           "具体保存时机由作者提示规定",
         ],
         state: [
-          "其余可从玩家原文和最终叙事恢复的持续结果",
-          "world_checkpoint 只用于事件之间的间隙",
-          "不等于检查点",
-          "当前事情还等着玩家作出决定、给出关键回应时",
-          "不是本轮目标",
-          "整理随时可做，不等于检查点",
-          "未达到独立建档门槛的信息仍可嵌入自然所有者",
-          "足够维持连续性与意义的信息",
-          "先按停笔位置确定本轮叙事范围",
-          "不必再造一份逐轮日志",
+          "其余能从玩家原文和故事正文还原的变化",
+          "`world_checkpoint` 只用于事件之间的自然空档",
+          "随时可以整理文档，但整理不等于检查点",
+          "活动还在进行、或眼前正等着玩家表态和做决定时",
+          "按“事情”建档而非按回合记流水账",
+          "先按停笔规则确定本轮故事写到哪里",
         ],
         stateAbsent: ["先写文档还是先写叙事都可以"],
       },
@@ -179,16 +175,13 @@ describe("旧格式默认提示词职责", () => {
           "Author instructions decide save timing",
         ],
         state: [
-          "Other durable outcomes recoverable from player originals and final narrative",
-          "Use world_checkpoint only for gaps between events",
-          "an ongoing activity has accumulated progress across several turns",
-          "Consolidation can happen at any time; it is not a checkpoint",
-          "While an activity is still ongoing",
-          "not a goal for this turn",
-          "Information below the independent-document threshold",
-          "Save enough to preserve continuity and meaning",
-          "First fix this turn's narrative scope from the stopping point",
-          "do not create a second turn-by-turn log",
+          "Other durable outcomes recoverable from the player's text and final prose",
+          "Use `world_checkpoint` only at natural gaps between events",
+          "Whenever a multi-turn activity builds up real progress",
+          "Consolidation can happen anytime and is not a checkpoint",
+          "While an activity is still underway",
+          "organized by what happened—not turn by turn",
+          "Decide how far this turn's story advances first",
         ],
         stateAbsent: ["Documents or narrative may be written first"],
       },
@@ -451,14 +444,14 @@ describe("旧格式文风块库", () => {
     const prose = defaultPresetHostFiles["blocks/prose.md"]!;
     // The prose block requires detail where it matters, not only anti-padding.
     expect(prose).toContain("Slow down where it matters");
-    expect(prose).toContain("Raising a hand may take three lines");
-    expect(prose).toContain("Padding repeats the same fact in different words");
+    expect(prose).toContain("Raising a hand can take three lines");
+    expect(prose).toContain("never pad by repeating known facts");
     // Sensation lives with the agency rule it must not override.
     expect(defaultPresetHostFiles["blocks/agency-default.md"]).toContain(
-      "player character's natural sensory and bodily experience may be stated directly",
+      "objective sensory details and involuntary physical reactions grounded in the scene",
     );
     expect(defaultNarrationPrompt).toContain(
-      "weight of the moment determine length",
+      "Match length to the weight of the scene",
     );
 
     const styles = Object.keys(defaultPresetHostFiles)
@@ -539,9 +532,9 @@ test("new shipped templates persist app references instead of editable copies of
   }
 });
 
-describe("Batch 3B refined policy block independence with adjacent blocks disabled (#249)", () => {
+describe("Default policy block independence with adjacent blocks disabled", () => {
   test.each(["zh-CN", "en"] as const)(
-    "%s each of the 6 refined policy blocks preserves its own boundaries on its own source when adjacent optional blocks are disabled or swapped",
+    "%s each policy retains its guidance when adjacent optional blocks are disabled or swapped",
     (locale) => {
       const compiler = new FileNativePromptCompiler({ locale });
       const compileBlock = (
@@ -611,164 +604,155 @@ describe("Batch 3B refined policy block independence with adjacent blocks disabl
       ]);
       const prose = compileBlock("play.prose", ["play.output", "play.scene"]);
 
-      // Exact top-level `背景` YAML key must survive in BOTH locales on save-timing itself.
+      const situation = compileBlock("play.situation", [
+        "play.ownership",
+        "play.save-timing",
+      ]);
+
       expect(saveTiming).toContain("`背景`");
+      expect(saveTiming).toContain("`background`");
 
-      if (locale === "zh-CN") {
-        expect(saveTiming).toContain(
-          "玩家视图绑定的当前值变化，本轮终态叙事前写回",
-        );
-        expect(saveTiming).toContain(
-          "当前情境已采用顶层 `背景` 时，时间、地点等定位值变化应在终态叙事前写回该节点",
-        );
-        expect(saveTiming).toContain("未采用不必创建");
-        expect(saveTiming).toContain(
-          "玩家原文与最终叙事未记录的必要信息（如重要场外进展、未表露认知、隐蔽后果）当轮写回",
-        );
-        expect(saveTiming).toContain(
-          "其余可从玩家原文和最终叙事恢复的持续结果，允许在事件收尾或合适的中间整理点归并",
-        );
-        expect(saveTiming).toContain("随时可在当轮直接归并");
-        expect(saveTiming).toContain("暂时离场不等于退役");
-        expect(saveTiming).toContain("当前明确修订优先于旧叙事");
-
-        expect(checkpoint).toContain("world_checkpoint 只用于事件之间的间隙");
-        expect(checkpoint).toContain("追逐穿过街道仍是同一场活动");
-        expect(checkpoint).toContain(
-          "持续活动尚在进行，或当前事情还等着玩家作出决定、给出关键回应时，不因普通停笔或整理完成而登记",
-        );
-        expect(checkpoint).toContain("整理随时可做，不等于检查点");
-
-        expect(output).toContain("世界内叙事只写故事正文");
-        expect(output).toContain("不要求把允许的场面写得潦草");
-        expect(output).toContain("界面数值不能代替事件表现");
-        expect(output).toContain("补录旧结果、去重和整理不要求再次演出");
-        expect(output).toContain('正文不得出现"没搜到／没找到资料"等内部措辞');
-        expect(output).toContain(
-          "仅含世界外查询或维护时，简洁回答或说明整理结果，不添加动作、对话或时间推进",
-        );
-
-        expect(facts).toContain(
-          "缺少裁决所需事实时，先经目录、字面搜索与精确读取取得",
-        );
-        expect(facts).toContain("搜索未命中不证明事实不存在");
-        expect(facts).toContain(
-          "在可见正文说清足以行动的前提：要做什么及必要的对象、去处或条件",
-        );
-        expect(facts).toContain("状态正文、工具读取与写回回执本身不算交代");
-        expect(facts).toContain(
-          "角色未知的幕后事实仍须发现，不直接揭露谜底与无关秘密",
-        );
-        expect(facts).toContain(
-          "无任务不造任务；已交代且未变的内容不逐轮提醒，也不为此逐轮翻查历史",
-        );
-
-        expect(ownership).toContain("当前事实归自然所有者");
-        expect(ownership).toContain(
-          "写入玩家角色的感情时，只记录玩家已表达的内容",
-        );
-        expect(ownership).toContain("事件按事情划分、不按回合建档");
-        expect(ownership).toContain("当时的结果");
-        expect(ownership).toContain("不必再造一份逐轮日志");
-        expect(ownership).toContain("summary 是目录简介");
-
-        expect(prose).toContain(
-          "玩家主动托付推断时，直接告诉玩家可知的结果，保持证据支持的确定程度；只有玩家表示要说出口时，才写成角色对话",
-        );
-        expect(prose).toContain("赶路、例行公事与已知背景可一两句带过");
-        expect(prose).toContain("详写几秒不等于推进整场活动");
-        expect(prose).toContain("一个抬手可以写三行，两小时赶路也可以写一句");
-      } else {
-        expect(saveTiming).toContain(
-          "Write changed current values bound by player views before final narrative",
-        );
-        expect(saveTiming).toContain(
-          "exact top-level `背景` field, write changed time, location or other positioning values there before final narrative",
-        );
-        expect(saveTiming).toContain(
-          "worlds without this field need not create it",
-        );
-        expect(saveTiming).toContain(
-          "Write needed information absent from player originals and final narrative this turn",
-        );
-        expect(saveTiming).toContain(
-          "Other durable outcomes recoverable from player originals and final narrative may be consolidated at event closure or a suitable intermediate point",
-        );
-        expect(saveTiming).toContain("Consolidation can happen at any time");
-        expect(saveTiming).toContain("Temporary absence is not retirement");
-        expect(saveTiming).toContain(
-          "current explicit revisions override older narrative",
-        );
-
-        expect(checkpoint).toContain(
-          "Use world_checkpoint only for gaps between events",
-        );
-        expect(checkpoint).toContain(
-          "a chase across another street is still one activity",
-        );
-        expect(checkpoint).toContain(
-          "While an activity is still ongoing, or the current event awaits a player decision or key response, do not register merely because you stop writing or finish consolidation",
-        );
-        expect(checkpoint).toContain(
-          "Consolidation can happen at any time; it is not a checkpoint",
-        );
-
-        expect(output).toContain("In-world narrative uses only story prose");
-        expect(output).toContain(
-          "stopping limits advancement, not the care given to the allowed scene",
-        );
-        expect(output).toContain(
-          "Interface values do not replace dramatization",
-        );
-        expect(output).toContain(
-          "Delayed recording, deduplication and maintenance do not replay old events",
-        );
-        expect(output).toContain(
-          'Keep internal wording such as "nothing was found in the records" out of prose',
-        );
-        expect(output).toContain(
-          "For purely out-of-world inquiry or maintenance, answer or report consolidation briefly without adding actions, dialogue or time passage",
-        );
-
-        expect(facts).toContain("When facts needed for a ruling are missing");
-        expect(facts).toContain("Zero search matches do not prove absence");
-        expect(facts).toContain(
-          "disclose actionable premises in visible prose through speech, observable objects or grounded memories even if the player did not ask: what can be done and the necessary person, place or conditions",
-        );
-        expect(facts).toContain(
-          "state bodies, tool reads and write receipts alone are not disclosure",
-        );
-        expect(facts).toContain(
-          "backstage facts unknown to the character still require discovery without revealing solutions or unrelated secrets",
-        );
-        expect(facts).toContain(
-          "Do not invent tasks, repeat unchanged disclosed information, or routinely search history for it each turn",
-        );
-
-        expect(ownership).toContain(
-          "Give current facts to their natural owners",
-        );
-        expect(ownership).toContain(
-          "When recording the player character's feelings, write only what the player has expressed",
-        );
-        expect(ownership).toContain(
-          "Group events by what happened, not by turn",
-        );
-        expect(ownership).toContain("outcomes at that time");
-        expect(ownership).toContain("do not create a second turn-by-turn log");
-        expect(ownership).toContain("summary is a catalog identifier");
-
-        expect(prose).toContain(
-          "When the player delegates an inference, tell the player what can be known at the certainty supported by the evidence. Only turn that inference into character dialogue when the player expresses an intent to say it aloud.",
-        );
-        expect(prose).toContain(
-          "travel, routine and known background may take a sentence or two",
-        );
-        expect(prose).toContain(
-          "detailing a few seconds does not advance an entire activity",
-        );
-        expect(prose).toContain("Raising a hand may take three lines");
+      const policies =
+        locale === "zh-CN"
+          ? ([
+              [
+                saveTiming,
+                [
+                  "当轮必写（在写完本轮正文前完成）",
+                  "玩家界面常驻显示的数值发生变化时",
+                  "当前情境已使用顶层 `背景`（或 `background`）记录时间/地点且本轮发生变化时，直接更新该节点",
+                  "故事正文和玩家原文里没写出来的必要信息",
+                  "可以在事件收尾或合适的中间节点一起整理",
+                  "随时可以在当轮直接整理进去",
+                  "角色暂时离场不算退场",
+                ],
+              ],
+              [
+                checkpoint,
+                [
+                  "`world_checkpoint` 只用于事件之间的自然空档",
+                  "追逐穿过两条街仍属于同一场活动",
+                  "不要仅仅因为普通停笔或刚整理完文档就登记检查点",
+                  "随时可以整理文档，但整理不等于检查点",
+                ],
+              ],
+              [
+                output,
+                [
+                  "世界内叙事只写故事正文",
+                  "不要求把允许写的部分写得潦草",
+                  "界面数值不能代替场面描写",
+                  "补录旧事、去重或整理文档时不要重演已经发生过的场景",
+                  "不要出现“没搜到资料”之类的话",
+                  "直接简洁作答，不推进剧情或时间",
+                ],
+              ],
+              [
+                facts,
+                [
+                  "缺少裁决所需事实时，先通过目录、搜索和读取核实",
+                  "角色的声称和猜测不等于事实",
+                  "把行动所需的前提说清楚",
+                  "后台文档和工具读取不算“已经告诉玩家”",
+                  "角色不知道的幕后真相留待发现，不提前剧透，也不硬造任务",
+                ],
+              ],
+              [
+                ownership,
+                [
+                  "当前状态归对应主体",
+                  "玩家角色的感情只写玩家自己表达过的部分",
+                  "按“事情”建档而非按回合记流水账",
+                  "当时的结果",
+                  "不要在每份人物文档里重复抄一遍经过",
+                  "`summary` 只用来在目录里快速识别",
+                ],
+              ],
+              [
+                prose,
+                [
+                  "给出证据能支撑的结论，保持对应的确定程度",
+                  "除非玩家表示要说出口，不写成台词",
+                  "赶路、例行公事和已知背景一两句带过",
+                  "一个抬手可以写三行，两小时赶路也可以写一句",
+                ],
+              ],
+            ] as const)
+          : ([
+              [
+                saveTiming,
+                [
+                  "Write before final prose (required this turn)",
+                  "Any changed value displayed in player views",
+                  "tracks time/place under a top-level `background` (or `背景`) node and those values changed, update that node directly",
+                  "Necessary facts absent from the player's message and final prose",
+                  "may be saved at scene closure or any natural pause",
+                  "without waiting for the event to finish or recording unrealized outcomes early",
+                  "Temporary absence is not retirement",
+                ],
+              ],
+              [
+                checkpoint,
+                [
+                  "Use `world_checkpoint` only at natural gaps between events",
+                  "a chase spilling into the next street is still one event",
+                  "do not register a checkpoint just because you paused or finished tidying notes",
+                  "Consolidation can happen anytime and is not a checkpoint",
+                ],
+              ],
+              [
+                output,
+                [
+                  "In-world replies contain story prose only",
+                  "stopping rules limit how far you advance, not the care you give the moment",
+                  "UI stats never replace a scene",
+                  "Backfilling, deduplicating, or tidying records never replays past events",
+                  'Never write phrases like "nothing turned up in the records" in prose',
+                  "answer briefly without advancing time or story",
+                ],
+              ],
+              [
+                facts,
+                [
+                  "When key facts are missing, look them up through catalogs, search, and reads",
+                  "a character's claim is not a fact",
+                  "surface the actionable premise through dialogue, an observable object, or grounded memory",
+                  "Backend files and tool reads do not count as disclosure",
+                  "Keep unknown backstage truths discoverable without spoiling solutions or inventing tasks",
+                ],
+              ],
+              [
+                ownership,
+                [
+                  "Current state lives with its owner",
+                  "Record only feelings the player has actually expressed",
+                  "organized by what happened—not turn by turn",
+                  "outcomes at that time",
+                  "copying the account across every character sheet",
+                  "Use `summary` only as a short catalog label",
+                ],
+              ],
+              [
+                prose,
+                [
+                  "Deliver what the evidence supports",
+                  "Turn it into spoken dialogue only if the player means to say it aloud",
+                  "travel and routine can take a sentence",
+                  "Raising a hand can take three lines",
+                ],
+              ],
+            ] as const);
+      for (const [body, phrases] of policies) {
+        for (const phrase of phrases) expect(body).toContain(phrase);
       }
+
+      const negativeFactPolicy =
+        locale === "zh-CN"
+          ? "更新当前情境时，保留仍然成立的明确否定事实或未成立状态，不要因为某个角色提出了新说法就覆盖掉原本的客观边界。"
+          : "When updating the current situation, keep explicit negative facts and unmet conditions that still hold—never overwrite an established objective boundary just because a character makes a new claim.";
+      expect(situation.split("\n\n")[1]?.endsWith(negativeFactPolicy)).toBe(
+        true,
+      );
     },
   );
 });

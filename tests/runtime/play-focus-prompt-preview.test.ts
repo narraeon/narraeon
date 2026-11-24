@@ -28,14 +28,14 @@ const contracts = {
       "仅完善已有世界的玩法方向时，只需补或改该块里的一两句",
       "这段写给主持，不复制开场原文、当前事实、谜底或人物秘密",
     ],
-    focus: "在这个世界提供的玩法中，跟随玩家此刻投入的事",
+    focus: "顺着玩家此刻最投入的事推进",
     selection: [
-      "本轮明确意图优先",
-      "近几轮行为",
-      "自然、可观察的反馈",
-      "直接告诉玩家可知的结果，保持证据支持的确定程度",
-      "只有玩家表示要说出口时",
-      "当场可感知的重要后果",
+      "明确要求优先",
+      "结合近几轮上下文",
+      "自然、可观察的现场反馈",
+      "给出证据能支撑的结论，保持对应的确定程度",
+      "除非玩家表示要说出口，不写成台词",
+      "当场可见的后果",
     ],
   },
   en: {
@@ -46,15 +46,14 @@ const contracts = {
       "When only developing an existing world's play direction, just add or revise those one or two sentences",
       "This paragraph addresses the GM: do not copy opening prose, current facts, solutions or character secrets into it",
     ],
-    focus:
-      "Within the play this world offers, follow what the player is engaged in now",
+    focus: "Follow what the player is invested in right now",
     selection: [
-      "Prioritize this turn's explicit intent",
+      "Honor explicit pacing",
       "recent turns",
       "natural, observable feedback",
-      "tell the player what can be known at the certainty supported by the evidence",
-      "Only turn that inference into character dialogue when the player expresses an intent to say it aloud",
-      "important consequences perceptible on the spot",
+      "Deliver what the evidence supports",
+      "Turn it into spoken dialogue only if the player means to say it aloud",
+      "visible consequences",
     ],
   },
 };
@@ -253,65 +252,66 @@ test.each(["en", "zh-CN"] as const)(
       locale === "zh-CN"
         ? {
             "continue-stage": [
-              "本轮有新的角色行动或台词时",
-              "两者在首个世界回应前都要出现",
-              "条件未成立的后续行为按尝试或条件呈现",
-              "特意写出的动作或话要演出来",
+              "本轮只要有新的角色行动或台词",
+              "两者都要出现在首个世界回应之前",
+              "条件尚未满足的后续打算仍按尝试或条件写",
+              "玩家特意写出的动作或话要认真演出来",
             ],
             "continue-advance": [
-              "实际结果或回应起笔",
-              "保留输入中的尝试与条件",
+              "真实结果或回应起笔",
+              "保留输入里的尝试与条件",
             ],
-            "agency-default": ["走过走廊、敲门", "我把信交给他"],
-            "agency-strict": ["可补写的玩家行为", "NPC 可以当轮接信并回应"],
-            "agency-open": ["推进到何处由停笔块决定"],
+            "agency-default": [
+              "“我去找他”可以顺带写过走廊、敲门",
+              "我把信交给他",
+            ],
+            "agency-strict": ["可替玩家写出的行为", "NPC 当轮可以接信并回应"],
+            "agency-open": ["具体推进到哪里由停笔规则决定"],
             "stop-beat": [
-              "明确要求略过的普通反馈",
-              "新出现的关键条件",
-              "不因一次停顿或一个新细节自动停笔",
+              "明确要求略过的普通来回",
+              "一旦出现新条件",
+              "不必每遇到一个停顿就强行收手",
             ],
             "stop-scene": [
-              "明确留给自己的判断或回应前停",
-              "不因一次停顿或一个新细节自动停笔",
+              "玩家特意留给自己的判断",
+              "不必因为一个小停顿或新细节就过早切停",
             ],
             "style-intimate": ["距离和已经发生的触感", "没有接触时"],
             "style-noir": ["可感知的细节"],
             "style-action": ["已经成立的代价"],
             "style-literary": ["实际经过的时间"],
-            "save-timing": [
-              "本轮必写项用工具写回，可从原文恢复的其余持续结果择机归并",
-            ],
-            situation: ["移出当前待办或标为过去", "不推测玩家的长期偏好"],
-            "person-third": ["直接引语保留说话者的人称"],
+            "save-timing": ["其余能从玩家原文和故事正文还原的变化"],
+            situation: ["移出当前待办或标为过去", "臆测玩家的长期偏好"],
+            "person-third": ["台词保留说话人原本的人称"],
           }
         : {
             "continue-stage": [
-              "When this turn introduces new character action or dialogue",
-              "both must appear before the first world response",
-              "Conditional follow-through whose condition is unmet remains an attempt or condition",
-              "deliberately written actions or words must be staged",
+              "Whenever this turn introduces new action or dialogue",
+              "show both before the first NPC reply",
+              "Keep conditional follow-ups as attempts or conditions until met",
+              "deliberate actions or lines get staged properly",
             ],
             "continue-advance": [
-              "actual result or response",
-              "Preserve attempts and conditions in the input",
+              "actual result or reaction",
+              "Keep attempts and conditions intact",
             ],
             "agency-default": [
-              "walking the corridor and knocking",
+              "walking down the hall and knocking",
               "I hand him the letter",
             ],
             "agency-strict": [
-              "player behavior you may fill in",
-              "NPCs may take the letter and reply in this turn",
+              "Limit the player character's behavior strictly",
+              "NPCs may take the letter and answer in the same turn",
             ],
-            "agency-open": ["The stopping block determines how far to advance"],
+            "agency-open": ["advancing as far as the stopping rule allows"],
             "stop-beat": [
-              "ordinary feedback the player explicitly asked to skip",
-              "new consequential condition",
-              "A pause or new detail alone does not require stopping",
+              "Skip routine back-and-forth when the player asks to compress it",
+              "hand back new conditions or consequential choices",
+              "do not cut off on an empty pause",
             ],
             "stop-scene": [
-              "judgment or response the player explicitly reserved",
-              "A pause or new detail alone does not require stopping",
+              "stop before a judgment the player reserved",
+              "Do not cut off early over a small pause or minor detail",
             ],
             "style-intimate": [
               "distance and touch that has already occurred",
@@ -321,13 +321,15 @@ test.each(["en", "zh-CN"] as const)(
             "style-action": ["established costs"],
             "style-literary": ["time that actually elapsed"],
             "save-timing": [
-              "writing due items this turn and consolidating recoverable outcomes later",
+              "Other durable outcomes recoverable from the player's text and final prose",
             ],
             situation: [
-              "remove them from current pending work or mark them as past",
-              "do not infer enduring player preferences",
+              "remove or mark past anything resolved this turn",
+              "a guess at the player's long-term preferences",
             ],
-            "person-third": ["Direct quotations retain the speaker's person"],
+            "person-third": [
+              "keep direct dialogue in each speaker's own voice",
+            ],
           };
 
     for (const [name, expected] of Object.entries(phrases)) {

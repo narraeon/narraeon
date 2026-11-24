@@ -86,15 +86,15 @@ test.each([
   {
     locale: "zh-CN" as const,
     policy: [
-      "事件结束不等于无话可接",
-      "对话、交易、冲突或活动自然结束",
-      "地点改变、时间推进、在场者更换",
-      "不必依赖前一阶段全部过程",
-      "给出关键回应",
-      "不为登记加速",
-      "再提交最终正文",
+      "事件告一段落不等于无话可接",
+      "交谈、交易、冲突或活动真正告一段落",
+      "换地点、时间跳转、在场者变动",
+      "不再依赖前面全部过程",
+      "等着玩家表态和做决定",
+      "绝不要为了凑检查点而加速",
+      "补写完再输出正文",
     ],
-    ending: "不必再添一句话或一个动作来等玩家接续",
+    ending: "不必再添一句话来催玩家接续",
     mechanics: ["玩家可以取消预选", "替代 frame 的 recent", "为空时"],
     obsolete: [
       "最终正文后调用 world_checkpoint",
@@ -106,15 +106,15 @@ test.each([
   {
     locale: "en" as const,
     policy: [
-      "An event ending still leaves room to reply",
-      "conversation, transaction, conflict or activity naturally ends",
-      "Location changes, time passage and participant changes",
-      "does not rely on the entire prior process",
-      "key response",
-      "never speed up",
+      "An event wrapping up still leaves room to respond",
+      "conversation, deal, conflict, or activity genuinely concludes",
+      "Location changes, time skips, and shifting casts",
+      "later turns do not depend on replaying the entire stretch",
+      "waiting on a player choice or key reply",
+      "Never rush, compress a scene",
       "before final prose",
     ],
-    ending: "without adding another line or action to invite continuation",
+    ending: "no extra line is needed to prompt the player",
     mechanics: [
       "the player can cancel the preselection",
       "replaces the frame's recent",
@@ -389,14 +389,14 @@ test.each([
     )!;
     expect(authorPrompt).toContain(
       locale === "zh-CN"
-        ? "整理随时可做，不等于检查点"
-        : "Consolidation can happen at any time; it is not a checkpoint",
+        ? "随时可以整理文档，但整理不等于检查点"
+        : "Consolidation can happen anytime and is not a checkpoint",
     );
     // The gap policy is an author block; the Runtime contract only defers to it.
     const gapPolicy =
       locale === "zh-CN"
-        ? "world_checkpoint 只用于事件之间的间隙"
-        : "Use world_checkpoint only for gaps between events";
+        ? "`world_checkpoint` 只用于事件之间的自然空档"
+        : "Use `world_checkpoint` only at natural gaps between events";
     const deferral =
       locale === "zh-CN"
         ? "何时登记由检查点政策块规定"
@@ -554,13 +554,13 @@ test.each(["en", "zh-CN"] as const)(
 
 test("主持块分别约束玩家代理权、事实裁决与默认叙事视角", () => {
   expect(defaultPresetHostFiles["blocks/agency-default.md"]).toContain(
-    "require the player's explicit expression in their text",
+    "must come from the player's own words",
   );
   expect(defaultPresetHostFiles["blocks/facts.md"]).toContain(
-    "Attempts are not automatically successes",
+    "An attempt is not a success, a character's claim is not a fact",
   );
   // The person lives in its own block; the prose block no longer fixes it.
-  expect(defaultPresetHostFiles["blocks/prose.md"]).not.toContain("“you”");
+  expect(defaultPresetHostFiles["blocks/prose.md"]).not.toMatch(/["“]you["”]/u);
   expect(defaultPresetHostFiles["blocks/person-second.md"]).toContain(
     'Address the player character as "you"',
   );

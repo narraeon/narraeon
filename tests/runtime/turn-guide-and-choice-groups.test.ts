@@ -809,14 +809,15 @@ describe("Batch 1 prompt cleanup invariants (#245)", () => {
       const ownership = catalog.find((entry) => entry.id === "play.ownership")!;
       expect(ownership.body).toContain(
         locale === "zh-CN"
-          ? "写入玩家角色的感情时，只记录玩家已表达的内容。"
-          : "When recording the player character's feelings, write only what the player has expressed.",
+          ? "玩家角色的感情只写玩家自己表达过的部分。"
+          : "Record only feelings the player has actually expressed.",
       );
       const saveTiming = catalog.find(
         (entry) => entry.id === "play.save-timing",
       )!;
-      // C4: English save-timing keeps the exact Runtime-captured top-level key `背景`.
+      // The same top-level keys are recognized even when the orchestration uses another locale.
       expect(saveTiming.body).toContain("`背景`");
+      expect(saveTiming.body).toContain("`background`");
     });
   }
 });
