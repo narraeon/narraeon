@@ -94,6 +94,8 @@ import { settingImprovementToolDefinitions } from "../../src/runtime/setting/Set
  * Only the 24 bootstrap and four authoring digests moved.
  * #269 adds localized play tool field descriptions and shortens their top-level
  * descriptions. The 72 bootstrap, chain and preview digests moved.
+ * #270 localizes Runtime role headings for new ordered Chinese requests.
+ * Only the 12 ordered chain/preview and two authoring digests for zh-CN moved.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -326,17 +328,17 @@ const expectedDigests: Record<string, string> = {
   "chain/zh-CN/legacy-v1/openai_responses/bootstrap":
     "4f4a94ef94965580fc5fc593d72350dfa8c000f276b67f5175da6267197f46cc",
   "chain/zh-CN/ordered-default/anthropic_messages/append":
-    "770022dc4230cd0d84c0a28cc7b44926e9373f4bdf523bbca4310752bcdcb69c",
+    "652be7b8e973245d6934167d9eab25635bf1a347bbd6e1df57b196b905150f45",
   "chain/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "2dd5c09c0c15d1ad3061e1c48e077c0527fe8a2901c01b0289c3e71ce832731e",
+    "e07997e8b76443361527832f8ef682ec500f02353eb30ffcdeeeea680f18a775",
   "chain/zh-CN/ordered-default/chat_completions/append":
-    "30d8f467415abaeb6f7df4543da6320b6c63d2f5b4d08ad4b506b53770d841cd",
+    "e58332cc657b747409836b7d0765af8578d3addabd6a96c6a138b9451fc5fe39",
   "chain/zh-CN/ordered-default/chat_completions/bootstrap":
-    "cd771d5b7f139470573e219e8a17cbf18bc1138558b29bfe17bfd48b549a525e",
+    "51188dd9003fdf41f9380a37be00cc4072c52f9b206414ff4c74d020d8bc01a1",
   "chain/zh-CN/ordered-default/openai_responses/append":
-    "ae4cd3588b8bd7cbf276e8172bdb646f8a5ae1a98319f57714f1fb29c1a27668",
+    "be0082662959eae36fa66cb3327a89f5b304fb8a00b042b5832a260dafa820d0",
   "chain/zh-CN/ordered-default/openai_responses/bootstrap":
-    "23fbb554fb41e7164827bcaf9f083d33b85a1b6f811fd06302acc2e5f28fa33a",
+    "21a6964d906d878fcde519e2e48755e77d15ef29cfd5f1143f8ef6fe3d6a7e71",
   "preview/en/legacy-v1/anthropic_messages/append":
     "6bfe218f54c7e6bac166844f33f836e972e93ff08027b76a240e3a8ec4446ee2",
   "preview/en/legacy-v1/anthropic_messages/bootstrap":
@@ -374,23 +376,23 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/legacy-v1/openai_responses/bootstrap":
     "7e80d3bea3cca87019b9c8933bda65b2e4b0e354bb6336cbaf627fc6d4b0d888",
   "preview/zh-CN/ordered-default/anthropic_messages/append":
-    "5e73667c6e57bd547e3e4a6501c59c65c9736bc69565a1843c0d11bde6bfb443",
+    "5197ebd50366f4e79843e3191abd649d36a3f4804cab5976516cd1b6c8812707",
   "preview/zh-CN/ordered-default/anthropic_messages/bootstrap":
-    "446e2ecb64c253111a7d598a1a2123df3c4ff4b1171640872a1f8a0545898791",
+    "c545a46786b798cad3ff6d52027caccbf3bfbcdca8753a102c738ce0da8b862a",
   "preview/zh-CN/ordered-default/chat_completions/append":
-    "ce8e866865e11746585db9f1af54d6c2b6e0abff55dd366b744391bb905f138d",
+    "0837b302f764eeb251c156e89422e2193e493430a75fdbf524f30e745750a4f2",
   "preview/zh-CN/ordered-default/chat_completions/bootstrap":
-    "3822eb5eae0cf5313193fd99886edecfb322a05caa42e011b99a27c1167bc444",
+    "454b4b5bc5256fecae02fe0e364d182e0fc4e5b8088bba5c4b92ba550cdcbebb",
   "preview/zh-CN/ordered-default/openai_responses/append":
-    "52868fb62d9dbb27e812eb4b1dd5c1542908901ba99237af7ec3956bd1f16354",
+    "a8c1be54f907e5aa070f8d50b21cb48e7e5b279b4452fe58b8b65d9d8e585931",
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
-    "c93cc9458ca31083761fc6670c210d4d7526f0f277b246ea793437dc4ad559db",
+    "b1957b76ffc86cd4f3f491b72407a4d12d077f819b4e3bc579f5396966a96718",
   "revision/en":
     "5c92d09c0a2c6b1fa8e6c9594059182f9aedcb622e076c80246f51229fdd2523",
   "revision/zh-CN":
-    "28580e248083568936132bbe8735112897a81f8d7ff50b9f33e1ac0dfbef8e88",
+    "9e79b6033aa8fcb12f4c8fa99ba14457aa32a352d3243392232356ce473e85e9",
   "setting/en":
     "5f5f3a1dde418d6ea699dcbb1dec3be692dfc62bab7113d6b4161d8e0af471b1",
   "setting/zh-CN":
-    "b911113a229b4f3c2db39b56f08cd5ee2e00c950785aaefee61217a584c81a25",
+    "555da28fd9aaed5b5e44220409c3c7fa12b50106656574cd125fe20866e1261b",
 };

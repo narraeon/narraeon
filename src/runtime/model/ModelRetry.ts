@@ -154,6 +154,6 @@ function cancellableWait(ms: number, signal?: AbortSignal): Promise<void> {
 
 function deadlineExceeded(): ModelHostOutcomeUnknownError {
   return new ModelHostOutcomeUnknownError(
-    "Google Interactions exceeded its total time limit",
+    "Model request exceeded its total time limit",
   );
 }

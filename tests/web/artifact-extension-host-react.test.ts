@@ -11,8 +11,12 @@ import {
   type FrontendPlayerViewPanelProjection,
 } from "../../src/web/ArtifactExtensionHost.tsx";
 import { ArtifactDebugger } from "../../src/web/ArtifactDebugger.tsx";
+import { setWebLocale } from "../../src/web/i18n.ts";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  setWebLocale("zh-CN");
+});
 
 function artifact(
   overrides: Partial<FrontendArtifactProjection> = {},
@@ -66,6 +70,40 @@ function host(
 }
 
 describe("ArtifactExtensionHost React lifetime", () => {
+  test.each([
+    ["zh-CN", "扩展卡片暂时无法渲染，已切换为纯文本显示。"],
+    ["en", "Extension card unavailable; showing plain text instead."],
+  ] as const)(
+    "%s unavailable extension shows its original payload as plain text",
+    (locale, notice) => {
+      setWebLocale(locale);
+      const record = artifact();
+      const payload = "<strong>Original artifact</strong>";
+      const diagnostic = "The frozen extension resource is invalid";
+      render(
+        host([
+          {
+            ...record,
+            payload,
+            contentType: "text/html",
+            frontend: {
+              ...record.frontend,
+              status: "invalid_revision",
+              fallback: "raw",
+              diagnostic,
+            },
+          },
+        ]),
+      );
+      const fallback = screen.getByRole("status");
+      expect(fallback.querySelector("p")?.textContent).toBe(notice);
+      expect(screen.getByText(diagnostic)).toBeTruthy();
+      expect(fallback.querySelector("pre")?.textContent).toBe(payload);
+      expect(fallback.querySelector("strong")).toBeNull();
+      expect(screen.queryByTitle(record.output)).toBeNull();
+    },
+  );
+
   test("侧栏明确显示生成、更新和失败状态，失败不伪装新结果", () => {
     const tree = (
       status: "running" | "failed" | "completed",

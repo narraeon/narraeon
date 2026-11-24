@@ -1166,6 +1166,8 @@ function ArtifactExtensionInstance({
     if (isApp) window.setTimeout(sendAppUpdate, 0);
   }
 
+  const fallbackReason =
+    instanceError ?? pipeline.error ?? artifact.frontend.diagnostic;
   return (
     <article
       className={`artifact-extension-instance${instanceError ? " has-error" : ""}`}
@@ -1188,12 +1190,11 @@ function ArtifactExtensionInstance({
       artifact.frontend.fallback === "raw" ||
       pipeline.fallback ? (
         <div className="artifact-extension-fallback" role="status">
-          <p>
-            {instanceError ??
-              pipeline.error ??
-              artifact.frontend.diagnostic ??
-              uiText("扩展资源不可用，显示 raw artifact。")}
-          </p>
+          {(artifact.frontend.fallback === "raw" ||
+            fallbackReason === undefined) && (
+            <p>{uiText("扩展卡片暂时无法渲染，已切换为纯文本显示。")}</p>
+          )}
+          {fallbackReason !== undefined && <p>{fallbackReason}</p>}
           <pre>{pipeline.original}</pre>
           <button type="button" onClick={disabled ? onEnable : onDisable}>
             {disabled ? uiText("恢复此扩展") : uiText("停用此扩展")}

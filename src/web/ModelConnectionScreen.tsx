@@ -298,7 +298,7 @@ export function ModelConnectionScreen({
         }),
       );
       acceptLibrary(next);
-      onNotice(uiText("已切换当前模型配置；Runtime 不会自动故障转移。"));
+      onNotice(uiText("已切换当前模型配置（出错时不会自动切换到其他模型）。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {

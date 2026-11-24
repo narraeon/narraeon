@@ -39,6 +39,73 @@ for (const locale of ["zh-CN", "en"] as const) {
     );
   });
 
+  test(`${locale}: switching models and opening the prompt preview show player-facing notices`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale });
+    const first = `Copy fixture first ${locale}`;
+    const connectionIds: string[] = [];
+    for (const name of [first, `Copy fixture second ${locale}`]) {
+      const { activeConnectionId } = await runtime<{
+        activeConnectionId: string;
+      }>(page, {
+        type: "model.save",
+        connection: {
+          name,
+          presetId: "custom",
+          provider: "chat_completions",
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "fixture-secret",
+          modelId: "player-copy-model",
+          contextWindowTokens: 64000,
+          maxOutputTokens: 4096,
+        },
+      });
+      connectionIds.push(activeConnectionId);
+    }
+    await page.goto("/#/models");
+    await page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: first, exact: true }) })
+      .getByRole("button", {
+        name: t("切换到此配置", "Switch to this configuration"),
+        exact: true,
+      })
+      .click();
+    await expect(page.locator(".model-active-summary strong")).toHaveText(
+      first,
+    );
+    await expect
+      .soft(
+        page.getByText(
+          t(
+            "已切换当前模型配置（出错时不会自动切换到其他模型）。",
+            "Active model updated (no automatic fallback on errors).",
+          ),
+          { exact: true },
+        ),
+      )
+      .toBeVisible();
+
+    await page.goto("/#/orchestrations");
+    await page
+      .getByText(t("发送给 AI 的内容预览", "Preview content sent to AI"), {
+        exact: true,
+      })
+      .click();
+    const preview = page.getByRole("region", {
+      name: t("全新上下文会发送什么", "What a new context sends"),
+    });
+    await expect(preview.locator(".prompt-preview-lede")).toHaveText(
+      t(
+        "仅预览最终提示词，不调用模型，也不会改动世界进度。",
+        "Preview only — no model calls and no changes to your world.",
+      ),
+    );
+    for (const connectionId of connectionIds.reverse())
+      await runtime(page, { type: "model.delete", connectionId });
+  });
+
   test(`${locale}: ZIP import creates an independent, same-name copy`, async ({
     page,
   }) => {

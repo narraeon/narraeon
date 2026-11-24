@@ -105,7 +105,7 @@ test("cancel interrupts waiting without another dispatch", async () => {
   }
 });
 
-test("Google total deadline includes prior dispatch and waits", async () => {
+test("model total deadline includes prior dispatch and waits", async () => {
   await Promise.resolve();
   const dispatch = vi.fn(async () => {
     await Promise.resolve();
@@ -113,7 +113,11 @@ test("Google total deadline includes prior dispatch and waits", async () => {
   });
   await expect(
     withModelRetry(dispatch, { deadline: 1000, now: () => 500 }),
-  ).rejects.toBeInstanceOf(ModelHostOutcomeUnknownError);
+  ).rejects.toThrow(
+    new ModelHostOutcomeUnknownError(
+      "Model request exceeded its total time limit",
+    ),
+  );
   expect(dispatch).toHaveBeenCalledTimes(1);
 });
 
