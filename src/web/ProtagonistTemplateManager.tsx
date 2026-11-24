@@ -1,3 +1,7 @@
+import {
+  idleWorkspaceNavigation,
+  type WorkspaceNavigationProtection,
+} from "./WorkspaceLocation.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isProtagonistTemplateContent,
@@ -32,13 +36,15 @@ export function ProtagonistTemplateManager({
   templates,
   onChange,
   onClose,
-  onNavigationLockChange,
+  onNavigationProtectionChange,
 }: {
   client: Pick<RuntimeClient, "request">;
   templates: ProtagonistTemplate[];
   onChange: (view: ProtagonistTemplatesView) => void;
   onClose: () => void;
-  onNavigationLockChange?: (locked: boolean) => void;
+  onNavigationProtectionChange?: (
+    protection: WorkspaceNavigationProtection,
+  ) => void;
 }): React.JSX.Element {
   const [baseline, setBaseline] = useState<ProtagonistTemplate | null>(null);
   const [name, setName] = useState("");
@@ -73,9 +79,9 @@ export function ProtagonistTemplateManager({
   const dirty =
     name !== (baseline?.name ?? "") || body !== (baseline?.body ?? "");
   useEffect(() => {
-    onNavigationLockChange?.(dirty || pending);
-    return () => onNavigationLockChange?.(false);
-  }, [dirty, pending, onNavigationLockChange]);
+    onNavigationProtectionChange?.({ dirty, busy: pending });
+    return () => onNavigationProtectionChange?.(idleWorkspaceNavigation);
+  }, [dirty, pending, onNavigationProtectionChange]);
   function perform(action: TemplateAction): void {
     if (pendingRef.current) return;
     if (action.type === "close") {

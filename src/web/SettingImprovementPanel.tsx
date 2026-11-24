@@ -1,4 +1,8 @@
 import styles from "./WorldHeaderChrome.module.css";
+import {
+  idleWorkspaceNavigation,
+  type WorkspaceNavigationProtection,
+} from "./WorkspaceLocation.ts";
 import { ModelCallAttempts } from "./ModelCallAttempts.tsx";
 import { groupCallAttempts } from "./GroupModelCallAttempts.ts";
 import {
@@ -127,7 +131,9 @@ interface SettingImprovementPanelProps {
   onBack: () => void;
   showWorkspaceBack?: boolean;
   onCreateWorld?: () => void;
-  onNavigationLockChange?: (locked: boolean) => void;
+  onNavigationProtectionChange?: (
+    protection: WorkspaceNavigationProtection,
+  ) => void;
   packageGameplay?: {
     gameplay: Gameplay;
     onChangeScheme: (scheme: ResolutionScheme) => Promise<void>;
@@ -186,7 +192,7 @@ export function SettingImprovementPanel({
   onBack,
   showWorkspaceBack = true,
   onCreateWorld,
-  onNavigationLockChange,
+  onNavigationProtectionChange,
   packageGameplay,
   draftsLocked = false,
   revisionActions,
@@ -197,6 +203,7 @@ export function SettingImprovementPanel({
   const [editing, setEditing] = useState<{
     sessionId: string;
     messageId: string;
+    original: string;
     draft: string;
     requestId: string;
   } | null>(null);
@@ -250,12 +257,16 @@ export function SettingImprovementPanel({
       !view.turns.some((turn) => turn.user.id === editing.messageId))
   )
     setEditing(null);
+  const navigationDirty =
+    hasUnsavedFileDraft || editing?.draft !== editing?.original;
+  const navigationBusy = editBusy || loading || draftsLocked;
   useEffect(() => {
-    onNavigationLockChange?.(
-      interactionLocked || hasUnsavedFileDraft || loading,
-    );
-    return () => onNavigationLockChange?.(false);
-  }, [onNavigationLockChange, interactionLocked, hasUnsavedFileDraft, loading]);
+    onNavigationProtectionChange?.({
+      dirty: navigationDirty,
+      busy: navigationBusy,
+    });
+    return () => onNavigationProtectionChange?.(idleWorkspaceNavigation);
+  }, [onNavigationProtectionChange, navigationDirty, navigationBusy]);
   const startingFresh = view === null;
   const continuingHistory =
     view !== null &&
@@ -889,6 +900,7 @@ export function SettingImprovementPanel({
                       setEditing({
                         sessionId: view.sessionId,
                         messageId: turn.user.id,
+                        original: turn.user.text,
                         draft: turn.user.text,
                         requestId: createClientId("setting-edit"),
                       })

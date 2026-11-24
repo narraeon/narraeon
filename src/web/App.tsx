@@ -37,6 +37,10 @@ import { CreateContentPackageDialog } from "./CreateContentPackageDialog.tsx";
 import { CreateWorldScreen } from "./CreateWorldScreen.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
+import {
   HomeScreen,
   type HomeWorld,
   type HomeContentPackage,
@@ -51,9 +55,16 @@ import {
 } from "./useAuthoringWorkspace.ts";
 import { WorldPage } from "./WorldPage.tsx";
 import {
+  idleWorkspaceNavigation,
   parseWorkspaceHash,
+  readBrowserWorkspaceEntry,
+  returnToBrowserWorkspaceEntry,
+  sameBrowserWorkspaceEntry,
   workspaceHash,
+  writeBrowserWorkspaceEntry,
+  type BrowserWorkspaceEntry,
   type WorkspaceLocation,
+  type WorkspaceNavigationProtection,
 } from "./WorkspaceLocation.ts";
 
 interface Workspace {
@@ -77,6 +88,10 @@ interface PlayPresetLibrary {
 }
 
 type Screen = WorkspaceScreen;
+type LeaveIntent =
+  | { kind: "browser"; entry: BrowserWorkspaceEntry }
+  | { kind: "program"; navigate: () => void };
+
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -85,6 +100,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   const [screen, setScreen] = useState<Screen>("home");
   const locationRef = useRef<WorkspaceLocation>({ screen: "home" });
+  const browserEntry = useRef<BrowserWorkspaceEntry | null>(null);
+  const leaveIntent = useRef<LeaveIntent | null>(null);
+  const [leaveConfirmation, setLeaveConfirmation] =
+    useState<ConfirmationRequest<null> | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [presetPageVersion, setPresetPageVersion] = useState(0);
   const presetPageInstanceRef = useRef(0);
@@ -103,8 +122,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const creationTemplate = useRef<ProtagonistTemplate | undefined>(undefined);
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
   const [creatingPackage, setCreatingPackage] = useState(false);
-  const [childNavigationLocked, setChildNavigationLocked] = useState(false);
-  const [playPresetDraftDirty, setPlayPresetDraftDirty] = useState(false);
+  const [childNavigation, setChildNavigation] =
+    useState<WorkspaceNavigationProtection>(idleWorkspaceNavigation);
+  const [playPresetNavigation, setPlayPresetNavigation] =
+    useState<WorkspaceNavigationProtection>(idleWorkspaceNavigation);
   const [pendingModelAction, setPendingModelAction] = useState<string | null>(
     null,
   );
@@ -139,34 +160,37 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   filesDirtyRef.current = filesDirty;
   const packageOpenRequest = useRef(0);
   const packageReadTarget = useRef<ReadTarget<unknown> | null>(null);
+  const packageRetryEntry = useRef<BrowserWorkspaceEntry | null>(null);
   const [packageSyncFailed, setPackageSyncFailed] = useState(false);
   const [packageSyncError, setPackageSyncError] = useState<unknown>();
-  const navigationLockedRef = useRef(false);
-  const navigationDraftLockedRef = useRef(false);
-  const navigationLocked =
+  const navigationProtection = useRef(idleWorkspaceNavigation);
+  const navigationDirty =
     filesDirty ||
-    authoring.view?.runStatus === "running" ||
-    playPresetDraftDirty ||
+    playPresetNavigation.dirty ||
     modelDraftDirty ||
+    childNavigation.dirty;
+  const navigationBusy =
+    authoring.view?.runStatus === "running" ||
     importPending ||
     archivePending ||
     samplePending ||
     creatingWorld ||
     creatingPackage ||
-    childNavigationLocked;
-  navigationLockedRef.current = navigationLocked;
-  navigationDraftLockedRef.current =
-    filesDirty ||
-    authoring.view?.runStatus === "running" ||
-    playPresetDraftDirty ||
-    modelDraftDirty ||
-    childNavigationLocked;
+    playPresetNavigation.busy ||
+    (modelDraftDirty && pendingModelAction !== null) ||
+    childNavigation.busy;
+  const navigationLocked = navigationDirty || navigationBusy;
+  navigationProtection.current = {
+    dirty: navigationDirty,
+    busy: navigationBusy,
+  };
 
   function switchLocation(next: WorkspaceLocation, mode?: "replace"): void {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
     packageOpenRequest.current += 1;
     packageReadTarget.current?.dispose();
+    packageRetryEntry.current = null;
     setPackageSyncFailed(false);
     if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
     if (workspaceHash(previous) !== hash) {
@@ -178,19 +202,68 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     if (next.screen === "world") setWorldId(next.worldId);
     if (next.screen === "plays") setSelectedPresetId(next.presetId ?? "");
     setScreen(next.screen);
-    if (mode === "replace" || previous.screen === next.screen)
-      window.history.replaceState(null, "", hash);
-    else window.history.pushState(null, "", hash);
+    const replace = mode === "replace" || previous.screen === next.screen;
+    const position =
+      readBrowserWorkspaceEntry().position ??
+      browserEntry.current?.position ??
+      0;
+    browserEntry.current = writeBrowserWorkspaceEntry(
+      hash,
+      replace ? "replace" : "push",
+      replace ? position : position + 1,
+    );
   }
 
-  function preserveLocation(): void {
-    packageOpenRequest.current += 1;
-    window.history.pushState(null, "", workspaceHash(locationRef.current));
-    setNotice(uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"));
+  function cancelBrowserNavigation(destination: BrowserWorkspaceEntry): void {
+    const original = browserEntry.current;
+    if (
+      original !== null &&
+      !returnToBrowserWorkspaceEntry(original, destination)
+    )
+      setNotice(uiText("浏览器无法恢复旧历史地址，当前页面的修改仍在。"));
   }
 
-  const restoreAddress = useEffectEvent((next: Workspace) => {
-    const target = parseWorkspaceHash(window.location.hash);
+  function askToLeave(intent: LeaveIntent): void {
+    leaveIntent.current = intent;
+    const opener = document.activeElement;
+    setLeaveConfirmation(
+      (current) =>
+        current ?? {
+          action: null,
+          message: uiText("此页有未保存的修改。要放弃修改并离开吗？"),
+          confirmLabel: uiText("放弃并离开"),
+          opener: opener instanceof HTMLElement ? opener : null,
+        },
+    );
+  }
+
+  function clearLeave(): void {
+    leaveIntent.current = null;
+    setLeaveConfirmation(null);
+  }
+
+  function blockBrowserNavigation(entry: BrowserWorkspaceEntry): boolean {
+    if (navigationProtection.current.busy || creatingWorldRef.current) {
+      clearLeave();
+      setNotice(uiText("当前操作仍在进行，请等它结束后再切换页面。"));
+      cancelBrowserNavigation(entry);
+      return true;
+    }
+    if (navigationProtection.current.dirty) {
+      askToLeave({ kind: "browser", entry });
+      return true;
+    }
+    return false;
+  }
+
+  function restoreAddress(
+    next: Workspace,
+    {
+      entry,
+      discard = false,
+    }: { entry?: BrowserWorkspaceEntry; discard?: boolean } = {},
+  ): void {
+    const target = parseWorkspaceHash(entry?.hash ?? window.location.hash);
     let failure = "";
     if (target === null) failure = uiText("找不到该页面。");
     else if (
@@ -212,8 +285,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     if (failure || target === null) {
       switchLocation({ screen: "home" }, "replace");
       setNotice(failure);
-    } else if (target.screen === "content") {
-      void openPackage(target.packageId, "replace");
+    } else if (target.screen === "content" && !discard) {
+      void openPackage(target.packageId, "replace", entry);
     } else if (target.screen === "plays") {
       const current = locationRef.current;
       if (current.screen === "plays" && current.presetId !== target.presetId) {
@@ -228,45 +301,97 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (target.screen === "preview") setPromptPreviewPlayPreset(null);
       switchLocation(target, "replace");
     }
-  });
+  }
 
-  const restoreBrowserAddress = useEffectEvent(() => {
-    if (navigationLockedRef.current || creatingWorldRef.current) {
-      preserveLocation();
-      return;
-    }
-    // Recheck local identities: another tab may have deleted the target.
-    const version = ++packageOpenRequest.current;
-    if (workspace === null) return;
-    const hash = window.location.hash;
-    const receiptVersion = workspaceReceiptVersion.current;
-    void workspaceTarget.read().then((next) => {
-      if (
-        version !== packageOpenRequest.current ||
-        window.location.hash !== hash
-      )
-        return;
-      if (navigationLockedRef.current || creatingWorldRef.current) {
-        preserveLocation();
+  const restoreInitialAddress = useEffectEvent((next: Workspace) => {
+    restoreAddress(next);
+  });
+  const restoreBrowserAddress = useEffectEvent(
+    (entry: BrowserWorkspaceEntry, refreshSameEntry = false) => {
+      const version = ++packageOpenRequest.current;
+      const original = browserEntry.current;
+      if (original !== null && sameBrowserWorkspaceEntry(entry, original)) {
+        browserEntry.current = entry;
+        if (leaveIntent.current?.kind === "browser") clearLeave();
+        if (
+          !refreshSameEntry ||
+          navigationProtection.current.busy ||
+          navigationProtection.current.dirty
+        )
+          return;
+      } else if (blockBrowserNavigation(entry)) {
         return;
       }
-      const latest =
-        next ??
-        (receiptVersion !== workspaceReceiptVersion.current
-          ? currentWorkspace()
-          : null);
-      if (latest !== null) restoreAddress(latest);
-      else
-        window.history.pushState(null, "", workspaceHash(locationRef.current));
-    });
-  });
+      // Recheck local identities: another tab may have deleted the target.
+      if (workspace === null) return;
+      const receiptVersion = workspaceReceiptVersion.current;
+      void workspaceTarget.read().then((next) => {
+        if (
+          version !== packageOpenRequest.current ||
+          !sameBrowserWorkspaceEntry(entry, readBrowserWorkspaceEntry())
+        )
+          return;
+        if (
+          (original === null || !sameBrowserWorkspaceEntry(entry, original)) &&
+          blockBrowserNavigation(entry)
+        )
+          return;
+        const latest =
+          next ??
+          (receiptVersion !== workspaceReceiptVersion.current
+            ? currentWorkspace()
+            : null);
+        if (latest !== null) restoreAddress(latest, { entry });
+        else cancelBrowserNavigation(entry);
+      });
+    },
+  );
 
   useEffect(() => () => packageReadTarget.current?.dispose(), []);
   useEffect(() => {
-    const onPopState = () => restoreBrowserAddress();
+    let lastPop: BrowserWorkspaceEntry | null = null;
+    const onPopState = (event: PopStateEvent) => {
+      let entry = readBrowserWorkspaceEntry();
+      if (entry.position === undefined) {
+        const previous = browserEntry.current;
+        // A growing stack identifies a new hash entry. Never guess the direction
+        // of travel to an unmarked legacy entry without a browser-provided key.
+        if (
+          previous?.position !== undefined &&
+          (!event.isTrusted || entry.historyLength > previous.historyLength)
+        )
+          entry = writeBrowserWorkspaceEntry(
+            entry.hash,
+            "replace",
+            previous.position + (event.isTrusted ? 1 : 0),
+          );
+      }
+      lastPop = entry;
+      restoreBrowserAddress(entry, !event.isTrusted);
+    };
+    const onHashChange = (event: HashChangeEvent) => {
+      const entry = readBrowserWorkspaceEntry();
+      if (new URL(event.newURL).hash !== entry.hash) return;
+      if (lastPop === null || !sameBrowserWorkspaceEntry(lastPop, entry))
+        restoreBrowserAddress(entry);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("hashchange", onHashChange);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!navigationDirty) return;
+    function onBeforeUnload(event: BeforeUnloadEvent): void {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [navigationDirty]);
   const {
     target: workspaceTarget,
     syncFailed,
@@ -371,7 +496,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const read =
       loadAttempt === 0 ? workspaceTarget.read() : workspaceTarget.recover();
     void read.then((next) => {
-      if (active && next !== null) restoreAddress(next);
+      if (active && next !== null) restoreInitialAddress(next);
     });
     return () => {
       active = false;
@@ -383,7 +508,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const reconcileVisibleResource = useEffectEvent(() => {
     if (
       workspace === null ||
-      navigationLockedRef.current ||
+      window.location.hash !== workspaceHash(locationRef.current) ||
+      navigationProtection.current.dirty ||
+      navigationProtection.current.busy ||
       creatingWorldRef.current
     )
       return;
@@ -399,10 +526,22 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const missingWorld =
       location.screen === "world" &&
       !workspace.worlds.some((world) => world.worldId === location.worldId);
-    if (!missingPackage && !missingWorld) return;
+    const missingPreset =
+      location.screen === "plays" &&
+      location.presetId !== undefined &&
+      !workspace.playPresets.presets.some(({ id }) => id === location.presetId);
+    if (!missingPackage && !missingWorld && !missingPreset) return;
     switchLocation({ screen: "home" }, "replace");
     setSelected(workspace.contentPackages[0]?.localId ?? "");
-    setNotice(uiText(missingPackage ? "找不到该内容包。" : "找不到该世界。"));
+    setNotice(
+      uiText(
+        missingPackage
+          ? "找不到该内容包。"
+          : missingWorld
+            ? "找不到该世界。"
+            : "找不到该编排方案。",
+      ),
+    );
   });
   useEffect(() => {
     reconcileVisibleResource();
@@ -435,43 +574,61 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function openPackage(
     packageId: string,
     mode?: "replace",
+    entry?: BrowserWorkspaceEntry,
   ): Promise<void> {
     const requestVersion = packageOpenRequest.current + 1;
     packageOpenRequest.current = requestVersion;
     packageReadTarget.current?.dispose();
+    packageRetryEntry.current = null;
     setPackageSyncFailed(false);
     const target = new ReadTarget<unknown>({
       load: () => client.request({ type: "content.read", packageId }),
       apply: () => {
         if (packageOpenRequest.current !== requestVersion) return;
-        if (
-          navigationDraftLockedRef.current ||
-          (mode === "replace" &&
-            (navigationLockedRef.current || creatingWorldRef.current))
-        ) {
-          if (mode === "replace") preserveLocation();
-          else
-            setNotice(
-              uiText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
-            );
+        if (entry !== undefined) {
+          if (
+            !sameBrowserWorkspaceEntry(entry, readBrowserWorkspaceEntry()) ||
+            blockBrowserNavigation(entry)
+          )
+            return;
+        } else if (
+          navigationProtection.current.busy ||
+          creatingWorldRef.current
+        )
           return;
-        }
-        switchLocation({ screen: "content", packageId }, mode);
+        const accept = () =>
+          switchLocation({ screen: "content", packageId }, mode);
+        if (entry === undefined && navigationProtection.current.dirty)
+          askToLeave({ kind: "program", navigate: accept });
+        else accept();
       },
       onSyncFailure: (failed, error) => {
         if (packageOpenRequest.current !== requestVersion) return;
         setPackageSyncFailed(failed);
         setPackageSyncError(failed ? error : undefined);
-        if (failed && mode === "replace")
-          window.history.replaceState(
-            null,
-            "",
-            workspaceHash(locationRef.current),
-          );
+        if (failed && mode === "replace") {
+          if (entry !== undefined) {
+            packageRetryEntry.current = entry;
+            cancelBrowserNavigation(entry);
+          } else
+            browserEntry.current = writeBrowserWorkspaceEntry(
+              workspaceHash(locationRef.current),
+              "replace",
+              readBrowserWorkspaceEntry().position ?? 0,
+            );
+        }
       },
     });
     packageReadTarget.current = target;
     await target.read();
+  }
+
+  function retryPackageRead(): void {
+    const retryEntry = packageRetryEntry.current;
+    const current = readBrowserWorkspaceEntry();
+    if (retryEntry !== null && !sameBrowserWorkspaceEntry(retryEntry, current))
+      returnToBrowserWorkspaceEntry(retryEntry, current);
+    else void packageReadTarget.current?.recover();
   }
 
   /** The creation dialog keeps itself open and shows the error when Runtime refuses the package. */
@@ -557,7 +714,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             : id,
         );
       }
-      if (locationRef.current === origin && !navigationDraftLockedRef.current)
+      if (
+        locationRef.current === origin &&
+        !navigationProtection.current.dirty &&
+        !navigationProtection.current.busy
+      )
         switchLocation({ screen: "home" });
     } catch (error: unknown) {
       await workspaceTarget.recover();
@@ -826,11 +987,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     )?.name ?? null;
 
   function navigate(next: Screen): void {
-    if (navigationLocked) return;
+    if (navigationBusy || creatingWorldRef.current || next === screen) return;
+    if (navigationDirty)
+      askToLeave({
+        kind: "program",
+        navigate: () => performNavigation(next, true),
+      });
+    else performNavigation(next);
+  }
+
+  function performNavigation(next: Screen, discard = false): void {
     packageOpenRequest.current += 1;
-    if (next === screen) return;
     if (next === "content") {
       if (selectedPackage === undefined) setPackageDialogOpen(true);
+      else if (discard)
+        switchLocation({
+          screen: "content",
+          packageId: selectedPackage.localId,
+        });
       else void openPackage(selectedPackage.localId);
     } else if (next === "preview") openPromptPreview();
     else if (next === "plays")
@@ -849,6 +1023,26 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       switchLocation({ screen: next });
       if (next === "home" || next === "library") void refresh().catch(report);
     }
+  }
+
+  function decideLeave(confirmed: boolean): void {
+    const intent = leaveIntent.current;
+    clearLeave();
+    if (intent === null) return;
+    const busy = navigationProtection.current.busy || creatingWorldRef.current;
+    if (intent.kind === "program") {
+      if (confirmed && !busy) intent.navigate();
+      return;
+    }
+    const destination = readBrowserWorkspaceEntry();
+    if (!sameBrowserWorkspaceEntry(destination, intent.entry)) return;
+    if (!confirmed || busy) {
+      cancelBrowserNavigation(destination);
+      return;
+    }
+    if (workspace === null) return;
+    restoreAddress(workspace, { entry: destination, discard: true });
+    if (locationRef.current.screen !== "home") void refresh().catch(report);
   }
 
   // Async preset actions retain this instance even after a later page mounts.
@@ -874,7 +1068,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         modelConfigured={workspace.model.configured}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
-        onNavigationLockChange={setChildNavigationLocked}
+        onNavigationProtectionChange={setChildNavigation}
         onRenameWorld={(name) => renameWorld(worldId, name)}
         onRecoverWorkspace={() => workspaceTarget.recover()}
         initialReadingPreferences={
@@ -915,7 +1109,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         draftsLocked={authoring.draftsLocked}
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
-        onNavigationLockChange={setChildNavigationLocked}
+        onNavigationProtectionChange={setChildNavigation}
         conversation={conversation}
         conversationActions={authoringConversationActions(
           authoringWorkspace,
@@ -970,14 +1164,20 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       <WorkspaceHeader
         screen={screen}
         locale={workspace.preferences.locale}
-        localeSaving={localeSaving}
-        navigationLocked={navigationLocked}
+        localeDisabled={localeSaving || navigationLocked}
+        navigationLocked={navigationBusy}
         model={workspace.model}
         modelBusy={pendingModelAction !== null || modelDraftDirty}
         onSelectModel={quickSelectModel}
         onNavigate={navigate}
         onLocaleChange={(locale) => void saveLocale(locale)}
       />
+      {leaveConfirmation !== null && (
+        <ConfirmationDialog
+          request={leaveConfirmation}
+          onDecision={decideLeave}
+        />
+      )}
       {packageDialogOpen ? (
         <CreateContentPackageDialog
           pending={creatingPackage}
@@ -1001,7 +1201,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           }
           onRead={() => {
             if (syncFailed) void workspaceTarget.recover();
-            if (packageSyncFailed) void packageReadTarget.current?.recover();
+            if (packageSyncFailed) retryPackageRead();
             if (creationOverviewFailed) void creationOverviewTarget.recover();
             if (creationSyncFailed) void rereadCreation();
           }}
@@ -1142,7 +1342,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               }
               updateWorkspace((current) => ({ ...current, playPresets }));
             }}
-            onDirtyChange={setPlayPresetDraftDirty}
+            onNavigationProtectionChange={setPlayPresetNavigation}
             renderPromptPreview={(target) => (
               <PromptPreviewScreen
                 key={`${target.presetId}:${target.revision}`}
@@ -1182,7 +1382,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               setSelected(id);
             }}
             onCreate={(template) => void createWorld(template)}
-            onNavigationLockChange={setChildNavigationLocked}
+            onNavigationProtectionChange={setChildNavigation}
             onEdit={() => navigate("content")}
             onConfigureModel={() => navigate("model")}
           />

@@ -134,7 +134,7 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   ).toBeDisabled();
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page
     .getByRole("button", { name: "放弃未保存修改", exact: true })
     .click();
@@ -175,7 +175,7 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   await page.getByLabel("世界控制文件（JSON）").fill("invalid draft");
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole("button", { name: "放弃控制修改", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),

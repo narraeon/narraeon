@@ -6194,7 +6194,7 @@ function deferredProtagonistRevision() {
     onConfigureModel: vi.fn(),
     onRenameWorld: vi.fn(() => Promise.resolve()),
     onOpenWorld: vi.fn(() => Promise.resolve()),
-    onNavigationLockChange: vi.fn(),
+    onNavigationProtectionChange: vi.fn(),
     protagonistRevision: {
       message: "固定说明\n\n主角模板：冷静调查员",
       started: false,
@@ -6286,7 +6286,10 @@ test("自动主角修订从延迟 HTTP 派发到延迟观察完成持续保护�
     expect(f.props.onProtagonistRevisionStarted).toHaveBeenCalledOnce(),
   );
   expectProtagonistInteractionLocked();
-  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(true);
+  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+    dirty: false,
+    busy: true,
+  });
   fireEvent.click(screen.getByRole("button", { name: "返回游玩" }));
   fireEvent.click(screen.getByRole("button", { name: "编辑" }));
   fireEvent.change(screen.getByRole("textbox"), {
@@ -6316,7 +6319,10 @@ test("自动主角修订从延迟 HTTP 派发到延迟观察完成持续保护�
     await Promise.resolve();
   });
   expectProtagonistInteractionLocked();
-  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(true);
+  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+    dirty: false,
+    busy: true,
+  });
   await act(f.complete);
   await waitFor(() =>
     expect(
@@ -6325,7 +6331,10 @@ test("自动主角修订从延迟 HTTP 派发到延迟观察完成持续保护�
       }).disabled,
     ).toBe(false),
   );
-  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
+  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+    dirty: false,
+    busy: false,
+  });
 });
 
 test("自动主角修订请求失败释放交互保护并恢复正文供明确重试", async () => {
@@ -6368,7 +6377,10 @@ test("自动主角修订请求失败释放交互保护并恢复正文供明确�
   expect(
     screen.getByRole<HTMLButtonElement>("button", { name: "编辑" }).disabled,
   ).toBe(false);
-  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
+  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+    dirty: false,
+    busy: false,
+  });
   expect(
     f.client.request.mock.calls.filter(
       ([request]) => request.type === "world.revision.message",
@@ -6392,7 +6404,10 @@ test("自动主角修订请求失败释放交互保护并恢复正文供明确�
   expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(
     f.props.protagonistRevision.message,
   );
-  expect(f.props.onNavigationLockChange).toHaveBeenLastCalledWith(false);
+  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+    dirty: false,
+    busy: false,
+  });
 });
 
 test.each(["keep", "revert"] as const)(

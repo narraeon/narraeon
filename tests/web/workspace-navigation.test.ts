@@ -183,7 +183,7 @@ test.each([
   );
 });
 
-test("后退立即恢复地址并保留模型草稿", async () => {
+test("取消后退时恢复地址并保留模型草稿", async () => {
   const { client, request } = fixture();
   render(createElement(App, { client }));
   await screen.findByRole("heading", { name: "世界工作区" });
@@ -195,10 +195,12 @@ test("后退立即恢复地址并保留模型草稿", async () => {
   const calls = request.mock.calls.length;
   window.history.replaceState(null, "", "#/");
   fireEvent(window, new PopStateEvent("popstate"));
+  const dialog = screen.getByRole("dialog", {
+    name: "此页有未保存的修改。要放弃修改并离开吗？",
+  });
+  expect(window.location.hash).toBe("#/");
+  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
   expect(window.location.hash).toBe("#/models");
-  expect(
-    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
-  ).toBeTruthy();
   expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
     "未保存的模型名称",
   );
@@ -463,7 +465,7 @@ test("世界创建进行中时后退保持来源页面和地址", async () => {
   fireEvent(window, new PopStateEvent("popstate"));
   expect(window.location.hash).toBe("#/create");
   expect(
-    screen.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。"),
+    screen.getByText("当前操作仍在进行，请等它结束后再切换页面。"),
   ).toBeTruthy();
   await act(async () => {
     rejectCreation(new Error("已结束创建测试"));
@@ -831,7 +833,7 @@ test("文件草稿阻止全局导航与快捷创建，放弃草稿后恢复", as
   ).toBe(true);
   expect(
     screen.getByRole("button", { name: "返回工作区" }).hasAttribute("disabled"),
-  ).toBe(true);
+  ).toBe(false);
   expect(screen.getByLabelText("界面语言").hasAttribute("disabled")).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "创建世界" }));
   expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(

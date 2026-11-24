@@ -27,7 +27,7 @@ const creationDestinations = [
 export function WorkspaceHeader({
   screen,
   locale,
-  localeSaving,
+  localeDisabled,
   navigationLocked,
   model,
   modelBusy,
@@ -37,7 +37,7 @@ export function WorkspaceHeader({
 }: {
   screen: WorkspaceScreen;
   locale: AppLocale;
-  localeSaving: boolean;
+  localeDisabled: boolean;
   navigationLocked: boolean;
   model: ModelConnectionLibraryView;
   modelBusy: boolean;
@@ -211,7 +211,7 @@ export function WorkspaceHeader({
             <select
               aria-label={uiText("界面语言")}
               value={locale}
-              disabled={localeSaving || navigationLocked}
+              disabled={localeDisabled || navigationLocked}
               onChange={(event) =>
                 onLocaleChange(event.currentTarget.value as AppLocale)
               }

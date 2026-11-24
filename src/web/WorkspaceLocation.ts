@@ -4,6 +4,86 @@ export type WorkspaceLocation =
   | { screen: "world"; worldId: string }
   | { screen: "plays"; presetId?: string };
 
+export interface WorkspaceNavigationProtection {
+  dirty: boolean;
+  busy: boolean;
+}
+
+export const idleWorkspaceNavigation: WorkspaceNavigationProtection = {
+  dirty: false,
+  busy: false,
+};
+
+export interface BrowserWorkspaceEntry {
+  hash: string;
+  key: string | undefined;
+  position: number | undefined;
+  historyLength: number;
+}
+
+export function readBrowserWorkspaceEntry(): BrowserWorkspaceEntry {
+  const entry = window.navigation?.currentEntry;
+  const state: unknown = window.history.state;
+  const position =
+    typeof state === "object" && state !== null && "narraeonPosition" in state
+      ? state.narraeonPosition
+      : undefined;
+  return {
+    hash: window.location.hash,
+    key: entry?.key,
+    historyLength: window.history.length,
+    position:
+      entry !== undefined && entry !== null && entry.index >= 0
+        ? entry.index
+        : typeof position === "number" && Number.isSafeInteger(position)
+          ? position
+          : undefined,
+  };
+}
+
+export function writeBrowserWorkspaceEntry(
+  hash: string,
+  mode: "push" | "replace",
+  position: number,
+): BrowserWorkspaceEntry {
+  const state = { narraeonPosition: position };
+  if (mode === "replace") window.history.replaceState(state, "", hash);
+  else window.history.pushState(state, "", hash);
+  return readBrowserWorkspaceEntry();
+}
+
+export function sameBrowserWorkspaceEntry(
+  a: BrowserWorkspaceEntry,
+  b: BrowserWorkspaceEntry,
+): boolean {
+  return a.hash === b.hash && a.key === b.key && a.position === b.position;
+}
+
+export function returnToBrowserWorkspaceEntry(
+  original: BrowserWorkspaceEntry,
+  destination: BrowserWorkspaceEntry,
+): boolean {
+  if (original.key !== undefined && original.key !== destination.key) {
+    const { committed, finished } = window.navigation.traverseTo(original.key);
+    // A new browser navigation can supersede this traversal.
+    void Promise.allSettled([committed, finished]);
+    return true;
+  }
+  if (original.position === undefined || destination.position === undefined)
+    return false;
+  const delta = original.position - destination.position;
+  if (delta !== 0) window.history.go(delta);
+  else if (original.hash !== destination.hash) {
+    // A same-entry replacement has no history step to walk.
+    writeBrowserWorkspaceEntry(
+      original.hash,
+      "replace",
+      original.position ?? 0,
+    );
+  }
+  return true;
+}
+
 export function parseWorkspaceHash(hash: string): WorkspaceLocation | null {
   switch (hash) {
     case "":

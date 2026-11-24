@@ -126,14 +126,19 @@ const englishMessages: Record<string, string> = {
   "找不到该世界。": "World not found.",
   "找不到该内容包。": "Content package not found.",
   "找不到该编排方案。": "Orchestration not found.",
-  "已保留当前页面的未保存修改，请保存或放弃后再切换。":
-    "Your unsaved changes have been kept. Save or discard them before switching pages.",
   "正在编辑这份内容包，请在回复完成后创建世界。":
     "Editing this content package. Wait for the reply to finish before creating a world.",
   放弃控制修改: "Discard control changes",
   选择编辑文件: "Choose a file to edit",
   当前文件: "Current file",
   工作区导航: "Workspace navigation",
+  "此页有未保存的修改。要放弃修改并离开吗？":
+    "This page has unsaved changes. Discard them and leave?",
+  放弃并离开: "Discard and leave",
+  "浏览器无法恢复旧历史地址，当前页面的修改仍在。":
+    "The browser could not restore the old address. Your changes are still here.",
+  "当前操作仍在进行，请等它结束后再切换页面。":
+    "Wait for the current operation to finish before changing pages.",
   我的世界: "My worlds",
   内容库: "Content library",
   模型设置: "Model settings",

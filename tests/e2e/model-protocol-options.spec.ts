@@ -232,12 +232,22 @@ for (const locale of ["zh-CN", "en"] as const) {
     await name.fill(editedName);
     await summary.press(toggleKey);
     await expect(adapter).toBeHidden();
-    await expect(
-      page.getByRole("button", {
+    await page
+      .getByRole("button", {
         name: t("返回工作区", "Back to workspace"),
         exact: true,
-      }),
-    ).toBeDisabled();
+      })
+      .click();
+    const discard = page.getByRole("dialog", {
+      name: t(
+        "此页有未保存的修改。要放弃修改并离开吗？",
+        "This page has unsaved changes. Discard them and leave?",
+      ),
+    });
+    await discard
+      .getByRole("button", { name: t("取消", "Cancel"), exact: true })
+      .click();
+    await expect(page).toHaveURL(/#\/models$/u);
     await oldCard
       .getByRole("button", {
         name: t("切换到此配置", "Switch to this configuration"),

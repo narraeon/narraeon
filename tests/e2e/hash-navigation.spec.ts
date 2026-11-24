@@ -1,6 +1,9 @@
 import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Page } from "@playwright/test";
-import type { V1Request } from "../../src/protocol/v1.ts";
+import type {
+  V1Request,
+  V1WorldRevisionOverview,
+} from "../../src/protocol/v1.ts";
 
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   const response = await page.request.post("/api/runtime/v1", {
@@ -269,7 +272,13 @@ test("后退、前进按页面历史切换，新建、预览、模型页支持�
   }
 });
 
-for (const draft of ["content", "preset", "model", "world"] as const) {
+for (const draft of [
+  "content",
+  "preset",
+  "model",
+  "world",
+  "revision",
+] as const) {
   test(`${draft} 未保存修改阻止后退，恢复地址并保留草稿`, async ({ page }) => {
     const data = await setup(page);
     await page.goto("/");
@@ -298,46 +307,77 @@ for (const draft of ["content", "preset", "model", "world"] as const) {
       await page
         .getByRole("button", { name: `打开世界：${data.name}`, exact: true })
         .click();
-      await page.getByRole("button", { name: "世界管理", exact: true }).click();
-      await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
-      await page.getByLabel("世界控制文件（JSON）").fill("地址测试未保存控制");
+      if (draft === "world") {
+        await page
+          .getByRole("button", { name: "世界管理", exact: true })
+          .click();
+        await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
+        await page
+          .getByLabel("世界控制文件（JSON）")
+          .fill("地址测试未保存控制");
+      } else {
+        await page.getByRole("button", { name: "世界", exact: true }).click();
+        await page
+          .getByRole("button", { name: "修订当前世界", exact: true })
+          .click();
+        await page
+          .getByRole("navigation", { name: "世界修订工具" })
+          .getByRole("button", { name: "编辑", exact: true })
+          .click();
+        await page
+          .getByRole("button", {
+            name: "打开 state/current-situation.yaml",
+            exact: true,
+          })
+          .click();
+        await page
+          .getByLabel("编辑 state/current-situation.yaml")
+          .fill("地址测试未保存修订");
+      }
     }
+    // The first world-revision edit opens its persisted worktree before the
+    // local draft can be discarded. Let that write finish first.
+    await expect(
+      page.getByRole("button", { name: "模型设置", exact: true }),
+    ).toBeEnabled();
     const address = page.url();
-    await expect(
-      page.getByRole("button", { name: "返回工作区", exact: true }),
-    ).toBeDisabled();
+    const historyLength = await page.evaluate(() => history.length);
     await page.goBack();
+    const dialog = discardNavigationDialog(page);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "取消" }).click();
     await expect(page).toHaveURL(address);
-    await expect(
-      page.getByText("已保留当前页面的未保存修改，请保存或放弃后再切换。", {
-        exact: true,
-      }),
-    ).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
     const labels = {
       content: "编辑 opening.md",
       preset: "编排方案名称",
       model: "配置名称",
       world: "世界控制文件（JSON）",
+      revision: "编辑 state/current-situation.yaml",
     };
     const values = {
       content: "地址测试未保存开场",
       preset: "地址测试未保存编排方案",
       model: "地址测试未保存模型",
       world: "地址测试未保存控制",
+      revision: "地址测试未保存修订",
     };
     await expect(
       page.getByLabel(labels[draft], { exact: draft === "preset" }),
     ).toHaveValue(values[draft]);
-    if (draft === "content") {
-      await page
-        .getByRole("button", { name: "放弃未保存修改", exact: true })
-        .click();
-      await page.getByRole("button", { name: "收起文件面板" }).click();
-      await page.goBack();
-      await expect(page).toHaveURL(/#\/$/u);
-      await expect(
-        page.getByRole("heading", { name: "世界工作区" }),
-      ).toBeVisible();
+    await page.goBack();
+    await dialog.getByRole("button", { name: "放弃并离开" }).click();
+    await expect(
+      page.getByRole("heading", { name: "世界工作区" }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+    if (draft === "revision") {
+      const revision = await runtime<V1WorldRevisionOverview>(page, {
+        type: "world.revision.overview",
+        worldId: data.worldId,
+      });
+      expect(revision.epoch?.locked).toBe(true);
+      expect(revision.epoch?.diff).toEqual([]);
     }
   });
 }
@@ -388,4 +428,299 @@ test("无效、缺少身份或已删除的地址回首页且不会新建内容�
   await expect(
     page.getByText("World not found.", { exact: true }),
   ).toBeVisible();
+});
+
+function discardNavigationDialog(page: Page) {
+  return page.getByRole("dialog", {
+    name: "此页有未保存的修改。要放弃修改并离开吗？",
+  });
+}
+
+function browserHistory(page: Page) {
+  return page.evaluate(() => ({
+    length: history.length,
+    entries: window.navigation?.entries().map(({ url, key }) => ({ url, key })),
+  }));
+}
+
+for (const supportsNavigationApi of [true, false]) {
+  test(`repeated Back and Forward preserve the exact history and the draft until confirmed (Navigation API: ${supportsNavigationApi})`, async ({
+    page,
+  }) => {
+    if (!supportsNavigationApi)
+      await page.addInitScript(() =>
+        Object.defineProperty(window, "navigation", { value: undefined }),
+      );
+    await setup(page);
+    await page.goto("/");
+    await openWorkspaceCreationTool(page);
+    const orchestration = page.url();
+    await page.getByRole("button", { name: "模型设置", exact: true }).click();
+    await page.getByRole("button", { name: "内容库", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "内容库", exact: true }),
+    ).toBeVisible();
+    await page.goBack();
+    const name = page.getByLabel("配置名称");
+    const unchanged = await name.inputValue();
+    await name.fill("仍在编辑的模型名称");
+    const original = await browserHistory(page);
+    const dialog = discardNavigationDialog(page);
+
+    await page.goBack();
+    await expect(page).toHaveURL(orchestration);
+    await expect(dialog).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/$/u);
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(page).toHaveURL(/#\/models$/u);
+    await expect(name).toHaveValue("仍在编辑的模型名称");
+    expect(await browserHistory(page)).toEqual(original);
+
+    await page.goForward();
+    await expect(page).toHaveURL(/#\/library$/u);
+    await expect(dialog).toBeVisible();
+    await page.goBack();
+    await expect(dialog).toBeHidden();
+    await expect(name).toHaveValue("仍在编辑的模型名称");
+
+    await page.goForward();
+    await dialog.getByRole("button", { name: "放弃并离开" }).click();
+    await expect(
+      page.getByRole("heading", { name: "内容库", exact: true }),
+    ).toBeVisible();
+    expect(await browserHistory(page)).toEqual(original);
+    await page.goBack();
+    await expect(name).toHaveValue(unchanged);
+    await page.goBack();
+    await expect(page).toHaveURL(orchestration);
+    await page.goForward();
+    await expect(name).toHaveValue(unchanged);
+    expect(await browserHistory(page)).toEqual(original);
+  });
+}
+
+test("hash deep links and program navigation share draft confirmation and Android Back", async ({
+  page,
+}) => {
+  const data = await setup(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
+  const name = page.getByLabel("配置名称");
+  await name.fill("Android 返回需要先保留的草稿");
+  const dialog = discardNavigationDialog(page);
+  const androidBack = () =>
+    page.evaluate(() =>
+      (
+        window as Window & { narraeonAndroidBack?: () => boolean }
+      ).narraeonAndroidBack?.(),
+    );
+  const original = await browserHistory(page);
+  expect(await androidBack()).toBe(false);
+  // When no overlay handles Back, the Android host calls WebView.goBack().
+  await page.goBack();
+  await expect(dialog).toBeVisible();
+  expect(await androidBack()).toBe(true);
+  await expect(page).toHaveURL(/#\/models$/u);
+  await expect(name).toHaveValue("Android 返回需要先保留的草稿");
+  expect(await browserHistory(page)).toEqual(original);
+
+  await page.getByRole("button", { name: "内容库", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  expect(await browserHistory(page)).toEqual(original);
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect(name).toHaveValue("Android 返回需要先保留的草稿");
+
+  await page.evaluate((id) => {
+    window.location.hash = `#/content/${id}`;
+  }, data.packageId);
+  await expect(dialog).toBeVisible();
+  const withHash = await browserHistory(page);
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect(page).toHaveURL(/#\/models$/u);
+  expect(await browserHistory(page)).toEqual(withHash);
+  await page.goForward();
+  await dialog.getByRole("button", { name: "放弃并离开" }).click();
+  await expect(
+    page.getByRole("heading", { name: `${data.name} · AI 设定完善` }),
+  ).toBeVisible();
+  expect(await browserHistory(page)).toEqual(withHash);
+
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
+  await expect(name).not.toHaveValue("Android 返回需要先保留的草稿");
+  await name.fill("程序导航后应丢弃的草稿");
+  const beforeProgram = await browserHistory(page);
+  await page.getByRole("button", { name: "内容库", exact: true }).click();
+  await dialog.getByRole("button", { name: "放弃并离开" }).click();
+  await expect(
+    page.getByRole("heading", { name: "内容库", exact: true }),
+  ).toBeVisible();
+  expect((await browserHistory(page)).length).toBe(beforeProgram.length + 1);
+  await page.goBack();
+  await expect(name).not.toHaveValue("程序导航后应丢弃的草稿");
+});
+
+test("only a dirty draft asks for native confirmation on refresh and close", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/#/models");
+  const name = page.getByLabel("配置名称");
+  const savedName = await name.inputValue();
+  const beforeUnloadWasPrevented = () =>
+    page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+  expect(await beforeUnloadWasPrevented()).toBe(false);
+  await name.fill("刷新仍需保留的草稿");
+  expect(await beforeUnloadWasPrevented()).toBe(true);
+
+  const beforeRefresh = page.waitForEvent("dialog");
+  await page.evaluate(() => setTimeout(() => location.reload(), 0));
+  const refreshDialog = await beforeRefresh;
+  expect(refreshDialog.type()).toBe("beforeunload");
+  await refreshDialog.dismiss();
+  await expect(name).toHaveValue("刷新仍需保留的草稿");
+
+  const beforeClose = page.waitForEvent("dialog");
+  await page.close({ runBeforeUnload: true });
+  const closeDialog = await beforeClose;
+  expect(closeDialog.type()).toBe("beforeunload");
+  await closeDialog.dismiss();
+  await expect(name).toHaveValue("刷新仍需保留的草稿");
+
+  await page.getByRole("button", { name: "放弃修改", exact: true }).click();
+  await expect.poll(beforeUnloadWasPrevented).toBe(false);
+  await page.reload();
+  await expect(name).toHaveValue(savedName);
+});
+
+test("a running creation keeps its history entry without registering beforeunload", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/");
+  await page
+    .locator(".home-world-library")
+    .getByRole("button", { name: "新建世界" })
+    .click();
+  const pendingCreation = Promise.withResolvers<void>();
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (input.type !== "world.create") return route.continue();
+    await pendingCreation.promise;
+    return route.abort();
+  });
+  const start = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/runtime/v1") &&
+      (request.postDataJSON() as { request: V1Request }).request.type ===
+        "world.create",
+  );
+  await page
+    .getByRole("button", { name: "从当前内容包创建", exact: true })
+    .click();
+  await start;
+  try {
+    const original = await browserHistory(page);
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/create$/u);
+    await expect(discardNavigationDialog(page)).toBeHidden();
+    await expect(
+      page.getByText("当前操作仍在进行，请等它结束后再切换页面。"),
+    ).toBeVisible();
+    expect(await browserHistory(page)).toEqual(original);
+    expect(
+      await page.evaluate(
+        () =>
+          !window.dispatchEvent(
+            new Event("beforeunload", { cancelable: true }),
+          ),
+      ),
+    ).toBe(false);
+  } finally {
+    pendingCreation.resolve();
+  }
+});
+
+for (const supportsNavigationApi of [true, false]) {
+  test(`unsaved changes survive Back into an unmarked pre-upgrade entry (Navigation API: ${supportsNavigationApi})`, async ({
+    page,
+  }) => {
+    if (!supportsNavigationApi)
+      await page.addInitScript(() =>
+        Object.defineProperty(window, "navigation", { value: undefined }),
+      );
+    await setup(page);
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: "世界工作区" }),
+    ).toBeVisible();
+    await page.evaluate(() => {
+      history.replaceState(null, "", "#/library");
+      history.pushState(null, "", "#/models");
+    });
+    await page.reload();
+    const name = page.getByLabel("配置名称");
+    await name.fill("更新之后编辑的模型名称");
+    const original = await browserHistory(page);
+    await page.goBack();
+    await discardNavigationDialog(page)
+      .getByRole("button", { name: "取消" })
+      .click();
+    if (!supportsNavigationApi) {
+      await expect(
+        page.getByText("浏览器无法恢复旧历史地址，当前页面的修改仍在。"),
+      ).toBeVisible();
+      await expect(page).toHaveURL(/#\/library$/u);
+      await page.goForward();
+    }
+    await expect(page).toHaveURL(/#\/models$/u);
+    await expect(name).toHaveValue("更新之后编辑的模型名称");
+    expect(await browserHistory(page)).toEqual(original);
+  });
+}
+
+test("retrying a failed browser package read reuses the existing history entry", async ({
+  page,
+}) => {
+  const data = await setup(page);
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: `打开内容包：${data.name}`, exact: true })
+    .click();
+  const heading = page.getByRole("heading", {
+    name: `${data.name} · AI 设定完善`,
+  });
+  await expect(heading).toBeVisible();
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
+  await expect(page.getByLabel("配置名称")).toBeVisible();
+  const original = await browserHistory(page);
+  let failures = 0;
+  await page.route("**/api/runtime/v1", async (route) => {
+    const { request } = route.request().postDataJSON() as {
+      request: V1Request;
+    };
+    if (
+      request.type === "content.read" &&
+      request.packageId === data.packageId &&
+      failures < 2
+    ) {
+      failures += 1;
+      return route.abort();
+    }
+    return route.continue();
+  });
+
+  await page.goBack();
+  const reload = page.getByRole("button", { name: "重新加载", exact: true });
+  await expect(reload).toBeVisible();
+  await expect(page).toHaveURL(/#\/models$/u);
+  expect(failures).toBe(2);
+  await reload.click();
+  await expect(heading).toBeVisible();
+  expect(await browserHistory(page)).toEqual(original);
 });

@@ -18,6 +18,10 @@ import {
   WorldHeaderChrome,
   type WorldReadingRail,
 } from "./WorldHeaderChrome.tsx";
+import {
+  idleWorkspaceNavigation,
+  type WorkspaceNavigationProtection,
+} from "./WorkspaceLocation.ts";
 import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { useReadTarget } from "./useReadTarget.ts";
@@ -133,7 +137,7 @@ export function WorldPage({
   onRenameWorld,
   onOpenWorld,
   onRecoverWorkspace,
-  onNavigationLockChange,
+  onNavigationProtectionChange,
   onReadingPreferencesChange,
   initialReadingPreferences = defaultAppReadingPreferences,
   protagonistRevision,
@@ -150,7 +154,9 @@ export function WorldPage({
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
   onRecoverWorkspace?: () => Promise<unknown>;
-  onNavigationLockChange?: (locked: boolean) => void;
+  onNavigationProtectionChange?: (
+    protection: WorkspaceNavigationProtection,
+  ) => void;
   onReadingPreferencesChange?: (value: AppReadingPreferences) => void;
   initialReadingPreferences?: AppReadingPreferences;
   protagonistRevision?: { message: string; started: boolean };
@@ -227,7 +233,9 @@ export function WorldPage({
   const [observedCheckpoints, setObservedCheckpoints] = useState<string[]>([]);
   const [selectedDocument, setSelectedDocument] = useState("");
   const [controlFiles, setControlFiles] = useState("[]");
-  const [authoringLocked, setAuthoringLocked] = useState(false);
+  const [authoringNavigation, setAuthoringNavigation] = useState(
+    idleWorkspaceNavigation,
+  );
   const [controlDirty, setControlDirty] = useState(false);
   const controlDirtyRef = useRef(false);
   useLayoutEffect(() => {
@@ -260,10 +268,17 @@ export function WorldPage({
   useEffect(() => {
     if (turnNoteOpen) turnNoteInputRef.current?.focus();
   }, [turnNoteOpen]);
+  const navigationDirty =
+    revisionDirty || controlDirty || authoringNavigation.dirty;
+  const navigationBusy =
+    authoringNavigation.busy || pending === "control-apply";
   useEffect(() => {
-    onNavigationLockChange?.(revisionDirty || controlDirty || authoringLocked);
-    return () => onNavigationLockChange?.(false);
-  }, [onNavigationLockChange, revisionDirty, controlDirty, authoringLocked]);
+    onNavigationProtectionChange?.({
+      dirty: navigationDirty,
+      busy: navigationBusy,
+    });
+    return () => onNavigationProtectionChange?.(idleWorkspaceNavigation);
+  }, [onNavigationProtectionChange, navigationDirty, navigationBusy]);
 
   const onWorldRead = useCallback(
     (next: WorldReadView, preserveControlDraft: boolean) => {
@@ -1440,8 +1455,7 @@ export function WorldPage({
     onContinuePartial: () =>
       void submitPlayChain("append", "", "continue_partial"),
     playDisabled: !modelConfigured || !playIdle,
-    configureDisabled:
-      !playIdle || revisionDirty || controlDirty || authoringLocked,
+    configureDisabled: !playIdle || navigationDirty || navigationBusy,
     onRetry: () => void submitPlayChain("append", ""),
     onConfigureModel,
   };
@@ -1482,7 +1496,7 @@ export function WorldPage({
     const epoch = activeRevisionEpoch;
     return (
       <SettingImprovementPanel
-        onNavigationLockChange={setAuthoringLocked}
+        onNavigationProtectionChange={setAuthoringNavigation}
         key={worldId}
         target="world-revision"
         packageName={worldTitle}

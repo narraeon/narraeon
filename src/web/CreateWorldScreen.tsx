@@ -1,3 +1,4 @@
+import type { WorkspaceNavigationProtection } from "./WorkspaceLocation.ts";
 import { useCallback, useEffect, useState } from "react";
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import type {
@@ -21,7 +22,7 @@ export function CreateWorldScreen({
   onCreate,
   onEdit,
   onConfigureModel,
-  onNavigationLockChange,
+  onNavigationProtectionChange,
 }: {
   client: Pick<RuntimeClient, "request">;
   packages: readonly {
@@ -37,7 +38,9 @@ export function CreateWorldScreen({
   onCreate: (template?: ProtagonistTemplate) => void;
   onEdit: () => void;
   onConfigureModel: () => void;
-  onNavigationLockChange?: (locked: boolean) => void;
+  onNavigationProtectionChange?: (
+    protection: WorkspaceNavigationProtection,
+  ) => void;
 }): React.JSX.Element {
   const [templates, setTemplates] = useState<ProtagonistTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
@@ -205,9 +208,9 @@ export function CreateWorldScreen({
               setTemplateId("");
           }}
           onClose={() => setManagingTemplates(false)}
-          {...(onNavigationLockChange === undefined
+          {...(onNavigationProtectionChange === undefined
             ? {}
-            : { onNavigationLockChange })}
+            : { onNavigationProtectionChange })}
         />
       )}
     </main>

@@ -331,7 +331,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       await page.getByLabel(`编辑 ${file.path}`).fill(file.contents);
     }
   }
-  await expect(page.getByRole("button", { name: "返回工作区" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "返回工作区" })).toBeEnabled();
   await page.getByRole("button", { name: "整批保存" }).click();
   await expect(page.locator(".setting-workspace-feedback")).toContainText(
     "已整批保存",

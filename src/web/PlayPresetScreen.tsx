@@ -1,3 +1,7 @@
+import {
+  idleWorkspaceNavigation,
+  type WorkspaceNavigationProtection,
+} from "./WorkspaceLocation.ts";
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { orchestrationManifest } from "../shared/application-preset-files.ts";
 import { useReadTarget } from "./useReadTarget.ts";
@@ -298,7 +302,7 @@ export function PlayPresetScreen({
   initialLibrary,
   recommendedTemplates = [],
   onLibraryChange,
-  onDirtyChange,
+  onNavigationProtectionChange,
   initialSelectedId,
   onSelectionChange,
   renderPromptPreview,
@@ -309,7 +313,9 @@ export function PlayPresetScreen({
   initialLibrary: PlayPresetScreenLibrary;
   recommendedTemplates?: RecommendedPlayPresetTemplate[];
   onLibraryChange: (library: PlayPresetScreenLibrary) => void;
-  onDirtyChange: (dirty: boolean) => void;
+  onNavigationProtectionChange: (
+    protection: WorkspaceNavigationProtection,
+  ) => void;
   initialSelectedId?: string;
   onSelectionChange?: (presetId: string) => void;
   modelConnection?: ModelConnectionView | undefined;
@@ -427,10 +433,13 @@ export function PlayPresetScreen({
   }, [initialLibrary, target]);
 
   useEffect(() => {
-    onDirtyChange(dirty);
-  }, [dirty, onDirtyChange]);
+    onNavigationProtectionChange({ dirty, busy: dirty && pending });
+  }, [dirty, pending, onNavigationProtectionChange]);
 
-  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  useEffect(
+    () => () => onNavigationProtectionChange(idleWorkspaceNavigation),
+    [onNavigationProtectionChange],
+  );
 
   function acceptPreset({ currentPresetId, preset }: PlayPresetReceipt): void {
     target.accept({ complete: false });

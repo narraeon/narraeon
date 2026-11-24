@@ -83,7 +83,7 @@ function setup(preset = fixture()) {
       client: { request: request as <T>(request: V1Request) => Promise<T> },
       initialLibrary: { currentPresetId: current.id, presets: [current] },
       onLibraryChange: vi.fn(),
-      onDirtyChange: vi.fn(),
+      onNavigationProtectionChange: vi.fn(),
     }),
   );
   return request;
@@ -111,7 +111,7 @@ test("保存冲突读回最新编排方案并保留名称与正文草稿及拒�
       client: { request: request as <T>(input: V1Request) => Promise<T> },
       initialLibrary: { currentPresetId: initial.id, presets: [initial] },
       onLibraryChange: vi.fn(),
-      onDirtyChange: vi.fn(),
+      onNavigationProtectionChange: vi.fn(),
     }),
   );
   fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
@@ -146,7 +146,7 @@ test("被动重读不重复报告当前选择，主动切换和编排方案删�
     client: { request: <T>() => Promise.resolve({} as T) },
     initialLibrary: { currentPresetId: first.id, presets: [first, second] },
     onLibraryChange: vi.fn(),
-    onDirtyChange: vi.fn(),
+    onNavigationProtectionChange: vi.fn(),
     onSelectionChange,
   };
   const view = render(createElement(PlayPresetScreen, props));
@@ -198,7 +198,7 @@ test("删除回执生效后列表读取失败，重试只读取重建的编排�
       client: { request: request as <T>(r: V1Request) => Promise<T> },
       initialLibrary: { currentPresetId: removed.id, presets: [removed] },
       onLibraryChange: vi.fn(),
-      onDirtyChange: vi.fn(),
+      onNavigationProtectionChange: vi.fn(),
     }),
   );
   fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
