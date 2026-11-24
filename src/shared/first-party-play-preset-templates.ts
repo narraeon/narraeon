@@ -1,5 +1,6 @@
 import type { AppLocale } from "../protocol/appPreferences.ts";
 import { firstPartyActionChoicesPresetFilesForLocale } from "./first-party-action-choices.ts";
+import { firstPartyArtifactDebuggerPresetFilesForLocale } from "./first-party-artifact-debugger.ts";
 import { firstPartyGenericPanelsPresetFilesForLocale } from "./first-party-generic-panels.ts";
 import { firstPartyStatusPanelPresetFilesForLocale } from "./first-party-player-view.ts";
 
@@ -45,12 +46,13 @@ export function firstPartyPlayPresetTemplatesForLocale(
     },
     {
       id: "artifact-debugger",
-      label: locale === "zh-CN" ? "产物调试器" : "Artifact debugger",
+      label:
+        locale === "zh-CN" ? "产物调试器示例" : "Artifact debugger example",
       name:
         locale === "zh-CN"
-          ? "产物调试器（可编辑副本）"
-          : "Artifact debugger (editable copy)",
-      files: firstPartyGenericPanelsPresetFilesForLocale(locale),
+          ? "产物调试器示例（可编辑副本）"
+          : "Artifact debugger example (editable copy)",
+      files: firstPartyArtifactDebuggerPresetFilesForLocale(locale),
     },
   ];
 }
