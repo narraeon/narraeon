@@ -22,7 +22,7 @@ The woman offers you a dry towel. “Welcome in. We're having a small mystery wi
   title: An empty saucer in the lamplight
   summary: A small search in the Rain Lantern Inn's lobby.
   aliases: []
-背景:
+background:
   Time: An autumn evening, nine o'clock, steady rain
   Place: Rain Lantern Inn lobby, Brookbridge
 Present:
@@ -186,12 +186,12 @@ views:
         label: Time
         select:
           document: "@current-situation"
-          locator: { yaml: [背景, Time] }
+          locator: { yaml: [background, Time] }
       - id: place
         label: Place
         select:
           document: "@current-situation"
-          locator: { yaml: [背景, Place] }
+          locator: { yaml: [background, Place] }
 `,
     },
   ],

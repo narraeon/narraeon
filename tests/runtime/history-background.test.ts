@@ -43,10 +43,53 @@ test.each([
   '背景: "  "',
   "背景: {}",
   "背景: []",
-  "background: ignored\n其他:\n  背景: nested",
+  "Background: ignored\n其他:\n  背景: nested\n  background: nested",
   "背 景: ignored",
 ])("空值、缺失与非精确字段没有背景：%s", (body) => {
   expect(captureNarrativeOrigin(snapshot(body), 1).value).toBeNull();
+});
+
+test.each([
+  ["背景: 中文", "中文"],
+  ["background: English", "English"],
+  ["background: English\n背景: 中文", "中文"],
+  ["背景: false\nbackground: English", "false"],
+  ["background: 0", "0"],
+])("按顶层键的存在性选取背景：%s", (body, expected) => {
+  expect(captureNarrativeOrigin(snapshot(body), 1).value).toBe(expected);
+});
+
+test.each(["null", '""', '"  "', "{}", "[]"])(
+  "英文键保留空值语义，空中文键仍优先：%s",
+  (empty) => {
+    expect(
+      captureNarrativeOrigin(snapshot(`background: ${empty}`), 1).value,
+    ).toBeNull();
+    expect(
+      captureNarrativeOrigin(snapshot(`背景: ${empty}\nbackground: English`), 1)
+        .value,
+    ).toBeNull();
+  },
+);
+
+test("旧冻结请求沿用已保存的起点，缺少起点的旧请求仍不记录", () => {
+  const current = snapshot("background: {Time: Day two, Place: Bridge}");
+  const legacy = {
+    firstEventId: 1,
+    documentId: "situation.bound",
+    value: "时间: 第一天\n地点: 客栈",
+  };
+  expect(narrativeBackground(legacy, current)).toEqual({
+    kind: "narrative",
+    before: legacy.value,
+    after: "Time: Day two\nPlace: Bridge",
+  });
+  expect(narrativeBackground({ ...legacy, value: null }, current)).toEqual({
+    kind: "narrative",
+    before: null,
+    after: "Time: Day two\nPlace: Bridge",
+  });
+  expect(narrativeBackground(undefined, current)).toBeUndefined();
 });
 
 test.each([

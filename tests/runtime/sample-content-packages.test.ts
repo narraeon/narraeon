@@ -9,12 +9,15 @@ import {
   parseV1Envelope,
   v1Protocol,
   type ContentTreeFile,
+  type V1PlayCallChainEvent,
+  type V1PlayCallChainView,
   type V1Request,
 } from "../../src/protocol/v1.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import type { EditableContentPackageDetail } from "../../src/runtime/content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "../../src/runtime/content/FileNativeContentTree.ts";
 import type { PromptPreview } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
+import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { sampleContentPackageForLocale } from "../../src/shared/sample-packages/index.ts";
 
 const roots: string[] = [];
@@ -275,6 +278,161 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     expect(network).not.toHaveBeenCalled();
   });
 });
+
+test("English background survives play, a later advancement, and a cold history read", async () => {
+  const { root, runtime } = await setup();
+  await request(runtime, { type: "preferences.save", locale: "en" });
+  const model = {
+    provider: "chat_completions" as const,
+    modelId: "history-test",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 512,
+  };
+  await request(runtime, {
+    type: "model.save",
+    connection: {
+      ...model,
+      name: "History fixture",
+      presetId: "custom",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "fixture-only",
+    },
+  });
+  const { localId: packageId } = await request<{ localId: string }>(runtime, {
+    type: "content.create-sample",
+    locale: "en",
+  });
+  const {
+    world: { worldId },
+  } = await request<{ world: { worldId: string } }>(runtime, {
+    type: "world.create",
+    operationId: "english-history-world",
+    packageId,
+    model,
+  });
+  const chainId = "english-history";
+  const evening = {
+    Time: "An autumn evening, nine o'clock, steady rain",
+    Place: "Rain Lantern Inn lobby, Brookbridge",
+  };
+  const morning = { Time: "The next morning", Place: "Brookbridge steps" };
+  const noon = { Time: "Noon the next day", Place: "Brookbridge market" };
+  const advance = (id: string, value: typeof evening) =>
+    toolResponse(id, "world_patch", {
+      target: "@current-situation",
+      edits: [{ op: "replace", locator: { yaml: ["background"] }, value }],
+    });
+  const provider = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValue(new Error("Unexpected Provider request"))
+    .mockResolvedValueOnce(advance("morning", morning))
+    .mockResolvedValueOnce(narrativeResponse("We arrived at the steps."))
+    .mockResolvedValueOnce(advance("noon", noon))
+    .mockResolvedValueOnce(
+      toolResponse("old-history", "history_read", { latest: 4 }),
+    )
+    .mockResolvedValueOnce(narrativeResponse("The market was busy."));
+
+  const first = await request<V1PlayCallChainView>(runtime, {
+    type: "play.chain.start",
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText: "Head for the steps in the morning.",
+  });
+  expect(first.status).toBe("ready");
+  expect(first.events).toContainEqual(
+    expect.objectContaining({
+      kind: "tool_result",
+      callId: "morning",
+      ok: true,
+    }),
+  );
+
+  const dataRoot = join(root, "data");
+  const cold = new V1Runtime({ dataRoot, configRoot: join(root, "config") });
+  await cold.initialize();
+  const next = await request<V1PlayCallChainView>(cold, {
+    type: "play.chain.append",
+    worldId,
+    chainId,
+    exchangeId: "second",
+    playerText: "Head to the market and recall how we got here.",
+  });
+  expect(next.status).toBe("ready");
+  expect(next.events).toContainEqual(
+    expect.objectContaining({ kind: "tool_result", callId: "noon", ok: true }),
+  );
+  expect(provider).toHaveBeenCalledTimes(5);
+
+  const yaml = ({ Time, Place }: typeof evening) =>
+    `Time: ${Time}\nPlace: ${Place}`;
+  const { history } = await new FileNativeWorldStore(dataRoot).recoverEndpoint(
+    worldId,
+  );
+  expect(history.map(({ background }) => background)).toEqual([
+    { kind: "snapshot", value: yaml(evening) },
+    { kind: "snapshot", value: yaml(evening) },
+    { kind: "narrative", before: yaml(evening), after: yaml(morning) },
+    { kind: "snapshot", value: yaml(morning) },
+    { kind: "narrative", before: yaml(morning), after: yaml(noon) },
+  ]);
+  const readSummary = next.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "old-history",
+  );
+  if (readSummary === undefined) throw new Error("History result missing");
+  const read = await request<V1PlayCallChainEvent>(cold, {
+    type: "play.timeline.detail",
+    worldId,
+    chainId,
+    eventId: readSummary.id,
+  });
+  expect(read).toMatchObject({ kind: "tool_result", ok: true });
+  if (read.kind !== "tool_result") throw new Error("Expected a tool result");
+  expect(read.markdown).toContain(yaml(evening));
+  expect(read.markdown).toContain(yaml(morning));
+  expect(read.markdown).toContain("Rain patters from the inn's eaves.");
+  expect(read.markdown).toContain("We arrived at the steps.");
+  expect(read.markdown).not.toContain(noon.Time);
+  expect(read.markdown).not.toContain(noon.Place);
+  const view = await request<{
+    playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
+  }>(cold, { type: "world.read", worldId });
+  expect(view.playerViews.diagnostics).toEqual([]);
+  expect(view.playerViews.views[0]?.items.map(({ value }) => value)).toEqual([
+    noon.Time,
+    noon.Place,
+  ]);
+});
+
+function toolResponse(id: string, name: string, args: object): Response {
+  return Response.json({
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id,
+              type: "function",
+              function: { name, arguments: JSON.stringify(args) },
+            },
+          ],
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+  });
+}
+
+function narrativeResponse(content: string): Response {
+  return Response.json({
+    choices: [
+      { message: { role: "assistant", content }, finish_reason: "stop" },
+    ],
+  });
+}
 
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "narraeon-sample-"));

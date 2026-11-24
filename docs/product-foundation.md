@@ -64,7 +64,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 ### 3.2 `opening.md`、`bindings.currentSituation` 与文档模型
 
 - **`opening.md`**：根级唯一非空 UTF-8 Markdown（无 `$document` 头）。故事逻辑起点的首次游玩 bootstrap 直接携带完整原文一次并标明玩家已读；后期全新上下文不自动注入，且始终排除于 `recent` 与附加材料。
-- **`bindings.currentSituation`**：每个世界必须精确绑定一份开放的**当前情境**文档承接短期局面，职责不由路径、ref 或标题猜测。受限 YAML 当前情境可选用精确顶层 `背景` 字段供 Runtime 随叙事不可变采集（[ADR-0041](adr/0041-history-captures-optional-situation-background.md)）。
+- **`bindings.currentSituation`**：每个世界必须精确绑定一份开放的**当前情境**文档承接短期局面，职责不由路径、ref 或标题猜测。受限 YAML 当前情境可选用精确顶层 `背景` 或 `background` 字段供 Runtime 随叙事不可变采集。两键并存时以 `背景` 为准（[ADR-0041](adr/0041-history-captures-optional-situation-background.md)）。
 - **受限 YAML／MD 与 `$document` 五项头**：开放对象默认受限 YAML，长篇规则与块默认 Markdown，一文一自然所有者；模型始终阅读确定性 Markdown 渲染结果。可引用文档仅保留五项 `$document` 技术头：世界内不可变 `id`（模型侧隐藏）、唯一公开短引用 `ref`（模型侧写 `@ref`）、`title`、`summary`、`aliases`。
 - **`$ref` 与逻辑节点**：单键 `{ $ref: ... }` 是唯一机械文档引用且只指整份文档，裸字符串永远只是文字。局部读写使用「文档 + YAML 路径／Markdown 标题路径」的逻辑节点；`frame.yaml`／`player-views.yaml` 持久选择器不得依赖数组下标，单次 patch 可用 0 起下标精确改删。
 - **无世界数据 Schema**：Runtime 严格校验解析安全、深度、容量、技术头、引用完整性与 patch 路径，绝不校验好感度范围、修为顺序、关系对称或角色认知正确性（[ADR-0006](adr/0006-character-knowledge-is-not-world-truth.md)）。
@@ -166,7 +166,7 @@ Runtime 是唯一提交者（[ADR-0001](adr/0001-runtime-is-the-sole-committer.m
 | --- | --- | --- |
 | [模型 Provider 协议、容错与可观测性](specs/model-providers-and-resilience.md) | `runtime/model/`、`runtime/play/` | 四协议编码、不透明续传、三正交推理意图、参数／后缀修复、`allowed_tools`、缓存与 7 项 usage、64 步暂停、429 退避、续写矩阵、Prompt Preview 与「AI 读取」 |
 | [提示词编排、编排方案与世界控制框架](specs/prompt-orchestration-and-presets.md) | `runtime/prompt/`、`runtime/config/` | `narraeon.orchestration/v1` 叠加与种子所有权、旧四块退役映射、旧库迁移、`playPrompts`/`authorPrompts`、选项组与本轮提示、`frame.yaml` 与 `maintenance` schema、SillyTavern 导入 |
-| [游玩调用链、历史导航与世界生命周期](specs/play-history-and-world-lifecycle.md) | `runtime/play/`、`history/`、`world/`、`archive/` | 调用链时序、内存精读授权与重启重放、`world_patch`（1–32 `edits`）、`history_*` 与 `背景`、检查点、跑团内存种子与重掷、四类去重、三种世界外修改对照、世界归档与故事导出 |
+| [游玩调用链、历史导航与世界生命周期](specs/play-history-and-world-lifecycle.md) | `runtime/play/`、`history/`、`world/`、`archive/` | 调用链时序、内存精读授权与重启重放、`world_patch`（1–32 `edits`）、`history_*` 与历史背景、检查点、跑团内存种子与重掷、四类去重、三种世界外修改对照、世界归档与故事导出 |
 | [玩法扩展、后置请求、玩家视图与产物持久化](specs/extensions-and-player-views.md) | `runtime/artifact/`、`runtime/extension/` | 后置编排与 `followups.yaml`、`extension-controls.json`、来源脚本授权、世界目录产物与 `forkArtifactClosure` 分叉发布（含旧迁移）、资源闭包与正则／JSON 校验、玩家视图与预览 |
 | [内容包创作、主角模板、设定完善与世界修订](specs/authoring-and-world-revision.md) | `runtime/content/`、`setting/`、`world-revision/`、`authoring/`、`config/` | 内容包身份／ZIP／脚手架／示例、应用级主角模板（`protagonist-templates-v1.json`）定制契约、设定完善当前树事务与 `setting_patch`（单 `op`）、游玩读取覆盖、世界修订独占 epoch 与跨 epoch 会话 |
 | [Web 工作区、路由、对话观察与前端状态同步](specs/web-workspace-and-observation.md) | `src/web/`、`src/server/` | Hash 路由与草稿保护、双视图与首屏 40 项边界、`runtime/activity.json`、统一 SSE 观察与 90s 提示、「本段调用详情」与 85% 窗口提示、快捷键与命令／读取同步 |

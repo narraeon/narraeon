@@ -54,11 +54,22 @@ export function readBackground(
   snapshot: Snapshot,
   documentId: string,
 ): string | null {
-  const selected = snapshot.query({
+  let selected = snapshot.query({
     kind: "select_node",
     document: { documentId },
     locator: { yaml: ["背景"] },
   });
+  // An empty Chinese field still takes precedence over the English field.
+  if (
+    selected.kind === "error" &&
+    selected.diagnostics[0]?.code === "locator_not_found"
+  ) {
+    selected = snapshot.query({
+      kind: "select_node",
+      document: { documentId },
+      locator: { yaml: ["background"] },
+    });
+  }
   if (selected.kind !== "select_node" || selected.node.codec !== "yaml")
     return null;
   const value = selected.node.value;
