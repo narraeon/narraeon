@@ -184,7 +184,7 @@ test("a terminal observation failure offers a read and reconnect while generatio
   finish(heldResponse!);
   heldResponse = null;
   await run;
-  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(
     page.getByText("The committed reply is visible.", { exact: true }),
   ).toBeVisible();
@@ -335,7 +335,7 @@ test("initial world read failure retries once and manual recovery only reads", a
   ).toBeVisible();
   expect(reads).toBe(2);
   offline = false;
-  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(page.getByLabel("Your action", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Temporarily unable to sync", { exact: true }),
@@ -455,7 +455,7 @@ test("a recovery read cancels a newer same-chain invocation while SSE remains un
   ).toBeVisible();
   await interruptObservation(page, true);
   await expect(
-    page.getByRole("button", { name: "Read again", exact: true }),
+    page.getByRole("button", { name: "Reload", exact: true }),
   ).toBeVisible();
   finish(heldResponse!);
   heldResponse = null;
@@ -485,7 +485,7 @@ test("a recovery read cancels a newer same-chain invocation while SSE remains un
     }
     return route.continue();
   });
-  await page.getByRole("button", { name: "Read again", exact: true }).click();
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(
     page.getByText("A newer action from another page.", { exact: true }),
   ).toBeVisible();

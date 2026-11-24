@@ -299,7 +299,7 @@ export function contentPackageTarget(
     beginEdit: () => null,
     save: async (files, base, snapshot) => {
       if (base.treeRevision === null)
-        throw new Error(uiText("内容包版本缺失，请重新读取后再保存。"));
+        throw new Error(uiText("内容包版本缺失，请重新加载后再保存。"));
       let detail: AuthoringPackageDetail;
       try {
         detail = await request<AuthoringPackageDetail>(client, {

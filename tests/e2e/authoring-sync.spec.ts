@@ -111,7 +111,7 @@ for (const kind of ["setting", "revision"] as const) {
     await expect(syncNotice(page)).toBeVisible();
     expect(reads).toBe(2);
     offline = false;
-    await page.getByRole("button", { name: "重新读取", exact: true }).click();
+    await page.getByRole("button", { name: "重新加载", exact: true }).click();
     await expect(composer(page)).toBeEnabled();
     await expect(syncNotice(page)).toHaveCount(0);
     expect(reads).toBeGreaterThanOrEqual(3);
@@ -255,7 +255,7 @@ for (const kind of ["setting", "revision"] as const) {
       .getByRole("button", { name: "收起文件面板", exact: true })
       .click();
     offline = false;
-    await page.getByRole("button", { name: "重新读取", exact: true }).click();
+    await page.getByRole("button", { name: "重新加载", exact: true }).click();
     await expect(syncNotice(page)).toHaveCount(0);
     await openEditor(page, kind);
     await expect(editor).toHaveValue("An unsaved file draft.");
@@ -286,7 +286,7 @@ for (const kind of ["setting", "revision"] as const) {
     await expect(syncNotice(page)).toBeVisible();
     expect(reads).toBe(1);
     await page.unroute("**/api/runtime/v1/events?**");
-    await page.getByRole("button", { name: "重新读取", exact: true }).click();
+    await page.getByRole("button", { name: "重新加载", exact: true }).click();
     await expectObservation(page);
     await expect(syncNotice(page)).toHaveCount(0);
     await expect(
@@ -439,7 +439,7 @@ for (const kind of ["setting", "revision"] as const) {
     expect(reads).toBe(2);
     offline = false;
     await preview
-      .getByRole("button", { name: "重新读取", exact: true })
+      .getByRole("button", { name: "重新加载", exact: true })
       .click();
     await expect(
       preview.getByText("暂时无法同步", { exact: true }),
@@ -786,7 +786,7 @@ test("world revision first-edit lock receipt is never replayed during read recov
   );
   await page.getByRole("button", { name: "收起文件面板", exact: true }).click();
   offline = false;
-  await page.getByRole("button", { name: "重新读取", exact: true }).click();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(syncNotice(page)).toHaveCount(0);
   await openEditor(page, "revision");
   await expect(editor).toHaveValue(

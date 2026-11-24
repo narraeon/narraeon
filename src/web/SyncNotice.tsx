@@ -18,7 +18,7 @@ export function SyncNotice({
       )}
       <p>{uiText("暂时无法同步")}</p>
       <button type="button" onClick={onRead}>
-        {uiText("重新读取")}
+        {uiText("重新加载")}
       </button>
     </div>
   );

@@ -1607,7 +1607,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(screen.getByRole("button", { name: "加载更早的故事" }));
     await screen.findByText("暂时无法同步");
     expect(pageReads).toBe(2);
-    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
     await screen.findByText("早期 AI 原文");
     expect(pageReads).toBe(3);
     await waitFor(() => expect(screen.getAllByTitle("panel")).toHaveLength(1));
@@ -2584,7 +2584,7 @@ describe("世界游玩页面", () => {
     fireEvent.click(details!.querySelector("summary")!);
     await within(details!).findByText("暂时无法同步");
     expect(detailReads).toBe(2);
-    fireEvent.click(within(details!).getByRole("button", { name: "重新读取" }));
+    fireEvent.click(within(details!).getByRole("button", { name: "重新加载" }));
     await waitFor(() =>
       expect(within(details!).queryByText("暂时无法同步")).toBeNull(),
     );
@@ -5930,7 +5930,7 @@ test("装饰读取失败时在扩展区域显示原因，重试成功后提示�
   const notice = "暂时无法同步";
   await screen.findByText(notice);
   expect(screen.queryByTitle("panel")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await screen.findByTitle("panel");
   expect(screen.queryByText(notice)).toBeNull();
   expect(reads).toBe(3);
@@ -5951,7 +5951,7 @@ test("同一世界装饰读取连续失败时只保留一条提示", async () =>
   await screen.findByRole("heading", { name: "宿舍世界" });
   const notice = "暂时无法同步";
   await screen.findByText(notice);
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await waitFor(() =>
     expect(
       client.request.mock.calls.filter(
@@ -5960,7 +5960,7 @@ test("同一世界装饰读取连续失败时只保留一条提示", async () =>
     ).toHaveLength(3),
   );
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "重新读取" })).toBeTruthy(),
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy(),
   );
   expect(screen.getAllByText(notice)).toHaveLength(1);
 });
@@ -5998,7 +5998,7 @@ test("世界文件面板首次读取失败有界恢复，手动重读只加载�
   const worldReads = client.request.mock.calls.filter(
     ([input]) => input.type === "world.read",
   ).length;
-  fireEvent.click(within(rail).getByRole("button", { name: "重新读取" }));
+  fireEvent.click(within(rail).getByRole("button", { name: "重新加载" }));
   await waitFor(() =>
     expect(within(rail).queryByText("暂时无法同步")).toBeNull(),
   );
@@ -6036,7 +6036,7 @@ test("AI 读取面板暂时断网时在原位置重读自己的查询", async ()
   )!;
   await within(rail).findByText("暂时无法同步");
   expect(readingCalls).toBe(2);
-  fireEvent.click(within(rail).getByRole("button", { name: "重新读取" }));
+  fireEvent.click(within(rail).getByRole("button", { name: "重新加载" }));
   await within(rail).findByText("精确节点");
   expect(readingCalls).toBe(3);
   expect(
@@ -6543,7 +6543,7 @@ test("a lost play response and failed recovery preserve the draft until a read c
   await screen.findByText("暂时无法同步");
   expect(input.value).toBe("Look outside.");
   offline = false;
-  fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   await screen.findByText("Alex opens the door and lets you go first.");
   await waitFor(() => expect(screen.queryByText("暂时无法同步")).toBeNull());
   expect(input.value).toBe("");

@@ -32,6 +32,14 @@ for (const locale of appLocales) {
         expect(empty.worlds).toEqual([]);
         await page.reload();
         if (chinese) await page.setViewportSize({ width: 390, height: 844 });
+        await expect(
+          page.getByRole("heading", {
+            name: chinese
+              ? "用清晰易读的文档搭好你的世界"
+              : "Start with clear, readable world files",
+            exact: true,
+          }),
+        ).toBeVisible();
         const start = page.getByRole("button", {
           name: chinese ? "从示例开始" : "Start with a sample",
           exact: true,
@@ -75,6 +83,12 @@ for (const locale of appLocales) {
             exact: true,
           }),
         ).toBeDisabled();
+        await expect(
+          page.getByRole("button", {
+            name: chinese ? "编辑这份内容包" : "Refine this content package",
+            exact: true,
+          }),
+        ).toBeVisible();
 
         // The configured endpoint is deliberately unreachable. Creation and the
         // authored opening require no Provider exchange; this does not test AI play.

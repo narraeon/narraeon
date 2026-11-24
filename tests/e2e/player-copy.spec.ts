@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { expect, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
+import { createZip } from "../support/createZip.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
 
 test.use({ runtimeScope: "player-copy" });
@@ -8,6 +9,35 @@ test.use({ runtimeScope: "player-copy" });
 for (const locale of ["zh-CN", "en"] as const) {
   const en = locale === "en";
   const t = (zh: string, english: string) => (en ? english : zh);
+
+  test(`${locale}: a content package that needs repair points to its editor`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale });
+    const title = `Repair fixture (${locale})`;
+    const archive = createZip([{ path: "opening.md", contents: "Opening.\n" }]);
+    const pack = await runtime<{ localId: string; status: string }>(page, {
+      type: "content.import",
+      title,
+      archiveBase64: archive.toString("base64"),
+    });
+    expect(pack.status).toBe("needs_repair");
+    await page.goto("/#/");
+    const card = page.getByRole("button", {
+      name: t(`打开内容包：${title}`, `Open content package: ${title}`),
+      exact: true,
+    });
+    await expect(card).toContainText(
+      t(
+        "打开并修复内容包中的问题",
+        "Open and fix issues in this content package",
+      ),
+    );
+    await card.click();
+    await expect(page).toHaveURL(
+      `/#/content/${encodeURIComponent(pack.localId)}`,
+    );
+  });
 
   test(`${locale}: ZIP import creates an independent, same-name copy`, async ({
     page,

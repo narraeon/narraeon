@@ -694,7 +694,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         authoring.latest?.runStatus === "running" ||
         authoring.history.some((session) => session.runStatus === "running")
       ) {
-        setNotice(uiText("这份内容包正在完善，请在回复完成后创建世界。"));
+        setNotice(uiText("正在编辑这份内容包，请在回复完成后创建世界。"));
         return;
       }
       const created = await worldCreation.create(
