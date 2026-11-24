@@ -6211,7 +6211,11 @@ test("协议接受按世界、调用链与本轮交换精确寻址的取消请�
 });
 
 test("协议把玩家历史修改建模为当前世界的时间线修订", () => {
-  for (const continuation of ["continue_context", "fresh_context"] as const)
+  for (const continuation of [
+    "auto",
+    "continue_context",
+    "fresh_context",
+  ] as const)
     expect(() =>
       parseV1Envelope({
         protocol: "narraeon.runtime/v1",

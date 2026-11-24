@@ -2,11 +2,11 @@ import { expect, type Page } from "@playwright/test";
 import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
 
-import type { V1Request } from "../../src/protocol/v1.ts";
+import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
 
 let provider: Server;
 let providerUrl = "";
-const responses: (string | { checkpoint: true })[] = [];
+const responses: (string | { checkpoint: true } | { disconnect: true })[] = [];
 const providerRequests: string[] = [];
 
 test.setTimeout(90_000);
@@ -26,6 +26,10 @@ test.beforeAll(async () => {
       if (text === undefined) {
         response.writeHead(500, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: "unexpected model request" }));
+        return;
+      }
+      if (typeof text === "object" && "disconnect" in text) {
+        response.destroy();
         return;
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -159,6 +163,28 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
     await player.getByRole("button", { name: edit, exact: true }).click();
     await editor.getByLabel(t("修改后的行动", "Edited action")).fill(after);
   };
+  const revisionCommands: Extract<
+    V1Request,
+    { type: "play.chain.revise-player" }
+  >[] = [];
+  page.on("request", (request) => {
+    if (
+      !request.url().endsWith("/api/runtime/v1") ||
+      request.method() !== "POST"
+    )
+      return;
+    const command = (request.postDataJSON() as { request: V1Request }).request;
+    if (command.type === "play.chain.revise-player")
+      revisionCommands.push(command);
+  });
+  const readHead = async () =>
+    (
+      await runtime<{ head: string }>(page, {
+        type: "world.read",
+        worldId: created.world.worldId,
+      })
+    ).head;
+  const originalHead = await readHead();
   const priorAssistantMessage = { role: "assistant", content: originalReply };
   const messages = () =>
     (JSON.parse(providerRequests.at(-1)!) as { messages: unknown[] }).messages;
@@ -170,11 +196,10 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   const currentReply =
     "Alex agrees to meet ten minutes early in the same conversation.";
   await openEdit(originalAction, currentEdit);
-  const currentLabel = t("接着原对话继续", "Continue existing session");
-  await expect(editor.getByText(currentLabel, { exact: true })).toBeVisible();
-  await expect(
-    editor.getByRole("radio", { name: new RegExp(`^${currentLabel}`, "u") }),
-  ).toBeChecked();
+  const continuation = t("修改后如何继续", "How to continue after editing");
+  const options = editor.locator("summary").filter({ hasText: continuation });
+  await expect(options).toBeVisible();
+  await expect(editor.getByRole("radio")).toHaveCount(0);
   await expect(
     editor.getByText(
       t(
@@ -184,16 +209,27 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
       { exact: true },
     ),
   ).toBeVisible();
-  responses.push(currentReply);
+  responses.push({ disconnect: true });
   await editor
     .getByRole("button", {
       name: t("保存修改并继续", "Save edit and continue"),
       exact: true,
     })
     .click();
+  const resend = page.getByRole("button", {
+    name: t("重新发送", "Resend request"),
+    exact: true,
+  });
+  await expectReply(resend).toBeEnabled();
+  const interruptedHead = await readHead();
+  expect(interruptedHead).not.toBe(originalHead);
+  expect(providerRequests).toHaveLength(3);
+  responses.push(currentReply);
+  await resend.click();
   await expectReply(
     revisedTimeline.getByText(currentReply, { exact: true }),
   ).toBeVisible();
+  await expectReply(action).toBeEnabled();
   await expect(revisedTimeline).not.toContainText(originalAction);
   await expect(revisedTimeline).not.toContainText(replacedReply);
   await expect(separators).toHaveCount(1);
@@ -201,10 +237,35 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
     expect.objectContaining(priorAssistantMessage),
   );
 
+  expect(revisionCommands.map(({ continuation }) => continuation)).toEqual([
+    "auto",
+  ]);
+  const currentHead = await readHead();
+  expect(currentHead).not.toBe(originalHead);
+  const replayed = await runtime<{
+    continuation: string;
+    playCallChain: V1PlayCallChainView;
+  }>(page, revisionCommands[0]!);
+  expect(replayed.continuation).toBe("continue_context");
+  expect(replayed.playCallChain.parentHead).toBe(currentHead);
+  expect(await readHead()).toBe(currentHead);
+  expect(providerRequests).toHaveLength(4);
+  expect(providerRequests[3]).toBe(providerRequests[2]);
+  expect(currentHead).not.toBe(interruptedHead);
+  await expect(
+    revisedTimeline.getByText(currentEdit, { exact: true }),
+  ).toHaveCount(1);
+
+  await page.setViewportSize({ width: 375, height: 812 });
   const freshEdit = "Then let's meet fifteen minutes early.";
   await openEdit(currentEdit, freshEdit);
   const freshLabel = t("用新对话继续", "Continue in a new conversation");
-  await expect(editor.getByText(freshLabel, { exact: true })).toBeVisible();
+  await options.click();
+  await expect(
+    editor.getByRole("radio", {
+      name: new RegExp(t("^自动选择", "^Choose automatically"), "u"),
+    }),
+  ).toBeChecked();
   await editor
     .getByRole("radio", { name: new RegExp(`^${freshLabel}`, "u") })
     .check();
@@ -247,12 +308,15 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   await expect(
     copiedPlayer.getByRole("button", { name: fork, exact: true }),
   ).toBeVisible();
-  expect(providerRequests).toHaveLength(4);
+  expect(providerRequests).toHaveLength(5);
   expect(providerRequests.at(-1)).toContain(freshEdit);
   expect(providerRequests.at(-1)).not.toContain(originalAction);
   expect(messages()).not.toContainEqual(
     expect.objectContaining(priorAssistantMessage),
   );
+
+  expect(revisionCommands.at(-1)?.continuation).toBe("fresh_context");
+  expect(await readHead()).not.toBe(currentHead);
 
   const revisedPlayer = page
     .locator(".call-chain-player")

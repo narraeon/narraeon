@@ -640,7 +640,9 @@ const afterTurnNote: Partial<Record<Command, readonly Check[]>> = {
   "play.chain.revise-player": [
     field("sendAfterRevision", boolean),
     field("requireCompatible", boolean),
-    field("continuation", { enum: ["continue_context", "fresh_context"] }),
+    field("continuation", {
+      enum: ["auto", "continue_context", "fresh_context"],
+    }),
   ],
   "world.surface.read": [
     field("surface", {

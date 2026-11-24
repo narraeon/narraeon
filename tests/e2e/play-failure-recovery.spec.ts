@@ -149,6 +149,16 @@ for (const locale of ["zh-CN", "en"] as const)
     const input = page.getByLabel(english ? "Your action" : "你的行动", {
       exact: true,
     });
+    const more = page.getByLabel(english ? "More" : "更多", { exact: true });
+    const openTurnNote = async () => {
+      await more.click();
+      await page
+        .getByRole("button", {
+          name: english ? "One-turn request" : "本轮临时要求",
+          exact: true,
+        })
+        .click();
+    };
     const shortcut = page.getByRole("button", {
       name: english ? "Wrap up here" : "在此收尾",
       exact: true,
@@ -161,6 +171,9 @@ for (const locale of ["zh-CN", "en"] as const)
       ? "Wrap up this part here, save what is needed for later, and register a checkpoint."
       : "这段就在这里收尾，保存后续需要的信息，并登记检查点。";
     await expect(note).toHaveCount(0);
+    await expect(shortcut).toHaveCount(0);
+    await more.focus();
+    await page.keyboard.press("Enter");
     await shortcut.focus();
     await page.keyboard.press("Enter");
     await expect(note).toBeFocused();
@@ -168,7 +181,9 @@ for (const locale of ["zh-CN", "en"] as const)
     expect(providerRequests).toHaveLength(0);
     await note.fill(english ? "Keep the quiet mood." : "保留安静的氛围。");
     await note.press("Escape");
+    await more.click();
     await shortcut.click();
+    await more.click();
     await shortcut.click();
     const combined = `${english ? "Keep the quiet mood." : "保留安静的氛围。"} ${wrapUp}`;
     await expect(note).toHaveValue(combined);
@@ -177,6 +192,8 @@ for (const locale of ["zh-CN", "en"] as const)
       path: test.info().outputPath(`wrap-up-${locale}-desktop.png`),
     });
     await page.setViewportSize({ width: 375, height: 812 });
+    await more.focus();
+    await page.keyboard.press("Enter");
     await shortcut.focus();
     await page.keyboard.press("Space");
     await expect(note).toHaveValue(combined);
@@ -186,9 +203,9 @@ for (const locale of ["zh-CN", "en"] as const)
     expect(dockBounds!.x).toBeGreaterThanOrEqual(0);
     expect(dockBounds!.x + dockBounds!.width).toBeLessThanOrEqual(375);
     const inputBounds = await input.boundingBox();
-    const shortcutBounds = await shortcut.boundingBox();
-    expect(inputBounds!.width).toBeGreaterThan(80);
-    expect(shortcutBounds!.x + shortcutBounds!.width).toBeLessThanOrEqual(
+    const moreBounds = await more.boundingBox();
+    expect(inputBounds!.width).toBeGreaterThan(250);
+    expect(moreBounds!.x + moreBounds!.width).toBeLessThanOrEqual(
       inputBounds!.x,
     );
     await page.screenshot({
@@ -202,6 +219,7 @@ for (const locale of ["zh-CN", "en"] as const)
       })
       .click();
     await expect(note).toHaveCount(0);
+    await more.click();
     await shortcut.click();
     await note.fill(`${wrapUp} ${english ? "End quietly." : "安静收尾。"}`);
     const sentNote = await note.inputValue();
@@ -283,12 +301,7 @@ for (const locale of ["zh-CN", "en"] as const)
       wire.messages.filter((message) => message.content?.includes(wrapUp)),
     ).toHaveLength(1);
     await reopenWorld();
-    await page
-      .getByRole("button", {
-        name: english ? "One-turn request" : "本轮临时要求",
-        exact: true,
-      })
-      .click();
+    await openTurnNote();
     await note.fill("This edited draft must not replace the frozen request.");
     const chainBefore = await runtime<V1PlayCallChainView>(page, {
       type: "play.chain.inspect",
@@ -306,12 +319,7 @@ for (const locale of ["zh-CN", "en"] as const)
     expect(providerRequests).toHaveLength(2);
     expect(providerRequests[1]).toBe(providerRequests[0]);
     await expect(note).toHaveCount(0);
-    await page
-      .getByRole("button", {
-        name: english ? "One-turn request" : "本轮临时要求",
-        exact: true,
-      })
-      .click();
+    await openTurnNote();
     await expect(note).toHaveValue("");
     await note.press("Escape");
     await recoveryExpect(
@@ -402,9 +410,7 @@ for (const locale of ["zh-CN", "en"] as const)
     expect(providerRequests.at(-1)).toBe(originalRequest);
     await input.fill("I continue from the current world.");
     steps.push({ kind: "text", text: "The corridor opens into a garden." });
-    await page
-      .getByLabel(english ? "Choose submission mode" : "选择提交方式")
-      .click();
+    await page.getByLabel(english ? "More" : "更多").click();
     await page
       .getByRole("button", {
         name: english

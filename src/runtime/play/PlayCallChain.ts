@@ -1534,6 +1534,34 @@ export class PlayCallChain {
     await this.#worlds.clearPlayerRevisionIntent(intent.worldId);
   }
 
+  async automaticPlayerRevisionMode(
+    input: PlayCallChainRevisionBaseInput,
+  ): Promise<PlayCallChainRevisionInput["continuation"]> {
+    await this.#worlds.ensureCurrentStorage(input.worldId);
+    const timeline = this.#worlds.playTimeline;
+    const freshChainId = revisionChainId(
+      input.chainId,
+      input.operationId,
+      input.worldId,
+      "fresh_context",
+    );
+    const outline = await timeline.readTimelineOutline(input.worldId);
+    if (outline?.chainIds.at(-1) === freshChainId) return "fresh_context";
+    const source = (await timeline.readContext(input.worldId, input.chainId))
+      ?.value;
+    const eventIndex = source?.events.findIndex(
+      ({ id }) => id === input.eventId,
+    );
+    // The normal planner validates the target and recognizes previously applied
+    // replacements before checking compatibility.
+    if (source === undefined || eventIndex === undefined || eventIndex < 0)
+      return "continue_context";
+    return playerRevisionCompatibility(source, eventIndex, input.modelHost) ===
+      null
+      ? "continue_context"
+      : "fresh_context";
+  }
+
   async reviseAndAppend(
     input: PlayCallChainRevisionInput,
     modelHost: ModelHost,
@@ -1686,13 +1714,6 @@ export class PlayCallChain {
         "The model context to revise does not exist.",
       );
     const sourceContext = contexts[contextIndex]!;
-    if (
-      input.continuation === "continue_context" &&
-      sourceContext.importedFromArchive
-    )
-      throw PlayCallChainError.requiresFreshContext(
-        "This model context was imported from a backup; start a fresh context before continuing.",
-      );
     const eventIndex = sourceContext.events.findIndex(
       (event) => event.id === input.eventId,
     );
@@ -1708,22 +1729,14 @@ export class PlayCallChain {
 
     if (
       input.continuation === "continue_context" &&
-      input.modelHost !== undefined
+      (sourceContext.importedFromArchive || input.modelHost !== undefined)
     ) {
-      assertSessionModelHostBinding(sourceContext, input.modelHost);
-      const prefix = transcriptThroughEvents(
-        sourceContext.transcript,
-        sourceContext.events.slice(0, eventIndex),
+      const incompatibility = playerRevisionCompatibility(
+        sourceContext,
+        eventIndex,
+        input.modelHost,
       );
-      if (
-        !validAuthoringNativeContinuation(
-          prefix,
-          input.modelHost.binding().provider,
-        )
-      )
-        throw PlayCallChainError.requiresFreshContext(
-          "The saved native continuation is incompatible; switch back or start a fresh context.",
-        );
+      if (incompatibility !== null) throw incompatibility;
     }
 
     const intent: PlayerRevisionIntent = {
@@ -4245,6 +4258,39 @@ function assertSessionModelHostBinding(
       "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
       "model_protocol_mismatch",
     );
+}
+
+function playerRevisionCompatibility(
+  source: PersistedPlayCallChainContext,
+  eventIndex: number,
+  modelHost: ModelHost | undefined,
+): PlayCallChainError | null {
+  if (source.importedFromArchive)
+    return PlayCallChainError.requiresFreshContext(
+      "This model context was imported from a backup; start a fresh context before continuing.",
+    );
+  if (modelHost !== undefined) {
+    try {
+      assertSessionModelHostBinding(source, modelHost);
+    } catch (error: unknown) {
+      if (error instanceof PlayCallChainError) return error;
+      throw error;
+    }
+  }
+  const provider = source.modelBinding?.provider;
+  if (provider === undefined)
+    return PlayCallChainError.requiresFreshContext(
+      "This model context predates durable provider continuation bindings; start a fresh context.",
+    );
+  const prefix = transcriptThroughEvents(
+    source.transcript,
+    source.events.slice(0, eventIndex),
+  );
+  return validAuthoringNativeContinuation(prefix, provider)
+    ? null
+    : PlayCallChainError.requiresFreshContext(
+        "The saved native continuation is incompatible; switch back or start a fresh context.",
+      );
 }
 
 function validateIdentity(value: string, label: string): void {

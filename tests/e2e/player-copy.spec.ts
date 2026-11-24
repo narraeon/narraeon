@@ -366,7 +366,7 @@ for (const locale of ["zh-CN", "en"] as const) {
       await page.unroute("**/api/runtime/v1");
       expect(calls).toBe(0);
 
-      const menu = t("选择提交方式", "Choose submission mode");
+      const menu = t("更多", "More");
       const mode = page.getByLabel(menu);
       const append = t("接着当前对话继续", "Continue current session");
       const resume = page.getByRole("button", { name: append, exact: true });
@@ -547,7 +547,7 @@ for (const locale of ["zh-CN", "en"] as const) {
             .fill("Fixture edited action");
           await story
             .getByRole("button", {
-              name: t("保存修改并继续", "Save edit and continue"),
+              name: t("保存修改", "Save changes"),
               exact: true,
             })
             .click();
@@ -558,10 +558,7 @@ for (const locale of ["zh-CN", "en"] as const) {
           t("将输入框留空", "leave the input empty"),
         );
         await expect(notice).toContainText(
-          t(
-            `「${menu}」（＋）中选择「${append}」`,
-            `“${append}” under “${menu}” (+)`,
-          ),
+          t(`「${menu}」中选择「${append}」`, `“${append}” under “${menu}”`),
         );
         await expect(story.getByText(recovery.previousReply)).toHaveCount(0);
         const playCalls = calls;
@@ -579,6 +576,7 @@ for (const locale of ["zh-CN", "en"] as const) {
         await expect(resume.getByText(append, { exact: true })).toBeVisible();
         await resume.click();
         await expectReply(story.getByText(recovery.nextReply)).toBeVisible();
+        await expectReply(action).toBeEnabled();
         expect(calls).toBe(playCalls + 1);
         await expect(story.locator(".call-chain-player")).toHaveCount(3);
       }

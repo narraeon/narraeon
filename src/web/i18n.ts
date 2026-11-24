@@ -1804,14 +1804,18 @@ const worldPageEnglishMessages: Record<string, string> = {
   "修改后的玩家提交不能为空。": "The edited player message cannot be empty.",
   "正在当前世界中保存修改，并舍弃这条消息之后的当前时间线…":
     "Saving the edit in the current world and leaving the later current timeline behind…",
-  "修改已保存。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可继续生成。":
-    "Your edit was saved. After configuring a model, leave the input empty and choose “{action}” under “{menu}” (+) to continue generating.",
+  "修改已保存。配置模型后，将输入框留空，在「{menu}」中选择「{action}」即可继续生成。":
+    "Your edit was saved. After configuring a model, leave the input empty and choose “{action}” under “{menu}” to continue generating.",
   "修改已保存，正在从修改稿继续生成…":
     "Edit saved; continuing from the edited message…",
   "修改已保存，正在从全新上下文继续生成…":
     "Edit saved; continuing from a fresh context…",
   "修改已保存；模型请求中断，可以重新发送已保存的请求。":
     "The edit was saved, but the model request was interrupted. You can resend the saved request.",
+  "修改已保存，可以续写中断的回复。":
+    "Edit saved. Continue the interrupted response.",
+  "原对话无法继续，已开启新对话。{message}":
+    "The original conversation was unavailable, so a new one was opened.{message}",
   "修改已保存，但模型请求失败。":
     "Your edit was saved. The model request failed.",
   "修改已保存在当前世界，并已从修改稿继续。":
@@ -1933,8 +1937,8 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在重新生成…": "Regenerating…",
   "已重新生成；原回复已离开当前时间线":
     "Regenerated; the original reply is no longer on the current timeline",
-  "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可重新生成。":
-    "The original reply was removed from the current story. After configuring a model, leave the input empty and choose “{action}” under “{menu}” (+) to regenerate.",
+  "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」中选择「{action}」即可重新生成。":
+    "The original reply was removed from the current story. After configuring a model, leave the input empty and choose “{action}” under “{menu}” to regenerate.",
   世界控制: "World control",
   "编辑主持框架和玩家视图。草稿必须先通过真实提示词预览，再整批应用。":
     "Edit the host frame and player views. The draft must pass a real Prompt Preview before it can be applied as a whole.",
@@ -1967,6 +1971,11 @@ const worldPageEnglishMessages: Record<string, string> = {
   修改: "Edit",
   修改后的行动: "Edited action",
   修改后如何继续: "How to continue after editing",
+  自动选择: "Choose automatically",
+  "优先接着原对话；无法续传时开启新对话。":
+    "Continue the original conversation when possible, or start a new one.",
+  "这次修改需要开启新对话。请先配置模型，再保存修改。":
+    "This edit needs a new conversation. Configure a model before saving the edit.",
   "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。":
     "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
   接着原对话继续: "Continue existing session",
@@ -2212,7 +2221,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "追加不会重新编译世界材料。": "Appending does not recompile world materials.",
   接着当前对话继续: "Continue current session",
   追加行动: "Append action",
-  选择提交方式: "Choose submission mode",
+  更多: "More",
   选择文档: "Choose document",
   "配置模型后可查看下次发送的预览。":
     "Configure a model to preview the next send.",

@@ -7,7 +7,11 @@ import {
 import type { ContentWorkspace } from "../content/ContentWorkspace.ts";
 import { inspectContentPackageCurrentTree } from "../content/FileNativeContentTree.ts";
 import { FileNativeModelHost } from "../model/FileNativeModelAdapters.ts";
-import type { ModelConnectionStore } from "../model/ModelConnectionStore.ts";
+import {
+  ModelConnectionUnavailableError,
+  type ModelConnectionStore,
+} from "../model/ModelConnectionStore.ts";
+import { PlayCallChainError } from "../play/PlayCallChainError.ts";
 import type { ModelHostBinding } from "../model/ModelHost.ts";
 import type {
   PlayCallChain,
@@ -252,34 +256,64 @@ export class PlayCommands {
         await this.#services.worlds.assertWorldRevisionUnlocked(
           request.worldId,
         );
-        const binding =
-          request.continuation === "fresh_context" ||
-          request.sendAfterRevision === true
-            ? await this.#continuousBinding()
-            : null;
+        const automatic = request.continuation === "auto";
+        const automaticModel = automatic
+          ? await this.#services.modelHost().catch((error: unknown) => {
+              if (error instanceof ModelConnectionUnavailableError)
+                return undefined;
+              throw error;
+            })
+          : undefined;
+        const continuation =
+          request.continuation === "auto"
+            ? await this.#services.playCallChains.automaticPlayerRevisionMode({
+                ...base,
+                ...(automaticModel === undefined
+                  ? {}
+                  : { modelHost: automaticModel }),
+              })
+            : request.continuation;
+        if (
+          automatic &&
+          automaticModel === undefined &&
+          continuation === "fresh_context"
+        )
+          throw PlayCallChainError.requiresFreshContext(
+            this.#services.locale() === "en"
+              ? "This edit needs a new conversation. Configure a model before saving the edit."
+              : "这次修改需要开启新对话。请先配置模型，再保存修改。",
+          );
+        const needsBinding =
+          continuation === "fresh_context" ||
+          (request.sendAfterRevision === true &&
+            (!automatic || automaticModel !== undefined));
+        const binding = needsBinding
+          ? await this.#continuousBinding(automaticModel)
+          : null;
         const modelHost =
+          automaticModel ??
           binding?.modelHost ??
-          (request.requireCompatible === true
+          (!automatic && request.requireCompatible === true
             ? await this.#services.modelHost()
             : undefined);
         const revision =
-          request.continuation === "continue_context"
+          binding !== null && continuation === "fresh_context"
             ? ({
                 ...base,
-                continuation: request.continuation,
-                ...(modelHost === undefined ? {} : { modelHost }),
+                continuation,
+                freshContext: {
+                  hostBinding: binding.hostBinding,
+                  playPreset: binding.playPreset,
+                  modelBinding: binding.modelBinding,
+                  modelPrompt: binding.modelHost.modelPrompt(),
+                },
               } as const)
             : ({
                 ...base,
-                continuation: request.continuation,
-                freshContext: {
-                  hostBinding: binding!.hostBinding,
-                  playPreset: binding!.playPreset,
-                  modelBinding: binding!.modelBinding,
-                  modelPrompt: binding!.modelHost.modelPrompt(),
-                },
+                continuation: "continue_context",
+                ...(modelHost === undefined ? {} : { modelHost }),
               } as const);
-        const result =
+        const revised =
           request.sendAfterRevision === true && binding !== null
             ? await this.#services.playCallChains.reviseAndAppend(
                 revision,
@@ -288,7 +322,7 @@ export class PlayCommands {
               )
             : await this.#services.playCallChains.revisePlayer(revision);
         await this.#services.reconcileArtifacts(request.worldId);
-        return result;
+        return { ...revised, continuation: revision.continuation };
       }
       case "play.chain.regenerate-narrative": {
         await this.#services.worlds.assertWorldRevisionUnlocked(
@@ -506,14 +540,14 @@ export class PlayCommands {
     return { hostBinding: presetHostBinding(playPreset), playPreset };
   }
 
-  async #continuousBinding(): Promise<{
+  async #continuousBinding(model?: FileNativeModelHost): Promise<{
     modelHost: FileNativeModelHost;
     hostBinding: { hostPresetId: string; files: Record<string, string> };
     playPreset: PlayPresetBinding;
     modelBinding: ModelHostBinding;
   }> {
     const [modelHost, prompt] = await Promise.all([
-      this.#services.modelHost(),
+      model ?? this.#services.modelHost(),
       this.#playPromptBinding(),
     ]);
     return {

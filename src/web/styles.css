@@ -4655,6 +4655,11 @@ summary:focus-visible {
   line-height: 1.5;
 }
 
+.history-player-edit-options > summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
 .history-player-edit-continuation {
   display: grid;
   gap: 0.45rem;
@@ -8417,9 +8422,6 @@ summary:focus-visible {
   line-height: 1.55;
 }
 
-/* Scoped under .world-composer-row so these beat the generic
-   `.world-composer-row > button` rule in workspace-layout.css. */
-.world-composer-row > .world-turn-note-toggle,
 .world-turn-note-clear {
   display: grid;
   width: 2rem;
@@ -8436,16 +8438,9 @@ summary:focus-visible {
   cursor: pointer;
 }
 
-.world-composer-row > .world-turn-note-shortcut {
-  flex: none;
-  min-height: 2rem;
-  padding: 0.3rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--muted);
-  background: var(--surface);
-  font-size: 0.75rem;
-  white-space: nowrap;
+.world-composer-mode > summary.has-turn-note {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .world-turn-note-clear {
@@ -8453,16 +8448,6 @@ summary:focus-visible {
   background: transparent;
 }
 
-.world-composer-row > .world-turn-note-toggle[aria-pressed="true"] {
-  color: var(--text);
-}
-
-.world-composer-row > .world-turn-note-toggle.has-text {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.world-composer-row > .world-turn-note-toggle:disabled,
 .world-turn-note-clear:disabled {
   cursor: not-allowed;
   opacity: 0.5;

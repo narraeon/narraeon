@@ -941,7 +941,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     ),
   );
   await page.getByLabel("你的行动").fill("I ask Alex to write down the time.");
-  await page.getByLabel("选择提交方式").click();
+  await page.getByLabel("更多").click();
   await page
     .getByRole("button", { name: "用新对话继续（保留故事进度）", exact: true })
     .click();
@@ -1090,7 +1090,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByLabel("你的行动")
     .fill("Start again after the pause and continue from here.");
-  await page.getByLabel("选择提交方式").click();
+  await page.getByLabel("更多").click();
   await page
     .getByRole("button", { name: "用新对话继续（保留故事进度）", exact: true })
     .click();

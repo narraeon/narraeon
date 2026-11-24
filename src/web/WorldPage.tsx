@@ -32,7 +32,7 @@ import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
 import { type ObserveConversation } from "./ConversationObserver.ts";
 import { useAuthoringWorkspace } from "./useAuthoringWorkspace.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
-import { getWebLocale, uiText } from "./i18n.ts";
+import { uiText } from "./i18n.ts";
 import {
   hasHandledCheckpoint,
   rememberHandledCheckpoint,
@@ -302,6 +302,7 @@ export function WorldPage({
     useState<PlayContextUsageProjection | null>(null);
   const [forceFreshContext, setForceFreshContext] = useState(false);
   const submissionModeId = useId();
+  const composerMoreRef = useRef<HTMLDetailsElement>(null);
   const [checkpointPreference, setCheckpointPreference] = useState<{
     worldId: string;
     head: string;
@@ -1640,6 +1641,7 @@ export function WorldPage({
           worldId: string;
           playCallChain: V1PlayCallChainView;
           sentAfterRevision?: boolean;
+          continuation: Exclude<PlayerRevisionContinuation, "auto">;
         }>(client, {
           type: "play.chain.revise-player",
           operationId: createClientId("revise-player"),
@@ -1657,7 +1659,8 @@ export function WorldPage({
       );
       // The revised chain is bound to the revision's own head.
       setForceFreshContext(false);
-      if (continuation === "fresh_context") consumeCheckpointPreference();
+      if (revised.continuation === "fresh_context")
+        consumeCheckpointPreference();
       const revisedPlayer = revised.playCallChain.events.find(
         (event) =>
           event.kind === "player" && event.exchangeId === replacementExchangeId,
@@ -1668,16 +1671,16 @@ export function WorldPage({
           chainId: revised.playCallChain.chainId,
           eventId: revisedPlayer.id,
         };
-      if (!modelConfigured) {
+      if (revised.sentAfterRevision !== true) {
         await refreshRevisedTimeline(revised.playCallChain, world);
         setFeedback({
           kind: "status",
           text: uiText(
             regenerate
-              ? "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可重新生成。"
-              : "修改已保存。配置模型后，将输入框留空，在「{menu}」（＋）中选择「{action}」即可继续生成。",
+              ? "原回复已从当前故事移除。配置模型后，将输入框留空，在「{menu}」中选择「{action}」即可重新生成。"
+              : "修改已保存。配置模型后，将输入框留空，在「{menu}」中选择「{action}」即可继续生成。",
             {
-              menu: uiText("选择提交方式"),
+              menu: uiText("更多"),
               action: uiText("接着当前对话继续"),
             },
           ),
@@ -1699,6 +1702,20 @@ export function WorldPage({
       )
         setRegenerationFallback(regenerationTarget);
       await refreshRevisedTimeline(continued, world);
+      const openedNewConversation =
+        continuation === "auto" && revised.continuation === "fresh_context";
+      const message =
+        continued.status === "interrupted"
+          ? continued.canRetry
+            ? uiText("修改已保存；模型请求中断，可以重新发送已保存的请求。")
+            : continued.canContinuePartial
+              ? uiText("修改已保存，可以续写中断的回复。")
+              : uiText("修改已保存，但模型请求失败。")
+          : regenerate
+            ? uiText("已重新生成；原回复已离开当前时间线")
+            : revised.continuation === "fresh_context"
+              ? uiText("修改已保存在当前世界，并已用新对话继续。")
+              : uiText("修改已保存在当前世界，并已从修改稿继续。");
       setFeedback({
         kind:
           continued.status === "interrupted" &&
@@ -1706,20 +1723,11 @@ export function WorldPage({
           !continued.canContinuePartial
             ? "error"
             : "status",
-        text:
-          continued.status === "interrupted"
-            ? continued.canRetry
-              ? uiText("修改已保存；模型请求中断，可以重新发送已保存的请求。")
-              : continued.canContinuePartial
-                ? getWebLocale() === "en"
-                  ? "Edit saved. Continue the interrupted response."
-                  : "修改已保存，可以续写中断的回复。"
-                : uiText("修改已保存，但模型请求失败。")
-            : regenerate
-              ? uiText("已重新生成；原回复已离开当前时间线")
-              : continuation === "fresh_context"
-                ? uiText("修改已保存在当前世界，并已用新对话继续。")
-                : uiText("修改已保存在当前世界，并已从修改稿继续。"),
+        text: openedNewConversation
+          ? uiText("原对话无法继续，已开启新对话。{message}", {
+              message: continued.status === "interrupted" ? ` ${message}` : "",
+            })
+          : message,
       });
     } catch (reason: unknown) {
       // A refresh error or generic rejection cannot establish a context incompatibility.
@@ -2499,9 +2507,66 @@ export function WorldPage({
               </div>
             ) : null}
             <div className="world-composer-row">
-              <details className="world-composer-mode">
-                <summary aria-label={uiText("选择提交方式")}>＋</summary>
+              <details
+                ref={composerMoreRef}
+                className="world-composer-mode"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape" || !event.currentTarget.open)
+                    return;
+                  event.preventDefault();
+                  event.currentTarget.open = false;
+                  event.currentTarget.querySelector("summary")?.focus();
+                }}
+              >
+                <summary
+                  aria-label={uiText("更多")}
+                  className={turnNote === "" ? undefined : "has-turn-note"}
+                >
+                  ⋯
+                </summary>
                 <div>
+                  <button
+                    type="button"
+                    aria-labelledby={submissionModeId + "-note"}
+                    aria-describedby={submissionModeId + "-note-description"}
+                    aria-pressed={turnNoteOpen}
+                    disabled={!playIdle || !modelConfigured}
+                    onClick={() => {
+                      if (composerMoreRef.current)
+                        composerMoreRef.current.open = false;
+                      setTurnNoteOpen((open) => !open);
+                      if (turnNoteOpen) composerTextareaRef.current?.focus();
+                    }}
+                  >
+                    <strong id={submissionModeId + "-note"}>
+                      {uiText("本轮临时要求")}
+                    </strong>
+                    <span id={submissionModeId + "-note-description"}>
+                      {uiText("只对这一轮生效，不进入故事")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!playIdle || !modelConfigured}
+                    onClick={() => {
+                      if (composerMoreRef.current)
+                        composerMoreRef.current.open = false;
+                      const note = uiText(
+                        "这段就在这里收尾，保存后续需要的信息，并登记检查点。",
+                      );
+                      setTurnNote((current) =>
+                        current.includes(note)
+                          ? current
+                          : current.trim() === ""
+                            ? note
+                            : `${current} ${note}`,
+                      );
+                      setTurnNoteOpen(true);
+                      turnNoteInputRef.current?.focus();
+                    }}
+                  >
+                    <strong>{uiText("在此收尾")}</strong>
+                  </button>
                   <button
                     type="button"
                     aria-labelledby={submissionModeId + "-append"}
@@ -2542,47 +2607,6 @@ export function WorldPage({
                   </button>
                 </div>
               </details>
-              <button
-                type="button"
-                className={
-                  turnNote === ""
-                    ? "world-turn-note-toggle"
-                    : "world-turn-note-toggle has-text"
-                }
-                aria-label={uiText("本轮临时要求")}
-                aria-pressed={turnNoteOpen}
-                title={uiText("只对这一轮生效，不进入故事")}
-                disabled={
-                  pending !== null ||
-                  !modelConfigured ||
-                  activeStatus === "running" ||
-                  worldRevisionLocked
-                }
-                onClick={() => setTurnNoteOpen((open) => !open)}
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                className="world-turn-note-shortcut"
-                disabled={!playIdle || !modelConfigured}
-                onClick={() => {
-                  const note = uiText(
-                    "这段就在这里收尾，保存后续需要的信息，并登记检查点。",
-                  );
-                  setTurnNote((current) =>
-                    current.includes(note)
-                      ? current
-                      : current.trim() === ""
-                        ? note
-                        : `${current} ${note}`,
-                  );
-                  setTurnNoteOpen(true);
-                  turnNoteInputRef.current?.focus();
-                }}
-              >
-                {uiText("在此收尾")}
-              </button>
               <label>
                 <span className="visually-hidden">{uiText("你的行动")}</span>
                 <textarea
@@ -3365,7 +3389,7 @@ function TimelineEvent({
   const [detailPending, setDetailPending] = useState(false);
   const [editedText, setEditedText] = useState<string | null>(null);
   const [revisionContinuation, setRevisionContinuation] =
-    useState<PlayerRevisionContinuation>("continue_context");
+    useState<PlayerRevisionContinuation>("auto");
   const eventId = event.id;
   const {
     target: detailTarget,
@@ -3413,11 +3437,7 @@ function TimelineEvent({
                     disabled={restartDisabled}
                     onClick={() => {
                       setEditedText(event.text);
-                      setRevisionContinuation(
-                        requiresFreshContext
-                          ? "fresh_context"
-                          : "continue_context",
-                      );
+                      setRevisionContinuation("auto");
                     }}
                   >
                     {uiText("修改")}
@@ -3453,56 +3473,82 @@ function TimelineEvent({
                   "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
                 )}
               </p>
-              <fieldset className="history-player-edit-continuation">
-                <legend>{uiText("修改后如何继续")}</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name={`revision-continuation-${chainId}-${event.id}`}
-                    value="continue_context"
-                    checked={revisionContinuation === "continue_context"}
-                    disabled={restartDisabled || requiresFreshContext}
-                    onChange={() => setRevisionContinuation("continue_context")}
-                  />
-                  <span>
-                    <strong>{uiText("接着原对话继续")}</strong>
-                    <small>
-                      {uiText("保留修改点以前的模型对话和原生续传。")}
-                    </small>
-                  </span>
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name={`revision-continuation-${chainId}-${event.id}`}
-                    value="fresh_context"
-                    checked={revisionContinuation === "fresh_context"}
-                    disabled={restartDisabled || freshContextDisabled}
-                    onChange={() => setRevisionContinuation("fresh_context")}
-                  />
-                  <span>
-                    <strong>{uiText("用新对话继续")}</strong>
-                    <small>
-                      {uiText("修改稿会成为新对话的第一条玩家消息。")}
-                    </small>
-                  </span>
-                </label>
-                {requiresFreshContext ? (
-                  <p>
-                    {uiText(
-                      "此上下文来自备份；修改后须以本机选择开启全新上下文。",
-                    )}
-                  </p>
-                ) : null}
-              </fieldset>
+              {requiresFreshContext ? (
+                <p>
+                  {uiText(
+                    freshContextDisabled
+                      ? "这次修改需要开启新对话。请先配置模型，再保存修改。"
+                      : "此上下文来自备份；修改后须以本机选择开启全新上下文。",
+                  )}
+                </p>
+              ) : null}
+              <details className="history-player-edit-options">
+                <summary>{uiText("修改后如何继续")}</summary>
+                <fieldset className="history-player-edit-continuation">
+                  <legend className="visually-hidden">
+                    {uiText("修改后如何继续")}
+                  </legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name={`revision-continuation-${chainId}-${event.id}`}
+                      value="auto"
+                      checked={revisionContinuation === "auto"}
+                      disabled={restartDisabled}
+                      onChange={() => setRevisionContinuation("auto")}
+                    />
+                    <span>
+                      <strong>{uiText("自动选择")}</strong>
+                      <small>
+                        {uiText("优先接着原对话；无法续传时开启新对话。")}
+                      </small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name={`revision-continuation-${chainId}-${event.id}`}
+                      value="continue_context"
+                      checked={revisionContinuation === "continue_context"}
+                      disabled={restartDisabled || requiresFreshContext}
+                      onChange={() =>
+                        setRevisionContinuation("continue_context")
+                      }
+                    />
+                    <span>
+                      <strong>{uiText("接着原对话继续")}</strong>
+                      <small>
+                        {uiText("保留修改点以前的模型对话和原生续传。")}
+                      </small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name={`revision-continuation-${chainId}-${event.id}`}
+                      value="fresh_context"
+                      checked={revisionContinuation === "fresh_context"}
+                      disabled={restartDisabled || freshContextDisabled}
+                      onChange={() => setRevisionContinuation("fresh_context")}
+                    />
+                    <span>
+                      <strong>{uiText("用新对话继续")}</strong>
+                      <small>
+                        {uiText("修改稿会成为新对话的第一条玩家消息。")}
+                      </small>
+                    </span>
+                  </label>
+                </fieldset>
+              </details>
               <div className="button-row">
                 <button
                   type="button"
                   disabled={
                     restartDisabled ||
                     editedText.trim().length === 0 ||
-                    (revisionContinuation === "fresh_context" &&
-                      freshContextDisabled)
+                    (freshContextDisabled &&
+                      (requiresFreshContext ||
+                        revisionContinuation === "fresh_context"))
                   }
                   onClick={() =>
                     onEditPlayer(
@@ -3513,9 +3559,11 @@ function TimelineEvent({
                     )
                   }
                 >
-                  {revisionContinuation === "fresh_context"
-                    ? uiText("保存修改并用新对话继续")
-                    : uiText("保存修改并继续")}
+                  {freshContextDisabled && !requiresFreshContext
+                    ? uiText("保存修改")
+                    : revisionContinuation === "fresh_context"
+                      ? uiText("保存修改并用新对话继续")
+                      : uiText("保存修改并继续")}
                 </button>
                 <button
                   type="button"

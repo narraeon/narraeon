@@ -3802,6 +3802,8 @@ describe("世界游玩页面", () => {
 
     renderWorld(client);
     await screen.findByText("Alex opens the door and lets you go first.");
+    const more = screen.getByLabelText("更多");
+    fireEvent.click(more);
     const toggle = screen.getByRole("button", { name: "本轮临时要求" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
@@ -3815,6 +3817,7 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I walk into the corridor." },
     });
+    fireEvent.click(more);
     fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
 
     await waitFor(() =>
@@ -3838,6 +3841,8 @@ describe("世界游玩页面", () => {
     };
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
+    const more = screen.getByLabelText("更多");
+    fireEvent.click(more);
     const shortcut = screen.getByRole("button", { name: "在此收尾" });
     fireEvent.click(shortcut);
     const note = screen.getByLabelText<HTMLInputElement>("本轮临时要求内容");
@@ -3850,7 +3855,9 @@ describe("世界游玩页面", () => {
     );
     fireEvent.change(note, { target: { value: "保留夜晚的氛围。" } });
     fireEvent.keyDown(note, { key: "Escape" });
+    fireEvent.click(more);
     fireEvent.click(shortcut);
+    fireEvent.click(more);
     fireEvent.click(shortcut);
     expect(
       screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
@@ -3861,6 +3868,7 @@ describe("世界游玩页面", () => {
       screen.getByRole("button", { name: "清空并收起本轮临时要求" }),
     );
     expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
+    fireEvent.click(more);
     fireEvent.click(shortcut);
     expect(
       screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
@@ -3887,6 +3895,7 @@ describe("世界游玩页面", () => {
         modelConfigured: blockedBy !== "model",
       });
       await screen.findByRole("heading", { name: "宿舍世界" });
+      fireEvent.click(screen.getByLabelText("更多"));
       await waitFor(() => {
         expect(
           screen.getByRole<HTMLButtonElement>("button", { name: "在此收尾" })
@@ -3923,6 +3932,8 @@ describe("世界游玩页面", () => {
 
     renderWorld(client);
     await screen.findByText("Alex opens the door and lets you go first.");
+    const more = screen.getByLabelText("更多");
+    fireEvent.click(more);
     const toggle = screen.getByRole("button", { name: "本轮临时要求" });
     fireEvent.click(toggle);
     const note = screen.getByLabelText<HTMLInputElement>("本轮临时要求内容");
@@ -3931,7 +3942,8 @@ describe("世界游玩页面", () => {
 
     expect(screen.queryByLabelText("本轮临时要求内容")).toBeNull();
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(toggle.classList.contains("has-text")).toBe(true);
+    expect(more.classList.contains("has-turn-note")).toBe(true);
+    fireEvent.click(more);
     fireEvent.click(toggle);
     expect(
       screen.getByLabelText<HTMLInputElement>("本轮临时要求内容").value,
@@ -4348,6 +4360,8 @@ describe("世界游玩页面", () => {
             }
             return Promise.resolve({
               outcome: "revised",
+              sentAfterRevision: true,
+              continuation: "continue_context",
               playCallChain: chain,
             });
           }
@@ -4841,11 +4855,9 @@ describe("世界游玩页面", () => {
     );
     expect(
       within(playerMessage)
-        .getByRole("radio", {
-          name: /接着原对话继续/u,
-        })
-        .matches(":checked"),
-    ).toBe(true);
+        .getByText("修改后如何继续", { selector: "summary" })
+        .closest("details")?.open,
+    ).toBe(false);
     fireEvent.change(editor, {
       target: { value: "I ask Alex not to open the door yet." },
     });
@@ -4872,7 +4884,7 @@ describe("世界游玩页面", () => {
       chainId: "play-chain-existing",
       eventId: 1,
       replacementText: "I ask Alex not to open the door yet.",
-      continuation: "continue_context",
+      continuation: "auto",
     });
     expect(client.request).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4951,6 +4963,11 @@ describe("世界游玩页面", () => {
     fireEvent.change(within(playerMessage).getByLabelText("修改后的行动"), {
       target: { value: "I ask Alex to wait before opening the door." },
     });
+    fireEvent.click(
+      within(playerMessage).getByText("修改后如何继续", {
+        selector: "summary",
+      }),
+    );
     fireEvent.click(
       within(playerMessage).getByRole("radio", {
         name: /用新对话继续/u,
@@ -5073,6 +5090,10 @@ function renderWorld(
         return {
           ...revised,
           playCallChain: continued,
+          continuation:
+            request.continuation === "auto"
+              ? "continue_context"
+              : request.continuation,
           sentAfterRevision: true,
         };
       }

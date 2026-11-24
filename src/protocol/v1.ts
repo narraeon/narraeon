@@ -335,7 +335,7 @@ export type V1Request =
       replacementExchangeId: string;
       replacementText: string;
       turnNote?: string;
-      continuation: "continue_context" | "fresh_context";
+      continuation: "auto" | "continue_context" | "fresh_context";
       requireCompatible?: boolean;
       sendAfterRevision?: boolean;
     }
