@@ -11,10 +11,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import java.io.File
+import org.json.JSONObject
 
 // Runs the Narraeon backend inside this app process. The Node runtime can only start
 // once per process, so a second start is ignored.
@@ -37,18 +39,6 @@ class NodeService : Service() {
                 nodeState = NodeState.Preparing
                 val root = prepareBundle()
                 val crashDir = DiagnosticLog.crashDir(this)
-                val arguments = arrayOf("node", File(root, "node/server/mobile.js").path)
-                val environment = arrayOf(
-                    "NARRAEON_PORT=$PORT",
-                    "NARRAEON_MOBILE_STARTUP_KEY=${backendIdentity.startupKey}",
-                    "NARRAEON_STATIC_ROOT=${File(root, "web").path}",
-                    "NARRAEON_DATA_ROOT=${File(filesDir, "data").path}",
-                    "NARRAEON_CONFIG_ROOT=${File(filesDir, "config").path}",
-                    "NARRAEON_LOG_ROOT=${File(filesDir, "log").path}",
-                    "HOME=${filesDir.path}",
-                    "TMPDIR=${cacheDir.path}",
-                    "NARRAEON_STDERR_LOG=${File(crashDir, "node-stderr.log").path}",
-                )
                 // The data-root lock (server.pid) survives an app kill. After a restart, its PID can
                 // belong to another process; kill(pid, 0) then reports EPERM, which the server reads as
                 // alive, and startup is refused. Android runs one app process at a time, so no live
@@ -56,7 +46,7 @@ class NodeService : Service() {
                 File(filesDir, "data/server.pid").delete()
                 acquireWakeLock()
                 nodeState = NodeState.Running
-                val code = NativeNode.startNode(arguments, environment)
+                val code = startNode(root, File(crashDir, "node-stderr.log"))
                 nodeState = NodeState.Exited("node exited with code $code")
                 Log.e(TAG, "node exited with code $code")
                 DiagnosticLog.append(this, "node-service.log", "node exited with code $code")
@@ -72,6 +62,31 @@ class NodeService : Service() {
         }, "narraeon-node").start()
 
         return START_STICKY
+    }
+
+    private fun startNode(root: File, stderrLog: File): Int {
+        val config = JSONObject()
+            .put("NARRAEON_PORT", PORT.toString())
+            .put("NARRAEON_MOBILE_STARTUP_KEY", backendIdentity.startupKey)
+            .put("NARRAEON_STATIC_ROOT", File(root, "web").path)
+            .put("NARRAEON_DATA_ROOT", File(filesDir, "data").path)
+            .put("NARRAEON_CONFIG_ROOT", File(filesDir, "config").path)
+            .put("NARRAEON_LOG_ROOT", File(filesDir, "log").path)
+            .put("HOME", filesDir.path)
+            .put("TMPDIR", cacheDir.path)
+            .toString().toByteArray(Charsets.UTF_8)
+
+        // The payload must fit in an Android pipe before Node starts reading it.
+        // Keep ownership of the read end here even if native initialization fails.
+        check(config.size <= 4096) { "Node startup configuration exceeds pipe capacity" }
+        val (reader, writer) = ParcelFileDescriptor.createPipe()
+        return reader.use {
+            ParcelFileDescriptor.AutoCloseOutputStream(writer).use { it.write(config) }
+            NativeNode.startNode(
+                arrayOf("node", File(root, "node/server/mobile-bootstrap.js").path, reader.fd.toString()),
+                stderrLog.path,
+            )
+        }
     }
 
     // Copies assets/narraeon into filesDir/narraeon when bundle-version.txt changes. The file

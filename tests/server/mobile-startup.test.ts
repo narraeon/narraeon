@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, expect, test } from "vitest";
@@ -27,19 +28,31 @@ async function startMobile(staticFiles = true) {
   }
   const port = await availableRuntimePort();
   const key = "2a".repeat(32);
-  const child = spawn(process.execPath, ["src/server/mobile.ts"], {
-    env: {
-      ...process.env,
-      NARRAEON_PORT: String(port),
-      NARRAEON_DATA_ROOT: join(root, "data"),
-      NARRAEON_CONFIG_ROOT: join(root, "config"),
-      NARRAEON_LOG_ROOT: join(root, "log"),
-      NARRAEON_STATIC_ROOT: root,
-      NARRAEON_MOBILE_STARTUP_KEY: key,
+  const cache = join(root, "cache");
+  await mkdir(cache);
+  const probe = `
+    import { writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { tmpdir } from "node:os";
+    import { isMainThread } from "node:worker_threads";
+    if (!isMainThread) writeFileSync(join(tmpdir(), "tmpdir-probe"), process.env.HOME);
+  `;
+  const child = spawn(
+    process.execPath,
+    [
+      `--import=data:text/javascript,${encodeURIComponent(probe)}`,
+      "src/server/mobile-bootstrap.ts",
+      "3",
+    ],
+    {
+      env: {
+        ...process.env,
+        NARRAEON_STATIC_ROOT: join(root, "unused-host-static-root"),
+        NARRAEON_MOBILE_STARTUP_KEY: "unused-host-startup-key",
+      },
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stderr.resume();
+  );
   const closed = new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", resolve);
@@ -48,7 +61,23 @@ async function startMobile(staticFiles = true) {
     if (child.exitCode === null && child.signalCode === null) child.kill();
     await closed;
   });
-  return { child, closed, key, port, root };
+  const configuration = child.stdio[3];
+  if (!(configuration instanceof Writable))
+    throw new Error("Could not open the startup configuration pipe");
+  configuration.end(
+    JSON.stringify({
+      NARRAEON_PORT: String(port),
+      NARRAEON_DATA_ROOT: join(root, "data"),
+      NARRAEON_CONFIG_ROOT: join(root, "config"),
+      NARRAEON_LOG_ROOT: join(root, "log"),
+      NARRAEON_STATIC_ROOT: root,
+      NARRAEON_MOBILE_STARTUP_KEY: key,
+      HOME: root,
+      TMPDIR: cache,
+    }),
+  );
+  child.stderr?.resume();
+  return { child, closed, key, port, root, cache };
 }
 
 async function ready(child: ChildProcess, port: number): Promise<void> {
@@ -67,8 +96,9 @@ async function ready(child: ChildProcess, port: number): Promise<void> {
 }
 
 test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
-  const { child, key, port } = await startMobile();
+  const { child, key, port, root, cache } = await startMobile();
   await ready(child, port);
+  expect(await readFile(join(cache, "tmpdir-probe"), "utf8")).toBe(root);
   const base = `http://127.0.0.1:${port}`;
   const challenge = "5b".repeat(32);
   const headers = { "x-narraeon-startup-challenge": challenge };
@@ -98,7 +128,7 @@ test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
 
 test("Android Node 入口启动失败时以错误状态结束并写入诊断", async () => {
   const { child, closed, root } = await startMobile(false);
-  child.stdout.resume();
+  child.stdout?.resume();
   expect(await closed).toBe(1);
   expect(
     await readFile(join(root, "log", "crash", "node-errors.log"), "utf8"),
