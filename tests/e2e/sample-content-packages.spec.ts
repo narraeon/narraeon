@@ -130,7 +130,7 @@ for (const locale of appLocales) {
             : "Rain patters from the inn's eaves.",
         );
         await expect(timeline).toContainText(
-          chinese ? "她等着你的回答" : "She waits for your answer.",
+          chinese ? "她递来一条干毛巾。" : "She holds out a dry towel.",
         );
         await page
           .getByRole("button", {

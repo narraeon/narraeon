@@ -11,7 +11,7 @@ Behind it, a woman in a green apron lifts an empty blue saucer, checks underneat
 
 A guest in a grey cardigan looks up from the window table. “A pale blue envelope. It's for my sister, and I haven't sealed it yet.” Beside the counter, a young postal runner pauses with a damp ledger tucked against his chest.
 
-The woman offers you a dry towel. “Welcome in. We're having a small mystery with a letter. Would you mind lending us a fresh pair of eyes?” The counter, umbrella stand, and window table are all within the lamplight. She waits for your answer.
+The counter, umbrella stand, and window table are all within the lamplight. The woman turns to you. “Welcome in. We're having a small mystery with a letter. Would you mind lending us a fresh pair of eyes?” She holds out a dry towel.
 `,
     },
     {

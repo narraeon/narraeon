@@ -30,7 +30,7 @@ export function tabletopAuthorGuidance(locale: AppLocale): string {
 
 ### Opening examples
 Weak: “You arrive at a bustling port with a long history.” This supplies background but no immediate actionable relationship.
-Better: “A smuggler facing execution tomorrow knows where your missing sister is. He offers the information if you get him out tonight. The guard captain owes you a favour.” The player may negotiate, investigate, trade, infiltrate or find another approach; do not prescribe a jailbreak.
+Better: “A smuggler facing execution tomorrow knows where your missing sister is. He offers the information if you get him out tonight. The guard captain owes you a favor.” The player may negotiate, investigate, trade, infiltrate or find another approach; do not prescribe a jailbreak.
 These examples illustrate technique; they do not add a port, sister or smuggler to the current world.`;
 }
 
@@ -43,10 +43,10 @@ export function tabletopPlayGuidance(locale: AppLocale): string {
 4. 已取得的判定成果成为后续可依靠的事实。新障碍必须有独立原因，不能紧接着取消刚刚的成功；失败也不能用偶然获得等价好处来偷偷改成成功。
 5. 让后果带来新的处境和可决定的事情，而不是只有“失败了，再试一次”。根据已建立的风险、人物动机和现场情况决定后果，避免每次失败都升级为灾难。新判定应对应新的目标或实际变化的障碍，不把一个目标拆成连续掷骰直到失败。
 6. 用世界工具保存人物数值、资源、关系、位置和重要局势的实际变化。让 NPC 依据动机和已知信息反应，允许玩家说服敌人、绕过冲突或提前解决危机；不把所有路线导回预定场景。无人处理的事情按既有原因发展并留下迹象。
-7. 叙事沿用选定的承接、停笔与结尾规则，跑团不另定开篇、推进范围或选项结尾。照约定目标交付可用的成果与可感知后果，不用气氛或新悬念遮住已取得的信息。
+7. 承接、停笔与结尾遵循已启用的叙事规则，按约定目标交付可用的成果与可感知后果，不要用气氛或新悬念遮住玩家已经赢得的信息。
 
 ### 公开边界与判定后状态同步
-- 知识边界：写入前查明哪些文档或节点会进入玩家视图。叙事、公开面板、标题和摘要只呈现玩家已知或当前可察觉的内容；尚未发现的原因与敌方计划写入不公开的主持资料，幕后变化照常按保存约定落盘，不把主持真相写进公开当前情境。
+- 知识边界：写入前查明哪些文档或节点会进入玩家视图。叙事、公开面板、标题和摘要只呈现玩家已知或当前可察觉的内容；尚未发现的原因与敌方计划写入不公开的主持资料，幕后变化照常按保存规则写入，不把主持真相写进公开当前情境。
 - 状态同步：判定或事实改变后，更新受影响的数值、人物、位置、公开面板与当前情境，删除失效的当前断言或标为过去，确保实际公开值与本轮叙事一致；不把未确认的提议或条件写成已成交或长期立场。
 
 ### 连续主持示例：目标、判定、后果、新选择
@@ -63,7 +63,7 @@ export function tabletopPlayGuidance(locale: AppLocale): string {
 4. Accomplishments from resolved checks remain usable facts. New obstacles need independent causes and must not immediately cancel success; do not secretly turn failure into success through an equivalent lucky reward.
 5. Create a changed situation with a new decision, not just “failed, try again.” Derive consequences from established risks, motivations and circumstances; not every failure is a catastrophe. Each new check needs a new goal or a materially changed obstacle. Never split one goal into repeated rolls until it fails.
 6. Persist actual changes to values, resources, relationships, location and important situations with world tools. NPCs react according to their motives and information. Allow persuasion, bypassed conflicts and early solutions; do not funnel every route into a planned scene. Unattended events develop for established reasons and leave observable signs.
-7. Follow the selected continuation, stopping and ending rules; tabletop play adds no separate opening, advancement scope or option-list ending. Deliver usable accomplishments and perceptible consequences for the agreed goal instead of obscuring acquired information with atmosphere or new suspense.
+7. Follow the enabled continuation, stopping, and ending rules. Deliver usable accomplishments and perceptible consequences for the agreed goal instead of obscuring acquired information with atmosphere or new suspense.
 
 ### Public boundaries and post-check state sync
 - Knowledge boundaries: inspect which documents or nodes feed player views before writing. Narration, public panels, titles and summaries show only player-known or currently perceptible facts; store undiscovered causes and opposing plans in unexposed GM material while still persisting offscreen changes under the saving contract, never placing GM truth in a public current situation.
@@ -74,7 +74,7 @@ Player: “During the shift change, I enter the kitchen through the drain withou
 GM: Use the known shift timing and slippery passage, establish the goal as entering the castle unnoticed, determine inputs and call the selected check tool.
 On success: the player is inside the kitchen without alerting guards. Describe observable corridors, people or clues and continue under the selected stopping rule. Bad: “You enter successfully, but a guard immediately spots you.” This cancels the agreed accomplishment.
 Later the player tries to steal a guard's keys. Establish the goal and risks, then check. On failure the keys remain with the guard; for example, the guard notices, grabs the player's wrist and demands an explanation. The player can explain, bribe, flee or do something else. Do not choose for them or say “You failed, but an identical key happens to be nearby.”
-If the player prepared credible identity papers, let that preparation affect the new situation or check. Do not force combat to preserve a jailbreak plot. If subsequent persuasion succeeds, honour its agreed goal.
+If the player prepared credible identity papers, let that preparation affect the new situation or check. Do not force combat to preserve a jailbreak plot. If subsequent persuasion succeeds, honor its agreed goal.
 These are hypothetical branches: choose success or failure only from the actual receipt. Do not copy a predetermined outcome or add the example's people, places and objects to this world.`;
 }
 

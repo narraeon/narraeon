@@ -118,7 +118,7 @@ const resolutionSchemas: Record<ResolutionToolName, object> = {
 const descriptions: Record<ResolutionToolName, [string, string]> = {
   d20_check: [
     "掷 d20 判定。原始 20 大成功、1 大失败；其余取值加 modifier >= difficulty 成功。优势两骰取高，劣势取低。先确定目标和数值，结果必须兑现。",
-    "Resolve a d20 check. Selected raw 20 critically succeeds, 1 critically fails; otherwise roll + modifier >= difficulty succeeds. Advantage keeps the higher of two dice, disadvantage the lower. Declare the goal and values before rolling; honour the result.",
+    "Resolve a d20 check. Selected raw 20 critically succeeds, 1 critically fails; otherwise roll + modifier >= difficulty succeeds. Advantage keeps the higher of two dice, disadvantage the lower. Declare the goal and values before rolling; honor the result.",
   ],
   percentile_check: [
     "百分骰判定。共享个位，奖励/惩罚额外十位骰相消后取较低/较高的完整结果，00 与个位0表示100。最终1大成功、100大失败，其余 <= target 成功。",

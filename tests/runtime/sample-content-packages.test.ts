@@ -167,9 +167,10 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     ).toBe("usable");
   });
 
-  test("passes import inspection, real prompt compilation and world creation with live status values and no model call", async () => {
+  test("imports and opens without calling a model, then carries the unanswered invitation into the first turn", async () => {
     const { runtime } = await setup();
     const network = vi.spyOn(globalThis, "fetch");
+    await request(runtime, { type: "preferences.save", locale });
     const sample = sampleContentPackageForLocale(locale);
     const inspection = inspectContentPackageCurrentTree(sample.files);
     expect(inspection.status).toBe("usable");
@@ -194,7 +195,7 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
         name: "Preview only",
         presetId: "custom",
         provider: "chat_completions",
-        baseUrl: "http://127.0.0.1:1/v1",
+        baseUrl: "https://provider.invalid/v1",
         apiKey: "sample-test",
         modelId: "sample-test",
         contextWindowTokens: 128000,
@@ -222,6 +223,14 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
     const opening = sample.files.find(
       ({ path }) => path === "opening.md",
     )!.contents;
+    const invitation =
+      locale === "zh-CN"
+        ? "先擦擦雨吧。我们正找一封信——你愿意帮忙看看吗？"
+        : "Welcome in. We're having a small mystery with a letter. Would you mind lending us a fresh pair of eyes?";
+    const offer =
+      locale === "zh-CN" ? "她递来一条干毛巾。" : "She holds out a dry towel.";
+    expect(opening).toContain(invitation);
+    expect(opening.trimEnd().endsWith(offer)).toBe(true);
     expect(bootstrap.split(opening)).toHaveLength(2);
     expect(bootstrap).toContain("@current-situation");
     expect(bootstrap).toContain("@letter-entrusted");
@@ -276,6 +285,60 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
       )[0]?.contents,
     ).toBe(opening);
     expect(network).not.toHaveBeenCalled();
+
+    const firstReply =
+      locale === "zh-CN"
+        ? "她把浅蓝信封的样子说给你听。"
+        : "She describes the pale blue envelope.";
+    network
+      .mockRejectedValue(new Error("Unexpected Provider request"))
+      .mockResolvedValueOnce(
+        toolResponse("check-invitation", "context_read", {
+          ref: "@current-situation",
+        }),
+      )
+      .mockResolvedValueOnce(narrativeResponse(firstReply));
+    const first = await request<V1PlayCallChainView>(runtime, {
+      type: "play.chain.start",
+      worldId,
+      chainId: "sample-first-turn",
+      exchangeId: "first",
+      playerText:
+        locale === "zh-CN"
+          ? "信封是什么样的？"
+          : "What does the envelope look like?",
+    });
+    expect(first.status).toBe("ready");
+    expect(first.events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_result",
+        callId: "check-invitation",
+        ok: true,
+      }),
+    );
+    expect(network).toHaveBeenCalledTimes(2);
+    const requestBody = network.mock.calls[0]?.[1]?.body;
+    if (typeof requestBody !== "string")
+      throw new Error("Expected a JSON Provider request");
+    const firstWire = JSON.parse(requestBody) as {
+      messages: { content: string | null }[];
+    };
+    const dispatched = firstWire.messages
+      .map(({ content }) => content)
+      .join("\n");
+    expect(dispatched.split(opening)).toHaveLength(2);
+    expect(dispatched).toContain(invitation);
+    expect(dispatched).toContain(
+      locale === "zh-CN"
+        ? "干毛巾尚未被接过"
+        : "offered towel has not been taken",
+    );
+    const played = await request<ContentTreeFile[]>(runtime, {
+      type: "world.surface.read",
+      worldId,
+      surface: "history",
+    });
+    expect(played.map(({ contents }) => contents)).toContain(firstReply);
   });
 });
 

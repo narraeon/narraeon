@@ -196,6 +196,46 @@ describe("tabletop builtins and defaults", () => {
 });
 
 describe("tabletop-scoped prompts in play compilation", () => {
+  test.each(["en", "zh-CN"] as const)(
+    "%s compiled tabletop guidance follows the preset toggle without disabling resolution",
+    (locale) => {
+      const compiler = new FileNativePromptCompiler({ locale });
+      const playPrompts = defaultPlayList();
+      const tabletopIndex = playPrompts.findIndex(
+        ({ id }) => id === "play.tabletop",
+      );
+      const tabletopEntry = playPrompts[tabletopIndex]!;
+      if (tabletopEntry.kind !== "builtin")
+        throw new Error("Expected tabletop builtin");
+      const enabled = compiler.compilePlayCallChain(
+        previewInputWithGameplay(tabletop),
+        presetBinding({ playPrompts }),
+      );
+      playPrompts[tabletopIndex] = { ...tabletopEntry, enabled: false };
+      const disabled = compiler.compilePlayCallChain(
+        previewInputWithGameplay(tabletop),
+        presetBinding({ playPrompts }),
+      );
+      const enabledWire = JSON.stringify(enabled.bootstrap.provider);
+      const text =
+        locale === "en"
+          ? "Follow the enabled continuation, stopping, and ending rules."
+          : "承接、停笔与结尾遵循已启用的叙事规则";
+      expect(enabledWire).toContain(text);
+      expect(enabledWire).toContain(
+        locale === "en"
+          ? "honor its agreed goal"
+          : "幕后变化照常按保存规则写入",
+      );
+      expect(JSON.stringify(disabled.bootstrap.provider)).not.toContain(text);
+      expect(disabled.bootstrap.tools).toEqual(enabled.bootstrap.tools);
+      expect(
+        disabled.bootstrap.tools.find(({ name }) => name === "d20_check")
+          ?.description,
+      ).toContain(locale === "en" ? "honor the result" : "结果必须兑现");
+    },
+  );
+
   test("play.tabletop compiles for tabletop worlds and disappears for fiction without changing fiction output", () => {
     const compiler = new FileNativePromptCompiler();
     const withTabletop = presetBinding({ playPrompts: defaultPlayList() });
@@ -267,17 +307,45 @@ describe("tabletop-scoped prompts in play compilation", () => {
 });
 
 describe("tabletop-scoped prompts in authoring compilation", () => {
-  function authoring(gameplay: Gameplay, binding: PlayPresetBinding) {
-    const compiler = new FileNativePromptCompiler();
+  function authoring(
+    gameplay: Gameplay,
+    binding: PlayPresetBinding,
+    locale: "en" | "zh-CN" = "en",
+  ) {
+    const compiler = new FileNativePromptCompiler({ locale });
     const input = previewInputWithGameplay(gameplay);
     return compiler.compileSettingImprovement({
       contentPackageTitle: "Scope package",
       playPreset: binding,
       modelBinding: input.modelBinding,
-      tools: settingImprovementToolDefinitions("en", gameplay),
+      tools: settingImprovementToolDefinitions(locale, gameplay),
       gameplay,
     });
   }
+
+  test.each(["en", "zh-CN"] as const)(
+    "%s compiled authoring guidance follows the tabletop toggle and mode",
+    (locale) => {
+      const authorPrompts = defaultAuthorList();
+      const marker =
+        locale === "en" ? "owes you a favor" : "守卫队长欠你一个人情";
+      const wire = (gameplay: Gameplay) =>
+        JSON.stringify(
+          authoring(gameplay, presetBinding({ authorPrompts }), locale)
+            .provider,
+        );
+      expect(wire(tabletop)).toContain(marker);
+      expect(wire(fiction)).not.toContain(marker);
+      const index = authorPrompts.findIndex(
+        ({ id }) => id === "author.tabletop",
+      );
+      const entry = authorPrompts[index]!;
+      if (entry.kind !== "builtin")
+        throw new Error("Expected tabletop author builtin");
+      authorPrompts[index] = { ...entry, enabled: false };
+      expect(wire(tabletop)).not.toContain(marker);
+    },
+  );
 
   test("author.tabletop and the play-reference expansion include tabletop prompts only for tabletop packages", () => {
     const binding = presetBinding({

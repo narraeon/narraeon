@@ -434,12 +434,12 @@ test.each(["en", "zh-CN"] as const)(
       )!.markdown;
       expect(tabletop).toContain(
         locale === "zh-CN"
-          ? "叙事沿用选定的承接、停笔与结尾规则"
-          : "Follow the selected continuation, stopping and ending rules",
+          ? "承接、停笔与结尾遵循已启用的叙事规则"
+          : "Follow the enabled continuation, stopping, and ending rules",
       );
       expect(tabletop).toContain(
         locale === "zh-CN"
-          ? "照约定目标交付可用的成果"
+          ? "按约定目标交付可用的成果"
           : "Deliver usable accomplishments",
       );
       expect(tabletop).not.toMatch(
