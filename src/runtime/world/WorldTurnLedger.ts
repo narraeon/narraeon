@@ -58,6 +58,8 @@ export class WorldTurnLedgerError extends Error {
 
 const headFile = join("runtime", "head.json");
 const turnsDirectory = join("runtime", "turns");
+const turnReadBatchSize = 8;
+const maxCachedWorlds = 8;
 
 function turnFileName(sequence: number): string {
   return join(turnsDirectory, `${String(sequence).padStart(8, "0")}.json`);
@@ -324,24 +326,32 @@ function parseTurn(text: string, name: string): WorldTurnRecord {
 }
 
 async function readAllRecords(root: string): Promise<StoredTurn[]> {
+  const directory = join(root, turnsDirectory);
   let names: string[];
   try {
-    names = await readdir(join(root, turnsDirectory));
+    names = (await readdir(directory)).filter((name) => name.endsWith(".json"));
   } catch (error) {
     if (isMissing(error)) return [];
     throw error;
   }
   const turns: StoredTurn[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".json")) continue;
-    // 回退在发布端点之后才删除被丢弃的轮记录：读到一半消失的记录一定已被丢弃，跳过即可。
-    // 端点若在读取期间变化，loadView 会重新读取。
-    const text = await readTextOrNull(join(root, turnsDirectory, name));
-    if (text === null) continue;
-    turns.push({
-      record: parseTurn(text, name),
-      digest: createHash("sha256").update(text).digest("hex"),
-    });
+  for (let start = 0; start < names.length; start += turnReadBatchSize) {
+    // 等本批读取全部结束，再按目录顺序处理结果或抛出错误。
+    const batch = await Promise.allSettled(
+      names.slice(start, start + turnReadBatchSize).map(async (name) => {
+        // 回退发布端点后才删除丢弃的轮。跳过已经消失的记录，端点变化由 loadView 重试。
+        const text = await readTextOrNull(join(directory, name));
+        if (text === null) return null;
+        return {
+          record: parseTurn(text, name),
+          digest: createHash("sha256").update(text).digest("hex"),
+        };
+      }),
+    );
+    for (const result of batch) {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value !== null) turns.push(result.value);
+    }
   }
   return turns;
 }
@@ -389,6 +399,15 @@ function viewOf(head: number, turns: readonly StoredTurn[]): LedgerView {
 // beginTurn 与 recoverIncomplete 会在 head 之上写入或删除记录，它们不改变已发布的视图。
 const viewCache = new Map<string, LedgerView>();
 
+function rememberView(key: string, view: LedgerView): void {
+  viewCache.delete(key);
+  viewCache.set(key, view);
+  if (viewCache.size > maxCachedWorlds) {
+    const oldest = viewCache.keys().next();
+    if (!oldest.done) viewCache.delete(oldest.value);
+  }
+}
+
 // An unpublished turn can start and be rolled back without advancing head.
 // Track overlapping writes for as long as a reader can observe them.
 const activeReaders = new Map<string, { generation: number; count: number }>();
@@ -401,14 +420,18 @@ function noteFileWrite(root: string): void {
 // 一次读取只解析一个视图。回退先发布新端点、再删除被丢弃的轮记录：读完记录后端点仍未变化，
 // 说明读到的记录与这个端点一致；端点变了就用新端点重新读取。
 async function loadView(root: string): Promise<LedgerView> {
+  const key = resolve(root);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const head = await readHead(root);
-    const cached = viewCache.get(resolve(root));
-    if (cached?.head === head) return cached;
+    const cached = viewCache.get(key);
+    if (cached?.head === head) {
+      rememberView(key, cached);
+      return cached;
+    }
     const turns = await readAllRecords(root);
     if ((await readHead(root)) !== head) continue;
     const view = viewOf(head, turns);
-    viewCache.set(resolve(root), view);
+    rememberView(key, view);
     return view;
   }
   throw new WorldTurnLedgerError(
@@ -550,7 +573,7 @@ export async function commitTurnHead(
   };
   const next = viewOf(record.sequence, [...previous.turns.values(), published]);
   await publishHead(root, record.sequence);
-  viewCache.set(key, next);
+  rememberView(key, next);
 }
 
 export async function appendTurn(
@@ -614,7 +637,7 @@ export async function recoverIncomplete(
     if (record.sequence <= head && !view.turns.has(record.sequence))
       await rm(join(root, turnFileName(record.sequence)), { force: true });
   }
-  viewCache.set(resolve(root), view);
+  rememberView(resolve(root), view);
   return incomplete.length > 0;
 }
 

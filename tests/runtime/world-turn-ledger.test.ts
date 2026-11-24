@@ -311,6 +311,50 @@ describe("world turn ledger view cache", () => {
     }
   });
 
+  test("retains the eight most recently used worlds and rebuilds an evicted view", async () => {
+    const worlds = [];
+    for (let index = 0; index < 9; index += 1) {
+      const world = join(root, `world-${index}`);
+      await initializeLedger(world);
+      const turn = await appendTurn(world, {
+        mode: "play",
+        changes: [{ path: "state/a.yaml", content: `world ${index}\n` }],
+      });
+      forgetLedger(world);
+      worlds.push({ world, turn });
+    }
+
+    for (const { world, turn } of worlds.slice(0, 8)) {
+      expect(await listTurns(world)).toEqual([turn]);
+    }
+    const recent = worlds[0]!;
+    expect(await listTurns(`${recent.world}/.`)).toEqual([recent.turn]);
+    await recoverIncomplete(worlds[8]!.world);
+
+    // Hide each turn directory in isolation to count the surviving cache hits.
+    for (const [index, { world, turn }] of worlds.entries()) {
+      const turns = join(world, "runtime", "turns");
+      const moved = join(world, "runtime", "turns-away");
+      await rename(turns, moved);
+      try {
+        if (index === 1) {
+          await expect(listTurns(world)).rejects.toMatchObject({
+            code: "missing_record",
+          });
+        } else {
+          expect(await listTurns(world)).toEqual([turn]);
+        }
+      } finally {
+        await rename(moved, turns);
+      }
+    }
+    const evicted = worlds[1]!;
+    expect(await listTurns(evicted.world)).toEqual([evicted.turn]);
+    expect(await readFileAt(evicted.world, 1, "state/a.yaml")).toBe(
+      "world 1\n",
+    );
+  });
+
   test("forgetLedger makes the next read come from disk", async () => {
     await appendTurn(root, {
       mode: "play",
@@ -329,8 +373,6 @@ describe("world turn ledger view cache", () => {
     } finally {
       await rename(moved, turns);
     }
-    // 上面的失败读取已经按残缺目录填充了视图，恢复目录后需要再次失效。
-    forgetLedger(root);
     expect((await listTurns(root)).length).toBe(1);
   });
 

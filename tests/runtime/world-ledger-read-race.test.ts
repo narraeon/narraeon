@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 import type * as FsPromises from "node:fs/promises";
@@ -13,6 +13,8 @@ import {
   appendTurn,
   forgetLedger,
   initializeLedger,
+  listTurns,
+  recoverIncomplete,
   rewindTo,
 } from "../../src/runtime/world/WorldTurnLedger.ts";
 import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
@@ -122,6 +124,12 @@ test("先替换一个状态文件时，正常读取仍返回旧端点的完整�
   };
   const overlappingRead = runtime.handle(request);
   await Promise.race([readPaused.promise, overlappingRead]);
+  // Evict the paused reader's view while it is still coordinating with writes.
+  for (let index = 0; index < 8; index += 1) {
+    const other = join(root, `other-ledger-${index}`);
+    await initializeLedger(other);
+    await listTurns(other);
+  }
   race.afterRename = async (destination) => {
     if (destination !== first) return;
     race.afterRename = undefined;
@@ -197,6 +205,73 @@ test("readHead 在端点读取与视图解析之间被回退时，返回一致�
     sequence: 1,
     operationId: "op-1",
   });
+});
+
+test("冷读期间回退清理已经列出的轮记录，会重读端点和轮账本", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-ledger-read-race-"));
+  roots.push(root);
+  await initializeLedger(root);
+  const first = await appendTurn(root, { mode: "play", changes: [] });
+  await appendTurn(root, { mode: "play", changes: [] });
+  forgetLedger(root);
+
+  const discarded = join(root, "runtime/turns/00000002.json");
+  race.beforeRead = async (path) => {
+    if (path !== discarded) return;
+    race.beforeRead = undefined;
+    await rewindTo(root, 1);
+    await expect(readFile(discarded)).rejects.toMatchObject({ code: "ENOENT" });
+    forgetLedger(root);
+  };
+
+  expect(await listTurns(root)).toEqual([
+    first,
+    expect.objectContaining({
+      sequence: 3,
+      mode: "rewind",
+      restoresSequence: 1,
+    }),
+  ]);
+  expect(race.beforeRead).toBeUndefined();
+});
+
+test("首次恢复分批读取轮账本，损坏记录修复后可以重读", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-ledger-batch-"));
+  roots.push(root);
+  await initializeLedger(root);
+  const turns = [];
+  for (let sequence = 1; sequence <= 17; sequence += 1) {
+    turns.push(await appendTurn(root, { mode: "play", changes: [] }));
+  }
+  forgetLedger(root);
+
+  const directory = join(root, "runtime/turns");
+  const damaged = join(directory, "00000017.json");
+  const original = await readFile(damaged, "utf8");
+  await writeFile(damaged, "{");
+  await writeFile(join(directory, "ignored.tmp"), "{");
+
+  let inFlight = 0;
+  let peak = 0;
+  let reads = 0;
+  race.beforeRead = async (path) => {
+    if (dirname(path) !== directory) return;
+    reads += 1;
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    inFlight -= 1;
+  };
+  await expect(recoverIncomplete(root)).rejects.toMatchObject({
+    code: "corrupt",
+  });
+  expect(peak).toBe(8);
+  expect(inFlight).toBe(0);
+
+  reads = 0;
+  await writeFile(damaged, original);
+  expect(await listTurns(root)).toEqual(turns);
+  expect(reads).toBe(turns.length);
 });
 
 function commitPayload(sequence: number) {
