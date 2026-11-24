@@ -1437,6 +1437,17 @@ export function WorldPage({
     setReadingOpen(false);
   }
 
+  function openPlayDialog(
+    next: "reading" | "manage",
+    opener: HTMLButtonElement,
+  ): void {
+    // showModal restores its previous focus. Some browsers leave pointer-clicked
+    // buttons unfocused, so use the actual opener consistently.
+    opener.focus({ preventScroll: true });
+    setReadingOpen(false);
+    setDialog(next);
+  }
+
   async function applyRevision(): Promise<void> {
     const result = await revisionWorkspace.finish("apply");
     if (result === null) return;
@@ -1945,6 +1956,18 @@ export function WorldPage({
     );
   }
 
+  const feedbackNotice =
+    feedback === null ||
+    (feedback.technical === true &&
+      !readingPreferences.showTechnicalInfo) ? null : (
+      <p
+        className={"world-feedback " + feedback.kind}
+        role={feedback.kind === "error" ? "alert" : "status"}
+      >
+        {feedback.text}
+      </p>
+    );
+
   return (
     <main
       className={`world-reader-page ${readingPreferences.showTechnicalInfo ? "is-detailed-mode" : "is-story-mode"}`}
@@ -2067,10 +2090,7 @@ export function WorldPage({
             <button
               type="button"
               aria-label={uiText("世界管理")}
-              onClick={() => {
-                setDialog("manage");
-                setReadingOpen(false);
-              }}
+              onClick={(event) => openPlayDialog("manage", event.currentTarget)}
             >
               ···
             </button>
@@ -2726,6 +2746,7 @@ export function WorldPage({
                 : "world-overlay-rail world-overlay-rail-right"
             }
             aria-hidden={!rightRailOpen}
+            inert={!rightRailOpen}
             aria-label={
               rightRailTab === "documents"
                 ? uiText("当前世界")
@@ -2792,7 +2813,9 @@ export function WorldPage({
                   reading={aiReading}
                   loading={aiReadingLoading}
                   documents={documents}
-                  onOpenFull={() => setDialog("reading")}
+                  onOpenFull={(event) =>
+                    openPlayDialog("reading", event.currentTarget)
+                  }
                 />
               )}
             </div>
@@ -2804,7 +2827,12 @@ export function WorldPage({
               >
                 {uiText("修订当前世界")}
               </button>
-              <button type="button" onClick={() => setDialog("manage")}>
+              <button
+                type="button"
+                onClick={(event) =>
+                  openPlayDialog("manage", event.currentTarget)
+                }
+              >
                 {uiText("世界管理")}
               </button>
             </footer>
@@ -2840,6 +2868,7 @@ export function WorldPage({
               }
               reading={aiReading}
               documents={documents}
+              feedback={feedbackNotice}
               onClose={() => setDialog(null)}
             />
           ) : null}
@@ -2896,6 +2925,7 @@ export function WorldPage({
                   }
                 />
               }
+              feedback={feedbackNotice}
               world={world}
               worldTitle={worldTitle}
               worldNameDraft={worldNameDraft}
@@ -2926,16 +2956,7 @@ export function WorldPage({
             />
           ) : null}
 
-          {feedback === null ||
-          (feedback.technical === true &&
-            !readingPreferences.showTechnicalInfo) ? null : (
-            <p
-              className={"world-feedback " + feedback.kind}
-              role={feedback.kind === "error" ? "alert" : "status"}
-            >
-              {feedback.text}
-            </p>
-          )}
+          {dialog === null ? feedbackNotice : null}
 
           <ArtifactExtensionMount mount="overlay" />
           <ArtifactExtensionMount mount="debug" />
