@@ -9,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -383,7 +384,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
+  // Editors report their draft state in layout effects, so the browser
+  // guard is installed before the input event finishes.
+  useLayoutEffect(() => {
     if (!navigationDirty) return;
     function onBeforeUnload(event: BeforeUnloadEvent): void {
       event.preventDefault();

@@ -33,6 +33,7 @@ import { getWebLocale, uiText } from "./i18n.ts";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -432,11 +433,11 @@ export function PlayPresetScreen({
     }
   }, [initialLibrary, target]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onNavigationProtectionChange({ dirty, busy: dirty && pending });
   }, [dirty, pending, onNavigationProtectionChange]);
 
-  useEffect(
+  useLayoutEffect(
     () => () => onNavigationProtectionChange(idleWorkspaceNavigation),
     [onNavigationProtectionChange],
   );

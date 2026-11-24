@@ -1,5 +1,12 @@
 import { uiText } from "./i18n.ts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 
@@ -152,8 +159,8 @@ export function ModelConnectionScreen({
     savedConnection === undefined ||
     !isSameModelServiceOrigin(savedConnection.baseUrl, form.baseUrl);
 
-  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
-  useEffect(
+  useLayoutEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  useLayoutEffect(
     () => () => {
       onDirtyChange(false);
     },

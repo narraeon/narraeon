@@ -1,5 +1,5 @@
 import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type {
   V1Request,
   V1WorldRevisionOverview,
@@ -293,16 +293,23 @@ for (const draft of [
       await page
         .getByRole("button", { name: "打开 opening.md", exact: true })
         .click();
-      await page.getByLabel("编辑 opening.md").fill("地址测试未保存开场");
+      await fillWithUnloadProtection(
+        page.getByLabel("编辑 opening.md"),
+        "地址测试未保存开场",
+      );
     } else if (draft === "preset") {
       await openWorkspaceCreationTool(page);
       await page.getByText("编排方案操作", { exact: true }).click();
-      await page
-        .getByLabel("编排方案名称", { exact: true })
-        .fill("地址测试未保存编排方案");
+      await fillWithUnloadProtection(
+        page.getByLabel("编排方案名称", { exact: true }),
+        "地址测试未保存编排方案",
+      );
     } else if (draft === "model") {
       await page.getByRole("button", { name: "模型设置", exact: true }).click();
-      await page.getByLabel("配置名称").fill("地址测试未保存模型");
+      await fillWithUnloadProtection(
+        page.getByLabel("配置名称"),
+        "地址测试未保存模型",
+      );
     } else {
       await page
         .getByRole("button", { name: `打开世界：${data.name}`, exact: true })
@@ -312,9 +319,10 @@ for (const draft of [
           .getByRole("button", { name: "世界管理", exact: true })
           .click();
         await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
-        await page
-          .getByLabel("世界控制文件（JSON）")
-          .fill("地址测试未保存控制");
+        await fillWithUnloadProtection(
+          page.getByLabel("世界控制文件（JSON）"),
+          "地址测试未保存控制",
+        );
       } else {
         await page.getByRole("button", { name: "世界", exact: true }).click();
         await page
@@ -330,13 +338,24 @@ for (const draft of [
             exact: true,
           })
           .click();
-        await page
-          .getByLabel("编辑 state/current-situation.yaml")
-          .fill("地址测试未保存修订");
+        const opened = page.waitForResponse((response) => {
+          const request = response.request();
+          return (
+            request.url().endsWith("/api/runtime/v1") &&
+            request.method() === "POST" &&
+            (request.postDataJSON() as { request: V1Request }).request.type ===
+              "world.revision.open"
+          );
+        });
+        await fillWithUnloadProtection(
+          page.getByLabel("编辑 state/current-situation.yaml"),
+          "地址测试未保存修订",
+        );
+        expect((await opened).ok()).toBe(true);
       }
     }
-    // The first world-revision edit opens its persisted worktree before the
-    // local draft can be discarded. Let that write finish first.
+    // The Runtime receipt and enabled header distinguish an open revision
+    // draft from the pending write that first creates its worktree.
     await expect(
       page.getByRole("button", { name: "模型设置", exact: true }),
     ).toBeEnabled();
@@ -577,22 +596,38 @@ test("only a dirty draft asks for native confirmation on refresh and close", asy
   await name.fill("刷新仍需保留的草稿");
   expect(await beforeUnloadWasPrevented()).toBe(true);
 
-  const beforeRefresh = page.waitForEvent("dialog");
-  await page.evaluate(() => setTimeout(() => location.reload(), 0));
-  const refreshDialog = await beforeRefresh;
-  expect(refreshDialog.type()).toBe("beforeunload");
-  await refreshDialog.dismiss();
+  const discard = page.getByRole("button", { name: "放弃修改", exact: true });
+  await discard.click();
+  expect(await beforeUnloadWasPrevented()).toBe(false);
+  await name.click();
+  await name.evaluate((input) => {
+    window.addEventListener(
+      "input",
+      (event) => {
+        if (event.target === input) location.reload();
+      },
+      { once: true },
+    );
+  });
+  const beforeRefresh = page.waitForEvent("dialog").then(async (dialog) => {
+    expect(dialog.type()).toBe("beforeunload");
+    await dialog.dismiss();
+  });
+  await Promise.all([beforeRefresh, name.fill("刷新仍需保留的草稿")]);
   await expect(name).toHaveValue("刷新仍需保留的草稿");
 
+  await discard.click();
+  expect(await beforeUnloadWasPrevented()).toBe(false);
   const beforeClose = page.waitForEvent("dialog");
+  await name.fill("关闭仍需保留的草稿");
   await page.close({ runBeforeUnload: true });
   const closeDialog = await beforeClose;
   expect(closeDialog.type()).toBe("beforeunload");
   await closeDialog.dismiss();
-  await expect(name).toHaveValue("刷新仍需保留的草稿");
+  await expect(name).toHaveValue("关闭仍需保留的草稿");
 
-  await page.getByRole("button", { name: "放弃修改", exact: true }).click();
-  await expect.poll(beforeUnloadWasPrevented).toBe(false);
+  await discard.click();
+  expect(await beforeUnloadWasPrevented()).toBe(false);
   await page.reload();
   await expect(name).toHaveValue(savedName);
 });
@@ -724,3 +759,42 @@ test("retrying a failed browser package read reuses the existing history entry",
   await expect(heading).toBeVisible();
   expect(await browserHistory(page)).toEqual(original);
 });
+
+test("the protagonist template draft protects unload during the input event", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/#/create");
+  await page.getByRole("button", { name: "管理主角模板" }).click();
+  await fillWithUnloadProtection(
+    page.getByRole("textbox", { name: "模板正文" }),
+    "仍未保存的主角模板",
+  );
+});
+
+async function fillWithUnloadProtection(
+  input: Locator,
+  value: string,
+): Promise<void> {
+  // React handles the edit at the root before the native input event bubbles
+  // to window. Record the guard result there, without another browser task.
+  await input.evaluate((field) => {
+    window.addEventListener(
+      "input",
+      (event) => {
+        if (event.target !== field) return;
+        const unload = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(unload);
+        field.setAttribute(
+          "data-unload-protected-on-input",
+          String(unload.defaultPrevented),
+        );
+      },
+      { once: true },
+    );
+  });
+  await input.fill(value);
+  expect(await input.getAttribute("data-unload-protected-on-input")).toBe(
+    "true",
+  );
+}

@@ -272,7 +272,7 @@ export function WorldPage({
     revisionDirty || controlDirty || authoringNavigation.dirty;
   const navigationBusy =
     authoringNavigation.busy || pending === "control-apply";
-  useEffect(() => {
+  useLayoutEffect(() => {
     onNavigationProtectionChange?.({
       dirty: navigationDirty,
       busy: navigationBusy,

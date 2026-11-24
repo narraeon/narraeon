@@ -260,7 +260,7 @@ export function SettingImprovementPanel({
   const navigationDirty =
     hasUnsavedFileDraft || editing?.draft !== editing?.original;
   const navigationBusy = editBusy || loading || draftsLocked;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onNavigationProtectionChange?.({
       dirty: navigationDirty,
       busy: navigationBusy,

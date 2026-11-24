@@ -2,7 +2,13 @@ import {
   idleWorkspaceNavigation,
   type WorkspaceNavigationProtection,
 } from "./WorkspaceLocation.ts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   isProtagonistTemplateContent,
   type ProtagonistTemplate,
@@ -78,7 +84,7 @@ export function ProtagonistTemplateManager({
   );
   const dirty =
     name !== (baseline?.name ?? "") || body !== (baseline?.body ?? "");
-  useEffect(() => {
+  useLayoutEffect(() => {
     onNavigationProtectionChange?.({ dirty, busy: pending });
     return () => onNavigationProtectionChange?.(idleWorkspaceNavigation);
   }, [dirty, pending, onNavigationProtectionChange]);
