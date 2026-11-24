@@ -63,8 +63,8 @@ export function builtinAuthorPrompts(
       required: false,
       category: "policy",
       body: zh
-        ? "在此按编排顺序列出当前预设已启用的游玩语义参考（内置块以边界摘要呈现，自定义／克隆块保留原文），明确标为未来游玩参考，不是本轮叙事要求。内容包及世界正文仍通过创作工具读取。"
-        : "Lists the current preset's enabled play semantics in arranged order (built-in blocks as boundary summaries, custom/cloned blocks verbatim) as future-play reference, not narrative instructions for this conversation. Actual package and world content remains behind authoring tools.",
+        ? "在此按编排顺序列出当前编排方案已启用的游玩语义参考（内置块以边界摘要呈现，自定义／克隆块保留原文），明确标为未来游玩参考，不是本轮叙事要求。内容包及世界正文仍通过创作工具读取。"
+        : "Lists the current orchestration's enabled play semantics in arranged order (built-in blocks as boundary summaries, custom/cloned blocks verbatim) as future-play reference, not narrative instructions for this conversation. Actual package and world content remains behind authoring tools.",
     },
   ];
 }

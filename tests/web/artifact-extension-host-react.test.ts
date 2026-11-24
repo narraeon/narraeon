@@ -443,6 +443,7 @@ describe("ArtifactExtensionHost React lifetime", () => {
         },
       }),
     );
+    expect(screen.getByText(/当前编排方案 preset-1\/rev-1/u)).toBeTruthy();
     expect(screen.getByText("bridge 事件（2）")).toBeTruthy();
     expect(screen.getByText("bridge.ready")).toBeTruthy();
     expect(screen.getByText("diagnostic")).toBeTruthy();

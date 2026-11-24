@@ -638,16 +638,16 @@ export function PlayPresetScreen({
   }
 
   async function exportPreset(): Promise<void> {
-    if (draft === null) return;
+    if (saved === undefined) return;
     await run(async () => {
       const result = await request<{
         files: { path: string; contents: string }[];
-      }>({ type: "play.export", presetId: draft.id });
+      }>({ type: "play.export", presetId: saved.id });
       const blob = new Blob([JSON.stringify(result.files, null, 2)], {
         type: "application/json",
       });
       const outcome = await target.command(() =>
-        saveFile(`${draft.name}.orchestration.json`, {
+        saveFile(`${saved.name}.orchestration.json`, {
           blob,
         }),
       );
@@ -1123,7 +1123,6 @@ export function PlayPresetScreen({
             >
               <header className="play-preset-editor-header">
                 <div>
-                  <p className="play-preset-section-kicker">EDIT PRESET</p>
                   <h3>{draft.name}</h3>
                   <p className="field-note">
                     {uiText("· 游玩修改在下一次正常发送生效")}
@@ -1153,6 +1152,11 @@ export function PlayPresetScreen({
                 </div>
               </header>
 
+              {saved?.structure?.migrationNotice && (
+                <p className="workspace-feedback" role="status">
+                  {saved.structure.migrationNotice}
+                </p>
+              )}
               {draft.structure &&
               (workspaceView === "call_chain" ||
                 workspaceView === "setting_improvement") ? (

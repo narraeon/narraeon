@@ -1912,7 +1912,7 @@ describe("无法解析的预设库不阻断启动", () => {
     await store.initialize();
     const valid = await store.create("valid", defaultPlayPresetFiles);
     await store.select(valid.preset.id);
-    const invalidFiles = { "preset.yaml": "format: invalid\n" };
+    const invalidFiles = { "orchestration.yaml": "format: invalid\n" };
     const invalid = await store.create("invalid", invalidFiles);
     const revision = invalid.preset.revision;
     expect(invalid.preset.validation.status).toBe("invalid");
@@ -1933,14 +1933,11 @@ describe("无法解析的预设库不阻断启动", () => {
       await expect(instance.select(invalid.preset.id)).rejects.toMatchObject({
         code: "invalid_play_preset",
       });
-      expect(await instance.exportPortable(invalid.preset.id)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: "preset.yaml",
-            contents: invalidFiles["preset.yaml"],
-          }),
-        ]),
-      );
+      await expect(
+        instance.exportPortable(invalid.preset.id),
+      ).rejects.toMatchObject({
+        code: "call_chain_missing",
+      });
     }
     await store.delete(invalid.preset.id);
     expect((await store.list()).presets).toHaveLength(2);

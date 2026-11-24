@@ -40,6 +40,8 @@ export interface ModelBinding {
 }
 
 export const v1Protocol = "narraeon.runtime/v1" as const;
+export const v1RuntimeRequestBodyLimit =
+  maxPortableContentArchiveBase64Characters + 64 * 1024;
 
 export type V1StoryExportFormat = "markdown" | "text";
 

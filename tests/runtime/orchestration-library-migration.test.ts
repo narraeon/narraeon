@@ -5,7 +5,9 @@ import { gunzipSync } from "node:zlib";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   FileNativePlayPresetStore,
+  defaultPlayPresetFiles,
   isPlayPresetBinding,
+  revisionForPlayPresetFiles,
   type FileNativePlayPresetLibrary,
   type FileNativePlayPresetView,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -268,28 +270,120 @@ test.each([
       path: "orchestration.yaml",
       contents: imported.preset.files["orchestration.yaml"],
     });
+    const roundTrip = await store.importPortable({
+      name: "Round trip",
+      files: exported,
+    });
+    expect(roundTrip.preset.files).toEqual(imported.preset.files);
+    const copied = await store.copy(imported.preset.id);
+    expect(copied.preset.files).toEqual(imported.preset.files);
+    const created = await store.create("From released files", files);
+    expect(created.preset.files).toEqual(imported.preset.files);
     await expect(fs.access(join(root, oldFilename))).rejects.toMatchObject({
       code: "ENOENT",
     });
   },
 );
 
-test("a released v1 revision remains available when the inline conversion exceeds the file limit", async () => {
-  const fixture = await releasedFixture(v1);
-  const raw = fixture.files![`config/${oldFilename}`]!;
-  const previous = (JSON.parse(raw) as ReleasedLibrary).presets.find(
-    ({ id }) => id === fixture.presetId,
-  )!;
-  const root = await temporaryRoot();
-  await fs.writeFile(join(root, oldFilename), raw);
-  const store = new FileNativePlayPresetStore(root, {
-    limits: { maxFileBytes: 8000 },
+test.each(["small limit", "default limit"] as const)(
+  "a legacy v1 revision stays usable with a %s when inline conversion is too large",
+  async (mode) => {
+    const fixture = await releasedFixture(v1);
+    const original = fixture.files![`config/${oldFilename}`]!;
+    const library = JSON.parse(original) as ReleasedLibrary;
+    const previous = library.presets.find(({ id }) => id === fixture.presetId)!;
+    if (mode === "default limit") {
+      const files = {
+        ...previous.revisions[previous.currentRevision]!,
+        "blocks/style.md": "a".repeat(2_300_000),
+        "blocks/adjudication.md": "b".repeat(2_300_000),
+      };
+      const revision = revisionForPlayPresetFiles(files);
+      previous.revisions[revision] = files;
+      previous.currentRevision = revision;
+    }
+    const raw = mode === "small limit" ? original : JSON.stringify(library);
+    const oldFiles = previous.revisions[previous.currentRevision]!;
+    const root = await temporaryRoot();
+    await fs.writeFile(join(root, oldFilename), raw);
+    const zh = mode === "default limit";
+    const store = new FileNativePlayPresetStore(root, {
+      locale: () => (zh ? "zh-CN" : "en"),
+      ...(mode === "small limit" ? { limits: { maxFileBytes: 8000 } } : {}),
+    });
+    await store.initialize();
+    expect(store.recovery).toBeNull();
+    const binding = await store.bindCurrent();
+    expect(binding.revision).toBe(previous.currentRevision);
+    expect(binding.files).toEqual(oldFiles);
+    const stored = (await store.list()).presets.find(
+      ({ id }) => id === previous.id,
+    )!;
+    const structure = stored.structure!;
+    expect(structure.migrationNotice).toContain(
+      zh ? "保存并应用" : "then save and apply",
+    );
+    const rejection = {
+      code: "orchestration_migration_required",
+      message: structure.migrationNotice,
+    };
+    const newPath = join(root, filename);
+    const saved = await fs.readFile(newPath);
+    await expect(store.exportPortable(previous.id)).rejects.toMatchObject(
+      rejection,
+    );
+    await expect(store.copy(previous.id)).rejects.toMatchObject(rejection);
+    await expect(
+      store.create("New from old files", oldFiles),
+    ).rejects.toMatchObject(rejection);
+    await expect(
+      store.importPortable({ name: "Still too big", files: oldFiles }),
+    ).rejects.toMatchObject(rejection);
+    expect(await fs.readFile(newPath)).toEqual(saved);
+    expect(await store.bindCurrent()).toEqual(binding);
+
+    for (const entry of [
+      ...structure.playPrompts!,
+      ...structure.authorPrompts!,
+    ])
+      if (entry.kind === "user") entry.body = "Shortened prompt.";
+    const cleaned = await store.save({
+      presetId: previous.id,
+      name: stored.name,
+      files: oldFiles,
+      structure,
+    });
+    expect(cleaned.preset.draft?.files["orchestration.yaml"]).toContain(
+      "Shortened prompt.",
+    );
+    await store.select(previous.id);
+    const exported = await store.exportPortable(previous.id);
+    const imported = await store.importPortable({
+      name: "Reimported",
+      files: exported,
+    });
+    expect(imported.preset.files).toEqual((await store.bindCurrent()).files);
+    expect(imported.preset.files["blocks/style.md"]).toBe(
+      oldFiles["blocks/style.md"],
+    );
+    expect(
+      (await store.readRevision(previous.id, previous.currentRevision)).files,
+    ).toEqual(oldFiles);
+    expect(await fs.readFile(join(root, oldFilename), "utf8")).toBe(raw);
+    await expect(fs.access(join(root, filename))).resolves.toBeUndefined();
+  },
+);
+
+test("export refuses valid text whose JSON exceeds the HTTP import request limit", async () => {
+  const store = new FileNativePlayPresetStore(await temporaryRoot());
+  const escaped = "\u0001".repeat(4_000_000);
+  const { preset } = await store.create("Escaped assets", {
+    ...defaultPlayPresetFiles,
+    "assets/one.txt": escaped,
+    "assets/two.txt": escaped,
   });
-  await store.initialize();
-  expect(store.recovery).toBeNull();
-  const binding = await store.bindCurrent();
-  expect(binding.revision).toBe(previous.currentRevision);
-  expect(binding.files).toEqual(previous.revisions[previous.currentRevision]);
-  expect(await fs.readFile(join(root, oldFilename), "utf8")).toBe(raw);
-  await expect(fs.access(join(root, filename))).resolves.toBeUndefined();
+  expect(preset.validation.status).toBe("valid");
+  await expect(store.exportPortable(preset.id)).rejects.toMatchObject({
+    code: "orchestration_export_too_large",
+  });
 });

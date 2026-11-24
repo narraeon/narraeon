@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -7,6 +7,7 @@ import { upgradeOrderedPromptFormat } from "../../src/runtime/play/OrderedPlayPr
 import {
   FileNativePlayPresetStore,
   defaultPlayPresetFiles,
+  revisionForPlayPresetFiles,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
 const roots: string[] = [];
@@ -19,7 +20,6 @@ test("invalid convertible ordered presets retain their original bytes", async ()
   const root = await mkdtemp(join(tmpdir(), "ordered-play-invalid-"));
   roots.push(root);
   const store = new FileNativePlayPresetStore(root);
-  await store.initialize();
   const files = {
     "preset.yaml": stringify({
       format: "narraeon.play-preset/v2",
@@ -39,12 +39,42 @@ test("invalid convertible ordered presets retain their original bytes", async ()
     }),
   };
   expect(upgradeOrderedPromptFormat(files)).not.toEqual(files);
-  const created = await store.create("Incomplete", files);
-  expect(created.preset.files).toEqual(files);
-  expect(created.preset.validation.status).toBe("invalid");
+  const id = "legacy-incomplete";
+  const defaultFiles = defaultPlayPresetFiles;
+  const currentRevision = revisionForPlayPresetFiles(files);
+  const defaultRevision = revisionForPlayPresetFiles(defaultFiles);
+  await writeFile(
+    join(root, "file-native-play-presets.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      currentPresetId: "default",
+      presets: [
+        {
+          id: "default",
+          name: "default",
+          enabled: true,
+          scriptsEnabled: true,
+          currentRevision: defaultRevision,
+          revisions: { [defaultRevision]: defaultFiles },
+        },
+        {
+          id,
+          name: "Incomplete",
+          enabled: true,
+          scriptsEnabled: false,
+          currentRevision,
+          revisions: { [currentRevision]: files },
+        },
+      ],
+    }),
+  );
+  await store.initialize();
+  await expect(store.create("Incomplete", files)).rejects.toMatchObject({
+    code: "call_chain_missing",
+  });
   const savedFiles = { ...files, "prompts/notes.md": "Keep this draft" };
   const saved = await store.save({
-    presetId: created.preset.id,
+    presetId: id,
     name: "Incomplete",
     files: savedFiles,
   });
@@ -53,7 +83,7 @@ test("invalid convertible ordered presets retain their original bytes", async ()
   await cold.initialize();
   expect(cold.recovery).toBeNull();
   const reopened = (await cold.list()).presets.find(
-    ({ id }) => id === created.preset.id,
+    (preset) => preset.id === id,
   )!;
   expect(reopened.files).toEqual(files);
   expect(reopened.draft?.files).toEqual(savedFiles);
@@ -572,7 +602,7 @@ test.each(["en", "zh-CN"] as const)(
   },
 );
 
-test("one damaged legacy frame stays inspectable without breaking the preset library", async () => {
+test("a damaged legacy frame is rejected when creating a new orchestration", async () => {
   const root = await mkdtemp(join(tmpdir(), "ordered-damaged-"));
   roots.push(root);
   const store = new FileNativePlayPresetStore(root);
@@ -580,13 +610,10 @@ test("one damaged legacy frame stays inspectable without breaking the preset lib
   const current = await store.bindCurrent();
   const files = legacyDefaultPlayPresetFilesForLocale("en");
   files["frame.yaml"] = "roles: { runtime_system: 123 }";
-  const imported = await store.create("Repair me", files);
-  expect(imported.preset.validation.status).toBe("invalid");
-  const library = await store.list();
-  expect(library.presets).toHaveLength(2);
-  expect(
-    library.presets.find((entry) => entry.id === imported.preset.id)?.files,
-  ).toEqual(files);
+  await expect(store.create("Repair me", files)).rejects.toMatchObject({
+    code: "orchestration_migration_required",
+  });
+  expect((await store.list()).presets).toHaveLength(1);
   expect(await store.bindCurrent()).toEqual(current);
 });
 

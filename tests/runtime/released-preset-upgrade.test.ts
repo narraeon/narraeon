@@ -24,6 +24,7 @@ import {
   type ScriptedModelHostStep,
 } from "../../src/runtime/model/ModelHost.ts";
 import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
+import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 
 test("v0.4.0 实际发布代码写出的预设、世界、原生请求与产物可冷升级", async () => {
   const fixture = JSON.parse(
@@ -195,6 +196,59 @@ test("v0.4.0 实际发布代码写出的预设、世界、原生请求与产物�
         ),
       ),
     ).rejects.toThrow();
+
+    const runtime = new V1Runtime({ configRoot: config, dataRoot: root });
+    await runtime.initialize();
+    const model = {
+      provider: "chat_completions" as const,
+      modelId: "preview",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 8_192,
+    };
+    await runtime.handle({
+      type: "model.save",
+      connection: {
+        ...model,
+        name: "Preview",
+        presetId: "custom",
+        baseUrl: "http://127.0.0.1:1/v1",
+        apiKey: "preview",
+      },
+    });
+    const { result: content } = await runtime.handle({
+      type: "content.create",
+    });
+    const { localId: packageId } = content as { localId: string };
+    for (const [locale, legacyText, authorText] of [
+      [
+        "en",
+        "current play preset",
+        "current orchestration's enabled play-author semantics",
+      ],
+      ["zh-CN", "当前玩法文件", "当前编排方案实际启用的游玩作者语义"],
+    ] as const) {
+      await runtime.handle({ type: "preferences.save", locale });
+      const play = await runtime.handle({
+        type: "prompt.preview",
+        packageId,
+        playerInput: "Preview only",
+        model,
+        playPresetId: old.id,
+        playPresetRevision: old.revision,
+      });
+      expect(play.result).toMatchObject({
+        diagnosticBinding: {
+          playPresetId: old.id,
+          playPresetRevision: old.revision,
+        },
+      });
+      expect(JSON.stringify(play.result).includes(legacyText)).toBe(false);
+      const author = await runtime.handle({
+        type: "setting-improvement.preview",
+        packageId,
+      });
+      expect(JSON.stringify(author.result)).toContain(authorText);
+    }
 
     const chains = new PlayCallChain(worlds, undefined, artifacts);
     const historical = await chains.inspectWorld(fixture.worldId);

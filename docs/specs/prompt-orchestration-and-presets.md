@@ -20,7 +20,7 @@
 
 ### 2.1 `narraeon.orchestration/v1` 叠加表示与系统种子所有权
 
-新编排方案与应用模板使用 `orchestration.yaml`，格式为 `narraeon.orchestration/v1`。本地库 `file-native-orchestrations.json` 保存 `schemaVersion: 1`、`currentOrchestrationId` 与 `orchestrations`。便携导出为 `.orchestration.json`，只包含路径和文本内容。
+新编排方案与应用模板使用 `orchestration.yaml`，格式为 `narraeon.orchestration/v1`。本地库 `file-native-orchestrations.json` 保存 `schemaVersion: 1`、`currentOrchestrationId` 与 `orchestrations`。便携导出为 `.orchestration.json`，只包含路径和文本内容。Runtime 在导出前用当前导入规则校验格式与请求体积。
 
 - **应用目录所有权**：内置系统块的正文、稳定身份、元信息、默认启停与默认顺序属于应用目录，不复制完整系统正文进磁盘文件。
 - **持久化叠加内容**：`playPrompts` 与 `authorPrompts` 仅持久化用户自定义正文、必要的系统引用身份、显式角色／启停／尾部行覆盖（包括清空）、选项组选择和自定义顺序。编辑器、保存校验、复制、导入导出、Prompt Preview 与生产编译共用同一有效编排解析层。
@@ -47,7 +47,7 @@
 
 | 旧 `preset.yaml` 格式 | 转换规则 |
 | --- | --- |
-| `narraeon.play-preset/v1` | 旧主持块和叙事块成为独立用户条目，保留正文、启停和顺序。对应的可选系统游玩块默认停用。世界指令和材料合并在首次世界位置。原有作者正文成为独立条目并停用对应系统建议。没有旧作者声明时采用应用目录的默认作者指导。超出当前便携格式体积或条目上限的方案沿用原修订，整理后可在工作台保存。 |
+| `narraeon.play-preset/v1` | 旧主持块和叙事块成为独立用户条目，保留正文、启停和顺序。对应的可选系统游玩块默认停用。世界指令和材料合并在首次世界位置。原有作者正文成为独立条目并停用对应系统建议。没有旧作者声明时采用应用目录的默认作者指导。超出当前便携格式体积或条目上限的方案继续使用原修订。工作台提示缩短提示词并保存、应用后再复制或导出。原文可在「高级文件」查看。 |
 | `narraeon.play-preset/v2` | 原完整列表按已发布的必选身份校验，再转为叠加表示，保留用户块、克隆、顺序、角色和尾部覆盖。后续发布的必选块由有效编排解析层补入。 |
 | `narraeon.play-preset/v3` | 沿用原叠加内容，仅更新清单文件名和格式标识。 |
 

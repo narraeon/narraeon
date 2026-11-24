@@ -69,6 +69,7 @@ import {
   type PlayPresetPromptRole,
 } from "../../shared/play-preset-prompt-roles.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
+import { v1Protocol, v1RuntimeRequestBodyLimit } from "../../protocol/v1.ts";
 export type PlayPresetArtifactStrategy =
   "append" | "replace" | "upsert" | "transient" | "hidden";
 
@@ -753,7 +754,11 @@ export class FileNativePlayPresetStore {
         previous.kind === "valid" &&
         previous.definition.playPrompts !== undefined
       ) {
-        const definition = assertCurrentOrchestration(files, this.#limits);
+        const definition = assertCurrentOrchestration(
+          files,
+          this.#limits,
+          this.#locale(),
+        );
         assertReadonlyPromptsRetained(
           previous.definition.playPrompts,
           definition.playPrompts ?? [],
@@ -970,10 +975,27 @@ export class FileNativePlayPresetStore {
   async exportPortable(id: string): Promise<ContentTreeFile[]> {
     await this.#tail;
     const stored = findStored(await this.#read(), id);
-    const files = stored.revisions[stored.currentRevision]!;
-    return Object.keys(files)
+    const files = upgradeValidOrchestration(
+      stored.revisions[stored.currentRevision]!,
+      this.#limits,
+    );
+    const locale = this.#locale();
+    assertCurrentOrchestration(files, this.#limits, locale);
+    const portable = Object.keys(files)
       .sort()
       .map((path) => ({ path, contents: files[path]! }));
+    const importRequest = JSON.stringify({
+      protocol: v1Protocol,
+      request: { type: "play.import", name: stored.name, files: portable },
+    });
+    if (Buffer.byteLength(importRequest, "utf8") > v1RuntimeRequestBodyLimit)
+      throw new FileNativePlayPresetError(
+        "orchestration_export_too_large",
+        locale === "zh-CN"
+          ? "这份编排方案的 JSON 超出导入请求大小上限。请减少资源或提示词的体积，保存并应用后再导出。"
+          : "This orchestration's JSON exceeds the import request size limit. Reduce the size of its resources or prompts, then save and apply before exporting.",
+      );
+    return portable;
   }
 
   async importPortable(input: {
@@ -985,7 +1007,7 @@ export class FileNativePlayPresetStore {
       toFileMap(input.files, this.#limits),
       this.#limits,
     );
-    assertCurrentOrchestration(files, this.#limits);
+    assertCurrentOrchestration(files, this.#limits, this.#locale());
     return this.#change(async () => {
       const document = await this.#read();
       const stored = this.#stored(randomUUID(), input.name, files);
@@ -1175,13 +1197,15 @@ export class FileNativePlayPresetStore {
     rawFiles: Record<string, string>,
   ): StoredPreset {
     const name = normalizeName(rawName);
-    const files = cloneFiles(upgradeValidOrchestration(rawFiles, this.#limits));
+    const files = upgradeValidOrchestration(rawFiles, this.#limits);
+    if (Object.hasOwn(files, legacyManifest))
+      assertCurrentOrchestration(files, this.#limits, this.#locale());
     const revision = revisionForFiles(files, this.#limits);
     return {
       id,
       name,
       currentRevision: revision,
-      revisions: { [revision]: files },
+      revisions: { [revision]: cloneFiles(files) },
       enabled: true,
       scriptsEnabled: true,
     };
@@ -1199,7 +1223,7 @@ export class FileNativePlayPresetStore {
       name: stored.name,
       revision: stored.currentRevision,
       files: cloneFiles(files),
-      ...editorProjection(files, this.#limits),
+      ...editorProjection(files, this.#limits, this.#locale()),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
     };
@@ -1213,7 +1237,7 @@ export class FileNativePlayPresetStore {
       view.draft = {
         revision: stored.draftRevision,
         files: cloneFiles(draftFiles),
-        ...editorProjection(draftFiles, this.#limits),
+        ...editorProjection(draftFiles, this.#limits, this.#locale()),
       };
     }
     return view;
@@ -1283,16 +1307,17 @@ export function validatePlayPresetFiles(
 function editorProjection(
   files: Record<string, string>,
   limits: PortableContentTreeLimits,
+  locale: AppLocale,
 ): Pick<FileNativePlayPresetView, "validation" | "structure"> {
   const validation = validatePlayPresetFiles(files, limits);
   if (validation.status === "invalid") return { validation };
   const parsed = parsePlayPresetFiles(files, limits);
   if (parsed.kind === "invalid") return { validation };
   try {
-    return {
-      validation,
-      structure: toPlayPresetStructuredEditor(parsed.definition),
-    };
+    const structure = toPlayPresetStructuredEditor(parsed.definition);
+    if (parsed.definition.format === "narraeon.play-preset/v1")
+      structure.migrationNotice = legacyOrchestrationMigrationNotice(locale);
+    return { validation, structure };
   } catch (error: unknown) {
     return {
       validation: {
@@ -1332,12 +1357,6 @@ export function toPlayPresetStructuredEditor(
           )
         : withModelPrompt(definition.playPrompts, "play"),
     ),
-    ...(definition.playPrompts
-      ? {}
-      : {
-          migrationNotice:
-            "旧世界指令与材料归并到首次世界位置，其他提示相对顺序及正文保留；历史请求不变。保存后采用统一编排。",
-        }),
     callChainPath: definition.callChainPath,
     ...(definition.settingImprovementPrompt === undefined
       ? {}
@@ -3336,16 +3355,23 @@ function toFileMap(
   return files;
 }
 
+function legacyOrchestrationMigrationNotice(locale: AppLocale): string {
+  return locale === "zh-CN"
+    ? "这份旧编排方案需要整理后才能复制或导出。请打开「游玩」或「设定完善」，缩短较长的提示词，保存并应用。原文可在「高级文件」查看。"
+    : "This legacy orchestration needs editing before it can be copied or exported. In Play or Setting improvement, shorten the longest prompts, then save and apply. The original text is available in Advanced files.";
+}
+
 function assertCurrentOrchestration(
   files: Record<string, string>,
   limits: PortableContentTreeLimits,
+  locale: AppLocale,
 ): PlayPresetDefinition {
   const parsed = parsePlayPresetFiles(files, limits);
   if (parsed.kind === "invalid") throw parsed.error;
   if (parsed.definition.format !== orchestrationFormat)
     throw new FileNativePlayPresetError(
-      "preset_format_invalid",
-      "Repair the legacy orchestration files before using this revision",
+      "orchestration_migration_required",
+      legacyOrchestrationMigrationNotice(locale),
     );
   return parsed.definition;
 }

@@ -358,7 +358,7 @@ const runtimeContracts: Record<
     play: `# Runtime authority boundary
 
 - Only Runtime can formally write an operation into the world. Model text and tool calls cannot bypass Runtime to commit results directly.
-- The current play preset declares narrative rules, call-chain tools, and follow-up artifacts. Any capability it does not declare is unavailable.
+- The current orchestration declares narrative rules, call-chain tools, and follow-up artifacts. Any capability it does not declare is unavailable.
 - Editable host, world, and play prompts determine story semantics, player agency, point of view, and style. Runtime checks only files, references, authority, and atomic commits; it does not judge the story for the author.`,
     tools: `# Runtime tool contract
 
@@ -389,7 +389,7 @@ ${historyUseGuidance("en")}`,
     play: `# Runtime 权限边界
 
 - 只有 Runtime 能把一次操作正式写入世界。模型的文字或工具调用都不能绕过 Runtime 直接提交结果。
-- 当前玩法文件声明叙事规则、调用链工具和后置产物；未声明的能力一律不可用。
+- 当前编排方案声明叙事规则、调用链工具和后置产物；未声明的能力一律不可用。
 - 可编辑的主持、世界和玩法提示决定故事语义、玩家代理权、人称与文风；Runtime 只检查文件、引用、权限和原子提交，不替作者判断剧情。`,
     tools: `# Runtime 工具契约
 
@@ -1619,12 +1619,12 @@ function settingImprovementPresetReference(
         : " (built-in blocks shown as boundary summaries, custom/cloned blocks verbatim)";
   const explanation =
     locale === "zh-CN"
-      ? `以下是当前预设实际启用的游玩作者语义${summaryNote}，用于核对兼容性、重复规则和概念权重；未启用的政策不视为已有保证。不要模仿这些块的句式、节奏或镜头写入 ${revision ? "state/" : "world/"}，也不要把跨世界规则复制进 control/。需要配合时，表达最少的当前事实、稳定不变量或本世界特有的控制约束。本轮用于${revision ? "运行中世界的讨论与修订，保留当前时点已演变的事实；应用后继续游玩" : "内容包讨论与当前树编辑；创建世界后开始游玩"}。此参考不要求本轮生成玩家故事。`
-      : `These are the current preset's enabled play-author semantics${summaryNote}, used to check compatibility, duplicate rules and conceptual weight. Disabled policies are not guarantees. Do not imitate their sentences, pacing or staged gestures in ${revision ? "state/" : "world/"}, or copy cross-world rules into control/. Express the minimum current facts, stable invariants or world-specific constraints needed. This conversation ${revision ? "discusses and revises a running world at its evolved current time; play continues after Apply" : "discusses and edits the content package; play begins after world creation"}. This reference does not request a player story in this conversation.`;
+      ? `以下是当前编排方案实际启用的游玩作者语义${summaryNote}，用于核对兼容性、重复规则和概念权重；未启用的政策不视为已有保证。不要模仿这些块的句式、节奏或镜头写入 ${revision ? "state/" : "world/"}，也不要把跨世界规则复制进 control/。需要配合时，表达最少的当前事实、稳定不变量或本世界特有的控制约束。本轮用于${revision ? "运行中世界的讨论与修订，保留当前时点已演变的事实；应用后继续游玩" : "内容包讨论与当前树编辑；创建世界后开始游玩"}。此参考不要求本轮生成玩家故事。`
+      : `These are the current orchestration's enabled play-author semantics${summaryNote}, used to check compatibility, duplicate rules and conceptual weight. Disabled policies are not guarantees. Do not imitate their sentences, pacing or staged gestures in ${revision ? "state/" : "world/"}, or copy cross-world rules into control/. Express the minimum current facts, stable invariants or world-specific constraints needed. This conversation ${revision ? "discusses and revises a running world at its evolved current time; play continues after Apply" : "discusses and edits the content package; play begins after world creation"}. This reference does not request a player story in this conversation.`;
   const none =
     locale === "zh-CN"
-      ? "（当前预设没有启用主持或叙事作者块。）"
-      : "(The current preset enables no host or narrative author blocks.)";
+      ? "（当前编排方案没有启用主持或叙事作者块。）"
+      : "(The current orchestration enables no host or narrative author blocks.)";
   const groups = [
     settingImprovementReferenceGroup(
       ordered === undefined

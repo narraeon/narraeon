@@ -145,8 +145,9 @@ export function ArtifactDebugger({
                 {panel.head}
               </span>
               <span>
-                source：{panel.source.viewId} · current preset {panel.preset.id}
-                /{panel.preset.revision}
+                {uiText("来源")} · {panel.source.viewId} ·{" "}
+                {uiText("当前编排方案")} {panel.preset.id}/
+                {panel.preset.revision}
               </span>
               {panel.diagnostics.length === 0 ? null : (
                 <ul>
