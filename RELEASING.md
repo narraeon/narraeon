@@ -125,9 +125,8 @@ it does not affect the npm Trusted Publishing registration.
 - The APK version comes from `package.json`. `versionCode` is
   `major * 10000 + minor * 100 + patch`, so patch numbers must stay below 100.
 - The APK supports `arm64-v8a` only.
-- Without signing secrets, the APK is signed with the debug key. It installs
-  and runs, but it is not a production signature, so do not publish it as the
-  long-term distribution key.
+- Release builds require all four signing variables below. For a local APK
+  signed with the debug key, run `./gradlew assembleDebug` from `android/`.
 
 ### Signing secrets
 
@@ -148,6 +147,6 @@ Store these repository secrets:
 - `ANDROID_KEY_PASSWORD`: the key password. For PKCS12 keystores this must equal
   the keystore password.
 
-Delete the `.jks` and `.b64` files after the secrets are stored. If any of the
-four secrets is missing, the workflow still succeeds and prints a warning that
-the release is signed with the debug key.
+Delete the `.jks` and `.b64` files after the secrets are stored. The workflow
+passes the secrets to Gradle as environment variables. If any are unset or
+blank, the build fails before upload and reports the missing variable names.
