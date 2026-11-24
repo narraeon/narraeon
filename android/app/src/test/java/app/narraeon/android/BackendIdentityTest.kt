@@ -7,6 +7,7 @@ import java.util.concurrent.Executors
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class BackendIdentityTest {
@@ -21,6 +22,15 @@ class BackendIdentityTest {
         val identity = BackendIdentity()
         assertEquals(BackendIdentity.Verification.Unverified, request(identity, BackendIdentity().startupKey))
         assertEquals(BackendIdentity.Verification.Unverified, request(identity, null))
+    }
+
+    @Test
+    fun runtimeCookieUsesThisLaunchKeyAndIsScopedToTheApi() {
+        val identity = BackendIdentity()
+        val expected = sign(identity.startupKey, "narraeon-mobile-runtime/v1")
+        assertEquals("narraeon_mobile_runtime=$expected", identity.runtimeCookie)
+        assertEquals("${identity.runtimeCookie}; Path=/api/runtime/v1; HttpOnly; SameSite=Strict", identity.webViewCookie)
+        assertNotEquals(identity.runtimeCookie, BackendIdentity().runtimeCookie)
     }
 
     private fun request(identity: BackendIdentity, key: String?): BackendIdentity.Verification<String> {

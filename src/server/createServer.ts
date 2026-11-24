@@ -1,5 +1,5 @@
 import { registerConversationStream } from "./ConversationStream.ts";
-import { checkWebAccess } from "./WebAccess.ts";
+import { checkMobileRuntimeAccess, checkWebAccess } from "./WebAccess.ts";
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -99,6 +99,7 @@ export async function createServer(input: {
             redact: {
               paths: [
                 "req.headers.authorization",
+                "req.headers.cookie",
                 "req.headers.x-api-key",
                 "req.body",
               ],
@@ -113,13 +114,15 @@ export async function createServer(input: {
     "onRequest",
     checkWebAccess(input.port, input.trustedOrigins ?? []),
   );
+  const mobileStartupKey = input.mobileStartupKey;
+  if (mobileStartupKey !== undefined)
+    server.addHook("onRequest", checkMobileRuntimeAccess(mobileStartupKey));
   const html = await readFile(join(input.staticRoot, "index.html"), "utf8");
   const logRuntimeRequest: preHandlerHookHandler = (request, _reply, done) => {
     if (!isPollingRequest(request))
       request.log.info({ req: request }, "incoming request");
     done();
   };
-  const mobileStartupKey = input.mobileStartupKey;
   server.addHook("onSend", (request, reply, payload, done) => {
     void reply
       .header(

@@ -17,6 +17,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -47,7 +48,7 @@ class MainActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val poller = Executors.newSingleThreadExecutor()
     private val rendererCrashes = ArrayDeque<Long>()
-    private val fileSaver = WebFileSaver(this, BACKEND_ORIGIN)
+    private val fileSaver = WebFileSaver(this, BACKEND_ORIGIN, NodeService.backendIdentity)
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
@@ -121,6 +122,8 @@ class MainActivity : AppCompatActivity() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                     val url = request.url
                     val isLocal = url.scheme == "http" && url.encodedAuthority == BACKEND_AUTHORITY
+                    // Cookies are scoped to a host, so block requests to other ports on this host.
+                    if (url.host == "127.0.0.1" && !isLocal) return blockedResource()
                     val isMainFrame = request.isForMainFrame
                     val path = url.encodedPath
                     if (isMainFrame) {
@@ -276,16 +279,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     NodeService.NodeState.Running -> when (NodeService.backendIdentity.verify(URL(BACKEND_URL)) {}) {
                         is BackendIdentity.Verification.Verified -> {
-                            mainHandler.post {
-                                if (isFinishing || isDestroyed) return@post
-                                val current = NodeService.nodeState
-                                if (current is NodeService.NodeState.Exited) {
-                                    showFailure(getString(R.string.failure_backend_exited, current.detail))
-                                } else {
-                                    attachWebView()
-                                    webView?.loadUrl(BACKEND_URL)
-                                }
-                            }
+                            mainHandler.post { loadVerifiedBackend() }
                             return@execute
                         }
                         BackendIdentity.Verification.Unverified -> {
@@ -305,6 +299,24 @@ class MainActivity : AppCompatActivity() {
             if (Thread.currentThread().isInterrupted) return@execute
             DiagnosticLog.append(this, "node-service.log", "backend did not answer within ${STARTUP_TIMEOUT_MS}ms")
             mainHandler.post { showFailure(getString(R.string.failure_backend_timeout)) }
+        }
+    }
+
+    private fun loadVerifiedBackend() {
+        if (isFinishing || isDestroyed) return
+        // Install the cookie before loading the verified document. WebView then
+        // sends it for same-origin fetch and EventSource without exposing it to page JS.
+        CookieManager.getInstance().setCookie(BACKEND_URL, NodeService.backendIdentity.webViewCookie) { accepted ->
+            if (isFinishing || isDestroyed) return@setCookie
+            val state = NodeService.nodeState
+            when {
+                state is NodeService.NodeState.Exited -> showFailure(getString(R.string.failure_backend_exited, state.detail))
+                !accepted -> showFailure(getString(R.string.failure_runtime_access))
+                else -> {
+                    attachWebView()
+                    webView?.loadUrl(BACKEND_URL)
+                }
+            }
         }
     }
 

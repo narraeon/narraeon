@@ -10,6 +10,8 @@ Kotlin 通过匿名管道传递端口、静态资源目录、数据根目录、�
 
 后端固定监听 `127.0.0.1`，不注册信号处理，也不调用 `process.exit()`，并在监听成功后向 stdout 输出 `NARRAEON_READY <port>`。桌面的 `src/server/main.ts` 与 CLI 不变。`npm run build:android` 把构建产物与生产依赖暂存到 `android/app/src/main/assets/narraeon/`；原生侧按 `bundle-version.txt` 把它拷贝到 `filesDir/narraeon/`，用户数据目录位于其外，升级不会覆盖。
 
+Android 壳和嵌入式 Runtime 共用每次进程启动生成的随机密钥。壳先验证 Runtime 对新挑战的 HMAC 应答，并继续验证给 WebView 的首页和构建资源。同一密钥以独立的 HMAC 消息导出调用方凭据。启动核验通过后，壳把凭据放入 WebView 私有的 `HttpOnly`、`SameSite=Strict` 会话 cookie，路径限制在 `/api/runtime/v1`。原生归档下载直接把同一凭据发给本地 Runtime。移动 HTTP 入口在解析请求体或办理业务前核对该凭据，覆盖命令、SSE、上传、下载检查和一次性下载。普通静态响应不签发凭据。进程重启使旧凭据失效，既有 Host／Origin 校验继续生效。桌面 Web 和 CLI 保留原有访问流程。
+
 被拒绝的方案：
 
 - **Capacitor 或 React Native 等跨平台壳**。它们引入额外的桥接层与构建体系，而前端已经是 Web 应用，只需要一个能运行 Node 的原生容器。

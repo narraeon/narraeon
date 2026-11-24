@@ -9,11 +9,13 @@ import java.security.SecureRandom
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-/** One key for the lifetime of the embedded Node instance. Only fresh challenges go over HTTP. */
+/** One key for the lifetime of the embedded Node instance. The key itself stays in the app process. */
 internal class BackendIdentity {
     private val random = SecureRandom()
     private val key = ByteArray(32).also(random::nextBytes)
     val startupKey: String get() = key.hex()
+    val runtimeCookie = "narraeon_mobile_runtime=${sign("narraeon-mobile-runtime/v1")}"
+    val webViewCookie: String get() = "$runtimeCookie; Path=/api/runtime/v1; HttpOnly; SameSite=Strict"
 
     sealed interface Verification<out T> {
         data object Unavailable : Verification<Nothing>
@@ -23,8 +25,7 @@ internal class BackendIdentity {
 
     fun <T> verify(url: URL, read: (HttpURLConnection) -> T): Verification<T> {
         val challenge = ByteArray(32).also(random::nextBytes).hex()
-        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, algorithm)) }
-        val expected = mac.doFinal("$challenge\n${url.file}".toByteArray(Charsets.US_ASCII)).hex()
+        val expected = sign("$challenge\n${url.file}")
         val connection = url.openConnection(Proxy.NO_PROXY) as HttpURLConnection
         return try {
             connection.instanceFollowRedirects = false
@@ -47,6 +48,11 @@ internal class BackendIdentity {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun sign(message: String): String {
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, algorithm)) }
+        return mac.doFinal(message.toByteArray(Charsets.US_ASCII)).hex()
     }
 
     private fun ByteArray.hex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
