@@ -365,6 +365,7 @@ async function observeExit(run, at, stream, timeout) {
           error: terminal.error,
           responseClosedMsFromSigterm: elapsed(at, terminal.at),
           socketClosedMsFromSigterm: elapsed(at, stream.socketClosedAt),
+          exitMsAfterResponseClosed: elapsed(terminal.at, run.exit.at),
         }
       : null,
     portRebound: port.bound,
@@ -388,10 +389,12 @@ function assertCommittedExchange(view, assistantText) {
     view.events.filter(({ kind }) => kind === "player").map(({ text }) => text),
     [playerText, nextPlayerText],
   );
-  assert(
-    view.events.some(
-      ({ text, committedHead }) => text === assistantText && committedHead,
-    ),
+  assert.equal(
+    view.events.filter(
+      ({ kind, text, committedHead }) =>
+        kind === "assistant" && text === assistantText && committedHead,
+    ).length,
+    1,
   );
 }
 
@@ -513,7 +516,7 @@ async function runChecks(providerPort) {
     assert.equal(activeReport.whileProviderHeld.finalResultReceived, false);
 
     const waitForPeerClose =
-      values["natural-keepalive"] && name === "ndjsonDrainedKeepAlive";
+      values["natural-keepalive"] && keepAlive && !forceStop;
     if (forceStop) {
       activeReport.harnessSigkillMsFromSigterm = elapsed(at);
       assert(active.child.kill("SIGKILL"));
@@ -526,6 +529,7 @@ async function runChecks(providerPort) {
         "response to end after Provider completion",
       );
       assert.equal(stream.terminal.kind, "eof");
+      assert.equal(stream.terminal.httpComplete, true);
       assert.equal(finalView(stream)?.status, "ready");
       await waitFor(() => held.terminal, "Provider HTTP close");
       assert.equal(held.terminal, "finished");
@@ -604,7 +608,10 @@ async function runChecks(providerPort) {
       assert.equal(activeReport.connection.kind, "eof");
       assert.equal(held.terminal, "finished");
       assert.equal(restored.status, "ready");
-      assert.notEqual(restored.head, before.head);
+      const beforeTurn = Number(before.head.split(":")[1]);
+      const restoredTurn = Number(restored.head.split(":")[1]);
+      activeReport.commitsAdded = restoredTurn - beforeTurn;
+      assert.equal(activeReport.commitsAdded, 1);
       assertCommittedExchange(restored, finishedText);
     }
     assertGraceful(await observeExit(restarted, terminate(restarted)));

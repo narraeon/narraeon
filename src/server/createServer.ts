@@ -2,6 +2,7 @@ import { registerConversationStream } from "./ConversationStream.ts";
 import { checkMobileRuntimeAccess, checkWebAccess } from "./WebAccess.ts";
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 import { PassThrough } from "node:stream";
@@ -114,6 +115,7 @@ export async function createServer(input: {
               : { stream: input.logStream }),
           },
   });
+  closeConnectionsAfterDrain(server);
   const trustedOrigins = input.trustedOrigins ?? [];
   if (input.port === 0) {
     // Port zero is resolved by the socket bind, after the request hooks are registered.
@@ -360,6 +362,31 @@ function archiveDownloadFailure(
       },
     });
   throw error;
+}
+
+function closeConnectionsAfterDrain(server: FastifyInstance): void {
+  let closing = false;
+  server.addHook("preClose", () => {
+    closing = true;
+    return Promise.resolve();
+  });
+
+  const connections = new WeakMap<Socket, { inFlight: number }>();
+  server.server.prependListener("request", (request, response) => {
+    const socket = request.socket;
+    const connection = connections.get(socket) ?? { inFlight: 0 };
+    connections.set(socket, connection);
+    connection.inFlight++;
+    const complete = (): void => {
+      connection.inFlight--;
+      // A socket can have multiple pipelined requests with buffered replies.
+      if (closing && connection.inFlight === 0) socket.destroySoon();
+    };
+    response.once("finish", () => {
+      if (request.complete) complete();
+      else request.once("end", complete);
+    });
+  });
 }
 
 function acceptsPlayCallChainStream(request: FastifyRequest): boolean {

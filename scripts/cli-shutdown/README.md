@@ -16,7 +16,7 @@ probe_cli="$probe_package/consumer/node_modules/.bin/narraeon"
 node scripts/cli-shutdown/probe.mjs --cli "$probe_cli" > "$probe_package/shutdown.json"
 ```
 
-用以下命令等服务器自行回收 NDJSON 的 keep-alive 套接字。这个用例约需 75 秒，其他用例沿用快速模式。
+用以下命令等服务器自行回收普通 JSON 和 NDJSON 的 keep-alive 套接字。修复前这两个用例各需约 75 秒。
 
 ```sh
 node scripts/cli-shutdown/probe.mjs --cli "$probe_cli" --natural-keepalive > "$probe_package/shutdown-natural.json"
@@ -24,9 +24,9 @@ node scripts/cli-shutdown/probe.mjs --cli "$probe_cli" --natural-keepalive > "$p
 
 探针使用已安装 npm 包的 bin，以 `web --no-open` 启动。每个用例分配独立的 loopback 端口和临时数据、配置、日志目录。重启同一用例时复用这些目录和端口。探针会清理自己的临时目录和子进程。Provider 是 loopback 上的 Chat Completions 模拟端点，先发正文增量，等探针放行再发尾段和完成事件。默认在 SIGTERM 后保持 Provider 活跃 1.5 秒。快速模式再观察 1.5 秒，若已完成的响应仍留下开放的套接字，探针主动关掉它并记录时间。另一个用例由探针向仍在生成的 CLI 发送 SIGKILL，专门验证重启恢复。所有这些时间都是实验控制量。
 
-JSON 记录包含真实 SSE 观测、NDJSON 增量、终态回执、HTTP 消息是否完整和底层套接字关闭时刻。时间以发送 SIGTERM 为零点，负值表示响应在信号前已结束。退出码为 `null` 时，`signal` 指明终止进程的信号。端口由一个独立 TCP listener 试绑。
+JSON 记录包含真实 SSE 观测、NDJSON 增量、终态回执、HTTP 消息是否完整和底层套接字关闭时刻。`exitMsAfterResponseClosed` 是响应结束到进程退出的时间差。`commitsAdded` 是放行 Provider 后重启读到的新增权威提交数，探针要求恰好一轮。以发送 SIGTERM 为零点的字段中，负值表示事件发生在信号前。退出码为 `null` 时，`signal` 指明终止进程的信号。端口由一个独立 TCP listener 试绑。
 
-## 样本与结论
+## #272 基线样本与结论
 
 macOS arm64、Node v26.5.1、Fastify 5.12.8，安装的 Narraeon 包为 `0.9.0-preview.3`。下表取一次快速样本。所有用例退出后均可重新绑定原端口。
 
