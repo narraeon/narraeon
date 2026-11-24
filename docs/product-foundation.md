@@ -130,7 +130,7 @@ Runtime 是唯一提交者（[ADR-0001](adr/0001-runtime-is-the-sole-committer.m
 | 机制 | 官方定位 | 核心语义与并发边界 |
 | --- | --- | --- |
 | **时间线修订（修改消息）** | 核心历史操作（[ADR-0032](adr/0032-player-edits-append-current-world-timeline-revisions.md)） | 当前世界追加 `rewind` 轮回到父端点、删后续轨迹与产物，以修改稿提交（续原或新开上下文）；不保留被替换分支 |
-| **创建分叉** | 唯一新建独立世界的历史操作 | 复制目录至 staging、回退至所选轮、裁剪产物并重分配身份后原子 `rename` 发布；与来源完全独立 |
+| **创建分叉** | 唯一新建独立世界的历史操作 | 复制目标端点所需文件至 staging、用前像恢复所选轮、裁剪产物并重分配身份后原子 `rename` 发布；与来源完全独立 |
 | **世界修订（`world.revision.*`）** | **世界外修改主路径与演进目标**（[ADR-0038](adr/0038-world-revision-uses-one-locked-worktree.md)） | 首次编辑／发消息建跨重启持久独占 epoch，手动+AI 共享 `state/*`+`control/*` 工作树，支持单文件回滚与只读历史导航；`apply` 以同一轮 `revision_apply` 提交，`discard` 不改世界 |
 | **控制编辑（`world.control-draft.*`）** | **保留的高级人工修改入口**（「世界控制 · 高级编辑」） | 手动整批编辑并预览 `control/*` 后应用为 `control_apply` 轮（不可改 `gameplay.json`）；仅单次调用串行，草稿留盘但无跨重启互斥锁 |
 | **连续性修正（`correction.*`）** | **已废弃**（[ADR-0016](adr/0016-continuity-corrections-append-authority-commits.md)，由世界修订取代） | 产品上不再作为有效入口（Web 端未挂载）；后端暂存 `correction.begin`（固定文档模式，进程内占用+冻结控制，重启丢弃，底层 `replaceMaterials()` 公开不可达） |

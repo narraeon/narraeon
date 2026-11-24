@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -468,6 +469,93 @@ function overlayAfter(
   return overlay;
 }
 
+/** Plan the ledger files for a private fork staging directory under the source lock. */
+export async function planForkLedger(
+  root: string,
+  sequence: number,
+): Promise<{
+  shouldCopy: (path: string) => boolean;
+  finish: (staging: string) => Promise<void>;
+}> {
+  const view = await loadView(root);
+  const target = resolvePosition(view, sequence);
+  const rewinds = target !== resolvePosition(view, view.head);
+  const retainedTurns = new Set<string>();
+  for (const position of view.turns.keys()) {
+    if (!rewinds || position <= target)
+      retainedTurns.add(ledgerPath(turnFileName(position)));
+  }
+  const pendingPath = turnFileName(view.head + 1);
+  const pendingText = await readTextOrNull(join(root, pendingPath));
+  const pending =
+    pendingText === null
+      ? undefined
+      : parseTurn(pendingText, basename(pendingPath));
+  const overlay = new Map(
+    pending?.files.map(({ path, before }) => [path, before]),
+  );
+  for (const [path, before] of overlayAfter(view, target))
+    overlay.set(path, before);
+
+  return {
+    shouldCopy: (path) =>
+      path.startsWith("runtime/turns/")
+        ? retainedTurns.has(path)
+        : !overlay.has(path),
+    finish: async (staging) => {
+      const checkedDirectories = new Set([staging]);
+      const checkParent = async (directory: string): Promise<void> => {
+        if (checkedDirectories.has(directory)) return;
+        await checkParent(dirname(directory));
+        const entry = await lstat(directory).catch((error: unknown) => {
+          if (isMissing(error)) return null;
+          throw error;
+        });
+        if (entry !== null && !entry.isDirectory())
+          throw new WorldTurnLedgerError(
+            "invalid_path",
+            `分叉暂存区的父路径不是目录：${directory}`,
+          );
+        checkedDirectories.add(directory);
+      };
+      for (const [path, before] of overlay) {
+        if (before === null) continue;
+        const destination = join(staging, path);
+        await checkParent(dirname(destination));
+        await writeFileAtomic(destination, before);
+      }
+      if (!rewinds) return;
+
+      // Keep the physical sequence so a continuation cannot reuse a discarded
+      // turn number. An unpublished fork is discarded on failure, so it does
+      // not need a rollback journal containing the source's discarded bytes.
+      const record: WorldTurnRecord = {
+        sequence: view.head + 1,
+        mode: "rewind",
+        restoresSequence: target,
+        createdAt: new Date().toISOString(),
+        files: [],
+      };
+      await writeTurnRecord(staging, record);
+      await publishHead(staging, record.sequence);
+    },
+  };
+}
+
+function ledgerPath(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+async function writeTurnRecord(
+  root: string,
+  record: WorldTurnRecord,
+): Promise<void> {
+  const path = turnFileName(record.sequence);
+  const text = `${JSON.stringify(record, null, 2)}\n`;
+  parseTurn(text, basename(path));
+  await writeFileAtomic(join(root, path), text);
+}
+
 async function captureBefore(
   root: string,
   paths: readonly string[],
@@ -509,10 +597,7 @@ export async function beginTurn(
       input.changes.map((change) => change.path),
     ),
   };
-  const path = turnFileName(record.sequence);
-  const text = `${JSON.stringify(record, null, 2)}\n`;
-  parseTurn(text, basename(path));
-  await writeFileAtomic(join(root, path), text);
+  await writeTurnRecord(root, record);
   return record;
 }
 

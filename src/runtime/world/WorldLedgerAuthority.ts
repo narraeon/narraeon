@@ -1,6 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, posix } from "node:path";
 
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";
@@ -387,10 +396,10 @@ export class WorldLedgerAuthority {
   }
 
   /**
-   * 以账本端点重建当前文件（状态、历史投影、历史背景与材料清单）。
-   * 只用于尚未发布的 staging 世界：它先删除投影目录再写入，中途失败由调用方丢弃整个 staging。
+   * 在未发布的暂存区校验当前文件，并修复不符合账本端点的投影。
+   * 返回同一个端点供分叉使用，中途失败由调用方丢弃整个暂存区。
    */
-  async materializeCurrentFiles(): Promise<void> {
+  async reconcileCurrentFiles(): Promise<WorldRecoveredEndpoint> {
     const endpoint = await this.recover();
     const writes = new Map<string, string>();
     for (const file of endpoint.state)
@@ -407,18 +416,20 @@ export class WorldLedgerAuthority {
       writes.set(`history/${file.path}`, file.contents);
     for (const file of projectHistoryBackgrounds(endpoint.history))
       writes.set(`runtime/history-backgrounds/${file.path}`, file.contents);
-    writes.set(
-      materialsFile,
-      `${JSON.stringify({ head: endpoint.head, items: endpoint.additionalMaterials }, null, 2)}\n`,
-    );
-    for (const directory of [
-      "state",
-      "history",
-      join("runtime", "history-backgrounds"),
-    ])
-      await rm(join(this.#root, directory), { recursive: true, force: true });
+    for (const directory of ["state", "history", "runtime/history-backgrounds"])
+      await pruneProjectionTree(this.#root, directory, writes);
     for (const [path, contents] of writes)
       await writeTextAtomic(join(this.#root, path), contents);
+    const materials = `${JSON.stringify({ head: endpoint.head, items: endpoint.additionalMaterials }, null, 2)}\n`;
+    const path = join(this.#root, materialsFile);
+    const entry = await lstatOrNull(path);
+    if (
+      entry === null ||
+      !entry.isFile() ||
+      !(await fileEquals(path, materials))
+    )
+      await writeTextAtomic(path, materials);
+    return endpoint;
   }
 
   async authorityFactAt(head: string): Promise<{
@@ -607,6 +618,78 @@ function surfaceFiles(
     if (path.startsWith(prefix))
       files.push({ path: path.slice(prefix.length), contents });
   return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+// Remove paths outside the projection and leave byte-identical regular files in place.
+// A symlink or a directory in place of a file is removed before a replacement is written.
+async function pruneProjectionTree(
+  root: string,
+  directory: string,
+  writes: Map<string, string>,
+): Promise<void> {
+  const directories = new Set<string>();
+  for (const path of writes.keys()) {
+    if (!path.startsWith(`${directory}/`)) continue;
+    for (
+      let parent = posix.dirname(path);
+      !directories.has(parent);
+      parent = posix.dirname(parent)
+    ) {
+      directories.add(parent);
+      if (parent === directory) break;
+    }
+  }
+  const absolute = join(root, directory);
+  const top = await lstatOrNull(absolute);
+  if (top === null) return;
+  if (!top.isDirectory() || !directories.has(directory)) {
+    await rm(absolute, { recursive: true, force: true });
+    return;
+  }
+
+  const candidates: string[] = [];
+  const visit = async (parent: string): Promise<void> => {
+    for (const entry of await readdir(join(root, parent), {
+      withFileTypes: true,
+    })) {
+      const path = `${parent}/${entry.name}`;
+      const child = join(root, path);
+      if (entry.isDirectory() && directories.has(path)) {
+        await visit(path);
+        continue;
+      }
+      if (entry.isFile() && writes.has(path)) candidates.push(path);
+      else {
+        await rm(child, { recursive: true, force: true });
+      }
+    }
+  };
+  await visit(directory);
+  const batchSize = 8;
+  for (let offset = 0; offset < candidates.length; offset += batchSize) {
+    await Promise.all(
+      candidates.slice(offset, offset + batchSize).map(async (path) => {
+        if (await fileEquals(join(root, path), writes.get(path)!))
+          writes.delete(path);
+      }),
+    );
+  }
+}
+
+async function fileEquals(path: string, contents: string): Promise<boolean> {
+  return (await readFile(path)).equals(Buffer.from(contents, "utf8"));
+}
+
+async function lstatOrNull(
+  path: string,
+): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return null;
+    throw error;
+  }
 }
 
 // 与状态前像哈希保持同一格式（sha256:<hex>）。

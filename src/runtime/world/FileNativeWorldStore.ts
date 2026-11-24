@@ -40,7 +40,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
@@ -78,6 +78,7 @@ import {
 } from "./WorldLedgerAuthority.ts";
 import {
   forgetLedger,
+  planForkLedger,
   recoverIncomplete,
   rewindTo,
   WorldTurnLedgerError,
@@ -1419,20 +1420,22 @@ export class FileNativeWorldStore {
       );
       await mkdir(dirname(finalRoot), { recursive: true, mode: 0o700 });
       try {
-        await copyForkClosure(sourceRoot, staging);
-        await rewindTo(staging, headPosition(sourceHead));
+        const ledger = await planForkLedger(
+          sourceRoot,
+          headPosition(sourceHead),
+        );
+        await copyForkClosure(sourceRoot, staging, ledger.shouldCopy);
+        await ledger.finish(staging);
         await forkArtifactClosure(staging, {
           sourceWorldId: input.sourceWorldId,
           targetWorldId: worldId,
           restoredHead: sourceHead,
         });
-        // 分叉不信任来源的投影文件：当前文件由副本上的账本端点重建。
-        await new WorldLedgerAuthority(staging).materializeCurrentFiles();
-        // 控制与状态一样取自所选端点：回退已把副本的 control/ 恢复到该端点。
-        const selected = await new WorldLedgerAuthority(staging).recover();
-        const selectedControl = await new WorldLedgerAuthority(
-          staging,
-        ).recoverControl(selected.head);
+        const stagedAuthority = new WorldLedgerAuthority(staging);
+        const selected = await stagedAuthority.reconcileCurrentFiles();
+        const selectedControl = await stagedAuthority.recoverControl(
+          selected.head,
+        );
         await PackageScriptPermissions.write(
           staging,
           input.resetPackageScriptPermissions
@@ -2642,7 +2645,7 @@ function headPosition(head: string): number {
   return Number.parseInt(match[1]!, 10);
 }
 
-// 分叉只复制一个世界的闭包；回退与身份重分配由调用方在副本上完成。
+// 分叉复制所选端点需要的文件；前像恢复与身份重分配在暂存区完成。
 const forkClosureEntries = [
   "state",
   "control",
@@ -2659,9 +2662,11 @@ const forkClosureEntries = [
 async function copyForkClosure(
   sourceRoot: string,
   target: string,
+  shouldCopy: (path: string) => boolean,
 ): Promise<void> {
   await mkdir(join(target, "runtime"), { recursive: true, mode: 0o700 });
   for (const entry of forkClosureEntries) {
+    if (!shouldCopy(entry.split(sep).join("/"))) continue;
     const source = join(sourceRoot, entry);
     try {
       await stat(source);
@@ -2670,7 +2675,11 @@ async function copyForkClosure(
       throw error;
     }
     await mkdir(dirname(join(target, entry)), { recursive: true, mode: 0o700 });
-    await cp(source, join(target, entry), { recursive: true });
+    await cp(source, join(target, entry), {
+      recursive: true,
+      filter: (path) =>
+        shouldCopy(relative(sourceRoot, path).split(sep).join("/")),
+    });
   }
 }
 
