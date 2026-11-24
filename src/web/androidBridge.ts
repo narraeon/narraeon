@@ -14,6 +14,20 @@ function androidBridge(): AndroidBridge | undefined {
   return (window as { NarraeonAndroid?: AndroidBridge }).NarraeonAndroid;
 }
 
+export function androidHandledCheckpoints(): Set<string> | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as { narraeonAndroidHandledCheckpoints?: Set<string> })
+    .narraeonAndroidHandledCheckpoints;
+}
+
+export function rememberAndroidCheckpoint(key: string): void {
+  try {
+    androidBridge()?.postMessage(`remember-checkpoint:${key}`);
+  } catch {
+    // The page still remembers the choice if the native bridge goes away.
+  }
+}
+
 export function canExportAndroidLogs(): boolean {
   return androidBridge() !== undefined;
 }

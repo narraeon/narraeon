@@ -15,7 +15,11 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.Process
 import android.util.Log
+import java.io.DataInputStream
+import java.io.EOFException
 import java.io.File
+import java.io.IOException
+import kotlin.concurrent.thread
 import org.json.JSONObject
 
 // Runs the Narraeon backend inside this app process. The Node runtime can only start
@@ -45,7 +49,6 @@ class NodeService : Service() {
                 // Narraeon owner can exist here. Remove the stale file before starting Node.
                 File(filesDir, "data/server.pid").delete()
                 acquireWakeLock()
-                nodeState = NodeState.Running
                 val code = startNode(root, File(crashDir, "node-stderr.log"))
                 nodeState = NodeState.Exited("node exited with code $code")
                 Log.e(TAG, "node exited with code $code")
@@ -66,7 +69,7 @@ class NodeService : Service() {
 
     private fun startNode(root: File, stderrLog: File): Int {
         val config = JSONObject()
-            .put("NARRAEON_PORT", PORT.toString())
+            .put("NARRAEON_PORT", "0")
             .put("NARRAEON_MOBILE_STARTUP_KEY", backendIdentity.startupKey)
             .put("NARRAEON_STATIC_ROOT", File(root, "web").path)
             .put("NARRAEON_DATA_ROOT", File(filesDir, "data").path)
@@ -82,10 +85,39 @@ class NodeService : Service() {
         val (reader, writer) = ParcelFileDescriptor.createPipe()
         return reader.use {
             ParcelFileDescriptor.AutoCloseOutputStream(writer).use { it.write(config) }
-            NativeNode.startNode(
-                arrayOf("node", File(root, "node/server/mobile-bootstrap.js").path, reader.fd.toString()),
-                stderrLog.path,
-            )
+            val (readyReader, readyWriter) = ParcelFileDescriptor.createPipe()
+            var relay: Thread? = null
+            try {
+                readyWriter.use {
+                    relay = thread(name = "narraeon-node-readiness") { receiveReadiness(readyReader) }
+                    NativeNode.startNode(
+                        arrayOf(
+                            "node", File(root, "node/server/mobile-bootstrap.js").path,
+                            reader.fd.toString(), readyWriter.fd.toString(),
+                        ),
+                        stderrLog.path,
+                    )
+                }
+            } finally {
+                // On startup failure, closing the writer releases the waiting reader.
+                // Join before publishing Exited so a late handoff cannot replace it.
+                relay?.join() ?: readyReader.close()
+            }
+        }
+    }
+
+    private fun receiveReadiness(reader: ParcelFileDescriptor) {
+        try {
+            DataInputStream(ParcelFileDescriptor.AutoCloseInputStream(reader)).use { input ->
+                val port = input.readUnsignedShort()
+                if (port == 0) throw IOException("Node reported an invalid listening port")
+                nodeState = NodeState.Ready(BackendEndpoint(port))
+            }
+        } catch (_: EOFException) {
+            // Node returned before publishing readiness. The startup thread reports its exit.
+        } catch (error: IOException) {
+            Log.e(TAG, "could not read Node listening port", error)
+            DiagnosticLog.append(this, "node-service.log", "could not read Node listening port: $error")
         }
     }
 
@@ -185,7 +217,6 @@ class NodeService : Service() {
     }
 
     companion object {
-        const val PORT = 4317
         internal val backendIdentity = BackendIdentity()
         private const val TAG = "NARRAEON-SERVICE"
         private const val ASSET_ROOT = "narraeon"
@@ -196,14 +227,14 @@ class NodeService : Service() {
         private val nodeStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
         @Volatile
-        var nodeState: NodeState = NodeState.NotStarted
+        internal var nodeState: NodeState = NodeState.NotStarted
             private set
     }
 
-    sealed interface NodeState {
+    internal sealed interface NodeState {
         data object NotStarted : NodeState
         data object Preparing : NodeState
-        data object Running : NodeState
+        data class Ready(val endpoint: BackendEndpoint) : NodeState
 
         // node::Start returned or threw. It cannot run again in this process.
         data class Exited(val detail: String) : NodeState

@@ -48,7 +48,8 @@ class MainActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val poller = Executors.newSingleThreadExecutor()
     private val rendererCrashes = ArrayDeque<Long>()
-    private val fileSaver = WebFileSaver(this, BACKEND_ORIGIN, NodeService.backendIdentity)
+    private val fileSaver = WebFileSaver(this, NodeService.backendIdentity)
+    private val checkpointPreferences by lazy { CheckpointPreferences(this) }
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
@@ -112,7 +113,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun attachWebView() {
+    private fun attachWebView(backend: NodeService.NodeState.Ready) {
+        val endpoint = backend.endpoint
         val verifiedDocument = AtomicBoolean(false)
         val view = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -121,7 +123,7 @@ class MainActivity : AppCompatActivity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                     val url = request.url
-                    val isLocal = url.scheme == "http" && url.encodedAuthority == BACKEND_AUTHORITY
+                    val isLocal = url.scheme == "http" && url.encodedAuthority == endpoint.authority
                     // Cookies are scoped to a host, so block requests to other ports on this host.
                     if (url.host == "127.0.0.1" && !isLocal) return blockedResource()
                     val isMainFrame = request.isForMainFrame
@@ -138,19 +140,19 @@ class MainActivity : AppCompatActivity() {
                     // The page and its executable assets are handed to WebView from the same
                     // connections on which they were verified. A failed check cannot fall back to HTTP.
                     val result = NodeService.backendIdentity.verify(URL(url.toString()), ::verifiedResource)
-                    if (result is BackendIdentity.Verification.Verified && NodeService.nodeState == NodeService.NodeState.Running) {
+                    if (result is BackendIdentity.Verification.Verified && NodeService.nodeState == backend) {
                         if (isMainFrame) verifiedDocument.set(true)
                         return result.value
                     }
                     if (isMainFrame) mainHandler.post {
-                        if (webView === view) showUnverifiedBackend()
+                        if (webView === view) showUnverifiedBackend(endpoint)
                     }
                     return blockedResource()
                 }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     if (!request.isForMainFrame) return false
-                    return request.url.scheme != "http" || request.url.encodedAuthority != BACKEND_AUTHORITY
+                    return request.url.scheme != "http" || request.url.encodedAuthority != endpoint.authority
                 }
 
                 @RequiresApi(Build.VERSION_CODES.O)
@@ -181,14 +183,20 @@ class MainActivity : AppCompatActivity() {
         // Only the local backend page may use the bridge (log export, file saves).
         // Sandboxed extension frames have an opaque origin and do not match this rule.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            WebViewCompat.addWebMessageListener(view, BRIDGE_NAME, setOf(BACKEND_ORIGIN)) { _, message, _, isMainFrame, reply ->
+            checkpointPreferences.install(view, endpoint.origin)
+            WebViewCompat.addWebMessageListener(view, BRIDGE_NAME, setOf(endpoint.origin)) { _, message, _, isMainFrame, reply ->
                 val data = message.data ?: return@addWebMessageListener
                 if (!isMainFrame || !verifiedDocument.get() || webView !== view ||
-                    NodeService.nodeState != NodeService.NodeState.Running
+                    NodeService.nodeState != backend
                 ) {
                     return@addWebMessageListener
                 }
-                if (data == EXPORT_LOGS_MESSAGE) LogExport.share(this) else fileSaver.handle(data, reply)
+                when {
+                    data == EXPORT_LOGS_MESSAGE -> LogExport.share(this)
+                    data.startsWith(CheckpointPreferences.REMEMBER) ->
+                        checkpointPreferences.remember(data.removePrefix(CheckpointPreferences.REMEMBER))
+                    else -> fileSaver.handle(data, reply, endpoint)
+                }
             }
         }
         container.removeAllViews()
@@ -277,13 +285,13 @@ class MainActivity : AppCompatActivity() {
                         mainHandler.post { showFailure(getString(R.string.failure_backend_exited, state.detail)) }
                         return@execute
                     }
-                    NodeService.NodeState.Running -> when (NodeService.backendIdentity.verify(URL(BACKEND_URL)) {}) {
+                    is NodeService.NodeState.Ready -> when (NodeService.backendIdentity.verify(URL(state.endpoint.home)) {}) {
                         is BackendIdentity.Verification.Verified -> {
-                            mainHandler.post { loadVerifiedBackend() }
+                            mainHandler.post { loadVerifiedBackend(state) }
                             return@execute
                         }
                         BackendIdentity.Verification.Unverified -> {
-                            mainHandler.post { showUnverifiedBackend() }
+                            mainHandler.post { showUnverifiedBackend(state.endpoint) }
                             return@execute
                         }
                         BackendIdentity.Verification.Unavailable -> Unit
@@ -302,32 +310,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadVerifiedBackend() {
+    private fun loadVerifiedBackend(backend: NodeService.NodeState.Ready) {
+        if (isFinishing || isDestroyed) return
+        checkpointPreferences.migrateLegacy { loadBackendPage(backend) }
+    }
+
+    private fun loadBackendPage(backend: NodeService.NodeState.Ready) {
         if (isFinishing || isDestroyed) return
         // Install the cookie before loading the verified document. WebView then
         // sends it for same-origin fetch and EventSource without exposing it to page JS.
-        CookieManager.getInstance().setCookie(BACKEND_URL, NodeService.backendIdentity.webViewCookie) { accepted ->
+        CookieManager.getInstance().setCookie(backend.endpoint.home, NodeService.backendIdentity.webViewCookie) { accepted ->
             if (isFinishing || isDestroyed) return@setCookie
             val state = NodeService.nodeState
             when {
                 state is NodeService.NodeState.Exited -> showFailure(getString(R.string.failure_backend_exited, state.detail))
                 !accepted -> showFailure(getString(R.string.failure_runtime_access))
-                else -> {
-                    attachWebView()
-                    webView?.loadUrl(BACKEND_URL)
+                state == backend -> {
+                    attachWebView(backend)
+                    webView?.loadUrl(backend.endpoint.home)
                 }
             }
         }
     }
 
-    private fun showUnverifiedBackend() {
+    private fun showUnverifiedBackend(endpoint: BackendEndpoint) {
         DiagnosticLog.append(this, "node-service.log", "backend startup proof did not match")
-        showFailure(getString(R.string.failure_backend_unverified, NodeService.PORT))
+        showFailure(getString(R.string.failure_backend_unverified, endpoint.port))
     }
 
     // A native screen that works without the WebView or the backend.
     private fun showFailure(message: String) {
         if (isFinishing || isDestroyed) return
+        fileSaver.cancelPending()
         webView?.let {
             container.removeView(it)
             it.destroy()
@@ -383,14 +397,13 @@ class MainActivity : AppCompatActivity() {
         pendingFileChooser?.onReceiveValue(null)
         pendingFileChooser = null
         poller.shutdownNow()
+        checkpointPreferences.cancelMigration()
+        fileSaver.cancelPending()
         webView?.destroy()
         super.onDestroy()
     }
 
     companion object {
-        private const val BACKEND_AUTHORITY = "127.0.0.1:${NodeService.PORT}"
-        private const val BACKEND_ORIGIN = "http://$BACKEND_AUTHORITY"
-        private const val BACKEND_URL = "$BACKEND_ORIGIN/"
         private const val BRIDGE_NAME = "NarraeonAndroid"
         private const val EXPORT_LOGS_MESSAGE = "export-logs"
         private const val PAGE_BACK_SCRIPT = "window.narraeonAndroidBack?.() === true"

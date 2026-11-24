@@ -39,6 +39,23 @@ test("clearing browser site data resets checkpoint UI choices", () => {
   expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(false);
 });
 
+test("Android carries handled choices independently of the WebView origin", () => {
+  const firstLaunch = new Set<string>();
+  const postMessage = vi.fn();
+  vi.stubGlobal("narraeonAndroidHandledCheckpoints", firstLaunch);
+  vi.stubGlobal("NarraeonAndroid", { postMessage });
+  rememberHandledCheckpoint("world-one", "commit:3");
+  expect(postMessage).toHaveBeenCalledWith(
+    "remember-checkpoint:narraeon.checkpoint-context.v1:world-one:commit%3A3",
+  );
+  expect(window.localStorage.length).toBe(0);
+
+  vi.stubGlobal("narraeonAndroidHandledCheckpoints", new Set(firstLaunch));
+  expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(true);
+  expect(hasHandledCheckpoint("world-one", "commit:4")).toBe(false);
+  expect(hasHandledCheckpoint("fork-world", "commit:3")).toBe(false);
+});
+
 test("unavailable browser storage does not prevent playing", () => {
   vi.spyOn(window.Storage.prototype, "getItem").mockImplementation(() => {
     throw new Error("Browser storage unavailable");

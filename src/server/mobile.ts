@@ -1,6 +1,7 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { inspect } from "node:util";
+import { workerData } from "node:worker_threads";
 
 import { resolveAppPaths } from "../runtime/config/appPaths.ts";
 import { parseWebPort, startWebServer } from "./startWebServer.ts";
@@ -37,7 +38,11 @@ try {
       "The Android launcher must provide a valid mobile startup key",
     );
 
-  const port = parseWebPort(process.env.NARRAEON_PORT);
+  const requestedPort = process.env.NARRAEON_PORT;
+  const port = requestedPort === "0" ? 0 : parseWebPort(requestedPort);
+  const readinessFd: unknown = workerData;
+  if (typeof readinessFd !== "number")
+    throw new Error("Missing Android startup readiness descriptor");
   const server = await startWebServer({
     paths,
     staticRoot,
@@ -46,10 +51,21 @@ try {
     mobileStartupKey: Buffer.from(startupKey, "hex"),
   });
 
-  const address = server.server.address();
-  const listeningPort =
-    typeof address === "object" && address !== null ? address.port : port;
-  process.stdout.write(`NARRAEON_READY ${listeningPort}\n`);
+  try {
+    const address = server.server.address();
+    if (address === null || typeof address === "string" || address.port === 0)
+      throw new Error("The mobile Runtime has no listening TCP port");
+
+    // Kotlin owns the descriptor. Send the port as one unsigned big-endian short.
+    const handoff = Buffer.alloc(2);
+    handoff.writeUInt16BE(address.port);
+    if (writeSync(readinessFd, handoff) !== handoff.length)
+      throw new Error("Could not report the listening port to Android");
+    process.stdout.write(`NARRAEON_READY ${address.port}\n`);
+  } catch (error: unknown) {
+    await server.close().catch(() => undefined);
+    throw error;
+  }
 } catch (error: unknown) {
   recordCrash("startup", error);
   process.exitCode = 1;

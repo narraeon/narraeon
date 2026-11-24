@@ -51,7 +51,13 @@ export function WorldBackupExportButton({
       const path = `/api/runtime/v1/world-archives/${encodeURIComponent(archive.archiveId)}`;
       await confirmArchiveDownload(path);
       const outcome = await saveFile(archive.fileName, { path });
-      setMessage(outcome === "cancelled" ? "" : uiText("世界备份已开始下载。"));
+      setMessage(
+        outcome === "cancelled"
+          ? uiText("已取消保存世界备份。")
+          : outcome === "saved"
+            ? uiText("世界备份已保存。")
+            : uiText("世界备份已开始下载。"),
+      );
     } catch (error) {
       setMessage(archiveDownloadErrorMessage(error));
       await onFailure?.();

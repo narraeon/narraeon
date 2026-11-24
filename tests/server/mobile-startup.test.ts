@@ -2,9 +2,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, expect, test } from "vitest";
 
@@ -15,7 +15,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-async function startMobile(staticFiles = true, port?: number) {
+async function startMobile(staticFiles = true, port?: number | string) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-mobile-startup-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   if (staticFiles) {
@@ -43,6 +43,7 @@ async function startMobile(staticFiles = true, port?: number) {
       `--import=data:text/javascript,${encodeURIComponent(probe)}`,
       "src/server/mobile-bootstrap.ts",
       "3",
+      "4",
     ],
     {
       env: {
@@ -50,7 +51,7 @@ async function startMobile(staticFiles = true, port?: number) {
         NARRAEON_STATIC_ROOT: join(root, "unused-host-static-root"),
         NARRAEON_MOBILE_STARTUP_KEY: "unused-host-startup-key",
       },
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
     },
   );
   const closed = new Promise<number | null>((resolve, reject) => {
@@ -77,27 +78,74 @@ async function startMobile(staticFiles = true, port?: number) {
     }),
   );
   child.stderr?.resume();
+  child.stdout?.resume();
   return { child, closed, key, port, root, cache };
 }
 
-async function ready(child: ChildProcess, port: number): Promise<void> {
-  let output = "";
-  child.stdout?.on(
-    "data",
-    (chunk: Buffer) => (output += chunk.toString("utf8")),
-  );
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    if (output.includes(`NARRAEON_READY ${port}`)) return;
-    if (child.exitCode !== null) break;
-    await delay(25);
+async function readReadyPort(child: ChildProcess): Promise<number | null> {
+  const pipe = child.stdio[4];
+  if (pipe === undefined || pipe === null || !(Symbol.asyncIterator in pipe))
+    throw new Error("Could not open the readiness pipe");
+  let handoff = Buffer.alloc(0);
+  for await (const chunk of pipe as AsyncIterable<Buffer>) {
+    handoff = Buffer.concat([handoff, chunk]);
+    if (handoff.length >= 2) break;
   }
-  throw new Error("The mobile backend did not start");
+  return handoff.length === 2 ? handoff.readUInt16BE() : null;
+}
+
+test("Android hands off its actual port while another loopback server is listening", async () => {
+  const blocker = createServer();
+  await new Promise<void>((resolve, reject) => {
+    blocker.once("error", reject).listen(0, "127.0.0.1", resolve);
+  });
+  cleanup.push(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        blocker.close((error) => (error ? reject(error) : resolve()));
+      }),
+  );
+
+  const blockerAddress = blocker.address();
+  if (blockerAddress === null || typeof blockerAddress === "string")
+    throw new Error("Could not reserve a loopback port");
+  const { child, key } = await startMobile(true, 0);
+  const port = await readReadyPort(child);
+  expect(port).toBeGreaterThan(0);
+  expect(port).not.toBe(blockerAddress.port);
+  const address = `http://127.0.0.1:${port}`;
+  expect((await fetch(address)).status).toBe(200);
+  const api = `${address}/api/runtime/v1`;
+  const read = (headers: Record<string, string>) =>
+    fetch(api, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({
+        protocol: "narraeon.runtime/v1",
+        request: { type: "workspace.read" },
+      }),
+    });
+  const cookie = cookieFor(key);
+  expect((await read({ origin: address, cookie })).status).toBe(200);
+  expect((await read({ origin: address })).status).toBe(403);
+  expect(
+    (await read({ origin: `http://127.0.0.1:${blockerAddress.port}`, cookie }))
+      .status,
+  ).toBe(403);
+});
+
+function cookieFor(key: string): string {
+  return `narraeon_mobile_runtime=${createHmac(
+    "sha256",
+    Buffer.from(key, "hex"),
+  )
+    .update("narraeon-mobile-runtime/v1")
+    .digest("hex")}`;
 }
 
 test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
   const { child, key, port, root, cache } = await startMobile();
-  await ready(child, port);
+  expect(await readReadyPort(child)).toBe(port);
   expect(await readFile(join(cache, "tmpdir-probe"), "utf8")).toBe(root);
   const base = `http://127.0.0.1:${port}`;
   const challenge = "5b".repeat(32);
@@ -130,12 +178,8 @@ test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
 
 test("Android Node 入口重新启动后只接受本次启动的调用方凭据", async () => {
   const first = await startMobile();
-  await ready(first.child, first.port);
+  expect(await readReadyPort(first.child)).toBe(first.port);
   const api = `http://127.0.0.1:${first.port}/api/runtime/v1`;
-  const cookieFor = (key: string) =>
-    `narraeon_mobile_runtime=${createHmac("sha256", Buffer.from(key, "hex"))
-      .update("narraeon-mobile-runtime/v1")
-      .digest("hex")}`;
   const read = (cookie: string) =>
     fetch(api, {
       method: "POST",
@@ -151,7 +195,7 @@ test("Android Node 入口重新启动后只接受本次启动的调用方凭据"
   await first.closed;
 
   const second = await startMobile(true, first.port);
-  await ready(second.child, second.port);
+  expect(await readReadyPort(second.child)).toBe(second.port);
   expect((await read(oldCookie)).status).toBe(403);
   const cookie = cookieFor(second.key);
   expect((await read(cookie)).status).toBe(200);
@@ -174,9 +218,21 @@ test("Android Node 入口重新启动后只接受本次启动的调用方凭据"
 
 test("Android Node 入口启动失败时以错误状态结束并写入诊断", async () => {
   const { child, closed, root } = await startMobile(false);
-  child.stdout?.resume();
+  expect(await readReadyPort(child)).toBeNull();
   expect(await closed).toBe(1);
   expect(
     await readFile(join(root, "log", "crash", "node-errors.log"), "utf8"),
   ).toContain("[startup]");
 });
+
+test.each(["", "-1", "65536", "12.5", "invalid"])(
+  "Android reports an invalid NARRAEON_PORT value %j without handing off a port",
+  async (port) => {
+    const { child, closed, root } = await startMobile(true, port);
+    expect(await readReadyPort(child)).toBeNull();
+    expect(await closed).toBe(1);
+    expect(
+      await readFile(join(root, "log", "crash", "node-errors.log"), "utf8"),
+    ).toContain(`NARRAEON_PORT is not a valid port: ${port}`);
+  },
+);

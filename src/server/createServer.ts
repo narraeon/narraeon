@@ -87,7 +87,12 @@ export async function createServer(input: {
   logger?: boolean;
   logStream?: Writable;
 }): Promise<FastifyInstance> {
-  if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65_535)
+  const minimumPort = input.mobileStartupKey === undefined ? 1 : 0;
+  if (
+    !Number.isInteger(input.port) ||
+    input.port < minimumPort ||
+    input.port > 65_535
+  )
     throw new Error(`Invalid local web port: ${input.port}`);
   const server = Fastify({
     logController: new RuntimeLogController(),
@@ -110,10 +115,26 @@ export async function createServer(input: {
               : { stream: input.logStream }),
           },
   });
-  server.addHook(
-    "onRequest",
-    checkWebAccess(input.port, input.trustedOrigins ?? []),
-  );
+  const trustedOrigins = input.trustedOrigins ?? [];
+  if (input.port === 0) {
+    // Port zero is resolved by the socket bind, after the request hooks are registered.
+    let check: ReturnType<typeof checkWebAccess> | undefined;
+    server.addHook("onRequest", async (request, reply) => {
+      if (check === undefined) {
+        const address = server.server.address();
+        if (
+          address === null ||
+          typeof address === "string" ||
+          address.port === 0
+        )
+          return reply.code(503).send({ error: "Runtime is not listening" });
+        check = checkWebAccess(address.port, trustedOrigins);
+      }
+      return check.call(server, request, reply);
+    });
+  } else {
+    server.addHook("onRequest", checkWebAccess(input.port, trustedOrigins));
+  }
   const mobileStartupKey = input.mobileStartupKey;
   if (mobileStartupKey !== undefined)
     server.addHook("onRequest", checkMobileRuntimeAccess(mobileStartupKey));

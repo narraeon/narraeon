@@ -32,6 +32,7 @@ internal class BackendIdentity {
             connection.useCaches = false
             connection.connectTimeout = 500
             connection.readTimeout = 500
+            connection.setRequestProperty("Connection", "close")
             connection.setRequestProperty("Accept-Encoding", "identity")
             connection.setRequestProperty("X-Narraeon-Startup-Challenge", challenge)
             val status = connection.responseCode

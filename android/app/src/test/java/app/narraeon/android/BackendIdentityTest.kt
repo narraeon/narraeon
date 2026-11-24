@@ -8,6 +8,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class BackendIdentityTest {
@@ -31,6 +32,17 @@ class BackendIdentityTest {
         assertEquals("narraeon_mobile_runtime=$expected", identity.runtimeCookie)
         assertEquals("${identity.runtimeCookie}; Path=/api/runtime/v1; HttpOnly; SameSite=Strict", identity.webViewCookie)
         assertNotEquals(identity.runtimeCookie, BackendIdentity().runtimeCookie)
+    }
+
+    @Test
+    fun archiveDownloadsUseOnlyTheHandedOffEndpoint() {
+        val endpoint = BackendEndpoint(38_401)
+        val archive = "/api/runtime/v1/world-archives/archive-123"
+        assertEquals("http://127.0.0.1:38401$archive", endpoint.archiveUrl(archive).toString())
+        for (path in listOf("http://127.0.0.1:4317$archive", "//$archive", "$archive/check", "$archive?x=1",
+            "/api/runtime/v1/world-archives/../archive", "/api/runtime/v1/world-archives/%2farchive")) {
+            assertNull(path, endpoint.archiveUrl(path))
+        }
     }
 
     private fun request(identity: BackendIdentity, key: String?): BackendIdentity.Verification<String> {

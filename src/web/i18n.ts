@@ -86,6 +86,8 @@ const englishMessages: Record<string, string> = {
   "正在导出世界备份…": "Exporting world backup…",
   "正在导出…": "Exporting…",
   "世界备份已开始下载。": "Your world backup download has started.",
+  "世界备份已保存。": "Your world backup was saved.",
+  "已取消保存世界备份。": "Saving the world backup was cancelled.",
   "备份已失效或不存在，请重新导出。":
     "This backup is no longer available or does not exist. Export the world again.",
   "下载失败，请重试。": "The download failed. Try again.",

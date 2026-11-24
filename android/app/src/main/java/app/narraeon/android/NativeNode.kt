@@ -8,7 +8,7 @@ object NativeNode {
     }
 
     /**
-     * @param arguments Node argv, including the bootstrap script and its configuration pipe fd.
+     * @param arguments Node argv, including the bootstrap script and its configuration and readiness pipe fds.
      * @param stderrPath private file to preserve a copy of Node stderr for diagnostic export.
      */
     @JvmStatic

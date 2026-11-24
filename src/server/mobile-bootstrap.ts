@@ -4,11 +4,7 @@ import { Worker } from "node:worker_threads";
 
 // Android owns this pipe and keeps the read fd open until node::Start returns.
 // The launcher closes the write end before startup, so the read ends at EOF.
-function readStartupEnvironment(): Record<string, string> {
-  const fd = Number(process.argv[2]);
-  if (!Number.isSafeInteger(fd) || fd < 3)
-    throw new Error("Missing Android startup configuration descriptor");
-
+function readStartupEnvironment(fd: number): Record<string, string> {
   try {
     const config: unknown = JSON.parse(readFileSync(fd, "utf8"));
     if (config === null || typeof config !== "object" || Array.isArray(config))
@@ -26,6 +22,17 @@ function readStartupEnvironment(): Record<string, string> {
 }
 
 try {
+  const configurationFd = Number(process.argv[2]);
+  const readinessFd = Number(process.argv[3]);
+  if (!Number.isSafeInteger(configurationFd) || configurationFd < 3)
+    throw new Error("Missing Android startup configuration descriptor");
+  if (
+    !Number.isSafeInteger(readinessFd) ||
+    readinessFd < 3 ||
+    readinessFd === configurationFd
+  )
+    throw new Error("Missing Android startup readiness descriptor");
+
   // A Worker with its own env keeps app paths (including os.tmpdir()) and the
   // startup key out of the Android process environment shared with native code.
   const entry = new URL(
@@ -33,7 +40,8 @@ try {
     import.meta.url,
   );
   const worker = new Worker(entry, {
-    env: { ...process.env, ...readStartupEnvironment() },
+    env: { ...process.env, ...readStartupEnvironment(configurationFd) },
+    workerData: readinessFd,
   });
   worker.on("error", (error) => {
     console.error("Android backend worker failed", error);

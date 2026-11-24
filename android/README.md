@@ -1,8 +1,9 @@
 # Narraeon Android
 
 The Android app embeds the Narraeon backend in its own process. A foreground service starts
-the Node runtime (digidem/nodejs-mobile `libnode.so`, Node 24.20.0), and a WebView opens
-`http://127.0.0.1:4317` after verifying a fresh proof from that Node instance. Only `arm64-v8a` is supported. See
+the Node runtime (digidem/nodejs-mobile `libnode.so`, Node 24.20.0). Android asks the
+OS for an available loopback port and opens the WebView there after verifying a fresh
+proof from that Node instance. Only `arm64-v8a` is supported. See
 [ADR-0047](../docs/adr/0047-android-embeds-backend-in-app-process.md).
 
 ## Prerequisites
@@ -89,9 +90,15 @@ validates whatever is chosen.
 The WebView ignores `<a download>`. Inside the app, `saveFile` in
 `src/web/androidBridge.ts` sends a `save-file` message to `WebFileSaver` instead: small
 files go as base64, and world backups go as a same-origin path that the native side
-streams from the backend. `WebFileSaver` opens the system save dialog, writes the file,
-and replies `saved`, `cancelled` or `failed` to the page. Browsers keep the normal
-download.
+streams directly from the verified backend, bypassing the system HTTP proxy. Archive
+downloads allow 10 seconds to connect and 30 seconds between reads. `WebFileSaver`
+opens the system save dialog and stages the download in the app cache before writing
+to the chosen document. It cleans up incomplete documents on failure and replies
+`saved`, `cancelled` or `failed` to the page. Browsers keep the normal download.
+
+Handled narrative checkpoint choices are saved in Android app settings so the
+next launch can restore them on its new port. On upgrade the app copies those
+choices from the previous WebView origin on port 4317.
 
 ## Crash handling and diagnostic export
 
