@@ -12,6 +12,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.Proxy
 import java.net.URL
 
 // Saves files the page asks to download. The Android WebView ignores <a download>,
@@ -20,7 +21,11 @@ import java.net.URL
 // and are deleted after one download). This opens the system save dialog, writes the
 // file, and replies {id, outcome: "saved" | "cancelled" | "failed", error?}.
 // Must be constructed during Activity initialization, as it registers a result launcher.
-class WebFileSaver(private val activity: AppCompatActivity, private val backendOrigin: String) {
+internal class WebFileSaver(
+    private val activity: AppCompatActivity,
+    private val backendOrigin: String,
+    private val backendIdentity: BackendIdentity,
+) {
     private class Request(
         val id: String,
         val fileName: String,
@@ -91,8 +96,11 @@ class WebFileSaver(private val activity: AppCompatActivity, private val backendO
                 if (request.base64 != null) {
                     out.write(Base64.decode(request.base64, Base64.DEFAULT))
                 } else {
-                    val connection = URL(backendOrigin + request.path).openConnection() as HttpURLConnection
+                    // A download credential is only sent directly to the verified local origin.
+                    val connection = URL(backendOrigin + request.path).openConnection(Proxy.NO_PROXY) as HttpURLConnection
                     try {
+                        connection.instanceFollowRedirects = false
+                        connection.setRequestProperty("Cookie", backendIdentity.runtimeCookie)
                         if (connection.responseCode != HttpURLConnection.HTTP_OK) {
                             throw IOException("The download answered HTTP ${connection.responseCode}")
                         }

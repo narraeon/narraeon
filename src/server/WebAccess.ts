@@ -1,4 +1,38 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { onRequestAsyncHookHandler } from "fastify";
+
+const runtimeApiPath = "/api/runtime/v1";
+const mobileCallerCookie = "narraeon_mobile_runtime=";
+
+export function checkMobileRuntimeAccess(
+  startupKey: Buffer,
+): onRequestAsyncHookHandler {
+  // Startup proofs sign challenge + URL. Use a distinct message for the caller credential.
+  const expected = createHmac("sha256", startupKey)
+    .update("narraeon-mobile-runtime/v1")
+    .digest();
+
+  return async (request, reply) => {
+    const path = request.routeOptions.url;
+    if (path !== runtimeApiPath && !path?.startsWith(`${runtimeApiPath}/`))
+      return;
+
+    const credentials = request.headers.cookie
+      ?.split(";")
+      .map((cookie) => cookie.trim())
+      .filter((cookie) => cookie.startsWith(mobileCallerCookie));
+    const value = credentials?.[0]?.slice(mobileCallerCookie.length);
+    if (
+      credentials?.length !== 1 ||
+      value === undefined ||
+      !/^[a-f0-9]{64}$/.test(value) ||
+      !timingSafeEqual(expected, Buffer.from(value, "hex"))
+    )
+      return reply
+        .code(403)
+        .send({ error: "Untrusted Android Runtime caller" });
+  };
+}
 
 export function parseTrustedWebOrigins(value: string | undefined): string[] {
   if (value === undefined || value.trim() === "") return [];

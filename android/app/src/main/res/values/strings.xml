@@ -8,6 +8,7 @@
     <string name="dismiss">Not now</string>
     <string name="failure_backend_exited">The Narraeon backend stopped (%1$s). Export the diagnostic logs, then close the app and open it again.</string>
     <string name="failure_backend_unverified">Narraeon could not verify the backend on local port %1$d. Close any other app using the port, then close and reopen Narraeon. Export the diagnostic logs if the problem continues.</string>
+    <string name="failure_runtime_access">Narraeon could not set up access to its local backend. Close and reopen the app.</string>
     <string name="failure_backend_timeout">The Narraeon backend did not start within 60 seconds. Export the diagnostic logs, then close the app and open it again.</string>
     <string name="failure_renderer_repeated">The page crashed several times in a row. Your saved data is not affected. Export the diagnostic logs, then close the app and open it again.</string>
     <string name="abnormal_exit_title">Narraeon closed unexpectedly</string>

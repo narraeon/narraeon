@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-async function startMobile(staticFiles = true) {
+async function startMobile(staticFiles = true, port?: number) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-mobile-startup-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   if (staticFiles) {
@@ -25,8 +25,8 @@ async function startMobile(staticFiles = true) {
       "export const ready = true;",
     );
   }
-  const port = await availableRuntimePort();
-  const key = "2a".repeat(32);
+  port ??= await availableRuntimePort();
+  const key = randomBytes(32).toString("hex");
   const child = spawn(process.execPath, ["src/server/mobile.ts"], {
     env: {
       ...process.env,
@@ -79,6 +79,7 @@ test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
     const response = await fetch(`${base}${path}`, { headers });
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.has("set-cookie")).toBe(false);
     const proof = response.headers.get("x-narraeon-startup-proof");
     const message = `${challenge}\n${path}`;
     expect(proof).toBe(
@@ -91,9 +92,54 @@ test("Android Node 入口用本次启动密钥应答就绪挑战", async () => {
     );
     expect(await response.text()).toBe(body);
   }
-  expect(
-    (await fetch(`${base}/`)).headers.has("x-narraeon-startup-proof"),
-  ).toBe(false);
+  const home = await fetch(`${base}/`);
+  expect(home.headers.has("x-narraeon-startup-proof")).toBe(false);
+  expect(home.headers.has("set-cookie")).toBe(false);
+  expect(await home.text()).toBe("<main>Narraeon</main>");
+});
+
+test("Android Node 入口重新启动后只接受本次启动的调用方凭据", async () => {
+  const first = await startMobile();
+  await ready(first.child, first.port);
+  const api = `http://127.0.0.1:${first.port}/api/runtime/v1`;
+  const cookieFor = (key: string) =>
+    `narraeon_mobile_runtime=${createHmac("sha256", Buffer.from(key, "hex"))
+      .update("narraeon-mobile-runtime/v1")
+      .digest("hex")}`;
+  const read = (cookie: string) =>
+    fetch(api, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        protocol: "narraeon.runtime/v1",
+        request: { type: "workspace.read" },
+      }),
+    });
+  const oldCookie = cookieFor(first.key);
+  expect((await read(oldCookie)).status).toBe(200);
+  first.child.kill();
+  await first.closed;
+
+  const second = await startMobile(true, first.port);
+  await ready(second.child, second.port);
+  expect((await read(oldCookie)).status).toBe(403);
+  const cookie = cookieFor(second.key);
+  expect((await read(cookie)).status).toBe(200);
+
+  const abort = new AbortController();
+  try {
+    const response = await fetch(`${api}/events?kind=play&id=fixture`, {
+      headers: { cookie },
+      signal: abort.signal,
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const chunk: unknown = (await response.body!.getReader().read()).value;
+    if (!(chunk instanceof Uint8Array)) throw new Error("Expected SSE bytes");
+    expect(new TextDecoder().decode(chunk)).toContain(": connected");
+  } finally {
+    abort.abort();
+  }
 });
 
 test("Android Node 入口启动失败时以错误状态结束并写入诊断", async () => {
