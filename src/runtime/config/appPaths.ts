@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import envPaths from "env-paths";
@@ -28,4 +30,10 @@ export function resolveAppPaths(environment: NodeJS.ProcessEnv): AppPaths {
         ? resolve(configuredLogRoot)
         : defaults.log,
   };
+}
+
+export async function fingerprintDataRoot(dataRoot: string): Promise<string> {
+  return createHash("sha256")
+    .update(await realpath(dataRoot))
+    .digest("hex");
 }

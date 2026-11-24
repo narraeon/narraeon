@@ -44,7 +44,7 @@ npx narraeon web --no-open
 npx narraeon --help
 ```
 
-The server listens only on `127.0.0.1`. If the chosen port already hosts a compatible Narraeon instance, the CLI reuses it. If another program owns the port, startup fails instead of attaching to an unknown service.
+The server listens only on `127.0.0.1`. The CLI reuses a running Narraeon instance on the chosen port only when it can verify that both use the same data directory. If the port is occupied and reuse fails, choose another port with `--port`.
 
 Alternatively, run the release image from GitHub Container Registry:
 

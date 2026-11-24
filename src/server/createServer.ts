@@ -78,6 +78,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function createServer(input: {
   runtime: V1Runtime;
+  dataRootFingerprint?: string;
   staticRoot: string;
   port: number;
   trustedOrigins?: readonly string[];
@@ -268,7 +269,8 @@ export async function createServer(input: {
   });
   server.get("/health", () => ({
     status: "ok",
-    protocol: "narraeon.runtime/v1",
+    protocol: v1Protocol,
+    dataRootFingerprint: input.dataRootFingerprint,
   }));
   server.post(
     "/api/runtime/v1",

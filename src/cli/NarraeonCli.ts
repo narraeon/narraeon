@@ -2,8 +2,12 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { v1Protocol } from "../protocol/v1.ts";
 import { parseTrustedWebOrigins } from "../server/WebAccess.ts";
-import { resolveAppPaths } from "../runtime/config/appPaths.ts";
+import {
+  fingerprintDataRoot,
+  resolveAppPaths,
+} from "../runtime/config/appPaths.ts";
 import {
   parseWebHost,
   parseWebPort,
@@ -16,7 +20,8 @@ export interface StoppableServer {
   close: () => Promise<void>;
 }
 
-export type LocalWebInspection = "available" | "narraeon" | "occupied";
+export type LocalWebInspection =
+  "available" | "occupied" | { dataRootFingerprint: string | null };
 
 export type NarraeonCliResult =
   | { kind: "help" }
@@ -60,19 +65,36 @@ export async function runNarraeonCli(
   const url = `http://127.0.0.1:${command.port}`;
   const inspect = input.inspectServer ?? inspectLocalWebServer;
   const inspection = await inspect(url);
-  if (inspection === "narraeon") {
+  if (inspection === "occupied")
+    throw new Error(`Port ${String(command.port)} is already in use`);
+
+  const paths = resolveAppPaths(input.environment);
+  if (inspection !== "available") {
+    if (inspection.dataRootFingerprint === null)
+      throw new Error(
+        `Narraeon on port ${command.port} did not report a data directory fingerprint. Upgrade the running instance or choose another port with --port.`,
+      );
+    const requestedFingerprint = await fingerprintDataRoot(
+      paths.dataRoot,
+    ).catch((error: unknown) => {
+      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR"))
+        return undefined;
+      throw error;
+    });
+    if (requestedFingerprint !== inspection.dataRootFingerprint)
+      throw new Error(
+        `Narraeon is already running on port ${command.port} with a different data directory. Choose another port with --port.`,
+      );
     output(`Narraeon is already running: ${url}\n`);
     await openBrowser(command, url, input.openUrl, errorOutput);
     return { kind: "reused", url };
   }
-  if (inspection === "occupied")
-    throw new Error(`Port ${String(command.port)} is already in use`);
 
   const start = input.startServer ?? startWebServer;
   let server: StoppableServer;
   try {
     server = await start({
-      paths: resolveAppPaths(input.environment),
+      paths,
       staticRoot: input.staticRoot,
       host: command.host,
       port: command.port,
@@ -113,7 +135,14 @@ export async function inspectLocalWebServer(
   } catch {
     return "occupied";
   }
-  return response.ok && isNarraeonHealth(payload) ? "narraeon" : "occupied";
+  if (!response.ok || !isNarraeonHealth(payload)) return "occupied";
+  const fingerprint = payload.dataRootFingerprint;
+  return {
+    dataRootFingerprint:
+      typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint)
+        ? fingerprint
+        : null,
+  };
 }
 
 function acceptsTcpConnections(url: string): Promise<boolean> {
@@ -208,14 +237,18 @@ async function openBrowser(
   }
 }
 
-function isNarraeonHealth(value: unknown): boolean {
+function isNarraeonHealth(value: unknown): value is {
+  status: "ok";
+  protocol: typeof v1Protocol;
+  dataRootFingerprint?: unknown;
+} {
   return (
     typeof value === "object" &&
     value !== null &&
     "status" in value &&
     value.status === "ok" &&
     "protocol" in value &&
-    value.protocol === "narraeon.runtime/v1"
+    value.protocol === v1Protocol
   );
 }
 

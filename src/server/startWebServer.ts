@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 
 import type { GenerationActivity } from "../runtime/GenerationActivity.ts";
-import type { AppPaths } from "../runtime/config/appPaths.ts";
+import {
+  fingerprintDataRoot,
+  type AppPaths,
+} from "../runtime/config/appPaths.ts";
 import { prepareDataRoot } from "../runtime/config/dataRootCleanup.ts";
 import { createRuntime } from "./createRuntime.ts";
 import { createServer } from "./createServer.ts";
@@ -27,11 +30,13 @@ export async function startWebServer(
   generationActivity?: GenerationActivity,
 ): Promise<FastifyInstance> {
   await prepareDataRoot(input.paths.dataRoot);
+  const dataRootFingerprint = await fingerprintDataRoot(input.paths.dataRoot);
   let server: FastifyInstance | undefined;
   try {
     const runtime = await createRuntime(input.paths, generationActivity);
     server = await createServer({
       runtime,
+      dataRootFingerprint,
       staticRoot: input.staticRoot,
       port: input.port,
       ...(input.trustedOrigins === undefined

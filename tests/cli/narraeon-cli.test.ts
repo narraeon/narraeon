@@ -18,6 +18,7 @@ import {
   type NarraeonCliInput,
   type StoppableServer,
 } from "../../src/cli/NarraeonCli.ts";
+import { fingerprintDataRoot } from "../../src/runtime/config/appPaths.ts";
 import type { StartWebServerInput } from "../../src/server/startWebServer.ts";
 
 const fakeServer: StoppableServer = {
@@ -106,14 +107,16 @@ test("CLI 等待服务启动后才打开页面", async () => {
   expect(events).toEqual(["started", "opened:http://127.0.0.1:4317"]);
 });
 
-test("目标端口已有 Narraeon 时复用服务而不创建第二个 Runtime", async () => {
+test("目标端口的数据根一致时复用服务而不创建第二个 Runtime", async () => {
+  const dataRoot = process.cwd();
   const events: string[] = [];
   const result = await runNarraeonCli({
     ...cliInput({
       args: ["web"],
       capture: createCapture(),
-      inspection: "narraeon",
+      inspection: { dataRootFingerprint: await fingerprintDataRoot(dataRoot) },
     }),
+    environment: { NARRAEON_DATA_ROOT: dataRoot },
     startServer: () => {
       throw new Error("The Runtime should not start");
     },
@@ -129,6 +132,37 @@ test("目标端口已有 Narraeon 时复用服务而不创建第二个 Runtime",
   });
   expect(events).toEqual(["http://127.0.0.1:4317"]);
 });
+
+test.each([
+  { fingerprint: "0".repeat(64), message: /different data directory.*--port/ },
+  { fingerprint: null, message: /did not report a data directory fingerprint/ },
+])(
+  "数据根不匹配或无法确认时不开页面也不启动 Runtime",
+  async ({ fingerprint, message }) => {
+    const capture = createCapture();
+    const events: string[] = [];
+    await expect(
+      runNarraeonCli({
+        ...cliInput({
+          args: ["web"],
+          capture,
+          inspection: { dataRootFingerprint: fingerprint },
+        }),
+        environment: { NARRAEON_DATA_ROOT: process.cwd() },
+        startServer: () => {
+          events.push("started");
+          return Promise.resolve(fakeServer);
+        },
+        openUrl: () => {
+          events.push("opened");
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toThrow(message);
+    expect(capture.output).toBe("");
+    expect(events).toEqual([]);
+  },
+);
 
 test("非 Narraeon 端口占用在初始化 Runtime 前失败", async () => {
   let started = false;
@@ -224,7 +258,7 @@ test("本地服务探测只把匹配协议的健康端点视为 Narraeon", async
   try {
     await expect(
       inspectLocalWebServer(`http://127.0.0.1:${String(compatiblePort)}`),
-    ).resolves.toBe("narraeon");
+    ).resolves.toEqual({ dataRootFingerprint: null });
   } finally {
     await close(compatible);
   }
