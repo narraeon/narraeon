@@ -238,7 +238,7 @@ describe("旧格式默认提示词职责", () => {
           "未提供的元数据字段",
           "不要只为照抄未改变的元数据而读取",
         ],
-        patch: ["仅传变更字段（至少一项）", "未传字段保留"],
+        patch: ["只传有变化的元数据字段", "至少传一项", "省略的字段原样保留"],
         read: ["YAML 正文不含 $document 头"],
         absent: [
           "已注入全文",
@@ -256,8 +256,9 @@ describe("旧格式默认提示词职责", () => {
           "do not read merely to copy unchanged metadata",
         ],
         patch: [
-          "with only changed fields (at least one)",
-          "omitted fields are preserved",
+          "only changed metadata fields",
+          "at least one of title, summary, or aliases",
+          "Omitted fields are preserved",
         ],
         read: ["YAML bodies omit $document"],
         absent: [
@@ -293,17 +294,24 @@ describe("旧格式默认提示词职责", () => {
         .join("\n");
       const patch = compilation.tools.find(
         ({ name }) => name === "world_patch",
-      )?.description;
+      );
       const read = compilation.tools.find(
         ({ name }) => name === "context_read",
       )?.description;
-      const completeContract = [runtimePrompt, worldPrompt, patch, read].join(
-        "\n",
-      );
+      const completeContract = [
+        runtimePrompt,
+        worldPrompt,
+        JSON.stringify(patch),
+        read,
+      ].join("\n");
 
       for (const phrase of scenario.coverage)
         expect(worldPrompt).toContain(phrase);
-      for (const phrase of scenario.patch) expect(patch).toContain(phrase);
+      for (const phrase of scenario.patch)
+        expect(patch?.inputSchema).toHaveProperty(
+          "properties.edits.items.oneOf.6.properties.op.description",
+          expect.stringContaining(phrase),
+        );
       for (const phrase of scenario.read) expect(read).toContain(phrase);
       for (const phrase of scenario.absent)
         expect(completeContract).not.toContain(phrase);
