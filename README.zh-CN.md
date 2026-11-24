@@ -44,7 +44,7 @@ npx narraeon web --no-open
 npx narraeon --help
 ```
 
-服务只监听 `127.0.0.1`。如果选定端口已经运行兼容的 Narraeon，CLI 会直接复用；如果端口被其他程序占用，启动会明确失败，不会连接未知服务。
+服务只监听 `127.0.0.1`。CLI 只有在确认选定端口上的 Narraeon 使用同一个数据目录时才会复用。端口已被占用且无法复用时，可用 `--port` 换一个端口。
 
 也可以直接运行 GitHub Container Registry 上的发布镜像：
 

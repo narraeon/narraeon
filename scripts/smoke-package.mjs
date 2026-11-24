@@ -1,9 +1,18 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -121,6 +130,8 @@ process.stdout.write("Package imports are blocked\\n");`,
   const port = await availablePort();
   const environment = {
     ...process.env,
+    NARRAEON_HOST: "127.0.0.1",
+    NARRAEON_TRUSTED_ORIGINS: "",
     NARRAEON_CONFIG_ROOT: join(temporaryRoot, "runtime-config"),
     NARRAEON_DATA_ROOT: join(temporaryRoot, "runtime-data"),
     NARRAEON_LOG_ROOT: join(temporaryRoot, "runtime-log"),
@@ -137,7 +148,7 @@ process.stdout.write("Package imports are blocked\\n");`,
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk.toString("utf8")));
   child.stderr.on("data", (chunk) => (output += chunk.toString("utf8")));
-  await waitForHealth(child, port, () => output);
+  const health = await waitForHealth(child, port, () => output);
 
   const page = await fetch(`http://127.0.0.1:${String(port)}/`);
   assert(page.ok, `The packaged home page returned ${String(page.status)}`);
@@ -146,15 +157,74 @@ process.stdout.write("Package imports are blocked\\n");`,
     "The package did not serve the Vite page",
   );
 
-  const reused = await execute(
-    process.execPath,
-    [installedCli, "web", "--port", String(port), "--no-open"],
-    { cwd: consumerRoot, env: environment },
+  const runCli = (dataRoot, targetPort = port) =>
+    execute(
+      process.execPath,
+      [installedCli, "web", "--port", String(targetPort), "--no-open"],
+      {
+        cwd: consumerRoot,
+        env: { ...environment, NARRAEON_DATA_ROOT: dataRoot },
+        timeout: 15_000,
+      },
+    );
+
+  const dataRoot = environment.NARRAEON_DATA_ROOT;
+  const alias = join(temporaryRoot, "runtime-data-alias");
+  await symlink(dataRoot, alias, "junction");
+  for (const equivalent of [
+    dataRoot,
+    ` ${relative(consumerRoot, dataRoot)}${sep}.${sep} `,
+    alias,
+  ]) {
+    const reused = await runCli(equivalent);
+    assert(
+      reused.stdout.includes("Narraeon is already running"),
+      "The CLI did not reuse the service for an equivalent data directory",
+    );
+  }
+
+  const otherDataRoot = join(temporaryRoot, "other-runtime-data");
+  await mkdir(otherDataRoot);
+  await assertCliRejects(
+    runCli(otherDataRoot),
+    /different data directory.*--port/,
+  );
+  await assertCliRejects(
+    runCli(join(temporaryRoot, "missing-runtime-data")),
+    /different data directory.*--port/,
   );
   assert(
-    reused.stdout.includes("Narraeon is already running"),
-    "The second invocation did not reuse the service",
+    (await readdir(otherDataRoot)).length === 0,
+    "The CLI initialized the other data directory",
   );
+
+  assert(
+    /^[a-f0-9]{64}$/.test(health.dataRootFingerprint) &&
+      !JSON.stringify(health).includes(JSON.stringify(dataRoot).slice(1, -1)),
+    "Health must report a data directory fingerprint without the raw path",
+  );
+
+  for (const [payload, expected] of [
+    [
+      { status: "ok", protocol: "narraeon.runtime/v1" },
+      /did not report a data directory fingerprint.*--port/,
+    ],
+    [{ status: "ok" }, /Port \d+ is already in use/],
+  ]) {
+    const other = createHttpServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(payload));
+    });
+    other.listen(0, "127.0.0.1");
+    await once(other, "listening");
+    try {
+      await assertCliRejects(runCli(dataRoot, other.address().port), expected);
+    } finally {
+      const closed = once(other, "close");
+      other.close();
+      await closed;
+    }
+  }
   process.stdout.write(
     `Package smoke test passed: ${manifest.filename} · ${String(manifest.entryCount)} files · ${String(manifest.size)} bytes\n`,
   );
@@ -165,6 +235,17 @@ process.stdout.write("Package imports are blocked\\n");`,
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function assertCliRejects(invocation, expected) {
+  const result = await invocation.then(
+    ({ stdout }) => ({ code: 0, message: stdout.trim() }),
+    (error) => ({ code: error.code, message: error.stderr?.trim() }),
+  );
+  assert(
+    result.code === 1 && expected.test(result.message),
+    `Expected the CLI to reject (${expected}), got exit ${result.code}: ${result.message}`,
+  );
 }
 
 function availablePort() {
@@ -199,7 +280,7 @@ async function waitForHealth(process_, port, output) {
           payload.protocol === "narraeon.runtime/v1",
           "The packaged health protocol does not match",
         );
-        return;
+        return payload;
       }
     } catch {
       // The packaged Runtime is still starting.
