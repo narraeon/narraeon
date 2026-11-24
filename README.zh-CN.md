@@ -140,7 +140,7 @@ Narraeon 不依赖一段无限增长的聊天。全新上下文会从当前世�
 
 ## Android
 
-实验性的 Android 应用在 App 进程内运行同一套后端：前台服务启动内嵌的 Node 运行时，WebView 打开 `127.0.0.1:4317`。目前只支持 `arm64-v8a` 设备。构建步骤与运行时目录结构见 [android/README.md](android/README.md)。
+实验性的 Android 应用在 App 进程内运行同一套后端。前台服务启动内嵌的 Node 运行时，WebView 通过 Android 分配的回环端口打开应用。目前只支持 `arm64-v8a` 设备。构建步骤与运行时目录结构见 [android/README.md](android/README.md)。
 
 ## 本地数据与隐私
 

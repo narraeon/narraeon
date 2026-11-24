@@ -1,15 +1,19 @@
 import {
-  androidHandledCheckpoints,
+  readAndroidCheckpointPreferences,
   rememberAndroidCheckpoint,
 } from "./androidBridge.ts";
 
 const keyPrefix = "narraeon.checkpoint-context.v1";
+let androidHandled: Set<string> | undefined;
+
+export async function loadCheckpointPreferences(): Promise<void> {
+  androidHandled = await readAndroidCheckpointPreferences();
+}
 
 /** Browser choices are scoped to the origin. Android keeps them across local port changes. */
 export function hasHandledCheckpoint(worldId: string, head: string): boolean {
   const key = preferenceKey(worldId, head);
-  const android = androidHandledCheckpoints();
-  if (android !== undefined) return android.has(key);
+  if (androidHandled !== undefined) return androidHandled.has(key);
   try {
     return window.localStorage.getItem(key) === "handled";
   } catch {
@@ -19,10 +23,9 @@ export function hasHandledCheckpoint(worldId: string, head: string): boolean {
 
 export function rememberHandledCheckpoint(worldId: string, head: string): void {
   const key = preferenceKey(worldId, head);
-  const android = androidHandledCheckpoints();
-  if (android !== undefined) {
-    android.add(key);
-    rememberAndroidCheckpoint(key);
+  rememberAndroidCheckpoint(key);
+  if (androidHandled !== undefined) {
+    androidHandled.add(key);
     return;
   }
   try {

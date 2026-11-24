@@ -180,10 +180,9 @@ class MainActivity : AppCompatActivity() {
                 ): Boolean = showFileChooser(callback, params)
             }
         }
-        // Only the local backend page may use the bridge (log export, file saves).
+        // Only the verified local main frame can use the native bridge.
         // Sandboxed extension frames have an opaque origin and do not match this rule.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            checkpointPreferences.install(view, endpoint.origin)
             WebViewCompat.addWebMessageListener(view, BRIDGE_NAME, setOf(endpoint.origin)) { _, message, _, isMainFrame, reply ->
                 val data = message.data ?: return@addWebMessageListener
                 if (!isMainFrame || !verifiedDocument.get() || webView !== view ||
@@ -193,6 +192,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 when {
                     data == EXPORT_LOGS_MESSAGE -> LogExport.share(this)
+                    data == CheckpointPreferences.READ -> reply.postMessage(checkpointPreferences.snapshotMessage())
                     data.startsWith(CheckpointPreferences.REMEMBER) ->
                         checkpointPreferences.remember(data.removePrefix(CheckpointPreferences.REMEMBER))
                     else -> fileSaver.handle(data, reply, endpoint)

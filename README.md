@@ -150,10 +150,10 @@ Existing content packages, worlds, imported presets, copied presets, and user-ed
 
 ## Android
 
-An experimental Android app runs the same backend inside the app process: a
-foreground service starts the embedded Node runtime, and a WebView opens
-`127.0.0.1:4317`. It supports `arm64-v8a` devices only. Build steps and the
-runtime layout are in [android/README.md](android/README.md).
+An experimental Android app runs the same backend inside the app process. A
+foreground service starts the embedded Node runtime, and a WebView opens it on
+the loopback port assigned by Android. It supports `arm64-v8a` devices only.
+Build steps and the runtime layout are in [android/README.md](android/README.md).
 
 ## Local data and privacy
 

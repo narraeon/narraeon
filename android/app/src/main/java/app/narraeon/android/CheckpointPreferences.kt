@@ -9,8 +9,6 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.RequiresApi
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 
 /** UI choices for this installation, independent of the Runtime's current port. */
@@ -21,13 +19,7 @@ internal class CheckpointPreferences(private val context: Context) {
     private val handled: Set<String>
         get() = preferences.getStringSet(HANDLED, emptySet()).orEmpty()
 
-    fun install(view: WebView, origin: String) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
-        val keys = JSONArray(handled.toList())
-        WebViewCompat.addDocumentStartJavaScript(
-            view, "window.narraeonAndroidHandledCheckpoints = new Set($keys);", setOf(origin),
-        )
-    }
+    fun snapshotMessage(): String = "checkpoint-preferences:${JSONArray(handled.toList())}"
 
     fun remember(key: String) {
         if (isCheckpointKey(key)) preferences.edit().putStringSet(HANDLED, handled + key).apply()
@@ -84,6 +76,7 @@ internal class CheckpointPreferences(private val context: Context) {
     private fun isCheckpointKey(key: String) = key.startsWith(KEY_PREFIX) && key.length <= 1_024
 
     companion object {
+        const val READ = "read-checkpoint-preferences"
         const val REMEMBER = "remember-checkpoint:"
         private const val KEY_PREFIX = "narraeon.checkpoint-context.v1:"
         private const val HANDLED = "handled"

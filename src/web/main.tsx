@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App.tsx";
 import { AppErrorBoundary } from "./AppErrorBoundary.tsx";
+import { loadCheckpointPreferences } from "./CheckpointContextPreferences.ts";
 import { RuntimeClient } from "./runtimeClient.ts";
 import "./styles.css";
 import "./workspace-layout.css";
@@ -14,10 +15,12 @@ if (root === null) {
 
 const runtimeClient = new RuntimeClient();
 
-createRoot(root).render(
-  <StrictMode>
-    <AppErrorBoundary>
-      <App client={runtimeClient} />
-    </AppErrorBoundary>
-  </StrictMode>,
-);
+void loadCheckpointPreferences().then(() => {
+  createRoot(root).render(
+    <StrictMode>
+      <AppErrorBoundary>
+        <App client={runtimeClient} />
+      </AppErrorBoundary>
+    </StrictMode>,
+  );
+});

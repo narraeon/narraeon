@@ -2,22 +2,53 @@ import { useEffect, useEffectEvent } from "react";
 
 // The Android app injects `NarraeonAndroid` into the backend page only (see
 // android/.../MainActivity.kt). In a regular browser it is absent.
+type AndroidMessageListener = (event: { data: unknown }) => void;
+
 interface AndroidBridge {
   postMessage(message: string): void;
-  addEventListener(
-    type: "message",
-    listener: (event: { data: unknown }) => void,
-  ): void;
+  addEventListener(type: "message", listener: AndroidMessageListener): void;
+  removeEventListener(type: "message", listener: AndroidMessageListener): void;
 }
 
 function androidBridge(): AndroidBridge | undefined {
+  if (typeof window === "undefined") return undefined;
   return (window as { NarraeonAndroid?: AndroidBridge }).NarraeonAndroid;
 }
 
-export function androidHandledCheckpoints(): Set<string> | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as { narraeonAndroidHandledCheckpoints?: Set<string> })
-    .narraeonAndroidHandledCheckpoints;
+export async function readAndroidCheckpointPreferences(): Promise<
+  Set<string> | undefined
+> {
+  const bridge = androidBridge();
+  if (bridge === undefined) return undefined;
+
+  return new Promise((resolve) => {
+    const prefix = "checkpoint-preferences:";
+    function receive({ data }: { data: unknown }): void {
+      if (typeof data !== "string" || !data.startsWith(prefix)) return;
+      try {
+        const keys: unknown = JSON.parse(data.slice(prefix.length));
+        if (Array.isArray(keys) && keys.every((key) => typeof key === "string"))
+          finish(new Set(keys));
+      } catch {
+        // An unreadable response falls back to local storage.
+        finish();
+      }
+    }
+    function finish(keys?: Set<string>): void {
+      clearTimeout(timeout);
+      bridge?.removeEventListener("message", receive);
+      resolve(keys);
+    }
+
+    // Keep the page usable if the native side goes away before replying.
+    const timeout = setTimeout(finish, 2_000);
+    try {
+      bridge.addEventListener("message", receive);
+      bridge.postMessage("read-checkpoint-preferences");
+    } catch {
+      finish();
+    }
+  });
 }
 
 export function rememberAndroidCheckpoint(key: string): void {

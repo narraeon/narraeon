@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import {
   hasHandledCheckpoint,
+  loadCheckpointPreferences,
   rememberHandledCheckpoint,
 } from "../../src/web/CheckpointContextPreferences.ts";
 
@@ -16,10 +17,10 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
-  window.localStorage.clear();
   vi.unstubAllGlobals();
+  await loadCheckpointPreferences();
 });
 
 test("checkpoint UI choices persist independently by world and immutable endpoint", () => {
@@ -39,21 +40,84 @@ test("clearing browser site data resets checkpoint UI choices", () => {
   expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(false);
 });
 
-test("Android carries handled choices independently of the WebView origin", () => {
-  const firstLaunch = new Set<string>();
-  const postMessage = vi.fn();
-  vi.stubGlobal("narraeonAndroidHandledCheckpoints", firstLaunch);
-  vi.stubGlobal("NarraeonAndroid", { postMessage });
-  rememberHandledCheckpoint("world-one", "commit:3");
-  expect(postMessage).toHaveBeenCalledWith(
-    "remember-checkpoint:narraeon.checkpoint-context.v1:world-one:commit%3A3",
-  );
-  expect(window.localStorage.length).toBe(0);
+test("Android message bridge carries migrated and new choices across two port changes", async () => {
+  const prefix = "narraeon.checkpoint-context.v1:";
+  const nativeKeys = new Set([prefix + "world-one:commit%3A2"]);
+  const siteStorage = new Map<string, Map<string, string>>();
+  async function launch(port: number) {
+    const origin = `http://127.0.0.1:${port}`;
+    const items = new Map<string, string>();
+    siteStorage.set(origin, items);
+    let receive: ((event: { data: unknown }) => void) | undefined;
+    // Each launch has its own site storage and only the message bridge.
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => items.get(key),
+        setItem: (key: string, value: string) => items.set(key, value),
+      },
+      NarraeonAndroid: {
+        addEventListener: (_type: string, listener: typeof receive) => {
+          receive = listener;
+        },
+        removeEventListener: () => {
+          receive = undefined;
+        },
+        postMessage: (message: string) => {
+          if (message === "read-checkpoint-preferences") {
+            queueMicrotask(() =>
+              receive?.({
+                data: `checkpoint-preferences:${JSON.stringify([...nativeKeys])}`,
+              }),
+            );
+          } else if (message.startsWith("remember-checkpoint:")) {
+            nativeKeys.add(message.slice("remember-checkpoint:".length));
+          }
+        },
+      },
+    });
+    await loadCheckpointPreferences();
+    expect(receive).toBeUndefined();
+  }
 
-  vi.stubGlobal("narraeonAndroidHandledCheckpoints", new Set(firstLaunch));
+  await launch(33_001);
+  expect(hasHandledCheckpoint("world-one", "commit:2")).toBe(true);
+  rememberHandledCheckpoint("world-one", "commit:3");
+  await launch(33_002);
+  expect(hasHandledCheckpoint("world-one", "commit:2")).toBe(true);
   expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(true);
-  expect(hasHandledCheckpoint("world-one", "commit:4")).toBe(false);
+  rememberHandledCheckpoint("world-one", "commit:4");
+  await launch(33_003);
+  expect(hasHandledCheckpoint("world-one", "commit:2")).toBe(true);
+  expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(true);
+  expect(hasHandledCheckpoint("world-one", "commit:4")).toBe(true);
   expect(hasHandledCheckpoint("fork-world", "commit:3")).toBe(false);
+  expect([...siteStorage.values()].map((items) => items.size)).toEqual([
+    0, 0, 0,
+  ]);
+});
+
+test("Android can still save choices if its initial read times out", async () => {
+  vi.useFakeTimers();
+  try {
+    const postMessage = vi.fn();
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("NarraeonAndroid", {
+      addEventListener: vi.fn(),
+      removeEventListener,
+      postMessage,
+    });
+    const loaded = loadCheckpointPreferences();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await loaded;
+    expect(removeEventListener).toHaveBeenCalledOnce();
+    rememberHandledCheckpoint("world-one", "commit:3");
+    expect(postMessage).toHaveBeenLastCalledWith(
+      "remember-checkpoint:narraeon.checkpoint-context.v1:world-one:commit%3A3",
+    );
+    expect(hasHandledCheckpoint("world-one", "commit:3")).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("unavailable browser storage does not prevent playing", () => {
