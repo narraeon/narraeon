@@ -163,7 +163,7 @@ export function InterfaceExtensionPreview({
       {conflict ? (
         <p role="alert">
           {uiText(
-            "预设原文与表单均有修改，请先保留一种编辑结果并保存，再预览。",
+            "编排方案原文与表单均有修改，请先保留一种编辑结果并保存，再预览。",
           )}
         </p>
       ) : null}

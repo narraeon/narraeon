@@ -78,8 +78,8 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       (world) => world.worldId === worldId,
     )!.title;
     await page.reload();
-    await page.getByRole("button", { name: "预设", exact: true }).click();
-    await page.getByText("预设管理", { exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
+    await page.getByText("编排方案管理", { exact: true }).click();
     await page
       .getByRole("button", { name: "复制推荐状态栏", exact: true })
       .click();
@@ -162,7 +162,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await expect(
       preview.getByRole("heading", { name: "已保存状态栏42" }),
     ).toBeVisible();
-    await page.getByText("预设操作", { exact: true }).click();
+    await page.getByText("编排方案操作", { exact: true }).click();
     await page
       .getByRole("button", { name: "停用 JavaScript", exact: true })
       .click();
@@ -199,7 +199,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       page.getByRole("button", { name: "保存修改", exact: true }),
     ).toBeDisabled();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     await page.goto("/");
     await page

@@ -153,8 +153,8 @@ export function PresetDraftPreview({
       </summary>
       <p>
         {t(
-          "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此预设的脚本设置。",
-          "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this preset's script settings.",
+          "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此编排方案的脚本设置。",
+          "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this orchestration's script settings.",
         )}
       </p>
       <SyncNotice

@@ -15,7 +15,7 @@ export type WorkspaceScreen =
 const destinations = [
   ["home", "工作区"],
   ["content", "内容编辑"],
-  ["plays", "预设"],
+  ["plays", "编排方案"],
   ["create", "新建世界"],
   ["preview", "提示词预览"],
 ] as const;
@@ -83,7 +83,9 @@ export function WorkspaceHeader({
             disabled={navigationLocked}
             onClick={() => navigate(destination)}
           >
-            {uiText(label)}
+            {destination === "plays" && locale === "en"
+              ? "Orchestrations"
+              : uiText(label)}
           </button>
         ))}
         {canExportAndroidLogs() && (

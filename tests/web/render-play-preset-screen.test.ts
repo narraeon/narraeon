@@ -95,12 +95,13 @@ function outputs() {
   fireEvent.click(screen.getByRole("button", { name: "界面产物" }));
 }
 
-test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原因", async () => {
+test("保存冲突读回最新编排方案并保留名称与正文草稿及拒绝原因", async () => {
   const initial = fixture();
   const latest = { ...fixture(), name: "后台新名称", revision: "rev-new" };
   const request = vi.fn(async (input: V1Request) => {
     await Promise.resolve();
-    if (input.type === "play.save") throw new Error("版本冲突；请检查最新预设");
+    if (input.type === "play.save")
+      throw new Error("版本冲突；请检查最新编排方案");
     if (input.type === "play.read")
       return { currentPresetId: latest.id, presets: [latest] };
     return {};
@@ -113,8 +114,8 @@ test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原�
       onDirtyChange: vi.fn(),
     }),
   );
-  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
-  fireEvent.change(screen.getByLabelText("玩法预设名称"), {
+  fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
+  fireEvent.change(screen.getByLabelText("编排方案名称"), {
     target: { value: "我的名称草稿" },
   });
   fireEvent.click(screen.getByRole("button", { name: "新增提示词" }));
@@ -122,9 +123,9 @@ test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原�
     target: { value: "我的正文草稿也必须保留" },
   });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
-  await screen.findByText("版本冲突；请检查最新预设");
+  await screen.findByText("版本冲突；请检查最新编排方案");
   expect(screen.getByRole("option", { name: "后台新名称" })).toBeTruthy();
-  expect(screen.getByLabelText<HTMLInputElement>("玩法预设名称").value).toBe(
+  expect(screen.getByLabelText<HTMLInputElement>("编排方案名称").value).toBe(
     "我的名称草稿",
   );
   expect(screen.getByText("未保存修改")).toBeTruthy();
@@ -137,9 +138,9 @@ test("保存冲突读回最新预设并保留名称与正文草稿及拒绝原�
   ]);
 });
 
-test("被动重读不重复报告当前选择，主动切换和预设删除仍报告真实选择变化", async () => {
+test("被动重读不重复报告当前选择，主动切换和编排方案删除仍报告真实选择变化", async () => {
   const first = fixture();
-  const second = { ...first, id: "second", name: "第二份预设" };
+  const second = { ...first, id: "second", name: "第二份编排方案" };
   const onSelectionChange = vi.fn();
   const props = {
     client: { request: <T>() => Promise.resolve({} as T) },
@@ -160,7 +161,7 @@ test("被动重读不重复报告当前选择，主动切换和预设删除仍�
   );
   await screen.findByRole("option", { name: "读回的新名称" });
   expect(onSelectionChange).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("切换预设"), {
+  fireEvent.change(screen.getByLabelText("切换编排方案"), {
     target: { value: second.id },
   });
   expect(onSelectionChange).toHaveBeenLastCalledWith(second.id);
@@ -171,16 +172,16 @@ test("被动重读不重复报告当前选择，主动切换和预设删除仍�
     }),
   );
   await waitFor(() =>
-    expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+    expect(screen.getByLabelText<HTMLSelectElement>("切换编排方案").value).toBe(
       first.id,
     ),
   );
   expect(onSelectionChange).toHaveBeenLastCalledWith(first.id);
 });
 
-test("删除回执生效后列表读取失败，重试只读取重建的预设", async () => {
+test("删除回执生效后列表读取失败，重试只读取重建的编排方案", async () => {
   const removed = fixture();
-  const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认预设" };
+  const rebuilt = { ...removed, id: "rebuilt", name: "修复后默认编排方案" };
   let reads = 0;
   const request = vi.fn(async (r: V1Request) => {
     await Promise.resolve();
@@ -200,16 +201,16 @@ test("删除回执生效后列表读取失败，重试只读取重建的预设",
       onDirtyChange: vi.fn(),
     }),
   );
-  fireEvent.click(screen.getByText("预设操作", { selector: "summary" }));
-  fireEvent.click(screen.getByRole("button", { name: "删除预设" }));
+  fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除编排方案" }));
   await screen.findByText("暂时无法同步");
   expect(
-    screen.getByText("玩法预设已删除；删空后会自动重建默认预设。"),
+    screen.getByText("编排方案已删除；删空后会自动重建默认编排方案。"),
   ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "删除预设" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "删除编排方案" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
   await waitFor(() =>
-    expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
+    expect(screen.getByLabelText<HTMLSelectElement>("切换编排方案").value).toBe(
       rebuilt.id,
     ),
   );
@@ -370,9 +371,15 @@ test("system example is fully read-only, clone becomes independently editable an
 test("dirty draft cannot switch and cancel restores source and metadata", () => {
   setup();
   addFollowup();
-  expect(screen.getByLabelText("切换预设")).toHaveProperty("disabled", true);
+  expect(screen.getByLabelText("切换编排方案")).toHaveProperty(
+    "disabled",
+    true,
+  );
   fireEvent.click(screen.getByRole("button", { name: "撤销未保存修改" }));
-  expect(screen.getByLabelText("切换预设")).toHaveProperty("disabled", false);
+  expect(screen.getByLabelText("切换编排方案")).toHaveProperty(
+    "disabled",
+    false,
+  );
   expect(
     within(screen.getByRole("list", { name: "后置请求" })).queryByRole(
       "button",
@@ -387,10 +394,10 @@ test("invalid imported source is retained in recovery editor and raw save does n
   preset.validation = { status: "invalid", message: "Broken imported YAML" };
   const request = setup(preset);
   fireEvent.click(screen.getByRole("button", { name: "修复导入原文" }));
-  fireEvent.change(screen.getByLabelText("玩法预设文件", { exact: true }), {
+  fireEvent.change(screen.getByLabelText("编排方案文件", { exact: true }), {
     target: { value: "call-chain.yaml" },
   });
-  fireEvent.change(screen.getByLabelText("编辑玩法文件 call-chain.yaml"), {
+  fireEvent.change(screen.getByLabelText("编辑编排方案文件 call-chain.yaml"), {
     target: { value: "original unrepaired content" },
   });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
@@ -468,7 +475,7 @@ test("unused named resources can be deleted after unlinking without leaving expo
     }),
   );
   fireEvent.click(within(resource).getByRole("button", { name: "移除此引用" }));
-  fireEvent.click(screen.getByText("预设操作", { exact: true }));
+  fireEvent.click(screen.getByText("编排方案操作", { exact: true }));
   fireEvent.click(screen.getByText("保留的资源", { exact: true }));
   const unused = screen
     .getByText("样式 - 雾港.css", { exact: true, selector: "summary" })
@@ -554,7 +561,7 @@ test.each(["zh-CN", "en"] as const)(
     fireEvent.click(
       screen.getByRole("button", { name: cn ? "保存修改" : "Save changes" }),
     );
-    await screen.findByText(cn ? "预设已保存。" : "Preset saved.");
+    await screen.findByText(cn ? "编排方案已保存。" : "Orchestration saved.");
     const saved = request.mock.calls
       .map(([r]) => r)
       .find(
@@ -575,13 +582,13 @@ test.each(["zh-CN", "en"] as const)(
     });
     fireEvent.click(
       screen.getByRole("button", {
-        name: cn ? "应用为当前玩法" : "Use as current play preset",
+        name: cn ? "应用为当前编排方案" : "Use as current orchestration",
       }),
     );
     await screen.findByText(
       cn
-        ? "已应用此预设；游玩修改将在下一次正常发送时生效。"
-        : "Preset applied. Play changes take effect on the next normal send.",
+        ? "已应用此编排方案；游玩修改将在下一次正常发送时生效。"
+        : "Orchestration applied. Play changes take effect on the next normal send.",
     );
   },
 );
@@ -744,7 +751,7 @@ test("resource deletion button follows current source references through edits a
     'window.__NARRAEON_ASSETS__["assets/data.json"]';
   preset.structure!.extensionRefs = ["assets/data.json", "scripts/consumer.js"];
   const request = setup(preset);
-  fireEvent.click(screen.getByText("预设操作", { exact: true }));
+  fireEvent.click(screen.getByText("编排方案操作", { exact: true }));
   fireEvent.click(screen.getByText("保留的资源", { exact: true }));
   const data = screen
     .getByText("data.json", { selector: "summary" })

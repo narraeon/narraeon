@@ -64,7 +64,7 @@ test("portable ordered play preserves identities, disabled text, and protects re
   const store = new FileNativePlayPresetStore(root);
   await store.initialize();
   const files = {
-    ...defaultPlayPresetFiles,
+    ...legacyDefaultPlayPresetFilesForLocale("en"),
     "preset.yaml": stringify({
       format: "narraeon.play-preset/v2",
       name: "Ordered",
@@ -149,7 +149,7 @@ test.each([
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
     const files = {
-      ...defaultPlayPresetFiles,
+      ...legacyDefaultPlayPresetFilesForLocale("en"),
       "preset.yaml": stringify({
         format: "narraeon.play-preset/v2",
         name: "Ordered",
@@ -342,7 +342,7 @@ test("legacy migration retains disabled copies and resources while frozen reques
   const frozen = compiler.compilePlayCallChain(input, before);
   const exactBefore = JSON.stringify(frozen);
   const structure = imported.preset.structure!;
-  expect(structure.migrationNotice).toContain("归并");
+  expect(before.definition.format).toBe("narraeon.orchestration/v1");
   expect(
     structure.playPrompts?.find(
       (entry) => entry.kind === "user" && entry.name === "My disabled original",
@@ -353,8 +353,7 @@ test("legacy migration retains disabled copies and resources while frozen reques
     enabled: false,
     body: files["blocks/style-horror.md"],
   });
-  // Converted v1 presets gain the choice-group builtins and the tabletop
-  // builtin, which compiles only for tabletop worlds.
+  // The choices are available, but legacy user policies stay in charge.
   const builtinEntries = structure.playPrompts!.filter(
     (entry) => entry.kind === "builtin",
   );
@@ -370,7 +369,7 @@ test("legacy migration retains disabled copies and resources while frozen reques
   const saved = await store.save({
     presetId: imported.preset.id,
     name: "Legacy",
-    files,
+    files: imported.preset.files,
     structure,
   });
   expect(saved.preset.draft?.validation).toEqual({ status: "valid" });
@@ -627,16 +626,18 @@ test.each(["escaped-v2", "unknown"] as const)(
     roots.push(root);
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
-    const files = structuredClone(defaultPlayPresetFiles);
-    files["preset.yaml"] = files["preset.yaml"]!.replace(
-      "format: narraeon.play-preset/v3",
-      mode === "unknown"
-        ? "format: narraeon.play-preset/v99"
-        : 'format: "narraeon.play-preset/v\\x33"',
-    ).replace(
-      "playPrompts: {}",
-      "playPrompts: {overrides: [{builtin: play.mechanics, enabled: false}]}",
-    );
+    const { "orchestration.yaml": manifest, ...files } = defaultPlayPresetFiles;
+    files["preset.yaml"] = manifest!
+      .replace(
+        "format: narraeon.orchestration/v1",
+        mode === "unknown"
+          ? "format: narraeon.play-preset/v99"
+          : 'format: "narraeon.play-preset/v\\x33"',
+      )
+      .replace(
+        "playPrompts: {}",
+        "playPrompts: {overrides: [{builtin: play.mechanics, enabled: false}]}",
+      );
     await expect(
       store.importPortable({ name: "Invalid", files }),
     ).rejects.toThrow();
@@ -654,9 +655,12 @@ test("author arrangement is independent, portable and enforces mandatory target 
     files: defaultPlayPresetFiles,
   });
   expect(preset.preset.structure).toHaveProperty("authorPrompts");
-  const raw = parseDocument(defaultPlayPresetFiles["preset.yaml"]!);
+  const raw = parseDocument(defaultPlayPresetFiles["orchestration.yaml"]!);
   raw.setIn(["authorPrompts", 0, "enabled"], false);
-  const files = { ...defaultPlayPresetFiles, "preset.yaml": stringify(raw) };
+  const files = {
+    ...defaultPlayPresetFiles,
+    "orchestration.yaml": stringify(raw),
+  };
   await expect(
     store.importPortable({ name: "Invalid author", files }),
   ).rejects.toThrow();

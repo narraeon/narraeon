@@ -69,20 +69,24 @@ test("v0.7.10 current and draft convert once without changing historical revisio
     }
     expect(actual).toEqual(expected);
   }
-  expect(parseDocument(preset.files["preset.yaml"]!).get("format")).toBe(
-    "narraeon.play-preset/v3",
+  expect(parseDocument(preset.files["orchestration.yaml"]!).get("format")).toBe(
+    "narraeon.orchestration/v1",
   );
-  const converted = JSON.parse(await readFile(path, "utf8")) as Library;
+  const newPath = join(root, "file-native-orchestrations.json");
+  const converted = JSON.parse(await readFile(newPath, "utf8")) as {
+    orchestrations: Library["presets"];
+  };
   for (const before of original.presets) {
-    const after = converted.presets.find(
+    const after = converted.orchestrations.find(
       (p: { id: string }) => p.id === before.id,
     );
     for (const [revision, files] of Object.entries(before.revisions))
       expect(after!.revisions[revision]).toEqual(files);
   }
-  const bytes = await readFile(path, "utf8");
+  const bytes = await readFile(newPath, "utf8");
   await new FileNativePlayPresetStore(root).initialize();
-  expect(await readFile(path, "utf8")).toBe(bytes);
+  expect(await readFile(newPath, "utf8")).toBe(bytes);
+  expect(await readFile(path, "utf8")).toBe(fixture.library);
 });
 
 test.each([false, true])(
@@ -123,7 +127,7 @@ test.each([false, true])(
     await store.select(initial.id);
     const frozen = await store.bindCurrent();
     const bytes = await readFile(
-      join(root, "file-native-play-presets.json"),
+      join(root, "file-native-orchestrations.json"),
       "utf8",
     );
     const original = builtins.builtinPlayPrompts;
@@ -147,7 +151,7 @@ test.each([false, true])(
       const binding = await cold.bindCurrent();
       expect(binding.revision).toBe(frozen.revision);
       expect(
-        await readFile(join(root, "file-native-play-presets.json"), "utf8"),
+        await readFile(join(root, "file-native-orchestrations.json"), "utf8"),
       ).toBe(bytes);
       const effective = (await cold.list()).presets[0]!.structure!.playPrompts!;
       expect(effective.find((e) => e.id === "play.future")).toMatchObject({
@@ -197,6 +201,12 @@ test("a frozen v3 binding survives default status/order changes and retired iden
   } = await import("../../src/runtime/play/FileNativePlayPresetStore.ts");
   const frozen = builtinDefaultPlayPresetBinding("en");
   frozen.id = "historical";
+  frozen.files["preset.yaml"] = frozen.files["orchestration.yaml"]!.replace(
+    "narraeon.orchestration/v1",
+    "narraeon.play-preset/v3",
+  );
+  delete frozen.files["orchestration.yaml"];
+  frozen.definition.format = "narraeon.play-preset/v3";
   const entries = frozen.definition.playPrompts!.filter(
     (e) =>
       !(
@@ -211,7 +221,7 @@ test("a frozen v3 binding survives default status/order changes and retired iden
     messageRole: "assistant",
     turnGuide: "",
   });
-  const raw = parseDocument(frozen.files["preset.yaml"]!);
+  const raw = parseDocument(frozen.files["preset.yaml"]);
   raw.set("playPrompts", {
     overrides: [
       {
@@ -266,7 +276,7 @@ test("setting and world-revision compile fresh author defaults through the same 
   await store.initialize();
   const before = await store.bindCurrent();
   const bytes = await readFile(
-    join(root, "file-native-play-presets.json"),
+    join(root, "file-native-orchestrations.json"),
     "utf8",
   );
   const original = authors.builtinAuthorPrompts;
@@ -328,7 +338,7 @@ test("setting and world-revision compile fresh author defaults through the same 
       ),
     ).toBe(true);
     expect(
-      await readFile(join(root, "file-native-play-presets.json"), "utf8"),
+      await readFile(join(root, "file-native-orchestrations.json"), "utf8"),
     ).toBe(bytes);
   } finally {
     spy.mockRestore();
@@ -501,15 +511,15 @@ test("a future catalog identity cannot quarantine a preset with an existing buil
   const store = new FileNativePlayPresetStore(root);
   await store.initialize();
   const files = defaultPlayPresetFilesForLocale("en");
-  const document = parseDocument(files["preset.yaml"]!);
+  const document = parseDocument(files["orchestration.yaml"]!);
   document.set("playPrompts", {
     overrides: [{ builtin: "play.prose", id: "play.future", enabled: false }],
   });
-  files["preset.yaml"] = document.toString();
+  files["orchestration.yaml"] = document.toString();
   const imported = await store.importPortable({ name: "Aliased", files });
   await store.select(imported.preset.id);
   const bytes = await readFile(
-    join(root, "file-native-play-presets.json"),
+    join(root, "file-native-orchestrations.json"),
     "utf8",
   );
   const original = play.builtinPlayPrompts;
@@ -542,7 +552,7 @@ test("a future catalog identity cannot quarantine a preset with an existing buil
       ),
     ).toMatchObject({ id: "builtin-play.future-1", enabled: true });
     expect(
-      await readFile(join(root, "file-native-play-presets.json"), "utf8"),
+      await readFile(join(root, "file-native-orchestrations.json"), "utf8"),
     ).toBe(bytes);
   } finally {
     spy.mockRestore();

@@ -35,7 +35,7 @@ test("preset conflict preserves edits and rejection while a bounded offline read
 }) => {
   const created = await runtime<PlayPresetReceipt>(page, {
     type: "play.create",
-    name: "冲突原始预设",
+    name: "冲突原始编排方案",
   });
   let writes = 0;
   let reads = 0;
@@ -56,7 +56,7 @@ test("preset conflict preserves edits and rejection while a bounded offline read
           protocol: "narraeon.runtime/v1",
           error: {
             code: "preset_conflict",
-            message: "预设版本冲突，请核对最新预设后再保存。",
+            message: "编排方案版本冲突，请核对最新编排方案后再保存。",
           },
         },
       });
@@ -66,18 +66,18 @@ test("preset conflict preserves edits and rejection while a bounded offline read
       else await route.continue();
     } else await route.continue();
   });
-  await page.goto(`/#/presets/${created.preset.id}`);
+  await page.goto(`/#/orchestrations/${created.preset.id}`);
   await page
     .locator("summary")
-    .filter({ hasText: /^预设操作$/u })
+    .filter({ hasText: /^编排方案操作$/u })
     .click();
-  await page.getByLabel("玩法预设名称", { exact: true }).fill("我的名称草稿");
+  await page.getByLabel("编排方案名称", { exact: true }).fill("我的名称草稿");
   await page.getByRole("button", { name: "新增提示词", exact: true }).click();
   await page.getByLabel("提示词正文", { exact: true }).fill("保留我的正文编辑");
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByText("暂时无法同步", { exact: true })).toBeVisible();
   expect(reads).toBe(1);
-  await expect(page.getByLabel("玩法预设名称", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("编排方案名称", { exact: true })).toHaveValue(
     "我的名称草稿",
   );
   offline = false;
@@ -85,11 +85,13 @@ test("preset conflict preserves edits and rejection while a bounded offline read
   await expect(
     page.getByRole("option", { name: "其他页面的新名称", exact: true }),
   ).toHaveCount(1);
-  await expect(page.getByLabel("玩法预设名称", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("编排方案名称", { exact: true })).toHaveValue(
     "我的名称草稿",
   );
   await expect(
-    page.getByText("预设版本冲突，请核对最新预设后再保存。", { exact: true }),
+    page.getByText("编排方案版本冲突，请核对最新编排方案后再保存。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.getByText("暂时无法同步", { exact: true })).toHaveCount(0);
   expect(writes).toBe(1);
@@ -197,28 +199,28 @@ test("portable preset import and export lost results only read the library and n
       await route.continue();
     }
   });
-  await page.goto("/#/presets");
+  await page.goto("/#/orchestrations");
   await page
     .locator("summary")
-    .filter({ hasText: /^预设管理$/u })
+    .filter({ hasText: /^编排方案管理$/u })
     .click();
-  await page.getByLabel("选择要导入的预设", { exact: true }).setInputFiles({
-    name: "丢包的独立预设.play-preset.json",
+  await page.getByLabel("选择要导入的编排方案", { exact: true }).setInputFiles({
+    name: "丢包的独立编排方案.orchestration.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(exported.files)),
   });
   await expect(
-    page.getByRole("option", { name: "丢包的独立预设", exact: true }),
+    page.getByRole("option", { name: "丢包的独立编排方案", exact: true }),
   ).toHaveCount(1);
-  await expect(page.getByLabel("切换预设")).toHaveValue(
+  await expect(page.getByLabel("切换编排方案")).toHaveValue(
     library.currentPresetId,
   );
   expect(imports).toBe(1);
   await page
     .locator("summary")
-    .filter({ hasText: /^预设操作$/u })
+    .filter({ hasText: /^编排方案操作$/u })
     .click();
-  await page.getByRole("button", { name: "导出预设", exact: true }).click();
+  await page.getByRole("button", { name: "导出编排方案", exact: true }).click();
   await expect.poll(() => reads).toBe(2);
   expect(exports).toBe(1);
   expect(
@@ -232,7 +234,7 @@ test("preset enabled and script flags and selection reconcile lost receipts", as
 }) => {
   const created = await runtime<PlayPresetReceipt>(page, {
     type: "play.create",
-    name: "同步启停预设",
+    name: "同步启停编排方案",
   });
   const writes: string[] = [];
   let reads = 0;
@@ -251,10 +253,10 @@ test("preset enabled and script flags and selection reconcile lost receipts", as
     if (request.type === "play.read") reads++;
     await route.continue();
   });
-  await page.goto(`/#/presets/${created.preset.id}`);
+  await page.goto(`/#/orchestrations/${created.preset.id}`);
   await page
     .locator("summary")
-    .filter({ hasText: /^预设操作$/u })
+    .filter({ hasText: /^编排方案操作$/u })
     .click();
   await page
     .getByRole("button", {
@@ -272,16 +274,16 @@ test("preset enabled and script flags and selection reconcile lost receipts", as
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "停用预设", exact: true }).click();
+  await page.getByRole("button", { name: "停用编排方案", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "启用预设", exact: true }),
+    page.getByRole("button", { name: "启用编排方案", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "启用预设", exact: true }).click();
+  await page.getByRole("button", { name: "启用编排方案", exact: true }).click();
   await page
-    .getByRole("button", { name: "应用为当前玩法", exact: true })
+    .getByRole("button", { name: "应用为当前编排方案", exact: true })
     .click();
   await expect(page.locator(".play-preset-header-fact strong")).toHaveText(
-    "同步启停预设",
+    "同步启停编排方案",
   );
   expect(writes).toEqual([
     "play.scripts",
@@ -328,7 +330,7 @@ test("draft output and interface preview have independent bounded reads and keep
       writes++;
     await route.continue();
   });
-  await page.goto(`/#/presets/${created.preset.id}`);
+  await page.goto(`/#/orchestrations/${created.preset.id}`);
   await page.getByRole("button", { name: "新增后置请求", exact: true }).click();
   await page.getByRole("button", { name: "界面产物", exact: true }).click();
   await page.getByText("游玩效果预览 · 就地展开", { exact: true }).click();
@@ -385,7 +387,7 @@ for (const embedded of [false, true])
       if (offline) await route.abort("failed");
       else await route.continue();
     });
-    await page.goto(embedded ? "/#/presets" : "/#/preview");
+    await page.goto(embedded ? "/#/orchestrations" : "/#/preview");
     if (embedded)
       await page
         .locator("summary")
@@ -453,10 +455,10 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
     }
     await route.continue();
   });
-  await page.goto("/#/presets");
+  await page.goto("/#/orchestrations");
   await page
     .locator("summary")
-    .filter({ hasText: /^预设管理$/u })
+    .filter({ hasText: /^编排方案管理$/u })
     .click();
   const source = {
     prompts: [
@@ -495,7 +497,7 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
     0,
   );
   expect(libraryReads).toBe(2);
-  await expect(dialog.getByLabel("新预设名称")).toHaveValue("迁移草稿");
+  await expect(dialog.getByLabel("新编排方案名称")).toHaveValue("迁移草稿");
   expect(imports).toBe(1);
   expect(
     (await runtime<PlayPresetScreenLibrary>(page, { type: "play.read" }))
@@ -515,10 +517,10 @@ test("invalid SillyTavern source retains a localized diagnostic after one recove
     )
       reads++;
   });
-  await page.goto("/#/presets");
+  await page.goto("/#/orchestrations");
   await page
     .locator("summary")
-    .filter({ hasText: /^预设管理$/u })
+    .filter({ hasText: /^编排方案管理$/u })
     .click();
   await page.getByLabel("选择 SillyTavern JSON 文件").setInputFiles({
     name: "无效草稿.json",

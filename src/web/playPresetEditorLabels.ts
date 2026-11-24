@@ -1,3 +1,4 @@
+import { orchestrationManifest } from "../shared/application-preset-files.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import type { ArtifactMountName } from "./ArtifactExtensionHost.tsx";
 import { defaultSettingImprovementPromptPath } from "../shared/default-setting-improvement-prompt.ts";
@@ -57,13 +58,13 @@ export function describePresetFile(
   path: string,
   contents: string,
 ): PresetFileDescription {
-  if (path === "preset.yaml")
+  if (path === orchestrationManifest || path === "preset.yaml")
     return {
       path,
-      title: uiText("预设入口"),
+      title: uiText("编排方案入口"),
       kind: uiText("核心 YAML"),
       description: uiText(
-        "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份预设由哪些部分组成”。",
+        "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份编排方案由哪些部分组成”。",
       ),
     };
   if (path === "call-chain.yaml")
@@ -124,7 +125,7 @@ export function describePresetFile(
       title: uiText("界面交互脚本"),
       kind: "JavaScript",
       description: uiText(
-        "为 renderer 添加本地交互；导入预设后默认停用，只有显式信任后才执行。",
+        "为 renderer 添加本地交互；导入编排方案后默认停用，只有显式信任后才执行。",
       ),
     };
   if (path.startsWith("assets/"))
@@ -145,7 +146,7 @@ export function describePresetFile(
     path,
     title: path.split("/").at(-1) ?? uiText("未命名文件"),
     kind: uiText("普通文件"),
-    description: uiText("随玩法预设保存和导出的普通业务文件。"),
+    description: uiText("随编排方案保存和导出的普通业务文件。"),
   };
 }
 

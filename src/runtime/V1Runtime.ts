@@ -1846,8 +1846,12 @@ export class V1Runtime {
     const recovery = this.#playPresets.recovery;
     if (recovery !== null)
       notices.push({
-        surface: "Play-preset library",
-        message: `The play-preset library could not be read (${recovery.message}). A default library was rebuilt; the original file remains at ${recovery.quarantinedPath}`,
+        surface:
+          this.#locale === "zh-CN" ? "编排方案库" : "Orchestration library",
+        message:
+          this.#locale === "zh-CN"
+            ? `无法读取编排方案库。已重建默认库，原始文件备份在 ${recovery.quarantinedPath}（${recovery.message}）。`
+            : `The orchestration library could not be read (${recovery.message}). A default library was rebuilt. The original file is backed up at ${recovery.quarantinedPath}.`,
       });
     return notices;
   }

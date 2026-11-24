@@ -63,8 +63,9 @@ function members(group: PromptGroup): string[] {
 
 function playList(files: Record<string, string>): Entry[] {
   if (
+    files["orchestration.yaml"] !== undefined ||
     parseDocument(files["preset.yaml"]!).get("format") ===
-    "narraeon.play-preset/v3"
+      "narraeon.play-preset/v3"
   ) {
     const parsed = parseEffectivePreset(files);
     if (parsed.kind !== "valid") throw parsed.error;
@@ -772,7 +773,10 @@ describe("restructure migration", () => {
       "play.prose",
       "play.scene",
     ]);
-    expect(bound.files).toEqual(upgradeOrderedPromptFormat(files));
+    expect(bound.definition.format).toBe("narraeon.orchestration/v1");
+    expect(bound.definition.playPrompts).toEqual(
+      playList(upgradeOrderedPromptFormat(files)),
+    );
     // The old revision stays readable for frozen requests: its bytes are kept
     // as written and its retired entries parse as their successors.
     const old = await store.bindRevision("mine", currentRevision);

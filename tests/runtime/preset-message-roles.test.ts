@@ -461,7 +461,8 @@ test("deduplicates repeated # Author instruction headings across consecutive sys
 
 test("old v2 presets retain the combined System prefix when optional fields are absent", async () => {
   const { binding } = await fixture();
-  const raw = parseDocument(binding.files["preset.yaml"]!);
+  const { "orchestration.yaml": manifest, ...resources } = binding.files;
+  const raw = parseDocument(manifest!);
   raw.set("format", "narraeon.play-preset/v2");
   raw.set("authorPrompts", binding.definition.authorPrompts);
   raw.delete("mergeConsecutiveMessages");
@@ -475,7 +476,7 @@ test("old v2 presets retain the combined System prefix when optional fields are 
         return legacy;
       }),
   );
-  const files = { ...binding.files, "preset.yaml": stringify(raw) };
+  const files = { ...resources, "preset.yaml": stringify(raw) };
   const parsed = parsePlayPresetFiles(files);
   if (parsed.kind !== "valid") throw parsed.error;
   const old = { ...binding, definition: parsed.definition, files };
@@ -545,12 +546,12 @@ test.each([
 ])(
   "portable validation rejects invalid role/merge settings: $path",
   ({ path, value }) => {
-    const raw = parseDocument(defaultPlayPresetFiles["preset.yaml"]!);
+    const raw = parseDocument(defaultPlayPresetFiles["orchestration.yaml"]!);
     raw.setIn(path, value);
     expect(
       parsePlayPresetFiles({
         ...defaultPlayPresetFiles,
-        "preset.yaml": stringify(raw),
+        "orchestration.yaml": stringify(raw),
       }).kind,
     ).toBe("invalid");
   },

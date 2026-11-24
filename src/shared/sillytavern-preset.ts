@@ -1,6 +1,10 @@
 import { stringify } from "yaml";
 import type { AppLocale } from "../protocol/appPreferences.ts";
-import { applicationPresetFilesForLocale } from "./application-preset-files.ts";
+import {
+  applicationPresetFilesForLocale,
+  orchestrationFormat,
+  orchestrationManifest,
+} from "./application-preset-files.ts";
 import {
   builtinPlayPrompts,
   type OrderedPlayPrompt,
@@ -529,8 +533,8 @@ export function convertSillyTavernPreset(
   );
   const arrangement = customizePromptArrangement(entries, catalog);
   const files = applicationPresetFilesForLocale(options.locale);
-  files["preset.yaml"] = stringify({
-    format: "narraeon.play-preset/v3",
+  files[orchestrationManifest] = stringify({
+    format: orchestrationFormat,
     name: options.name,
     callChain: "call-chain.yaml",
     playPrompts: arrangement,

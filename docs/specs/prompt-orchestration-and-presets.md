@@ -2,9 +2,6 @@
 
 本规格定义提示词分层、编排方案存储与迁移、双编排结构、本轮提示机制、世界提示框架及维护声明 schema，对应代码模块 `src/runtime/prompt/` 与 `src/runtime/config/`，并承接 [ADR-0025](../adr/0025-prompts-compile-into-append-only-model-sessions.md)、[ADR-0029](../adr/0029-author-prompt-layers-split-by-capability.md)、[ADR-0034](../adr/0034-released-storage-formats-require-atomic-migrations.md) 与 [ADR-0043](../adr/0043-tabletop-gameplay-is-world-identity-and-runtime-derives-resolution.md)。
 
-> [!NOTE]
-> **术语过渡说明**：本规格及仓库文档统一启用规范术语 **「编排方案」**（合并原「主持预设」与「玩法预设」）。当前代码、界面文案、Hash 路由（`#/presets`）与磁盘存储格式（`narraeon.play-preset/v3`）暂仍沿用「预设」旧称，全面迁移由 GitHub Issue `#243` 实施。
-
 ## 1. 能力分层与编排方案边界
 
 提示词按各层的**实际作用域与写入能力**切分，而不按语义主题切分（[ADR-0029](../adr/0029-author-prompt-layers-split-by-capability.md)）：
@@ -21,9 +18,9 @@
 
 ## 2. 编排方案存储格式与分版本迁移
 
-### 2.1 `narraeon.play-preset/v3` 叠加表示与系统种子所有权
+### 2.1 `narraeon.orchestration/v1` 叠加表示与系统种子所有权
 
-新编排方案与应用模板使用 `narraeon.play-preset/v3`（#243 实施前暂沿用此 schema 标识）：
+新编排方案与应用模板使用 `orchestration.yaml`，格式为 `narraeon.orchestration/v1`。本地库 `file-native-orchestrations.json` 保存 `schemaVersion: 1`、`currentOrchestrationId` 与 `orchestrations`。便携导出为 `.orchestration.json`，只包含路径和文本内容。
 
 - **应用目录所有权**：内置系统块的正文、稳定身份、元信息、默认启停与默认顺序属于应用目录，不复制完整系统正文进磁盘文件。
 - **持久化叠加内容**：`playPrompts` 与 `authorPrompts` 仅持久化用户自定义正文、必要的系统引用身份、显式角色／启停／尾部行覆盖（包括清空）、选项组选择和自定义顺序。编辑器、保存校验、复制、导入导出、Prompt Preview 与生产编译共用同一有效编排解析层。
@@ -44,17 +41,19 @@
 | 叙事建议 | 停笔选项组、结尾、输出边界 | 停笔选项组按应用默认单选启用（其余同组项停用）；其余后继继承原条目启用状态 |
 | 状态维护建议 | 保存时机与整理、信息归属与事件、当前情境与玩家视图、检查点政策 | 继承原条目启用状态 |
 
-### 2.3 分版本迁移时机对照（v1 vs v2 → v3）
+### 2.3 已发布 v1、v2、v3 的一次性迁移
 
-已发布旧版本编排方案遵循 [ADR-0034](../adr/0034-released-storage-formats-require-atomic-migrations.md) 的显式、可重入迁移规则，**v1 与 v2 的转换时机严格区分，不得合并**：
+首次初始化发现旧库 `file-native-play-presets.json` 且新库尚不存在时，Runtime 按 [ADR-0034](../adr/0034-released-storage-formats-require-atomic-migrations.md) 将当前修订与可解析草稿一起迁移。旧库、历史修订、不可解析草稿保留原始内容。Runtime 在同目录写入并校验临时文件，再用一次原子 `rename` 发布新库。中断后从原库重试。新库发布后是常规读写入口。未知或损坏的库原样移至 `.unreadable-*.json`，工作区显示备份位置，并重建默认库。
 
-| 源版本 | 只读打开 / 列表读取行为 | 转换至 v3 的精确触发时机 | 转换与失败语义 |
-| --- | --- | --- | --- |
-| **v1** | **不转换、不改写用户文件**，持续按已发布 v1 契约读取与编译；缺少显式作者编排引用时在内存中采用系统推荐正文，不静默写盘 | **仅当用户在编排方案工作台显式保存时**转换为 v3 | 旧可编辑副本转为独立用户内容，对应应用内置项显式停用以避免重复正文；未启用正文与资源原样保留；世界部分按首次出现位置归并并报告顺序差异 |
-| **v2** | 首次初始化方案库或导入 v2 便携包时即触发转换（不留双读双写） | **首次初始化或导入时一次性原子转换**至 v3 | 保留全部历史 revision 与原文件树，仅将当前及可解析草稿推进至新 revision，不可解析草稿保留原字节供修复；整个库经同一原子 rename 发布，失败从旧源重做，成功后再次初始化不再写入；校验按原 v2 必选身份执行，后续新增必选块仅在转换后的有效编排中加入 |
+| 旧 `preset.yaml` 格式 | 转换规则 |
+| --- | --- |
+| `narraeon.play-preset/v1` | 旧主持块和叙事块成为独立用户条目，保留正文、启停和顺序。对应的可选系统游玩块默认停用。世界指令和材料合并在首次世界位置。原有作者正文成为独立条目并停用对应系统建议。没有旧作者声明时采用应用目录的默认作者指导。超出当前便携格式体积或条目上限的方案沿用原修订，整理后可在工作台保存。 |
+| `narraeon.play-preset/v2` | 原完整列表按已发布的必选身份校验，再转为叠加表示，保留用户块、克隆、顺序、角色和尾部覆盖。后续发布的必选块由有效编排解析层补入。 |
+| `narraeon.play-preset/v3` | 沿用原叠加内容，仅更新清单文件名和格式标识。 |
 
-- Runtime 的保存与导入校验在服务端强制执行，不得被表单以外的请求绕过；用户草稿须经保存并应用流程才切换有效 revision。
-- 历史编译结果、冻结资源、Provider 原生续传与合法原样重试一律沿用当时冻结快照，不按当前应用目录或最新编排重建。
+旧 `narraeon.play-call-chain/v1` 的后置定义转换为 `v2` 有序引用，原定义、挂载和扩展资源随方案保留。v1.0.0 仍可导入 `.play-preset.json` 和上述三种旧清单，导入的副本使用当前格式。v1.0.0 之后的旧格式兼容清理见 [#244](https://github.com/narraeon/narraeon/issues/244)。
+
+Runtime 在服务端校验保存和导入。草稿须应用才会切换有效修订。历史编译结果、冻结资源、Provider 原生续传与合法原样重试沿用当时的快照。
 
 ## 3. 游玩编排与作者编排（`playPrompts` / `authorPrompts`）
 
@@ -164,7 +163,7 @@ context:
   - 正文与元信息各自最近一次已提交写入位置按当前可达 Authority 历史分别计算（不使用文件 `mtime`，无变动写入／重启／复制不改变位置），**仅在维护诊断中展示**，不注入模型材料或 `context_read` 回执。
   - 诊断读取失败时仅显示「不可用」，不得阻断写入、叙事结算或世界修订，也不得展示旧事实冒充现值。
 
-## 7. SillyTavern 编排方案导入与静态宏阅读
+## 7. SillyTavern 预设导入与静态宏阅读
 
 - **支持来源**：SillyTavern 完整 Chat Completion 预设与 Prompt Manager v1 的 `full`／`character` 导出。
 - **向导交互与转换**：分栏浏览目录与详情（标题激活切详情、导入勾选独立保留；移动端上下布局）；返回来源修改选择、名称或顺序组使旧转换结果失效。导入前按来源顺序展示每项启停、插入位置、触发条件、宏与覆盖含义，勾选与来源启停分离。

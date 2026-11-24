@@ -202,23 +202,19 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       target.presetId !== undefined &&
       !next.playPresets.presets.some(({ id }) => id === target.presetId)
     )
-      failure = uiText("找不到该预设。");
+      failure = uiText("找不到该编排方案。");
     if (failure || target === null) {
       switchLocation({ screen: "home" }, "replace");
       setNotice(failure);
     } else if (target.screen === "content") {
       void openPackage(target.packageId, "replace");
     } else if (target.screen === "plays") {
-      const presetId = target.presetId ?? next.playPresets.currentPresetId;
       const current = locationRef.current;
-      if (current.screen === "plays" && current.presetId !== presetId) {
+      if (current.screen === "plays" && current.presetId !== target.presetId) {
         presetPageInstanceRef.current += 1;
         setPresetPageVersion((version) => version + 1);
       }
-      switchLocation(
-        { screen: "plays", ...(presetId ? { presetId } : {}) },
-        "replace",
-      );
+      switchLocation(target, "replace");
     } else if (target.screen === "preview" && !next.model.configured) {
       switchLocation({ screen: "model" }, "replace");
       setNotice(uiText("请先保存并启用一份模型配置。"));

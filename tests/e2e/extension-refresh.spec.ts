@@ -130,7 +130,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     });
     await runtime(page, { type: "play.select", presetId: preset.preset.id });
     await page.reload();
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page
       .getByRole("list", { name: "后置请求" })
       .getByRole("button", { name: /^first/u })
@@ -156,7 +156,9 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       'h2 { color: rgb(12, 34, 56); } h2::after { content: "<"; } /* </style><script data-css-escape>bad()</script> */',
     );
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("编排方案已保存。", { exact: true }),
+    ).toBeVisible();
     const savedLibrary = await runtime<{
       presets: { id: string; draft?: { validation: unknown } }[];
     }>(page, { type: "play.read" });
@@ -165,7 +167,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
         ?.validation,
     ).toEqual({ status: "valid" });
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     const content = await runtime<{ localId: string }>(page, {
       type: "content.create",
@@ -376,13 +378,15 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       "Emit panel and output_3 from the settled story.",
     );
     await page.goto(url);
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page.getByLabel("启用 Edited multi-output request").uncheck();
     await page.getByLabel("启用 second").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("编排方案已保存。", { exact: true }),
+    ).toBeVisible();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     await open();
     await page
@@ -395,12 +399,14 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect.poll(() => requests).toBe(4);
     expect(pending).toHaveLength(0);
     await page.goto(url);
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page.getByLabel("启用 场景回顾（系统示例）").check();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("编排方案已保存。", { exact: true }),
+    ).toBeVisible();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     await open();
     await page.getByLabel("你的行动").fill("Generate the system recap.");
@@ -416,12 +422,14 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect(recap()).toBeVisible();
     const finalHead = await head();
     await page.goto(url);
-    await page.getByRole("button", { name: "预设", exact: true }).click();
+    await page.getByRole("button", { name: "编排方案", exact: true }).click();
     await page.getByLabel("启用 场景回顾（系统示例）").uncheck();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
-    await expect(page.getByText("预设已保存。", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("编排方案已保存。", { exact: true }),
+    ).toBeVisible();
     await page
-      .getByRole("button", { name: "应用为当前玩法", exact: true })
+      .getByRole("button", { name: "应用为当前编排方案", exact: true })
       .click();
     await open();
     paginationMode = true;
@@ -503,8 +511,8 @@ function send(response: ServerResponse, delta: object): void {
 function presetFiles(): Record<string, string> {
   return {
     ...defaultPlayPresetFiles,
-    "preset.yaml":
-      "format: narraeon.play-preset/v1\nname: panels\ncallChain: call-chain.yaml\nmounts:\n  panel: story\n  suggestions: composer_above\n  failed-panel: sidebar\nextensions: [renderers/actions.html]\n",
+    "orchestration.yaml":
+      "format: narraeon.orchestration/v1\nname: panels\ncallChain: call-chain.yaml\nplayPrompts: {}\nmounts:\n  panel: story\n  suggestions: composer_above\n  failed-panel: sidebar\nextensions: [renderers/actions.html]\n",
     "call-chain.yaml": `format: narraeon.play-call-chain/v1
 narrative:
   - markdown: prompts/narrate.md

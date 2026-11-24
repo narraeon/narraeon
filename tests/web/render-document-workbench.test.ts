@@ -63,7 +63,7 @@ test.each([
   },
 );
 
-describe("文档工作区与玩法文件", () => {
+describe("文档工作区与编排方案文件", () => {
   test("内容包中的 control/gameplay.json 可以打开和编辑，不显示 JSON 不支持的提示", () => {
     const onFilesChange = vi.fn();
     render(
@@ -115,7 +115,7 @@ describe("文档工作区与玩法文件", () => {
     );
   });
 
-  test("世界修订中的玩法文件只读，并且不显示 JSON 或修订路径的误导提示", () => {
+  test("世界修订中的编排方案文件只读，并且不显示 JSON 或修订路径的误导提示", () => {
     render(
       createElement(DocumentWorkbench, {
         workspace: {

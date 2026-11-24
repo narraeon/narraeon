@@ -53,7 +53,7 @@ async function setup(page: Page) {
   for (const suffix of ["一", "二"]) {
     const result = await runtime<{ preset: { id: string } }>(page, {
       type: "play.create",
-      name: `${name}-预设${suffix}`,
+      name: `${name}-编排方案${suffix}`,
     });
     presets.push(result.preset.id);
   }
@@ -65,7 +65,7 @@ async function setup(page: Page) {
   };
 }
 
-test("世界、内容包、预设刷新恢复，书签直接打开世界沿用轻量加载", async ({
+test("世界、内容包、编排方案刷新恢复，书签直接打开世界沿用轻量加载", async ({
   page,
 }) => {
   const data = await setup(page);
@@ -108,16 +108,16 @@ test("世界、内容包、预设刷新恢复，书签直接打开世界沿用�
   ).toBeVisible();
   await page
     .getByRole("navigation", { name: "工作区导航" })
-    .getByRole("button", { name: "预设", exact: true })
+    .getByRole("button", { name: "编排方案", exact: true })
     .click();
   const length = await page.evaluate(() => history.length);
-  await page.getByLabel("切换预设").selectOption(data.presets[1]!);
+  await page.getByLabel("切换编排方案").selectOption(data.presets[1]!);
   await expect(page).toHaveURL(
-    new RegExp(`#/presets/${data.presets[1]}$`, "u"),
+    new RegExp(`#/orchestrations/${data.presets[1]}$`, "u"),
   );
   expect(await page.evaluate(() => history.length)).toBe(length);
   await page.reload();
-  await expect(page.getByLabel("切换预设")).toHaveValue(data.presets[1]!);
+  await expect(page.getByLabel("切换编排方案")).toHaveValue(data.presets[1]!);
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`#/content/${data.packageId}$`, "u"));
   await expect(
@@ -130,15 +130,33 @@ test("世界、内容包、预设刷新恢复，书签直接打开世界沿用�
     page.getByRole("button", { name: "返回工作区", exact: true }),
   ).toBeEnabled();
   await page.goForward();
-  await expect(page.getByLabel("切换预设")).toHaveValue(data.presets[1]!);
+  await expect(page.getByLabel("切换编排方案")).toHaveValue(data.presets[1]!);
   await page.evaluate((id) => {
     window.location.hash = `#/presets/${id}`;
   }, data.presets[0]!);
-  await expect(page.getByLabel("切换预设")).toHaveValue(data.presets[0]!);
+  await expect(page.getByLabel("切换编排方案")).toHaveValue(data.presets[0]!);
+  await expect(page).toHaveURL(
+    new RegExp(`#/orchestrations/${data.presets[0]}$`, "u"),
+  );
+});
+
+test("旧列表书签替换为新地址，并按界面语言显示编排方案", async ({ page }) => {
+  await runtime(page, { type: "preferences.save", locale: "en" });
+  await page.goto("/#/presets");
+  await expect(page).toHaveURL(/#\/orchestrations$/u);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Workspace navigation" })
+      .getByRole("button", { name: "Orchestrations", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Orchestrations", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Switch orchestration")).toBeVisible();
 });
 
 for (const removed of [false, true])
-  test(`预设刷新后浏览器后退恢复内容包页面与地址（${removed ? "原预设已删除" : "原预设仍存在"}）`, async ({
+  test(`编排方案刷新后浏览器后退恢复内容包页面与地址（${removed ? "原编排方案已删除" : "原编排方案仍存在"}）`, async ({
     page,
   }) => {
     await runtime(page, { type: "preferences.save", locale: "zh-CN" });
@@ -152,7 +170,7 @@ for (const removed of [false, true])
     });
     const preset = await runtime<{ preset: { id: string } }>(page, {
       type: "play.create",
-      name: "返回前的预设",
+      name: "返回前的编排方案",
     });
     await page.goto(`/#/content/${package_.localId}`);
     await expect(
@@ -163,11 +181,11 @@ for (const removed of [false, true])
     ).toBeVisible();
     await page
       .getByRole("navigation", { name: "工作区导航" })
-      .getByRole("button", { name: "预设", exact: true })
+      .getByRole("button", { name: "编排方案", exact: true })
       .click();
-    await page.getByLabel("切换预设").selectOption(preset.preset.id);
+    await page.getByLabel("切换编排方案").selectOption(preset.preset.id);
     await page.reload();
-    await expect(page.getByLabel("切换预设")).toHaveValue(preset.preset.id);
+    await expect(page.getByLabel("切换编排方案")).toHaveValue(preset.preset.id);
     if (removed)
       await runtime(page, { type: "play.delete", presetId: preset.preset.id });
     await page.goBack();
@@ -184,12 +202,14 @@ for (const removed of [false, true])
     if (removed) {
       await expect(page).toHaveURL(/#\/$/u);
       await expect(
-        page.getByText("找不到该预设。", { exact: true }),
+        page.getByText("找不到该编排方案。", { exact: true }),
       ).toBeVisible();
     } else {
-      await expect(page.getByLabel("切换预设")).toHaveValue(preset.preset.id);
+      await expect(page.getByLabel("切换编排方案")).toHaveValue(
+        preset.preset.id,
+      );
       await expect(page).toHaveURL(
-        new RegExp(`#/presets/${preset.preset.id}$`, "u"),
+        new RegExp(`#/orchestrations/${preset.preset.id}$`, "u"),
       );
     }
   });
@@ -267,12 +287,12 @@ for (const draft of ["content", "preset", "model", "world"] as const) {
     } else if (draft === "preset") {
       await page
         .getByRole("navigation", { name: "工作区导航" })
-        .getByRole("button", { name: "预设", exact: true })
+        .getByRole("button", { name: "编排方案", exact: true })
         .click();
-      await page.getByText("预设操作", { exact: true }).click();
+      await page.getByText("编排方案操作", { exact: true }).click();
       await page
-        .getByLabel("玩法预设名称", { exact: true })
-        .fill("地址测试未保存预设");
+        .getByLabel("编排方案名称", { exact: true })
+        .fill("地址测试未保存编排方案");
     } else if (draft === "model") {
       await page.getByRole("button", { name: "模型连接", exact: true }).click();
       await page.getByLabel("配置名称").fill("地址测试未保存模型");
@@ -297,13 +317,13 @@ for (const draft of ["content", "preset", "model", "world"] as const) {
     ).toBeVisible();
     const labels = {
       content: "编辑 opening.md",
-      preset: "玩法预设名称",
+      preset: "编排方案名称",
       model: "配置名称",
       world: "世界控制文件（JSON）",
     };
     const values = {
       content: "地址测试未保存开场",
-      preset: "地址测试未保存预设",
+      preset: "地址测试未保存编排方案",
       model: "地址测试未保存模型",
       world: "地址测试未保存控制",
     };
@@ -347,7 +367,7 @@ test("无效、缺少身份或已删除的地址回首页且不会新建内容�
     [`#/content/${data.packageId}`, "找不到该内容包。"],
     [`#/world/${data.worldId}`, "找不到该世界。"],
     ["#/world/not-a-world", "找不到该世界。"],
-    ["#/presets/missing", "找不到该预设。"],
+    ["#/orchestrations/missing", "找不到该编排方案。"],
     ["#/unknown", "找不到该页面。"],
   ];
   for (const [hash, message] of addresses) {

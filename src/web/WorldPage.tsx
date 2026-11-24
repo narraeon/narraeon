@@ -2349,7 +2349,7 @@ export function WorldPage({
               <div className="play-retry-note" role="status">
                 <p>
                   {uiText(
-                    "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+                    "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
                   )}
                 </p>
                 <button
@@ -2576,8 +2576,8 @@ export function WorldPage({
               <p className="world-composer-hint">
                 {uiText(
                   activeCanRetry
-                    ? "原样重试使用已保存请求，不采用新预设。"
-                    : "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+                    ? "原样重试使用已保存请求，不采用新编排方案。"
+                    : "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
                 )}
               </p>
             ) : null}

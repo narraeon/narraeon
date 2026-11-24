@@ -1,4 +1,5 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
+import { orchestrationManifest } from "../shared/application-preset-files.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import {
@@ -279,6 +280,7 @@ function toEditablePreset(
 }
 
 function preferredPresetFilePath(files: Record<string, string>): string {
+  if (Object.hasOwn(files, orchestrationManifest)) return orchestrationManifest;
   if (Object.prototype.hasOwnProperty.call(files, "preset.yaml"))
     return "preset.yaml";
   if (Object.prototype.hasOwnProperty.call(files, "call-chain.yaml"))
@@ -370,7 +372,7 @@ export function PlayPresetScreen({
       draft?.structure?.callChainPath ??
       savedEditable?.structure?.callChainPath ??
       "call-chain.yaml";
-    return new Set(["preset.yaml", callChainPath]);
+    return new Set([orchestrationManifest, "preset.yaml", callChainPath]);
   }, [
     draft?.structure?.callChainPath,
     savedEditable?.structure?.callChainPath,
@@ -503,7 +505,7 @@ export function PlayPresetScreen({
       setFeedback({
         kind: "error",
         text:
-          error instanceof Error ? error.message : uiText("玩法预设操作失败"),
+          error instanceof Error ? error.message : uiText("编排方案操作失败"),
       });
     } finally {
       setPending(false);
@@ -515,7 +517,9 @@ export function PlayPresetScreen({
     if (dirty && id !== selectedId) {
       setFeedback({
         kind: "error",
-        text: uiText("当前玩法有未保存修改；请先保存或撤销，再切换预设。"),
+        text: uiText(
+          "当前编排方案有未保存修改；请先保存或撤销，再切换编排方案。",
+        ),
       });
       return;
     }
@@ -594,7 +598,7 @@ export function PlayPresetScreen({
         return {
           ...current,
           resourceError:
-            error instanceof Error ? error.message : uiText("玩法预设操作失败"),
+            error instanceof Error ? error.message : uiText("编排方案操作失败"),
         };
       }
     });
@@ -606,7 +610,7 @@ export function PlayPresetScreen({
       setFeedback({
         kind: "error",
         text: uiText(
-          "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
+          "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
         ),
       });
       return;
@@ -628,7 +632,7 @@ export function PlayPresetScreen({
       acceptPreset(receipt);
       setFeedback({
         kind: "status",
-        text: uiText("预设已保存。"),
+        text: uiText("编排方案已保存。"),
       });
     });
   }
@@ -643,12 +647,12 @@ export function PlayPresetScreen({
         type: "application/json",
       });
       const outcome = await target.command(() =>
-        saveFile(`${draft.name}.play-preset.json`, {
+        saveFile(`${draft.name}.orchestration.json`, {
           blob,
         }),
       );
       if (outcome !== "cancelled")
-        setFeedback({ kind: "status", text: uiText("预设已导出。") });
+        setFeedback({ kind: "status", text: uiText("编排方案已导出。") });
     });
   }
 
@@ -667,19 +671,20 @@ export function PlayPresetScreen({
         )
       )
         throw new Error(
-          uiText("无法识别此预设。请选择通过“导出预设”生成的文件。"),
+          uiText("无法识别此编排方案。请选择通过“导出编排方案”生成的文件。"),
         );
       const result = await request<PlayPresetReceipt>({
         type: "play.import",
         name:
-          file.name.replace(/\.play-preset\.json$/iu, "") || uiText("导入玩法"),
+          file.name.replace(/\.(?:orchestration|play-preset)\.json$/iu, "") ||
+          uiText("导入的编排方案"),
         files: parsed as { path: string; contents: string }[],
       });
       acceptPreset(result);
       setFeedback({
         kind: "status",
         text: uiText(
-          "预设已导入为独立副本，JavaScript 默认关闭；信任其内容后可在预设操作中启用。",
+          "编排方案已导入为独立副本，JavaScript 默认关闭；信任其内容后可在编排方案操作中启用。",
         ),
       });
     });
@@ -708,13 +713,13 @@ export function PlayPresetScreen({
       <header className="play-preset-header">
         <div>
           <p className="eyebrow">{uiText("提示词编排")}</p>
-          <h2 id="play-preset-title">{uiText("玩法预设工作台")}</h2>
+          <h2 id="play-preset-title">{uiText("编排方案工作台")}</h2>
           <p className="play-preset-lede">
             {uiText("在同一处编辑设定完善方法、主持规则、后置请求与界面展示。")}
           </p>
         </div>
         <div className="play-preset-header-fact">
-          <span>{uiText("当前使用的预设")}</span>
+          <span>{uiText("当前使用的编排方案")}</span>
           <strong>{currentPreset?.name ?? uiText("未选择")}</strong>
           <small>
             {uiText("游玩在下一次正常发送生效，原样重试保留旧请求")}
@@ -745,17 +750,17 @@ export function PlayPresetScreen({
 
       <SyncNotice failed={syncFailed} onRead={() => void target.recover()} />
       <fieldset disabled={pending} className="play-preset-workspace">
-        <legend className="visually-hidden">{uiText("玩法预设工作区")}</legend>
+        <legend className="visually-hidden">{uiText("编排方案工作区")}</legend>
         <div className="play-preset-layout">
           <div className="play-preset-toolbar">
             <aside
               className="panel-card play-preset-library"
-              aria-label={uiText("玩法预设列表")}
+              aria-label={uiText("编排方案列表")}
             >
               <label>
-                <span className="visually-hidden">{uiText("玩法预设")}</span>
+                <span className="visually-hidden">{uiText("编排方案")}</span>
                 <select
-                  aria-label={uiText("切换预设")}
+                  aria-label={uiText("切换编排方案")}
                   value={selectedId ?? ""}
                   disabled={pending || dirty}
                   onChange={(event) => selectDraft(event.target.value)}
@@ -768,16 +773,16 @@ export function PlayPresetScreen({
                 </select>
               </label>
               <details ref={libraryMenu}>
-                <summary>{uiText("预设管理")}</summary>
+                <summary>{uiText("编排方案管理")}</summary>
 
                 <section
                   className="play-preset-library-actions"
-                  aria-label={uiText("新建与导入玩法预设")}
+                  aria-label={uiText("新建与导入编排方案")}
                 >
                   <h4>{uiText("新建或导入")}</h4>
                   <input
-                    aria-label={uiText("新玩法预设名称")}
-                    placeholder={uiText("新玩法预设名称")}
+                    aria-label={uiText("新编排方案名称")}
+                    placeholder={uiText("新编排方案名称")}
                     value={newName}
                     onChange={(event) => setNewName(event.currentTarget.value)}
                   />
@@ -794,12 +799,12 @@ export function PlayPresetScreen({
                         acceptPreset(result);
                         setFeedback({
                           kind: "status",
-                          text: uiText("已新建普通玩法预设。"),
+                          text: uiText("已新建普通编排方案。"),
                         });
                       })
                     }
                   >
-                    {uiText("新建空白预设")}
+                    {uiText("新建空白编排方案")}
                   </button>
                   {recommendedTemplates.map((template) => (
                     <button
@@ -841,15 +846,15 @@ export function PlayPresetScreen({
                       setFeedback({
                         kind: "status",
                         text: uiText(
-                          "SillyTavern 预设已导入为独立副本，JavaScript 默认关闭。",
+                          "已从 SillyTavern 预设导入独立编排方案，JavaScript 默认关闭。",
                         ),
                       });
                     }}
                   />
                   <label className="play-preset-import-control">
-                    {uiText("导入预设")}
+                    {uiText("导入编排方案")}
                     <input
-                      aria-label={uiText("选择要导入的预设")}
+                      aria-label={uiText("选择要导入的编排方案")}
                       type="file"
                       accept=".json,application/json"
                       disabled={pending || dirty}
@@ -867,7 +872,7 @@ export function PlayPresetScreen({
                 <nav
                   className="play-preset-workspace-nav"
                   role="tablist"
-                  aria-label={uiText("玩法预设编辑区域")}
+                  aria-label={uiText("编排方案编辑区域")}
                 >
                   {playPresetWorkspaceViews
                     .filter(
@@ -892,12 +897,12 @@ export function PlayPresetScreen({
                     ))}
                 </nav>
                 <details className="play-preset-operations">
-                  <summary>{uiText("预设操作")}</summary>
+                  <summary>{uiText("编排方案操作")}</summary>
                   <div className="play-preset-operations-content">
                     <label className="play-preset-name-field">
-                      {uiText("预设名称")}
+                      {uiText("编排方案名称")}
                       <input
-                        aria-label={uiText("玩法预设名称")}
+                        aria-label={uiText("编排方案名称")}
                         maxLength={160}
                         value={draft.name}
                         onChange={(event) =>
@@ -911,11 +916,11 @@ export function PlayPresetScreen({
 
                     <div
                       className="play-preset-management"
-                      aria-label={uiText("预设操作")}
+                      aria-label={uiText("编排方案操作")}
                     >
                       <p>
                         {uiText(
-                          "这些操作只管理这份本地预设；内容编辑和保存仍在页面底部完成。",
+                          "这些操作只管理这份本地编排方案；内容编辑和保存仍在页面底部完成。",
                         )}
                       </p>
                       <button
@@ -932,14 +937,14 @@ export function PlayPresetScreen({
                             acceptPreset(receipt);
                             setFeedback({
                               kind: "status",
-                              text: uiText("玩法预设状态已更新。"),
+                              text: uiText("编排方案状态已更新。"),
                             });
                           })
                         }
                       >
                         {draft.enabled === false
-                          ? uiText("启用预设")
-                          : uiText("停用预设")}
+                          ? uiText("启用编排方案")
+                          : uiText("停用编排方案")}
                       </button>
                       <button
                         type="button"
@@ -984,12 +989,12 @@ export function PlayPresetScreen({
                             acceptPreset(copied);
                             setFeedback({
                               kind: "status",
-                              text: uiText("已复制为独立预设。"),
+                              text: uiText("已复制为独立编排方案。"),
                             });
                           })
                         }
                       >
-                        {uiText("复制为新预设")}
+                        {uiText("复制为新编排方案")}
                       </button>
                       <button
                         type="button"
@@ -997,7 +1002,7 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() => void exportPreset()}
                       >
-                        {uiText("导出预设")}
+                        {uiText("导出编排方案")}
                       </button>
                       <button
                         type="button"
@@ -1031,13 +1036,13 @@ export function PlayPresetScreen({
                             setFeedback({
                               kind: "status",
                               text: uiText(
-                                "玩法预设已删除；删空后会自动重建默认预设。",
+                                "编排方案已删除；删空后会自动重建默认编排方案。",
                               ),
                             });
                           })
                         }
                       >
-                        {uiText("删除预设")}
+                        {uiText("删除编排方案")}
                       </button>
                     </div>
                     <p className="field-note">
@@ -1049,7 +1054,7 @@ export function PlayPresetScreen({
                       <summary>{uiText("保留的资源")}</summary>
                       <p>
                         {uiText(
-                          "未绑定资源仍随预设保存；可在模板编辑器重新引用。",
+                          "未绑定资源仍随编排方案保存；可在模板编辑器重新引用。",
                         )}
                       </p>
                       {Object.keys(draft.files)
@@ -1109,12 +1114,12 @@ export function PlayPresetScreen({
 
           {draft === null ? (
             <section className="panel-card" role="status">
-              {uiText("还没有玩法预设。")}
+              {uiText("还没有编排方案。")}
             </section>
           ) : (
             <section
               className="panel-card play-preset-editor"
-              aria-label={uiText("预设编辑器")}
+              aria-label={uiText("编排方案编辑器")}
             >
               <header className="play-preset-editor-header">
                 <div>
@@ -1132,7 +1137,7 @@ export function PlayPresetScreen({
                   </span>
                   {draft.id === library.currentPresetId ? (
                     <span className="play-preset-badge current">
-                      {uiText("当前玩法")}
+                      {uiText("当前编排方案")}
                     </span>
                   ) : null}
                   {draft.enabled === false ? (
@@ -1167,7 +1172,7 @@ export function PlayPresetScreen({
                       {dirty ? (
                         <p>
                           {uiText(
-                            "请先保存当前修改；这里预览的是已保存且校验通过的预设，不包含未保存修改。",
+                            "请先保存当前修改；这里预览的是已保存且校验通过的编排方案，不包含未保存修改。",
                           )}
                         </p>
                       ) : (
@@ -1223,7 +1228,7 @@ export function PlayPresetScreen({
                     if (draft.files[path] !== undefined) {
                       setFeedback({
                         kind: "error",
-                        text: uiText("该玩法文件路径已经存在。"),
+                        text: uiText("该编排方案文件路径已经存在。"),
                       });
                       return;
                     }
@@ -1232,7 +1237,9 @@ export function PlayPresetScreen({
                     setNewFilePath("");
                     setFeedback({
                       kind: "status",
-                      text: uiText("已加入修复草稿，保存时将检查预设格式。"),
+                      text: uiText(
+                        "已加入修复草稿，保存时将检查编排方案格式。",
+                      ),
                     });
                   }}
                 />
@@ -1265,7 +1272,7 @@ export function PlayPresetScreen({
                 {structuralConflict ? (
                   <p role="alert" className="workspace-feedback">
                     {uiText(
-                      "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
+                      "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
                     )}
                   </p>
                 ) : null}
@@ -1274,7 +1281,7 @@ export function PlayPresetScreen({
                     {dirty
                       ? uiText("草稿尚未保存")
                       : draft.validation.status === "valid"
-                        ? uiText("预设检查通过")
+                        ? uiText("编排方案检查通过")
                         : uiText("草稿需要修复")}
                   </strong>
                   <span>
@@ -1322,13 +1329,13 @@ export function PlayPresetScreen({
                         setFeedback({
                           kind: "status",
                           text: uiText(
-                            "已应用此预设；游玩修改将在下一次正常发送时生效。",
+                            "已应用此编排方案；游玩修改将在下一次正常发送时生效。",
                           ),
                         });
                       })
                     }
                   >
-                    {uiText("应用为当前玩法")}
+                    {uiText("应用为当前编排方案")}
                   </button>
                 </div>
               </footer>
@@ -1739,7 +1746,7 @@ function PresetFileWorkspace({
       <header className="play-preset-workspace-heading">
         <div>
           <p className="play-preset-section-kicker">ADVANCED FILES</p>
-          <h4 id="play-preset-files-title">{uiText("完整预设文件")}</h4>
+          <h4 id="play-preset-files-title">{uiText("完整编排方案文件")}</h4>
         </div>
         <p>
           {uiText(
@@ -1752,7 +1759,12 @@ function PresetFileWorkspace({
         aria-label={uiText("三个核心 YAML 文件的用途")}
       >
         {[
-          describePresetFile("preset.yaml", files["preset.yaml"] ?? ""),
+          describePresetFile(
+            Object.hasOwn(files, "preset.yaml")
+              ? "preset.yaml"
+              : orchestrationManifest,
+            files[orchestrationManifest] ?? files["preset.yaml"] ?? "",
+          ),
           describePresetFile("call-chain.yaml", files["call-chain.yaml"] ?? ""),
           describePresetFile("frame.yaml", files["frame.yaml"] ?? ""),
         ].map((info) => (
@@ -1766,7 +1778,7 @@ function PresetFileWorkspace({
       <label className="play-preset-file-jump">
         {uiText("快速跳转文件")}
         <select
-          aria-label={uiText("玩法预设文件")}
+          aria-label={uiText("编排方案文件")}
           value={selectedPath}
           onChange={(event) => onFilePathChange(event.currentTarget.value)}
         >
@@ -1778,7 +1790,7 @@ function PresetFileWorkspace({
         </select>
       </label>
       <div className="play-preset-file-browser">
-        <aside aria-label={uiText("玩法预设文件列表")}>
+        <aside aria-label={uiText("编排方案文件列表")}>
           <ul>
             {paths.map((path) => {
               const info = describePresetFile(path, files[path] ?? "");
@@ -1788,7 +1800,7 @@ function PresetFileWorkspace({
                     type="button"
                     className={path === selectedPath ? "selected" : ""}
                     aria-pressed={path === selectedPath}
-                    aria-label={uiText("打开玩法文件 {path}", { path })}
+                    aria-label={uiText("打开编排方案文件 {path}", { path })}
                     onClick={() => onFilePathChange(path)}
                   >
                     <strong>{info.title}</strong>
@@ -1812,7 +1824,7 @@ function PresetFileWorkspace({
           <label className="play-preset-source-editor">
             <span>{uiText("完整文件内容")}</span>
             <textarea
-              aria-label={uiText("编辑玩法文件 {path}", {
+              aria-label={uiText("编辑编排方案文件 {path}", {
                 path: selectedPath,
               })}
               wrap="soft"
@@ -1829,7 +1841,7 @@ function PresetFileWorkspace({
           <label>
             {uiText("新文件路径（prompt/regex/renderer/script/asset）")}
             <input
-              aria-label={uiText("新增玩法文件路径")}
+              aria-label={uiText("新增编排方案文件路径")}
               placeholder="renderers/my-panel.html"
               value={newFilePath}
               onChange={(event) =>

@@ -874,7 +874,7 @@ describe("世界游玩页面", () => {
     expect(within(story).getByRole("separator").textContent).toBe("");
     expect(
       screen.queryByText(
-        "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+        "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
       ),
     ).toBeNull();
     await screen.findByTitle("panel");
@@ -898,7 +898,7 @@ describe("世界游玩页面", () => {
     expect(within(story).getByText("default")).toBeTruthy();
     expect(
       screen.getByText(
-        "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。",
+        "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
       ),
     ).toBeTruthy();
     expect(rendered.container.querySelector(".is-detailed-mode")).toBeTruthy();
@@ -4597,7 +4597,7 @@ describe("世界游玩页面", () => {
       });
       expect(
         screen.getByText(
-          "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。",
+          "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
         ),
       ).toBeTruthy();
       expect(

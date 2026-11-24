@@ -55,8 +55,8 @@ const englishMessages: Record<string, string> = {
     "Wait for or cancel the running AI reply before changing this revision.",
   "下一次发送将开启全新上下文，尚无实报占用。":
     "The next message starts a fresh context; no usage has been reported yet.",
-  "原上下文无法用于这次重新生成。可使用当前模型和预设，从同一条玩家输入开启全新上下文。":
-    "The original context cannot be used for this regeneration. Use the current model and presets to regenerate from the same player input in a fresh context.",
+  "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。":
+    "The original context cannot be used for this regeneration. Use the current model and orchestration to regenerate from the same player input in a fresh context.",
   用全新上下文重新生成: "Regenerate with a fresh context",
   旧模型配置曾阻止发送: "Previous model settings blocked sending",
   "旧版本因模型配置变化阻止了这次发送。切回原协议后，可按上下文当前状态继续。":
@@ -125,7 +125,7 @@ const englishMessages: Record<string, string> = {
   "找不到该页面。": "Page not found.",
   "找不到该世界。": "World not found.",
   "找不到该内容包。": "Content package not found.",
-  "找不到该预设。": "Preset not found.",
+  "找不到该编排方案。": "Orchestration not found.",
   "已保留当前页面的未保存修改，请保存或放弃后再切换。":
     "Your unsaved changes have been kept. Save or discard them before switching pages.",
   "这份内容包正在完善，请在回复完成后创建世界。":
@@ -170,8 +170,8 @@ const englishMessages: Record<string, string> = {
     "Append player guidance to input (default)",
   "玩家本轮临时要求放入 instructions":
     "Include player guidance in instructions",
-  "预设和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。":
-    "Fixed turn guidance from the preset and world goes in instructions. GPT-6.2 reads that field after input. Enable this option to send temporary player guidance and each follow-up request’s own task there as well.",
+  "编排方案和世界的固定本轮提示始终放入 instructions。GPT-6.2 在 input 之后读取该字段。开启后，玩家的临时要求和后置请求各自的任务说明也通过该字段发送。":
+    "Fixed turn guidance from the orchestration and world goes in instructions. GPT-6.2 reads that field after input. Enable this option to send temporary player guidance and each follow-up request’s own task there as well.",
   "CLIProxyAPI 转 Claude 的显式缓存标记":
     "Explicit cache markers for Claude via CLIProxyAPI",
   "仅当此路由将 Responses 转为支持 cache_control 的 Anthropic Messages 时开启。Codex 路由请保持关闭。":
@@ -182,25 +182,25 @@ const englishMessages: Record<string, string> = {
   完善这份内容包: "Develop this content package",
   返回游玩: "Return to play",
 
-  预设管理: "Manage presets",
-  预设检查通过: "Preset validated",
-  "预设已导出。": "Preset exported.",
+  编排方案管理: "Manage orchestrations",
+  编排方案检查通过: "Orchestration validated",
+  "编排方案已导出。": "Orchestration exported.",
   "JavaScript 已关闭；文本、HTML 和样式仍可预览。":
     "JavaScript disabled. Text, HTML and styles can still be previewed.",
-  "已复制为独立预设。": "Copied as an independent preset.",
+  "已复制为独立编排方案。": "Copied as an independent orchestration.",
   "已复制推荐{name}，可独立编辑。":
     "Copied the recommended {name} for independent editing.",
-  预设编辑器: "Preset editor",
-  "已加入修复草稿，保存时将检查预设格式。":
-    "Added to the repair draft. The preset format will be checked when saving.",
+  编排方案编辑器: "Orchestration editor",
+  "已加入修复草稿，保存时将检查编排方案格式。":
+    "Added to the repair draft. The orchestration format will be checked when saving.",
 
   "跨世界使用的主持规则；可在“游玩”左侧目录调整启用状态和顺序。":
     "Narrator rules shared across worlds. Change their order and enabled state in the Play directory.",
   "主叙事或后置请求使用的提示词；在“游玩”左侧选择对应条目即可编辑。":
     "Prompts for the main narration or follow-up requests. Select the corresponding item in the Play directory to edit it.",
-  "预设已保存。": "Preset saved.",
-  "已应用此预设；游玩修改将在下一次正常发送时生效。":
-    "Preset applied. Play changes take effect on the next normal send.",
+  "编排方案已保存。": "Orchestration saved.",
+  "已应用此编排方案；游玩修改将在下一次正常发送时生效。":
+    "Orchestration applied. Play changes take effect on the next normal send.",
   "导入 SillyTavern 角色卡或世界书":
     "Import SillyTavern character card or world book",
   "SillyTavern 内容导入向导": "SillyTavern content import wizard",
@@ -412,7 +412,7 @@ const englishMessages: Record<string, string> = {
   不支持的字段路径: "Unsupported field paths",
   "JSON 格式无效": "Invalid JSON",
   不支持旧版提示格式: "Legacy prompt format is unsupported",
-  不支持此预设格式: "Unsupported preset format",
+  "不支持此 SillyTavern 预设格式": "Unsupported SillyTavern preset format",
   需要对象: "Expected an object",
   需要数组: "Expected an array",
   需要字符串: "Expected a string",
@@ -441,7 +441,7 @@ const englishMessages: Record<string, string> = {
   导入失败: "Import failed",
   源顺序组: "Source order group",
   请选择顺序组: "Choose an order group",
-  新预设名称: "New preset name",
+  新编排方案名称: "New orchestration name",
   源顺序: "Source order",
   未编排提示: "Unordered prompts",
   "未编排提示选中后会保留为停用项。":
@@ -466,28 +466,29 @@ const englishMessages: Record<string, string> = {
   "模型、端点、采样与扩展设置不会应用；凭据值不会显示或保存。":
     "Model, endpoint, sampling and extension settings are not applied; credential values are neither shown nor saved.",
   转换预览: "Conversion preview",
-  目标预设: "Target preset",
+  目标编排方案: "Target orchestration",
   兼容报告: "Compatibility report",
   导入独立副本: "Import independent copy",
-  "SillyTavern 预设已导入为独立副本，JavaScript 默认关闭。":
-    "SillyTavern preset imported as an independent copy; JavaScript is disabled by default.",
-  导入预设: "Import preset",
-  选择要导入的预设: "Choose a preset to import",
-  "无法识别此预设。请选择通过“导出预设”生成的文件。":
-    "This preset could not be recognized. Choose a file created with Export preset.",
-  导出预设: "Export preset",
-  "预设已导入为独立副本，JavaScript 默认关闭；信任其内容后可在预设操作中启用。":
-    "Preset imported as an independent copy with JavaScript disabled. Enable it in preset actions after reviewing and trusting its contents.",
+  "已从 SillyTavern 预设导入独立编排方案，JavaScript 默认关闭。":
+    "Imported an independent orchestration from the SillyTavern preset; JavaScript is disabled by default.",
+  导入编排方案: "Import orchestration",
+  选择要导入的编排方案: "Choose an orchestration to import",
+  "无法识别此编排方案。请选择通过“导出编排方案”生成的文件。":
+    "This orchestration could not be recognized. Choose a file created with Export orchestration.",
+  导入的编排方案: "Imported orchestration",
+  导出编排方案: "Export orchestration",
+  "编排方案已导入为独立副本，JavaScript 默认关闭；信任其内容后可在编排方案操作中启用。":
+    "Orchestration imported as an independent copy with JavaScript disabled. Enable it in orchestration actions after reviewing and trusting its contents.",
   "发送给 AI 的内容预览": "Preview content sent to AI",
-  "请先保存当前修改；这里预览的是已保存且校验通过的预设，不包含未保存修改。":
-    "Save your changes first. This preview uses the saved, validated preset and excludes unsaved changes.",
-  当前使用的预设: "Current preset",
+  "请先保存当前修改；这里预览的是已保存且校验通过的编排方案，不包含未保存修改。":
+    "Save your changes first. This preview uses the saved, validated orchestration and excludes unsaved changes.",
+  当前使用的编排方案: "Current orchestration",
   "在同一处编辑设定完善方法、主持规则、后置请求与界面展示。":
     "Edit authoring methods, narrator rules, follow-up requests and displays in one place.",
-  "预设原文与表单均有修改，请先保留一种编辑结果并保存，再预览。":
-    "Both the preset source and forms have changed. Keep one set of edits and save before previewing.",
-  "预设原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。":
-    "Both the preset source and forms have changed. Keep one set of edits before saving to avoid overwriting your changes.",
+  "编排方案原文与表单均有修改，请先保留一种编辑结果并保存，再预览。":
+    "Both the orchestration source and forms have changed. Keep one set of edits and save before previewing.",
+  "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。":
+    "Both the orchestration source and forms have changed. Keep one set of edits before saving to avoid overwriting your changes.",
   "这里显示此产物的数据要求。需要修改时，请在当前内容包或世界修订的文件编辑中修改 control/followups.yaml 的对应产物声明。":
     "These are the data requirements for this output. To change them, edit the corresponding output declaration in control/followups.yaml in the current content package or world revision file editor.",
   模板版本标记: "Template version marker",
@@ -538,8 +539,8 @@ const englishMessages: Record<string, string> = {
     "This system example is read-only. New runs use the current application example; clones are saved independently.",
   内容包后置请求: "Content-package followups",
   最近一次请求材料: "Latest request materials",
-  "下一次发送将采用当前预设和世界材料；原生对话保留。":
-    "The next send uses the current preset and world materials while preserving the native conversation.",
+  "下一次发送将采用当前编排方案和世界材料；原生对话保留。":
+    "The next send uses the current orchestration and world materials while preserving the native conversation.",
   "每次正常发送重新编译，工具往返使用本轮快照":
     "Each normal send recompiles; tool exchanges use the same run snapshot.",
   下一次发送候选: "Next send candidate",
@@ -558,10 +559,10 @@ const englishMessages: Record<string, string> = {
   "这是读取时的内容，可能与当前值不同":
     "This is what was read at the time. Current values may differ.",
   查看各次请求保存的提示材料: "Inspect saved prompt materials for each request",
-  "原样重试使用已保存请求，不采用新预设。":
-    "Exact retry uses the saved request and does not apply a new preset.",
-  "正常发送和空输入续写使用最新预设；本轮工具执行期间保持不变。":
-    "Normal sends and empty continuations use the latest preset; it stays fixed during this tool loop.",
+  "原样重试使用已保存请求，不采用新编排方案。":
+    "Exact retry uses the saved request and does not apply a new orchestration.",
+  "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。":
+    "Normal sends and empty continuations use the latest orchestration; it stays fixed during this tool loop.",
   "玩家视图格式无效，请检查文本处理规则。":
     "Invalid player-view data. Check the text processing rules.",
   "玩家视图、布局、资源与无模型预览":
@@ -824,7 +825,6 @@ const englishMessages: Record<string, string> = {
   "先新建内容包，或上传一份 ZIP，再整理开场与世界文档并创建独立世界。":
     "Create a content package or upload a ZIP, then prepare its opening and world documents and create an independent world.",
   工作区状态: "Workspace status",
-  当前预设: "Current preset",
   尚未选择: "Not selected",
   可用内容包: "Usable content packages",
   份: "total",
@@ -840,10 +840,10 @@ const englishMessages: Record<string, string> = {
   "编辑内容包里的开场、世界文档与控制文件。":
     "Edit a content package's opening, world documents, and control files.",
   从空白内容包开始: "Start with a blank content package",
-  预设: "Presets",
+  编排方案: "Orchestration",
   "编辑提示块库、叙事规则、后置请求与扩展资源。":
     "Edit prompt blocks, narrative rules, follow-up requests, and extension resources.",
-  选择预设: "Choose a preset",
+  选择编排方案: "Choose an orchestration",
   "从一份可用内容包复制出独立演化的世界。":
     "Copy a usable content package into an independently evolving world.",
   需要可用内容包: "Usable content package required",
@@ -944,66 +944,58 @@ const englishMessages: Record<string, string> = {
 };
 
 const playPresetEnglishMessages: Record<string, string> = {
-  玩法预设操作失败: "Play-preset action failed",
-  "当前玩法有未保存修改；请先保存或撤销，再切换预设。":
-    "The current play preset has unsaved changes. Save or discard them before switching presets.",
+  编排方案操作失败: "Orchestration action failed",
+  "当前编排方案有未保存修改；请先保存或撤销，再切换编排方案。":
+    "The current orchestration has unsaved changes. Save or discard them before switching orchestrations.",
   "已撤销当前未保存修改。": "Current unsaved changes were discarded.",
-  "preset.yaml/call-chain.yaml 与结构化编辑同时修改；请保留一种编辑方式后再保存，避免静默覆盖。":
-    "preset.yaml/call-chain.yaml and the structured editor were both changed. Keep one version before saving to avoid a silent overwrite.",
-  "玩法文件与结构化草稿已保存。":
-    "Play files and the structured draft were saved.",
-  "玩法预设业务文件已导出。": "Play-preset files were exported.",
-  "导入文件必须是 UTF-8 玩法业务文件数组":
-    "The imported file must be an array of UTF-8 play files",
-  导入玩法: "Import play preset",
-  "玩法预设已导入为新的本地身份；请显式启用其中的 JavaScript。":
-    "The play preset was imported as a new local identity. Enable its JavaScript explicitly if you trust it.",
+  "orchestration.yaml/call-chain.yaml 与结构化编辑同时修改；请保留一种编辑方式后再保存，避免静默覆盖。":
+    "orchestration.yaml/call-chain.yaml and the structured editor were both changed. Keep one version before saving to avoid a silent overwrite.",
+  "编排方案业务文件已导出。": "Orchestration files were exported.",
+  "编排方案已导入为新的本地身份；请显式启用其中的 JavaScript。":
+    "The orchestration was imported as a new local identity. Enable its JavaScript explicitly if you trust it.",
   提示词编排: "Prompt orchestration",
-  玩法预设工作台: "Play presets",
+  编排方案工作台: "Orchestrations",
   "在同一处管理设定完善方法、主持规则、调用链、界面产物与可信本地代码。":
     "Manage setting-improvement methods, host rules, call chains, interface artifacts, and trusted local code in one place.",
   新调用链与设定完善当前使用:
     "New call chains and setting-improvement sessions currently use",
   "已经开始的模型会话继续使用冻结 revision":
     "Model sessions already in progress keep their frozen revision",
-  玩法预设工作区: "Play-preset workspace",
-  玩法预设列表: "Play-preset list",
-  本地预设: "Local presets",
+  编排方案工作区: "Orchestration workspace",
+  编排方案列表: "Orchestration list",
+  本地编排方案: "Local orchestrations",
   "选择一个本地身份开始编辑。": "Choose a local identity to start editing.",
-  当前玩法: "Current play preset",
+  当前编排方案: "Current orchestration",
   结构有效: "Structure valid",
   已停用: "Disabled",
-  新建与导入玩法预设: "Create and import play presets",
+  新建与导入编排方案: "Create and import orchestrations",
   新建或导入: "Create or import",
-  新玩法预设名称: "New play-preset name",
-  "已新建普通玩法预设。": "A regular play preset was created.",
-  新建空白预设: "Create blank preset",
-  复制推荐: "Copy recommended preset",
-  导入玩法文件: "Import play files",
-  导入玩法预设文件: "Import play-preset file",
-  "还没有玩法预设。": "There are no play presets yet.",
-  玩法预设文件编辑器: "Play-preset file editor",
+  "已新建普通编排方案。": "A regular orchestration was created.",
+  新建空白编排方案: "Create blank orchestration",
+  复制推荐: "Copy recommended orchestration",
+  导入编排方案文件: "Import orchestration file",
+  "还没有编排方案。": "There are no orchestrations yet.",
+  编排方案文件编辑器: "Orchestration file editor",
   "· 修改只影响之后开始的全新上下文":
     "· Changes affect only new contexts started later",
   未保存修改: "Unsaved changes",
   已保存: "Saved",
   "JavaScript 已启用": "JavaScript enabled",
   "JavaScript 已停用": "JavaScript disabled",
-  预设名称: "Preset name",
-  玩法预设名称: "Play-preset name",
-  预设操作: "Preset actions",
-  玩法预设身份管理: "Play-preset identity management",
-  "这些操作只管理这份本地预设；内容编辑和保存仍在页面底部完成。":
-    "These actions manage only this local preset. Edit and save its content at the bottom of the page.",
-  "玩法预设状态已更新。": "Play-preset status updated.",
-  启用预设: "Enable preset",
-  停用预设: "Disable preset",
+  编排方案名称: "Orchestration name",
+  编排方案操作: "Orchestration actions",
+  编排方案身份管理: "Orchestration identity management",
+  "这些操作只管理这份本地编排方案；内容编辑和保存仍在页面底部完成。":
+    "These actions manage only this local orchestration. Edit and save its content at the bottom of the page.",
+  "编排方案状态已更新。": "Orchestration status updated.",
+  启用编排方案: "Enable orchestration",
+  停用编排方案: "Disable orchestration",
   启用: "Enable",
   添加: "Add",
-  切换预设: "Switch preset",
+  切换编排方案: "Switch orchestration",
   保留的资源: "Retained assets",
-  "未绑定资源仍随预设保存；可在模板编辑器重新引用。":
-    "Unbound assets are still saved with the preset. Reference them again from the template editor.",
+  "未绑定资源仍随编排方案保存；可在模板编辑器重新引用。":
+    "Unbound assets are still saved with the orchestration. Reference them again from the template editor.",
   "导入内容无法解析；原文完整保留，可导出或打开原文修复。":
     "The imported content could not be parsed. Its source is kept intact; export it or open the source to repair it.",
   修复导入原文: "Repair imported source",
@@ -1014,34 +1006,35 @@ const playPresetEnglishMessages: Record<string, string> = {
   "停用 JavaScript": "Disable JavaScript",
   "启用 JavaScript（本地可信代码）": "Enable JavaScript (trusted local code)",
   "已复制为独立本地身份。": "Copied as an independent local identity.",
-  复制为新预设: "Copy as new preset",
-  导出业务文件: "Export play files",
-  "玩法预设已删除；删空后会自动重建默认预设。":
-    "The play preset was deleted. Deleting the last preset automatically rebuilds the default.",
-  删除预设: "Delete preset",
+  复制为新编排方案: "Copy as new orchestration",
+  导出业务文件: "Export files",
+  "编排方案已删除；删空后会自动重建默认编排方案。":
+    "The orchestration was deleted. Deleting the last orchestration automatically rebuilds the default.",
+  删除编排方案: "Delete orchestration",
   "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。":
     "Imported JavaScript is disabled by default. Enabling it means you trust these local files; it does not provide a security sandbox.",
-  玩法预设摘要: "Play-preset summary",
+  编排方案摘要: "Orchestration summary",
   后置请求: "Follow-up requests",
   产物输出: "Artifact outputs",
   界面挂载: "Interface mounts",
   普通文件: "Regular files",
-  玩法预设编辑区域: "Play-preset editing area",
-  "该玩法文件路径已经存在。": "That play-file path already exists.",
+  编排方案编辑区域: "Orchestration editing area",
+  "该编排方案文件路径已经存在。": "That play-file path already exists.",
   "已加入普通文件草稿；保存时会通过 codec 校验。":
     "The regular file was added to the draft and will be validated by the codec when saved.",
   结构化编辑暂不可用: "Structured editing is unavailable",
-  "当前草稿无法生成结构投影。请到“高级文件”修复 preset.yaml 或 call-chain.yaml，保存后再回来。":
-    "The current draft cannot produce a structured projection. Repair preset.yaml or call-chain.yaml under Advanced files, save, and return here.",
+  "当前草稿无法生成结构投影。请到“高级文件”修复清单文件 或 call-chain.yaml，保存后再回来。":
+    "The current draft cannot produce a structured projection. Repair the manifest or call-chain.yaml under Advanced files, save, and return here.",
   前往高级文件: "Go to Advanced files",
-  预览当前预设: "Preview current preset",
-  "产物外观与真实调用链提示词都留在这里检查，不会调用模型或离开当前预设。":
-    "Inspect artifact appearance and real call-chain prompts here without calling a model or leaving the current preset.",
+  预览当前编排方案: "Preview current orchestration",
+  "产物外观与真实调用链提示词都留在这里检查，不会调用模型或离开当前编排方案。":
+    "Inspect artifact appearance and real call-chain prompts here without calling a model or leaving the current orchestration.",
   "正在生成真实编译/产物预览…":
     "Generating real compilation and artifact previews…",
   工作台静态错误: "Workbench static error",
   不可继续: "Cannot continue",
-  当前预设的真实提示词预览: "Real prompt preview for the current preset",
+  当前编排方案的真实提示词预览:
+    "Real prompt preview for the current orchestration",
   真实调用链预览: "Real call-chain preview",
   "请先保存当前修改；真实预览只编译已冻结的有效 revision。":
     "Save the current changes first. A real preview compiles only a frozen valid revision.",
@@ -1049,26 +1042,24 @@ const playPresetEnglishMessages: Record<string, string> = {
     "The current revision needs repair and cannot compile a real call chain yet.",
   "当前宿主没有提供提示词预览面板。":
     "The current host does not provide a Prompt Preview panel.",
-  "preset.yaml/call-chain.yaml 与结构化字段均有未保存修改；请撤销其中一侧后再保存，避免 stale structure 覆盖 raw YAML。":
-    "preset.yaml/call-chain.yaml and structured fields both have unsaved changes. Discard one side before saving so stale structure cannot overwrite raw YAML.",
+  "orchestration.yaml/call-chain.yaml 与结构化字段均有未保存修改；请撤销其中一侧后再保存，避免 stale structure 覆盖 raw YAML。":
+    "orchestration.yaml/call-chain.yaml and structured fields both have unsaved changes. Discard one side before saving so stale structure cannot overwrite raw YAML.",
   结构校验通过: "Structure validation passed",
   草稿需要修复: "Draft needs repair",
   撤销未保存修改: "Discard unsaved changes",
   保存修改: "Save changes",
-  "已将该冻结 revision 设为当前玩法。":
-    "That frozen revision is now the current play preset.",
-  应用为当前玩法: "Use as current play preset",
+  "已将该冻结 revision 设为当前编排方案。":
+    "That frozen revision is now the current orchestration.",
+  应用为当前编排方案: "Use as current orchestration",
   "AI 设定完善": "Setting improvement",
-  "这份文字决定 AI 怎样理解、规划和创作内容包设定；每次开始完善时会冻结当前预设 revision。":
-    "This text tells the model how to understand, plan, and author content-package settings. Each session freezes the current preset revision.",
+  "这份文字决定 AI 怎样理解、规划和创作内容包设定；每次开始完善时会冻结当前编排方案 revision。":
+    "This text tells the model how to understand, plan, and author content-package settings. Each session freezes the current orchestration revision.",
   "工具为什么不在这里？": "Why are the tools not editable here?",
-  "Runtime 继续内置 setting_* 工具定义、参数、说明和当前树直接结算协议。预设只能编辑创作语义，不能替换这些机械契约。":
-    "Runtime owns the setting_* definitions, parameters, descriptions, and direct current-tree settlement protocol. A preset can edit authoring semantics but cannot replace these mechanical contracts.",
+  "Runtime 继续内置 setting_* 工具定义、参数、说明和当前树直接结算协议。编排方案只能编辑创作语义，不能替换这些机械契约。":
+    "Runtime owns the setting_* definitions, parameters, descriptions, and direct current-tree settlement protocol. An orchestration can edit authoring semantics but cannot replace these mechanical contracts.",
   沿用系统推荐提示: "Use the system-recommended prompt",
-  "这是一份功能加入前保存的 v1 预设。打开页面不会改写它；写入后才会产生新的预设 revision。":
-    "This v1 preset was saved before the feature existed. Opening this page does not rewrite it; writing the prompt creates a new preset revision.",
   系统推荐设定完善提示词: "System-recommended setting-improvement prompt",
-  写入预设并编辑: "Write into preset and edit",
+  写入编排方案并编辑: "Write into orchestration and edit",
   设定完善创作提示: "Setting-improvement authoring prompt",
   "# 叙事规则\n\n说明 AI 每次写玩家可见正文时都应遵守的规则。\n":
     "# Narrative rules\n\nDescribe the rules the model must follow whenever it writes player-visible prose.\n",
@@ -1094,7 +1085,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   显示位置: "Display location",
   未连接到当前产物的旧频道:
     "Legacy channels not connected to current artifacts",
-  随预设加载的界面文件: "Interface files loaded with the preset",
+  随编排方案加载的界面文件: "Interface files loaded with the orchestration",
   "勾选 renderer、脚本和样式等前端资源。这里只选择已有文件，不需要写数组格式。":
     "Select existing frontend resources such as renderers, scripts, and styles. No array syntax is needed.",
   界面扩展文件: "Interface-extension files",
@@ -1115,8 +1106,8 @@ const playPresetEnglishMessages: Record<string, string> = {
   "产物不是世界事实；它只是这次额外请求生成的界面内容。":
     "An artifact is not a world fact; it is interface content generated by this additional request.",
   新增产物: "Add artifact",
-  "后置请求至少需要一项产物才能保存为有效预设。":
-    "A follow-up request needs at least one artifact before the preset can be saved as valid.",
+  "后置请求至少需要一项产物才能保存为有效编排方案。":
+    "A follow-up request needs at least one artifact before the orchestration can be saved as valid.",
   高级请求设置: "Advanced request settings",
   稳定标识: "Stable identifier",
   "本次所有产物合计上限（bytes）":
@@ -1202,23 +1193,23 @@ const playPresetEnglishMessages: Record<string, string> = {
   分组标识: "Group identifier",
   "项目 ID（每行一个）": "Item IDs (one per line)",
   删除分组: "Delete group",
-  完整预设文件: "Complete preset files",
+  完整编排方案文件: "Complete orchestration files",
   "常用设置应在前面的表单完成。这里保留完整 YAML、Markdown、HTML、脚本和样式，并说明每份文件负责什么。":
     "Use the earlier forms for common settings. This section keeps complete YAML, Markdown, HTML, scripts, and styles and explains each file's responsibility.",
   "三个核心 YAML 文件的用途": "Purpose of the three core YAML files",
   快速跳转文件: "Quick file navigation",
-  玩法预设文件: "Play-preset files",
-  玩法预设文件列表: "Play-preset file list",
+  编排方案文件: "Orchestration files",
+  编排方案文件列表: "Orchestration file list",
   完整文件内容: "Complete file content",
   新增高级文件: "Add advanced file",
   "新文件路径（prompt/regex/renderer/script/asset）":
     "New file path (prompt/regex/renderer/script/asset)",
-  新增玩法文件路径: "New play-file path",
+  新增编排方案文件路径: "New play-file path",
   加入文件草稿: "Add file to draft",
-  预设入口: "Preset entry point",
+  编排方案入口: "Orchestration entry point",
   "核心 YAML": "Core YAML",
-  "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份预设由哪些部分组成”。":
-    "Connects the setting-improvement prompt, call chain, display locations, player-view panels, and extension resources. It defines the parts of this preset.",
+  "连接设定完善提示、调用链、界面显示位置、玩家视图面板和扩展资源；它回答“这份编排方案由哪些部分组成”。":
+    "Connects the setting-improvement prompt, call chain, display locations, player-view panels, and extension resources. It defines the parts of this orchestration.",
   调用链与产物: "Call chain and artifacts",
   "声明主响应使用哪些叙事提示、结束后有哪些后置请求，以及每个请求可以生成什么产物。":
     "Declares the narrative prompts used by the main response, its follow-up requests, and the artifacts each request can produce.",
@@ -1237,7 +1228,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   "把产物内容或玩家视图变成页面上的 HTML 结构。":
     "Turns artifact content or player views into HTML on the page.",
   界面交互脚本: "Interface interaction scripts",
-  "为 renderer 添加本地交互；导入预设后默认停用，只有显式信任后才执行。":
+  "为 renderer 添加本地交互；导入编排方案后默认停用，只有显式信任后才执行。":
     "Adds local interaction to a renderer. Imported scripts are disabled until explicitly trusted.",
   界面样式或资源: "Interface styles or resources",
   扩展资源: "Extension resources",
@@ -1247,16 +1238,16 @@ const playPresetEnglishMessages: Record<string, string> = {
   "在显示前对产物正文执行有界、可预览的正则处理。":
     "Runs bounded, previewable regex processing on artifact content before display.",
   未命名文件: "Untitled file",
-  "随玩法预设保存和导出的普通业务文件。":
-    "A regular play file saved and exported with the preset.",
+  "随编排方案保存和导出的普通业务文件。":
+    "A regular play file saved and exported with the orchestration.",
   真实产物预览: "Real artifact preview",
   "保存有效 revision 后可预览产物 contract、regex 与冻结 renderer。":
     "Save a valid revision to preview artifact contracts, regex processing, and frozen renderers.",
   "真实产物预览（只读）": "Real artifact preview (read-only)",
   "样例由当前冻结文件生成；此处不调用模型、不写入世界，只复用生产 regex/renderer 编码。":
     "Samples come from the current frozen files. This preview calls no model, writes no world state, and reuses the production regex and renderer code.",
-  "当前预设没有 artifact output contract。":
-    "The current preset has no artifact output contract.",
+  "当前编排方案没有 artifact output contract。":
+    "The current orchestration has no artifact output contract.",
   "raw/document fallback 失败": "Raw/document fallback failed",
   "renderer 预览失败": "Renderer preview failed",
   "内置 renderer 预览失败": "Built-in renderer preview failed",
@@ -1282,14 +1273,14 @@ const playPresetEnglishMessages: Record<string, string> = {
   "等待 app preview ready…": "Waiting for app preview ready…",
   "frame.yaml 无法更新。": "frame.yaml could not be updated.",
   主持规则内容: "Host-rule content",
-  "直接阅读和编辑每条跨世界主持规则。启用的规则按顺序进入模型；停用只是不发送，内容仍会随预设保存和导出。":
-    "Read and edit each cross-world host rule directly. Enabled rules enter the model in order. Disabled rules are not sent but remain saved and exported with the preset.",
+  "直接阅读和编辑每条跨世界主持规则。启用的规则按顺序进入模型；停用只是不发送，内容仍会随编排方案保存和导出。":
+    "Read and edit each cross-world host rule directly. Enabled rules enter the model in order. Disabled rules are not sent but remain saved and exported with the orchestration.",
   "frame.yaml 在这里做什么？": "What does frame.yaml do here?",
   "它只保存“哪些主持规则已启用、按什么顺序发送”。你在下方勾选或排序时，页面会同步更新它，不必手写路径。":
     "It stores only which host rules are enabled and their send order. The page updates it when you select or reorder rules; no path editing is needed.",
   "frame.yaml 引用了不存在的块：": "frame.yaml references a missing block:",
-  "当前预设还没有主持规则内容。":
-    "The current preset has no host-rule content.",
+  "当前编排方案还没有主持规则内容。":
+    "The current orchestration has no host-rule content.",
   主持规则列表: "Host-rule list",
   未启用: "Disabled",
   已启用: "Enabled",
@@ -1332,8 +1323,7 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   生成真实预览: "Generate real preview",
   重新生成真实预览: "Regenerate real preview",
   本次固定绑定: "Bindings fixed for this preview",
-  主持预设: "Host preset",
-  没有当前预设: "No current preset",
+  没有当前编排方案: "No current orchestration",
   工作区当前选择: "Current workspace selection",
   没有当前模型: "No current model",
   请先配置并启用模型: "Configure and enable a model first",
@@ -1342,14 +1332,14 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   不作为模型历史注入: "Not injected as model history",
   "opening.md 只保留为玩家可见的 genesis 叙事":
     "opening.md remains only as player-visible genesis narrative",
-  玩法预设: "Play preset",
-  使用内置玩法的完整工具集合:
-    "Use the built-in play preset's complete tool set",
+  已绑定的编排方案: "Bound orchestration",
+  使用内置编排方案的完整工具集合:
+    "Use the built-in orchestration's complete tool set",
   等待生成预览: "Waiting to generate preview",
   生成后按四个视角检查: "Inspect the result from four perspectives",
   "逻辑消息、材料与工具、Provider 映射、预算与诊断。":
     "Logical messages, material and tools, Provider mapping, and budgets and diagnostics.",
-  未知预设: "Unknown preset",
+  未知编排方案: "Unknown orchestration",
   编译通过: "Compilation passed",
   编译检查结果: "Compilation checks",
   "Runtime 不预估上下文": "Runtime does not estimate context",
@@ -1369,17 +1359,18 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   窗口占用: "Window usage",
   上下文窗口占用: "Context-window usage",
   预览结果分区: "Preview sections",
-  玩法绑定: "Play binding",
+  编排方案绑定: "Orchestration binding",
   材料与工具: "Material and tools",
   "Provider 映射": "Provider mapping",
   预算与诊断: "Budget and diagnostics",
   首条玩家追加: "First player append",
   "稳定 bootstrap 之后，玩家原文作为普通 user 消息原样追加。":
     "After the stable bootstrap, the player's original text is appended unchanged as a regular user message.",
-  玩法绑定与调用链工具: "Play binding and call-chain tools",
+  "编排方案 · 冻结修订": "Orchestration · frozen revision",
+  编排方案绑定与调用链工具: "Orchestration binding and call-chain tools",
   "· 叙事规则进入稳定 bootstrap， 后置请求在主调用链完成后独立派发。":
     "· Narrative rules enter the stable bootstrap; follow-up requests are dispatched independently after the main call chain.",
-  玩法文件: "Play files",
+  调用链文件: "Call-chain file",
   "冻结工具、叙事规则与后置产物契约":
     "Frozen tools, narrative rules, and follow-up artifact contracts",
   工具全集: "Complete tool set",
@@ -1416,8 +1407,8 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "Provider 映射 ·": "Provider mapping ·",
   "按实际请求展示 instructions 与 input。":
     "The instructions and input fields from the actual request.",
-  "各行按预设顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。":
-    "The lines follow preset order and apply only to this send. See Provider mapping for their positions in the request.",
+  "各行按编排方案顺序编排，仅用于本次发送。实际发送位置见 Provider 映射。":
+    "The lines follow orchestration order and apply only to this send. See Provider mapping for their positions in the request.",
   查看编译的完整本轮提示: "Show the compiled turn guide",
   "展示编译器交给当前 Adapter 的真实 system 块和消息顺序。":
     "Shows the real system blocks and message order passed from the compiler to the current adapter.",
@@ -1596,8 +1587,8 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "Keep each line within 120 characters and the total within 10 lines. Exceeding them does not block compilation, but the suffix is approaching the size of the prefix rules.",
   "共 {count} 行": "{count} lines in total",
   "第 {index} 行超过 120 字": "Line {index} exceeds 120 characters",
-  "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。每项可附一行尾部提示，或只保留尾部提示：它们在每次游玩发送追加的本轮提示中占据世界位置，只放本世界特有且最容易丢的约束。":
-    "These Markdown blocks enter the world-instruction position reserved by the host preset in order; their bodies are edited in separate files. Each entry may carry one tail line, or consist of a tail line alone: these lines take the world position in the turn guide appended on every play send. Keep them to world-specific constraints that are easily lost.",
+  "这些 Markdown 块按顺序进入编排方案预留的世界指令位置；正文仍在独立文件中编辑。每项可附一行尾部提示，或只保留尾部提示：它们在每次游玩发送追加的本轮提示中占据世界位置，只放本世界特有且最容易丢的约束。":
+    "These Markdown blocks enter the world-instruction position reserved by the orchestration in order; their bodies are edited in separate files. Each entry may carry one tail line, or consist of a tail line alone: these lines take the world position in the turn guide appended on every play send. Keep them to world-specific constraints that are easily lost.",
   独立尾部行: "Standalone tail line",
   尾部提示: "Tail line",
   "尾部提示 {title}": "Tail line for {title}",
@@ -1691,8 +1682,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
   "02 · 世界专属指令": "02 · world-specific instructions",
   提示块顺序: "Prompt-block order",
   个块: "blocks",
-  "这些 Markdown 块按顺序进入主持预设预留的世界指令位置；正文仍在独立文件中编辑。":
-    "These Markdown blocks enter the host preset's world-instruction position in order. Their bodies remain editable in separate files.",
+  "这些 Markdown 块按顺序进入编排方案预留的世界指令位置；正文仍在独立文件中编辑。":
+    "These Markdown blocks enter the orchestration's world-instruction position in order. Their bodies remain editable in separate files.",
   世界指令顺序: "World-instruction order",
   引用的文件不存在: "Referenced file does not exist",
   调整顺序: "Reorder",
@@ -2440,8 +2431,8 @@ const dynamicEnglishMessages: Record<string, string> = {
   "玩家视图面板 {index} 显示位置": "Player-view panel {index} display location",
   "玩家视图面板 {index} 脚本": "Player-view panel {index} scripts",
   "玩家视图面板 {index} 资源": "Player-view panel {index} assets",
-  "打开玩法文件 {path}": "Open play-preset file {path}",
-  "编辑玩法文件 {path}": "Edit play-preset file {path}",
+  "打开编排方案文件 {path}": "Open orchestration file {path}",
+  "编辑编排方案文件 {path}": "Edit orchestration file {path}",
   "产物预览 {request}/{output}": "Artifact preview {request}/{output}",
   "产物预览 {id}": "Artifact preview {id}",
   "frame.yaml 无法更新：{message}": "Could not update frame.yaml: {message}",
@@ -2455,8 +2446,8 @@ const dynamicEnglishMessages: Record<string, string> = {
   "权威、真实工具与提交边界，由 Runtime 固定提供。":
     "Authority, real tools, and commit boundaries are fixed by the Runtime.",
   创作指令: "Author instructions",
-  "当前主持预设、世界专属创作政策与玩法叙事规则。":
-    "The current host preset, world-specific authoring policy, and play narrative rules.",
+  "当前编排方案、世界专属创作政策与玩法叙事规则。":
+    "The current orchestration, world-specific authoring policy, and play narrative rules.",
   世界上下文: "World context",
   "真实 slot 展开、材料覆盖和当前世界正文。":
     "Real slot expansion, material coverage, and current world content.",

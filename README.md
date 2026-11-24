@@ -100,7 +100,7 @@ node dist/node/cli/main.js web
    ```
 
 4. **Edit or improve the setting.** Edit files directly, or ask the model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
-5. **Review the play preset.** The built-in preset is ready to use and follows the selected language. Presets hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
+5. **Review the orchestration.** The built-in orchestration is ready to use and follows the selected language. Orchestrations hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
 6. **Create a world.** A usable content package can be copied into a new independent world. Later edits to the source package do not alter worlds that already exist.
 
 ## How play works
@@ -146,7 +146,7 @@ English is the default interface language. Switching to Simplified Chinese updat
 - Runtime tool descriptions and tool-use contracts;
 - the scaffold used for newly created blank content packages.
 
-Existing content packages, worlds, imported presets, copied presets, and user-edited prompt files are not translated or rewritten automatically.
+Existing content packages, worlds, imported orchestrations, copied orchestrations, and user-edited prompt files are not translated or rewritten automatically.
 
 ## Android
 
@@ -162,7 +162,7 @@ Narraeon uses the operating system's standard per-user application directories. 
 | Variable               | Purpose                                                    |
 | ---------------------- | ---------------------------------------------------------- |
 | `NARRAEON_DATA_ROOT`   | Content packages, worlds, Authority history, and artifacts |
-| `NARRAEON_CONFIG_ROOT` | Model connections, app preferences, and play presets       |
+| `NARRAEON_CONFIG_ROOT` | Model connections, app preferences, and orchestrations       |
 | `NARRAEON_LOG_ROOT`    | Runtime logs and AI failure diagnostics                    |
 | `NARRAEON_PORT`        | Local web port, default `4317`                             |
 

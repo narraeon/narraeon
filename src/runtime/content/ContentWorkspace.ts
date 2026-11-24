@@ -343,7 +343,7 @@ function baseFileNativeContentScaffold(
       },
       {
         path: "control/blocks/world.md",
-        contents: `<!-- 本文件只写这个世界特有的规则。按当前预设实际启用的作者块核对通用裁决与状态维护判据，不要在这里重复。 -->
+        contents: `<!-- 本文件只写这个世界特有的规则。按当前编排方案实际启用的作者块核对通用裁决与状态维护判据，不要在这里重复。 -->
 
 # 本世界的题材与专属规则
 
@@ -392,7 +392,7 @@ short_term_continuity: []
     },
     {
       path: "control/blocks/world.md",
-      contents: `<!-- Keep only rules unique to this world in this file. Check the current preset’s actually enabled author blocks for general adjudication and state-maintenance criteria; do not repeat them here. -->
+      contents: `<!-- Keep only rules unique to this world in this file. Check the current orchestration’s actually enabled author blocks for general adjudication and state-maintenance criteria; do not repeat them here. -->
 
 # This world's genre and special rules
 

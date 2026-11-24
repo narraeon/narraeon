@@ -15,14 +15,17 @@ export function parseWorkspaceHash(hash: string): WorkspaceLocation | null {
       return { screen: "preview" };
     case "#/models":
       return { screen: "model" };
-    case "#/presets":
+    case "#/presets": // Pre-1.0 bookmark alias.
+    case "#/orchestrations":
       return { screen: "plays" };
     case "#/content":
       return { screen: "content", packageId: "" };
     case "#/world":
       return { screen: "world", worldId: "" };
   }
-  const match = /^#\/(world|content|presets)\/([^/]+)$/u.exec(hash);
+  const match = /^#\/(world|content|orchestrations|presets)\/([^/]+)$/u.exec(
+    hash,
+  );
   if (match === null) return null;
   let id: string;
   try {
@@ -45,8 +48,8 @@ export function workspaceHash(location: WorkspaceLocation): string {
       return `#/world/${encodeURIComponent(location.worldId)}`;
     case "plays":
       return location.presetId
-        ? `#/presets/${encodeURIComponent(location.presetId)}`
-        : "#/presets";
+        ? `#/orchestrations/${encodeURIComponent(location.presetId)}`
+        : "#/orchestrations";
     case "model":
       return "#/models";
     case "create":

@@ -54,8 +54,8 @@ export function AuthoringPromptPreview({
             <summary>{zh ? "预览说明" : "About this preview"}</summary>
             <p>
               {zh
-                ? "候选预览读取当前已应用预设，不发送消息、不创建修订锁；发送时重新读取。"
-                : "Candidate preview reads the currently applied preset without sending a message or opening a revision lock. Sending reads it again."}
+                ? "候选预览读取当前已应用编排方案，不发送消息、不创建修订锁；发送时重新读取。"
+                : "Candidate preview reads the currently applied orchestration without sending a message or opening a revision lock. Sending reads it again."}
             </p>
           </details>
         </>

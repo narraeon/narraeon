@@ -551,7 +551,7 @@ export function HomeScreen({
           {modelConfigured ? activeModelName : uiText("尚未配置")}
         </span>
         <button type="button" disabled={pending} onClick={onOpenPlayPresets}>
-          {uiText("当前预设")} · {currentPresetName ?? uiText("尚未选择")}
+          {uiText("当前编排方案")} · {currentPresetName ?? uiText("尚未选择")}
         </button>
         <span>
           {uiText("可用内容包")} · {usablePackageCount}

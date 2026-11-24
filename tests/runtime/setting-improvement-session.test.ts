@@ -5139,9 +5139,9 @@ test("next author send refreshes rules while retaining bootstrap and native hist
     },
     ...preset.definition.authorPrompts!,
   ];
-  const raw = parseDocument(preset.files["preset.yaml"]!);
+  const raw = parseDocument(preset.files["orchestration.yaml"]!);
   raw.set("authorPrompts", { entries: [preset.definition.authorPrompts[0]] });
-  preset.files["preset.yaml"] = raw.toString();
+  preset.files["orchestration.yaml"] = raw.toString();
   const parsed = parsePlayPresetFiles(preset.files);
   if (parsed.kind !== "valid") throw parsed.error;
   preset.definition = parsed.definition;

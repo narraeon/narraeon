@@ -69,7 +69,7 @@ describe("旧格式默认提示词职责", () => {
     ]) {
       const parsed = parsePlayPresetFiles(files);
       if (parsed.kind !== "valid") throw parsed.error;
-      expect(parsed.definition.format).toBe("narraeon.play-preset/v3");
+      expect(parsed.definition.format).toBe("narraeon.orchestration/v1");
       expect(parsed.definition.narrativePrompts).toEqual([]);
     }
   });
@@ -518,7 +518,7 @@ test("new shipped templates persist app references instead of editable copies of
   ]) {
     const parsed = parsePlayPresetFiles(files);
     if (parsed.kind !== "valid") throw parsed.error;
-    expect(parsed.definition.format).toBe("narraeon.play-preset/v3");
+    expect(parsed.definition.format).toBe("narraeon.orchestration/v1");
     expect(parsed.definition.narrativePrompts).toEqual([]);
     expect(
       parsed.definition.playPrompts!.find((e) => e.id === "play.prose"),

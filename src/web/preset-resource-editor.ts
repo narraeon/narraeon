@@ -1,3 +1,4 @@
+import { orchestrationManifest } from "../shared/application-preset-files.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import {
   builtinFollowupExample,
@@ -367,7 +368,11 @@ export function presetResourceUsage(
   for (const path of declared)
     if (path !== undefined) entry(path).declared = true;
   for (const [sourcePath, body] of Object.entries(draft.files)) {
-    if (sourcePath === "preset.yaml" || sourcePath === structure.callChainPath)
+    if (
+      sourcePath === orchestrationManifest ||
+      sourcePath === "preset.yaml" ||
+      sourcePath === structure.callChainPath
+    )
       continue;
     for (const path of new Set(localResourceReferences(body)))
       if (path !== sourcePath) entry(path).sources.push(sourcePath);

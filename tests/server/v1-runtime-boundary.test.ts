@@ -116,7 +116,7 @@ test("写入前拒绝返回协议错误，存储故障仍返回服务错误", as
       },
       {
         request: { type: "play.select", presetId: "missing" },
-        message: "Requested play preset was not found",
+        message: "Requested orchestration was not found",
       },
     ];
     for (const { request, message } of rejections) {

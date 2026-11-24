@@ -166,14 +166,16 @@ test("deleting a resource checks the current declarations and other source befor
   expect(unlinked).toEqual(before);
   delete unlinked.files["scripts/consumer.js"];
   // Stale serialized structure is superseded by the editable declaration tree.
-  unlinked.files["preset.yaml"] = 'extensions: ["assets/shared.css"]';
+  unlinked.files["orchestration.yaml"] = 'extensions: ["assets/shared.css"]';
   const removed = editPresetResources(unlinked, {
     type: "delete-resource",
     path: "assets/shared.css",
   });
   expect(removed.files["assets/shared.css"]).toBeUndefined();
   expect(removed.structure.extensionRefs).toEqual([]);
-  expect(removed.files["preset.yaml"]).toBe(unlinked.files["preset.yaml"]);
+  expect(removed.files["orchestration.yaml"]).toBe(
+    unlinked.files["orchestration.yaml"],
+  );
 });
 
 test("removing outputs and requests cleans only their unused channels, retaining shared and unrelated mounts and files", () => {
@@ -560,7 +562,7 @@ test("one resource usage index reports declarations and distinct referencing fil
   draft.files["assets/shared.css"] = "/* assets/shared.css */";
   draft.files["scripts/consumer.js"] =
     "'assets/shared.css'; 'assets/shared.css'; 'assets/missing.json'";
-  draft.files["preset.yaml"] = "assets/shared.css";
+  draft.files["orchestration.yaml"] = "assets/shared.css";
   draft.files["call-chain.yaml"] = "assets/shared.css";
   const usage = presetResourceUsage(draft);
   expect(usage.get("assets/shared.css")).toEqual({

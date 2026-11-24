@@ -1521,7 +1521,7 @@ function settingImprovementPresetReference(
           binding.definition.files,
           readYamlRecord(
             binding.definition.files["frame.yaml"],
-            "play-preset host frame",
+            "orchestration host frame",
           ),
           [worldInstructionPlaceholder],
           [],
@@ -1705,7 +1705,7 @@ function playNarrativeBlocks(
     if (markdown === undefined)
       throw new PromptCompilationError(
         "play_preset_prompt_missing",
-        `Play-preset narrative prompt block does not exist: ${prompt.path}`,
+        `Orchestration narrative prompt block does not exist: ${prompt.path}`,
       );
     return { source: `play:${prompt.path}`, markdown: markdown.trim() };
   });
@@ -3193,7 +3193,7 @@ function compileHostRoles(
               markdown: readMarkdown(
                 files,
                 entry.markdown,
-                "host preset block",
+                "host orchestration block",
               ),
             },
           ];

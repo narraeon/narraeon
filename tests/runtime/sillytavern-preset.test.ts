@@ -61,8 +61,8 @@ describe("SillyTavern import", () => {
       selected: ["a", "b", "unused"],
     });
     expect(validatePlayPresetFiles(result.files).status).toBe("valid");
-    expect(result.files["preset.yaml"]).toContain("Hello {{char}}");
-    expect(result.files["preset.yaml"]).not.toContain("secret");
+    expect(result.files["orchestration.yaml"]).toContain("Hello {{char}}");
+    expect(result.files["orchestration.yaml"]).not.toContain("secret");
     expect(result.files["assets/sillytavern-import-report.json"]).not.toContain(
       "secret",
     );
@@ -317,7 +317,7 @@ it("preserves depth, triggers and unknown prompt semantics as disabled originals
   expect(result.report.map((item) => item.code)).toEqual(
     expect.arrayContaining(["depth_injection", "trigger", "unsupported_field"]),
   );
-  expect(result.files["preset.yaml"]).toContain("deep text");
+  expect(result.files["orchestration.yaml"]).toContain("deep text");
   const metadata = JSON.parse(
     result.files["assets/sillytavern-import-report.json"]!,
   ) as { prompts: unknown[] };
