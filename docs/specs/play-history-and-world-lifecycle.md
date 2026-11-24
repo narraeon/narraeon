@@ -155,7 +155,7 @@
 
 唯一创建独立世界的历史操作（[ADR-0045](../adr/0045-world-history-is-current-files-plus-a-turn-ledger.md)、[ADR-0046](../adr/0046-artifacts-live-in-the-world-directory-as-stateful-records.md)）：
 
-- 玩家可在任一已提交玩家或 AI 节点发起；Runtime 将来源世界目录整份复制到暂存区，在副本上回退至所选轮（`state`、`control`、`history` 与附加材料一并回到该轮），调用 `forkArtifactClosure` 裁剪并重分配产物身份，复制独立的扩展控制覆盖与来源脚本授权，重新分配世界身份与活动 chain 身份，最后一次原子 `rename` 发布。
+- 玩家可在任一已提交玩家或 AI 节点发起；Runtime 按轮账本复制所选端点所需的文件到暂存区，并用前像恢复 `state`、`control`、`history` 与附加材料。Runtime 调用 `forkArtifactClosure` 裁剪并重分配产物身份，再按账本校验当前投影，修复缺失或有差异的文件并移除多余文件。暂存区获得独立的扩展控制覆盖、来源脚本授权、世界身份与活动 chain 身份，最后一次原子 `rename` 发布。
 - 目标与来源不共享任何文件，删除来源后完全自足；不调用 Provider 或重新执行工具；编排方案采用创建分叉时的工作区选择；默认名称取来源世界当下显示名称并加「（分叉）」。
 - 若分叉节点属于持久游玩时间线，保留此前完整页面轨迹并截断所选上下文截至该节点的模型 transcript 与调用轨迹（含推理、工具参数与结果）；若截断后末项为玩家消息，玩家可直接空输入点击「追加上下文」重新生成。
 

@@ -69,7 +69,7 @@
 
 按 [ADR-0046](../adr/0046-artifacts-live-in-the-world-directory-as-stateful-records.md) 与当前实现（`FileNativeArtifactStore.ts:1481` `forkArtifactClosure`），分叉与备份直接随世界目录在 staging 中就地完成产物改写与原子发布，不再存在外置独立产物存储的延迟展开路径：
 
-1. `FileNativeWorldStore.deriveWorld` 将来源世界目录复制到暂存区并回退至目标分叉端点后，在未发布的暂存副本上调用 `forkArtifactClosure`。
+1. `FileNativeWorldStore.deriveWorld` 把所需文件复制到暂存区并恢复目标分叉端点后，在未发布的暂存副本上调用 `forkArtifactClosure`。
 2. `forkArtifactClosure` 仅保留同时满足以下条件的记录及关联 operation 文件：`save === "commit"`、`status === "active"`、非 `hidden`（`transient` 仅在原交互仍活跃时保留）、已附着于回复（`attachment` 存在）、通过频道投影选中，且绑定端点序号不晚于分叉端点。
 3. 逐文件删除其余记录与 operation 文件，并将保留记录与 operation 的 `worldId` 改写为目标世界身份、`operationId` 改写为 `artifact-fork:<targetWorldId>:<sha256(原 operationId)>` 并重算记录指纹。
 4. 目标世界随一次原子 `rename` 发布，完全自足，删除来源世界不影响该闭包，且不新增 Authority 提交。

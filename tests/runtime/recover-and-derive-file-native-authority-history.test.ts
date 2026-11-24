@@ -1,16 +1,38 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import type * as FsPromises from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
+import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
+import {
+  applyChanges,
+  beginTurn,
+} from "../../src/runtime/world/WorldTurnLedger.ts";
 import { revisePlayerTimeline } from "./support/player-timeline-edit.ts";
 
 const roots: string[] = [];
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return { ...actual, cp: vi.fn(actual.cp), rename: vi.fn(actual.rename) };
+});
+
 afterEach(async () => {
+  vi.clearAllMocks();
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -270,6 +292,139 @@ test("分叉的当前文件与来源该端点逐字节一致，且不与来源�
     await readFile(sourceState, "utf8"),
   );
   expect((await stat(forkState)).ino).not.toBe((await stat(sourceState)).ino);
+});
+
+test("公开分叉跳过后续轮文件，保留正确投影并修复缺失、损坏和多余投影", async () => {
+  const fixture = await world();
+  const worldsRoot = join(fixture.root, "worlds-file-native");
+  const source = join(worldsRoot, fixture.worldId);
+  for (let step = 1; step <= 2; step += 1) {
+    await fixture.store.commitPlayStep({
+      operationId: `projection-step-${step}`,
+      worldId: fixture.worldId,
+      parentHead: step === 1 ? "genesis" : "commit:1",
+      historyAppend: [
+        {
+          role: "player",
+          exactText: `正文 ${step}`,
+          background: { kind: "snapshot", value: `背景 ${step}` },
+        },
+      ],
+      nextMaterials: [],
+      stateChanges: [],
+    });
+  }
+  const history = (await readdir(join(source, "history"))).sort();
+  const [opening, kept, discarded] = history;
+  const backgrounds = join("runtime", "history-backgrounds");
+  const keptBackground = join(backgrounds, "message.1.1.player.json");
+  const discardedBackground = join(backgrounds, "message.2.1.player.json");
+  const expectedBackground = await readFile(join(source, keptBackground));
+  await writeFile(join(source, "history", kept!), "损坏的正文");
+  await rm(join(source, keptBackground));
+  await mkdir(join(source, "history", "unrelated"));
+  await writeFile(join(source, "history", "unrelated", "extra.md"), "多余正文");
+
+  const runtime = new V1Runtime({
+    dataRoot: fixture.root,
+    configRoot: join(fixture.root, "config"),
+  });
+  await runtime.initialize();
+  vi.clearAllMocks();
+  const result = (
+    await runtime.handle({
+      type: "world.derive",
+      operationId: "projection-fork",
+      sourceWorldId: fixture.worldId,
+      sourceHead: "commit:1",
+    })
+  ).result as { outcome: string; world: { worldId: string } };
+  expect(result.outcome).toBe("derived");
+  const fork = join(worldsRoot, result.world.worldId);
+  const historyCopy = vi
+    .mocked(cp)
+    .mock.calls.find(([path]) => path === join(source, "history"));
+  const turnsCopy = vi
+    .mocked(cp)
+    .mock.calls.find(([path]) => path === join(source, "runtime", "turns"));
+  const backgroundsCopy = vi
+    .mocked(cp)
+    .mock.calls.find(([path]) => path === join(source, backgrounds));
+  expect(
+    await historyCopy?.[2]?.filter?.(
+      join(source, "history", discarded!),
+      "unused",
+    ),
+  ).toBe(false);
+  expect(
+    await backgroundsCopy?.[2]?.filter?.(
+      join(source, discardedBackground),
+      "unused",
+    ),
+  ).toBe(false);
+  expect(
+    await turnsCopy?.[2]?.filter?.(
+      join(source, "runtime", "turns", "00000002.json"),
+      "unused",
+    ),
+  ).toBe(false);
+  const staging = String(historyCopy?.[1]);
+  const renamedTo = vi.mocked(rename).mock.calls.map(([, path]) => path);
+  expect(renamedTo).not.toContain(join(staging, opening!));
+  expect(renamedTo).toContain(join(staging, kept!));
+  expect((await readdir(join(fork, "history"))).sort()).toEqual([
+    opening,
+    kept,
+  ]);
+  expect(await readFile(join(fork, "history", kept!), "utf8")).toBe("正文 1");
+  expect(await readFile(join(fork, keptBackground))).toEqual(
+    expectedBackground,
+  );
+  expect(await readFile(join(source, "history", kept!), "utf8")).toBe(
+    "损坏的正文",
+  );
+  expect((await readdir(join(fork, "runtime", "turns"))).sort()).toEqual([
+    "00000001.json",
+    "00000003.json",
+  ]);
+});
+
+test("分叉使用已发布的文件，暂存失败后可重试且不改动来源的未完成轮", async () => {
+  const { root, store, worldId } = await world();
+  await store.ensureCurrentStorage(worldId);
+  const worldsRoot = join(root, "worlds-file-native");
+  const source = join(worldsRoot, worldId);
+  const path = "state/current-situation.yaml";
+  const changes = [
+    { path, content: initialSituation().replace("安静", "未发布") },
+  ];
+  await beginTurn(source, { mode: "play", changes });
+  await applyChanges(source, changes);
+
+  const input = {
+    operationId: "fork-with-incomplete-source-turn",
+    sourceWorldId: worldId,
+    sourceHead: "genesis",
+    hostPresetId: "host",
+  };
+  await expect(
+    store.deriveWorld({
+      ...input,
+      stageTarget: () => Promise.reject(new Error("stage failed")),
+    }),
+  ).rejects.toThrow("stage failed");
+  expect(await readdir(worldsRoot)).toEqual([worldId]);
+
+  const fork = await store.deriveWorld(input);
+  expect(await readFile(join(fork.worldRoot, path), "utf8")).toBe(
+    initialSituation(),
+  );
+  expect(await readdir(join(fork.worldRoot, "runtime", "turns"))).toEqual([]);
+  await expect(store.deriveWorld(input)).resolves.toEqual(fork);
+  expect(await readFile(join(source, path), "utf8")).toBe(changes[0]!.content);
+  expect(await readdir(join(source, "runtime", "turns"))).toEqual([
+    "00000001.json",
+  ]);
 });
 
 test("完成的操作结果按世界保留最近 256 条，更早的操作 ID 视为未开始", async () => {
