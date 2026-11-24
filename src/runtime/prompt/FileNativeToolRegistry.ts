@@ -150,8 +150,10 @@ export function runtimeToolInputSchema(
 export function portableRuntimeToolInputSchema(name: string): object | null {
   if (name === "context_list") return legacyContextListInputSchema();
   if (!isRegisteredRuntimeToolName(name)) return null;
+  // Only old frozen root unions need this projection. Keep their wire fallback
+  // free of the field annotations introduced for newly compiled requests.
   return structuredClone(
-    createToolDefinitions(defaultAppLocale)[name].inputSchema,
+    createToolDefinitions(defaultAppLocale, false)[name].inputSchema,
   );
 }
 
@@ -182,30 +184,62 @@ function legacyContextListInputSchema(): object {
 
 function createToolDefinitions(
   locale: AppLocale,
+  includeFieldDescriptions = true,
 ): Record<
   RegisteredRuntimeToolName,
   { description: string; inputSchema: object }
 > {
   const descriptions = toolDescriptions[locale];
   const object = objectSchema;
+  const describe = (schema: object, en: string, zh: string): object =>
+    includeFieldDescriptions
+      ? { ...schema, description: locale === "zh-CN" ? zh : en }
+      : schema;
   const string = { type: "string", minLength: 1 };
-  const yamlLocator = object(
-    {
-      yaml: {
-        type: "array",
-        items: { type: ["string", "integer"] },
+  const historyRef =
+    "Use an @history-message-* ref from injected history or a tool result.";
+  const historyRefZh = "使用注入历史或工具回执提供的 @history-message-* 引用。";
+  const yamlLocator = describe(
+    object(
+      {
+        yaml: describe(
+          { type: "array", items: { type: ["string", "integer"] } },
+          "Exact path segments: string map keys or zero-based array indexes. An empty path addresses the whole body and is valid only for add or replace.",
+          "精确路径段由字符串映射键和从 0 开始的数组下标组成。空路径指向完整正文，仅可用于 add 或 replace。",
+        ),
       },
-    },
-    ["yaml"],
+      ["yaml"],
+    ),
+    "Location in the YAML body, outside the $document header.",
+    "YAML 正文中的位置，不能指向 $document 技术头。",
   );
-  const markdownLocator = object(
-    { markdown: { type: "array", items: { type: "string" }, minItems: 1 } },
-    ["markdown"],
+  const markdownLocator = describe(
+    object(
+      {
+        markdown: describe(
+          { type: "array", items: { type: "string" }, minItems: 1 },
+          "Heading titles from the top-level section down to the target, excluding the document's # title and the heading markers.",
+          "从顶层节到目标节的标题文字，不含文档一级标题和标题的 # 标记。",
+        ),
+      },
+      ["markdown"],
+    ),
+    "Exact Markdown section to edit.",
+    "要编辑的 Markdown 节的精确位置。",
   );
-  // add_section takes [] to add a new top-level section at the end of the body.
-  const markdownParentLocator = object(
-    { markdown: { type: "array", items: { type: "string" } } },
-    ["markdown"],
+  const markdownParentLocator = describe(
+    object(
+      {
+        markdown: describe(
+          { type: "array", items: { type: "string" } },
+          "Heading titles down to the parent, excluding the document's # title and heading markers. Use [] to add a top-level section at the end of the body.",
+          "从顶层节到父节的标题文字，不含文档一级标题和标题的 # 标记。用 [] 在正文末尾添加顶层节。",
+        ),
+      },
+      ["markdown"],
+    ),
+    "Exact Markdown parent under which to add the new section.",
+    "添加新节的精确 Markdown 父级。",
   );
   const definitions: Record<
     RegisteredRuntimeToolName,
@@ -220,10 +254,26 @@ function createToolDefinitions(
       description: descriptions.history_list,
       inputSchema: object(
         {
-          before: string,
-          after: string,
-          limit: { type: "integer", minimum: 1, maximum: 100 },
-          cursor: string,
+          before: describe(
+            string,
+            `Return the page immediately before this message, excluding it. ${historyRef}`,
+            `取紧邻这条消息之前的一页，不含该消息。${historyRefZh}`,
+          ),
+          after: describe(
+            string,
+            `Return the page immediately after this message, excluding it. ${historyRef}`,
+            `取紧邻这条消息之后的一页，不含该消息。${historyRefZh}`,
+          ),
+          limit: describe(
+            { type: "integer", minimum: 1, maximum: 100 },
+            "Maximum messages per page. Defaults to 20.",
+            "每页最多返回的消息条数，默认为 20。",
+          ),
+          cursor: describe(
+            string,
+            "Use the returned earlierCursor or laterCursor to page in that direction. Run a new query after history_changed.",
+            "使用回执返回的 earlierCursor 或 laterCursor 向对应方向翻页。收到 history_changed 后重新查询。",
+          ),
         },
         [],
       ),
@@ -232,19 +282,51 @@ function createToolDefinitions(
       description: descriptions.history_search,
       inputSchema: object(
         {
-          queries: {
-            type: "array",
-            minItems: 1,
-            maxItems: 5,
-            items: { type: "string", minLength: 1, maxLength: 256 },
-          },
-          match: { enum: ["any", "all"] },
-          order: { enum: ["newest_first", "oldest_first"] },
-          caseSensitive: { type: "boolean" },
-          after: string,
-          before: string,
-          limit: { type: "integer", minimum: 1, maximum: 50 },
-          cursor: string,
+          queries: describe(
+            {
+              type: "array",
+              minItems: 1,
+              maxItems: 5,
+              items: { type: "string", minLength: 1, maxLength: 256 },
+            },
+            "One to five non-blank literal search terms, each at most 256 Unicode code points. Equivalent terms after normalization are deduplicated. Required for a new search.",
+            "一至五个非空白字面搜索词，每词最多 256 个 Unicode 码点。归一化后等价的词会去重。发起新搜索时必传。",
+          ),
+          match: describe(
+            { enum: ["any", "all"] },
+            "Match any term by default. all requires every term in the same message.",
+            "默认 any，匹配任一搜索词。all 要求所有搜索词出现在同一条消息中。",
+          ),
+          order: describe(
+            { enum: ["newest_first", "oldest_first"] },
+            "Order matching messages newest first (default) or oldest first in timeline order.",
+            "按时间线先后排列命中消息，默认最新在前，也可选最早在前。",
+          ),
+          caseSensitive: describe(
+            { type: "boolean" },
+            "True preserves case. False (default) folds case. Both use NFKC normalization.",
+            "true 区分大小写，false（默认）折叠大小写。两者均进行 NFKC 归一化。",
+          ),
+          after: describe(
+            string,
+            `Search only messages later than this exclusive lower bound. ${historyRef}`,
+            `只搜索晚于这条消息的原文，不含该消息。${historyRefZh}`,
+          ),
+          before: describe(
+            string,
+            `Search only messages earlier than this exclusive upper bound. ${historyRef}`,
+            `只搜索早于这条消息的原文，不含该消息。${historyRefZh}`,
+          ),
+          limit: describe(
+            { type: "integer", minimum: 1, maximum: 50 },
+            "Maximum matching messages per page. Defaults to 10.",
+            "每页最多返回的命中消息条数，默认为 10。",
+          ),
+          cursor: describe(
+            string,
+            "Use the returned nextCursor for the next page of the same search. Run a new query after history_changed.",
+            "使用回执返回的 nextCursor 继续同一次搜索的下一页。收到 history_changed 后重新查询。",
+          ),
         },
         [],
       ),
@@ -253,10 +335,26 @@ function createToolDefinitions(
       description: descriptions.history_read,
       inputSchema: object(
         {
-          latest: { type: "integer", minimum: 1, maximum: 21 },
-          ref: string,
-          before: { type: "integer", minimum: 0, maximum: 20 },
-          after: { type: "integer", minimum: 0, maximum: 20 },
+          latest: describe(
+            { type: "integer", minimum: 1, maximum: 21 },
+            "Number of latest messages to read, from 1 to 21.",
+            "要读最近多少条消息，范围为 1 至 21。",
+          ),
+          ref: describe(
+            string,
+            `The anchor message, always included in the window. ${historyRef}`,
+            `读取窗口必含的锚点消息。${historyRefZh}`,
+          ),
+          before: describe(
+            { type: "integer", minimum: 0, maximum: 20 },
+            "Number of messages to include before ref, excluding the anchor from the count. Defaults to 0.",
+            "要附带读取的锚点之前的消息条数，不计锚点，默认为 0。",
+          ),
+          after: describe(
+            { type: "integer", minimum: 0, maximum: 20 },
+            "Number of messages to include after ref, excluding the anchor from the count. Defaults to 0.",
+            "要附带读取的锚点之后的消息条数，不计锚点，默认为 0。",
+          ),
         },
         [],
       ),
@@ -265,12 +363,36 @@ function createToolDefinitions(
       description: descriptions.context_search,
       inputSchema: object(
         {
-          source: { const: "state" },
-          query: { type: "string", minLength: 1, maxLength: 256 },
-          caseSensitive: { type: "boolean" },
-          within: string,
-          limit: { type: "integer", minimum: 1, maximum: 50 },
-          cursor: { type: ["string", "null"] },
+          source: describe(
+            { const: "state" },
+            "Use state to search current world documents.",
+            "传入 state，在当前世界的状态文档中搜索。",
+          ),
+          query: describe(
+            { type: "string", minLength: 1, maxLength: 256 },
+            "A single literal string to find in document text.",
+            "要在文档原文中查找的单个字面字符串。",
+          ),
+          caseSensitive: describe(
+            { type: "boolean" },
+            "True preserves case. False (default) folds case. Both use NFKC normalization.",
+            "true 区分大小写，false（默认）折叠大小写。两者均进行 NFKC 归一化。",
+          ),
+          within: describe(
+            string,
+            "Use a Runtime-returned document @short-ref or @dir-* directory handle to restrict the scope. Omit to search all state documents.",
+            "用 Runtime 返回的文档 @短引用或 @dir-* 目录句柄限定范围。省略时搜索全部状态文档。",
+          ),
+          limit: describe(
+            { type: "integer", minimum: 1, maximum: 50 },
+            "Maximum literal matches per page. Defaults to 10.",
+            "每页最多返回的字面命中数，默认为 10。",
+          ),
+          cursor: describe(
+            { type: ["string", "null"] },
+            "Use the returned next-page cursor to continue with the same source, query, scope, case setting and limit. Omit or use null to start at the first page.",
+            "保留原 source、query、within、caseSensitive 和 limit，并用返回的下一页游标续查。省略或传 null 从第一页开始。",
+          ),
         },
         ["source", "query"],
       ),
@@ -283,75 +405,185 @@ function createToolDefinitions(
       description: descriptions.world_patch,
       inputSchema: object(
         {
-          target: string,
-          edits: {
-            type: "array",
-            minItems: 1,
-            maxItems: 32,
-            items: {
-              oneOf: [
-                object(
-                  {
-                    op: { enum: ["add", "replace", "append"] },
-                    locator: yamlLocator,
-                    value: {},
-                  },
-                  ["op", "locator", "value"],
-                ),
-                object({ op: { const: "remove" }, locator: yamlLocator }, [
-                  "op",
-                  "locator",
-                ]),
-                object(
-                  {
-                    op: { const: "replace_section" },
-                    locator: markdownLocator,
-                    markdown: { type: "string" },
-                  },
-                  ["op", "locator", "markdown"],
-                ),
-                object(
-                  {
-                    op: { const: "add_section" },
-                    locator: markdownParentLocator,
-                    markdown: { type: "string" },
-                  },
-                  ["op", "locator", "markdown"],
-                ),
-                object(
-                  {
-                    op: { const: "rename_section" },
-                    locator: markdownLocator,
-                    title: string,
-                  },
-                  ["op", "locator", "title"],
-                ),
-                object(
-                  { op: { const: "remove_section" }, locator: markdownLocator },
-                  ["op", "locator"],
-                ),
-                {
-                  ...object(
-                    {
-                      op: { const: "set_metadata" },
-                      title: string,
-                      summary: string,
-                      aliases: { type: "array", items: { type: "string" } },
-                    },
-                    ["op"],
+          target: describe(
+            string,
+            "The document's Runtime-returned @short-ref. Each edited scope must already have write authorization from a precise read or fully injected material.",
+            "Runtime 返回的文档 @短引用。每处改动范围须已通过精确读取或完整注入材料获得写入资格。",
+          ),
+          edits: describe(
+            {
+              type: "array",
+              minItems: 1,
+              maxItems: 32,
+              items: {
+                oneOf: [
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { enum: ["add", "replace", "append"] },
+                          "add and replace both write to existing or missing targets, creating missing parent maps and appending at indexes at or past the end. append adds one item to an existing sequence.",
+                          "add 与 replace 都可写入已有或缺失的目标，自动创建缺失的父映射，下标达到或超过数组长度时追加。append 向既有序列末尾追加一项。",
+                        ),
+                        locator: yamlLocator,
+                        value: describe(
+                          {},
+                          'YAML-compatible value, or a map without $document when replacing the whole body. For a document reference use only {$ref:"@short-ref"} with a Runtime-returned handle. Use plain text or world_create if no handle is available.',
+                          '要写入的 YAML 兼容值。写入完整正文时须为不含 $document 的映射。引用文档时只用 {$ref:"@短引用"}，句柄须来自 Runtime；没有句柄时用普通文字或先调用 world_create。',
+                        ),
+                      },
+                      ["op", "locator", "value"],
+                    ),
+                    "Write a YAML value at a precise location.",
+                    "在精确位置写入 YAML 值。",
                   ),
-                  minProperties: 2,
-                },
-                object(
-                  {
-                    op: { enum: ["replace_body", "replace_preamble"] },
-                    markdown: { type: "string" },
-                  },
-                  ["op", "markdown"],
-                ),
-              ],
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { const: "remove" },
+                          "Delete the addressed map key or array item. A missing target is reported as a no-op.",
+                          "删除指定的映射键或数组元素。目标缺失时，回执会标为无操作。",
+                        ),
+                        locator: yamlLocator,
+                      },
+                      ["op", "locator"],
+                    ),
+                    "Remove a YAML node.",
+                    "删除一个 YAML 节点。",
+                  ),
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { const: "replace_section" },
+                          "Replace the named section, or add it under its existing parent if the section is absent.",
+                          "替换指定节；若该节缺失，则在其已有父级下添加。",
+                        ),
+                        locator: markdownLocator,
+                        markdown: describe(
+                          { type: "string" },
+                          "One complete section starting with the heading matching the locator's title and level. Include only content within that section.",
+                          "传一份完整的节，以和定位器同名同级的标题开头，正文只包含本节范围内的内容。",
+                        ),
+                      },
+                      ["op", "locator", "markdown"],
+                    ),
+                    "Write a Markdown section by its own heading path.",
+                    "按节本身的标题路径写入 Markdown 节。",
+                  ),
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { const: "add_section" },
+                          "Add one child section under the located parent.",
+                          "在定位到的父级下添加一个子节。",
+                        ),
+                        locator: markdownParentLocator,
+                        markdown: describe(
+                          { type: "string" },
+                          "One complete section starting with a heading one level below its parent, such as ## Clues for a top-level section.",
+                          "传一份完整的节，以比父级低一级的标题开头。顶层节可用 ## 线索 一类的标题。",
+                        ),
+                      },
+                      ["op", "locator", "markdown"],
+                    ),
+                    "Add a Markdown section by its parent's heading path.",
+                    "按父级的标题路径添加 Markdown 节。",
+                  ),
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { const: "rename_section" },
+                          "Rename an existing section, preserving its level and contents.",
+                          "重命名已有节，保留标题级别和内容。",
+                        ),
+                        locator: markdownLocator,
+                        title: describe(
+                          string,
+                          "New heading text without its # markers.",
+                          "新标题的文字，不含 # 标记。",
+                        ),
+                      },
+                      ["op", "locator", "title"],
+                    ),
+                    "Change a Markdown section heading.",
+                    "修改 Markdown 节标题。",
+                  ),
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { const: "remove_section" },
+                          "Delete the located heading and its whole section. A missing section is reported as a no-op.",
+                          "删除指定标题和整节内容。该节缺失时，回执会标为无操作。",
+                        ),
+                        locator: markdownLocator,
+                      },
+                      ["op", "locator"],
+                    ),
+                    "Remove a Markdown section.",
+                    "删除一个 Markdown 节。",
+                  ),
+                  describe(
+                    {
+                      ...object(
+                        {
+                          op: describe(
+                            { const: "set_metadata" },
+                            "Supply only changed metadata fields, with at least one of title, summary, or aliases. Omitted fields are preserved.",
+                            "只传有变化的元数据字段。title、summary、aliases 至少传一项，省略的字段原样保留。",
+                          ),
+                          title: describe(
+                            string,
+                            "New document title. Also updates the # title in Markdown documents.",
+                            "新文档标题。Markdown 文档的一级标题也会同步更新。",
+                          ),
+                          summary: describe(
+                            string,
+                            "New short catalog summary for the document.",
+                            "用于目录索引的新文档简介。",
+                          ),
+                          aliases: describe(
+                            { type: "array", items: { type: "string" } },
+                            "Complete replacement list of alternate names. Use [] to clear it.",
+                            "用这份别名列表整体替换旧值。传 [] 清空。",
+                          ),
+                        },
+                        ["op"],
+                      ),
+                      minProperties: 2,
+                    },
+                    "Update YAML or Markdown document metadata.",
+                    "更新 YAML 或 Markdown 文档的元数据。",
+                  ),
+                  describe(
+                    object(
+                      {
+                        op: describe(
+                          { enum: ["replace_body", "replace_preamble"] },
+                          "replace_body rewrites the complete Markdown body. replace_preamble rewrites only the text after the # title and before the first ## heading (or the end if there is no ##).",
+                          "replace_body 重写整个 Markdown 正文。replace_preamble 只重写一级标题之后、首个二级标题之前的文字（无二级标题则到文末）。",
+                        ),
+                        markdown: describe(
+                          { type: "string" },
+                          "For replace_body include the existing # title and the complete new body, without technical front matter. For replace_preamble supply only the replacement preamble text.",
+                          "replace_body 要包含原有一级标题和完整的新正文，不带技术头。replace_preamble 只传用来替换前言的文字。",
+                        ),
+                      },
+                      ["op", "markdown"],
+                    ),
+                    "Rewrite the Markdown body or just its preamble.",
+                    "重写 Markdown 正文或其中的前言。",
+                  ),
+                ],
+              },
             },
-          },
+            "Ordered array of 1 to 32 edits to the same document. Use the branch matching each op. Resend only failures listed in the receipt. The receipt omits the body, so read it with context_read only if a later decision needs exact content or metadata.",
+            "按顺序对同一文档执行的 1 至 32 条编辑，逐条使用与 op 对应的分支。仅补发回执列出的失败项。回执省略正文，后续判断需要精确正文或元数据时再调用 context_read。",
+          ),
         },
         ["target", "edits"],
       ),
@@ -360,17 +592,45 @@ function createToolDefinitions(
       description: descriptions.world_create,
       inputSchema: object(
         {
-          parent: string,
-          codec: { enum: ["yaml", "markdown"] },
-          refHint: { type: "string", pattern: "^[a-z][a-z0-9-]{1,31}$" },
-          title: { type: "string", minLength: 1, maxLength: 120 },
-          summary: { type: "string", minLength: 1, maxLength: 240 },
-          aliases: {
-            type: "array",
-            maxItems: 16,
-            items: { type: "string", minLength: 1, maxLength: 64 },
-          },
-          body: { type: "string" },
+          parent: describe(
+            string,
+            "Runtime-returned @dir-* from the initial index or state_list. Use @dir-/ for root. Empty frozen-frame catalog directories are valid; unknown directories are rejected.",
+            "使用初始索引或 state_list 返回的 @dir-*，根目录用 @dir-/。冻结 frame 声明的空 catalog 目录可用，未知目录会被拒绝。",
+          ),
+          codec: describe(
+            { enum: ["yaml", "markdown"] },
+            "Source format of body, either yaml or markdown.",
+            "body 的原文格式，选 yaml 或 markdown。",
+          ),
+          refHint: describe(
+            { type: "string", pattern: "^[a-z][a-z0-9-]{1,31}$" },
+            "Suggested short reference, 2–32 ASCII characters, starting with a lowercase letter and followed by lowercase letters, digits, or hyphens. Omit the @ prefix and any path. Runtime may add a suffix on collision. Use the returned @short-ref afterward.",
+            "建议短引用，长 2 至 32 个 ASCII 字符，以小写字母开头，后续仅用小写字母、数字或连字符。不带 @ 前缀或路径。冲突时 Runtime 可能添加后缀，后续使用回执中的 @短引用。",
+          ),
+          title: describe(
+            { type: "string", minLength: 1, maxLength: 120 },
+            "Document display title. For markdown it must match the body's # heading.",
+            "文档显示标题。Markdown 文档的正文一级标题须与它一致。",
+          ),
+          summary: describe(
+            { type: "string", minLength: 1, maxLength: 240 },
+            "Brief description for the catalog.",
+            "用于目录索引的简短文档介绍。",
+          ),
+          aliases: describe(
+            {
+              type: "array",
+              maxItems: 16,
+              items: { type: "string", minLength: 1, maxLength: 64 },
+            },
+            "List of alternate names. Pass [] if there are none.",
+            "文档别名列表，没有别名时传 []。",
+          ),
+          body: describe(
+            { type: "string" },
+            'Complete source text without Runtime metadata. For yaml supply a map without $document. Reference an existing document only with {$ref:"@short-ref"} using a Runtime-returned handle. For markdown start with the # heading matching title and omit technical front matter.',
+            '传不含 Runtime 元数据的完整源文。YAML 须为不含 $document 的映射，引用已有文档时只用 {$ref:"@短引用"}，句柄须来自 Runtime。Markdown 须以和 title 相同的一级标题开头，不带技术头。',
+          ),
         },
         ["parent", "codec", "refHint", "title", "summary", "aliases", "body"],
       ),
@@ -379,8 +639,16 @@ function createToolDefinitions(
       description: descriptions.world_retire,
       inputSchema: object(
         {
-          target: string,
-          retired: { type: "boolean" },
+          target: describe(
+            string,
+            "Runtime-returned @short-ref of a document whose full body was read precisely or injected with write authorization.",
+            "Runtime 返回的文档 @短引用。须已精确读取全文，或已随写入资格完整注入该文档。",
+          ),
+          retired: describe(
+            { type: "boolean" },
+            "True retires the document from future frame catalog injection. False restores its catalog eligibility. Either way it stays stored, listable, searchable, readable and referenceable, and explicit full-document slots still work.",
+            "true 退役，将文档移出后续 frame catalog 注入。false 恢复其进入目录索引的资格。两种状态下文档均保留，可列、可搜、可读、可引用，显式全文注入仍可使用。",
+          ),
         },
         ["target", "retired"],
       ),
@@ -434,24 +702,21 @@ const toolDescriptions: Record<
     state_list:
       "List Runtime-known state directory and document handles. Use @dir-/ for the root or an @dir-* from the initial index or state_list (no need to re-list known handles). Empty catalog directories declared by the frozen frame stay usable. Returns the whole directory (Complete: yes); pass document handles to context_read. Never lists committed history.",
     history_list:
-      "Browse committed timeline history (opening included). Omit anchors for the latest page; before/after are mutually exclusive and exclude the anchor (injected refs work directly). Pages are oldest to newest in Authority acceptance order, not story dates; positions are not identities or turns. Previews show only 120 code points; read full originals with history_read. Historical background reflects capture-time state only, not current world state, and neither certifies facts nor grants character knowledge (interpret memories, dreams and local times with originals). Continue with {cursor} alone (earlierCursor/laterCursor are independent); rerun after history_changed.",
+      "Browse committed timeline history including the opening, with previews of up to 120 code points in Authority acceptance order from oldest to newest. Historical background reflects capture-time state only, not current world state, and neither certifies facts nor grants character knowledge. Use either before or after for an anchored page, neither for the latest page, or {cursor} alone to continue.",
     history_search:
-      "Search committed timeline originals literally using nonempty queries (no query alias or semantic filters; match defaults to any, all applies within one message). NFKC-normalized and case-insensitive by default (duplicates collapse). Zero matches do not prove an event never happened. after/before exclude timeline bounds regardless of order (after must precede before). Returns up to 3 excerpts, match counts and full length; read context with history_read. Continue with {cursor} alone; rerun after history_changed.",
+      "Search committed timeline originals for literal terms and get counts, up to 3 excerpts per message, and original lengths. Start with queries or continue with {cursor} alone, and if both bounds are set, after must precede before in timeline order regardless of result order. Zero matches do not prove an event never happened.",
     history_read:
-      "Read complete committed timeline originals without summaries, truncation or body pagination. {latest:N} (1–21) and {ref,before,after} (defaults 0, before+after<=20) are mutually exclusive; refs from injections or tools work directly. Windows are oldest to newest including the anchor; earlier/later sit just outside and can anchor the next read without overlap. Boundaries and empty history are normal. Counts are messages, not turns; large windows can be big.",
+      "Read complete committed originals on the current timeline, oldest to newest, without summaries, truncation or body pagination. Pass latest alone or ref with optional before and after totaling at most 20 messages besides the anchor. The earlier and later refs mark the immediately adjacent messages outside the window.",
     context_search:
-      "Search literal text in state documents (source=state; use history_search for history). Zero matches do not prove a fact is absent; never recount searches in player-visible prose. within accepts only Runtime-returned @document or @dir-* handles.",
+      "Search literal text in current world state. Use history_search for committed narrative. Zero matches do not prove that a fact is absent.",
     context_read:
       "Read the full content of a Runtime-returned @document or @node handle without truncation or pagination. Receipt headings, boundaries, scope and completion markers are not source text; YAML bodies omit $document and Markdown bodies start at the # heading. Never pass file paths, natural-language names, or invented world/... values.",
-    world_patch: `Update a document read precisely or injected completely with write authorization (target must be an @short-ref; never use path, JSON Pointer, set, or a filename).
-- Metadata: use set_metadata for stale title, summary, or aliases with only changed fields (at least one); omitted fields are preserved.
-- YAML: locator:{yaml:[...]} addresses map keys or zero-based array indexes. add/replace are upserts (creating missing parent maps; index at/past end appends); append adds to an existing sequence's end; remove deletes an exact target (missing target is a no-op reported in receipt). Reference a whole document only as {$ref:"@short-ref"} from a Runtime result (never invent document ids); otherwise use plain text or world_create first.
-- Markdown: locators exclude the # title. replace_section must start with the matching heading level/name and adds it if absent; add_section adds a child under locator, or a top-level section at the end via {"op":"add_section","locator":{"markdown":[]},"markdown":"## Clues\\nSilver key"}; replace_preamble edits between # and the first ##; replace_body replaces the body while keeping the original # heading.
-- Validation & settlement: target, edits array, write authorization, and $ref handle syntax are checked first (failure rejects the call with zero writes); after that, each edit settles independently (an invalid or failed individual edit is skipped while others apply; follow the receipt and resend only listed failures). Body is not echoed; re-read with context_read only if later decisions need exact serialized body or metadata.`,
+    world_patch:
+      "Apply a batch of edits to one authorized state document. Before the first edit, Runtime checks the target, edits array, write authorization for the whole batch, and the shape of every $ref object, rejecting the whole batch without writes if any check fails. After preflight, Runtime settles edits in order and resolves specific $ref targets per edit, so a failed edit is skipped while others can apply.",
     world_create:
-      'Create a document in a Runtime-known state directory. parent must be an @dir-* from the initial index or state_list (@dir-/ for root; empty frozen-frame catalog directories stay usable; unknown directories are rejected). refHint is a suggested lowercase ASCII short-reference hint (not a world/ path); use the @short-ref returned by Runtime. Reference whole documents in YAML only as {$ref:"@short-ref"} from a Runtime result (never invent document ids).',
+      "Create a state document in a Runtime-known directory. Runtime assigns its identity.",
     world_retire:
-      "Retire or restore an authorized state document (target is an @short-ref). retired:true removes it from future frame catalog injection while keeping it listed, searchable, readable, referenceable and restorable; retired:false restores it. Does not affect explicit full-document slots; use world_patch for ordinary edits.",
+      "Retire or restore an authorized state document. Use world_patch for ordinary edits.",
     artifact_emit:
       "Submit an artifact declared in advance for this follow-up request. Supply only the output name and payload; Runtime fixes the channel, key, content type, renderer, retention policy, and authority meaning in the contract.",
     artifact_clear:
@@ -463,24 +728,20 @@ const toolDescriptions: Record<
     state_list:
       "列出 Runtime 已知的状态目录与文档句柄。根目录用 @dir-/，下级用初始目录索引或 state_list 返回的 @dir-*（已有句柄无需再列）。冻结 frame 声明的空 catalog 目录仍可用。每次整份返回（Complete: yes），文档句柄交给 context_read；不列出已提交历史。",
     history_list:
-      "浏览当前时间线已提交历史（含开场白）。无锚点取最新页；before 或 after 互斥，取紧邻前／后页且不含锚点（注入中的 ref 可直接使用）。页内按 Authority 接受顺序由旧到新，不代表故事日期；位置非身份或回合数。预览仅前 120 码点，完整原文用 history_read。历史背景仅说明采集时刻状态，不是当前世界状态，不认证事实或授予角色知识（回忆、梦境或局部时间须结合原文解释）。续页只传 {cursor}（earlierCursor/laterCursor 独立翻页）；history_changed 须重新查询。",
+      "浏览当前时间线已提交历史（含开场白），页内按 Authority 接受顺序由旧到新，每条预览最多 120 个码点。历史背景仅说明采集时刻状态，不是当前世界状态，不认证事实或授予角色知识。按锚点查页时只传 before 或 after 之一，查最新页时均省略，续页只传 {cursor}。",
     history_search:
-      "字面搜索当前时间线已提交原文（queries 为非空字面词，不接受 query 别名或语义筛选；match 默认 any，all 限于同一消息）。始终 NFKC 规范化且默认不区分大小写（重复词合并）。零命中不证明事件未发生。after/before 按时间线先后排除边界且 after 须早于 before。每项返回最多 3 个片段、命中数与原文长度，前后文用 history_read。续页只传 {cursor}；history_changed 须重新查询。",
+      "在当前时间线已提交原文中搜索字面词，返回命中数、每条消息最多 3 个片段和原文长度。新搜索传 queries 或只传 {cursor} 续页，同时指定两个边界时，无论结果如何排序，时间线上 after 须早于 before。零命中不证明事件未发生。",
     history_read:
-      "完整读取当前时间线已提交原文，无摘要、无截断、无正文分页。{latest:N}（1–21）与 {ref,before,after}（before/after 默认 0 且合计<=20）两模式互斥，注入或工具返回的 ref 可直接使用。窗口由旧到新且含锚点；earlier/later 为紧邻窗口外句柄，可作下一次 ref 避免重读；边界与空历史正常。计数单位为消息而非回合，大窗口输出可能很大。",
+      "完整读取当前时间线已提交原文，由旧到新，无摘要、无截断、无正文分页。只传 latest，或传 ref 并按需加 before 和 after，两项计数合计最多 20 条消息，另含锚点。earlier 和 later 指向紧邻窗口外的消息。",
     context_search:
-      "在状态文档原文字面搜索（source 固定为 state；历史用 history_search）。0 命中不证明事实不存在；玩家可见叙事不得复述搜索过程。within 只接受 Runtime 返回的 @文档或 @dir-* 句柄。",
+      "在当前世界的状态文档中做字面搜索。已提交叙事用 history_search。零命中不证明事实不存在。",
     context_read:
       "完整读取 Runtime 返回的 @文档或 @节点句柄，无截断无分页。回执中的读取标题、边界、范围与完成标记不是源文；YAML 正文不含 $document 头，Markdown 正文从 # 标题开始。勿传文件路径、自然语言名或编造的 world/...。",
-    world_patch: `更新已精确读取或已随写入资格完整注入的文档（target 须为 @短引用；勿用 path、JSON Pointer、set 或文件名）。
-- 元数据：title/summary/aliases 过时时用 set_metadata，仅传变更字段（至少一项），未传字段保留。
-- YAML：locator:{yaml:[...]} 用 map key 或 0 起数组下标；add/replace 均为 upsert（自动建缺失父 map，下标越界追加）；append 追加到既有 sequence 末尾；remove 删精确位置，目标不存在为 no-op（回执注明）。整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）；无句柄时写普通文本或先 world_create。
-- Markdown：locator 不含 # 标题；replace_section 须以同级同名标题开头，不存在时在父级下新增；add_section 在 locator 下加子节，正文末尾新增顶层节用 {"op":"add_section","locator":{"markdown":[]},"markdown":"## 线索\\n银钥匙"}；replace_preamble 改 # 与首个 ## 间文字；replace_body 替换正文并保留原 # 标题。
-- 校验与结算：先校验 target、edits 数组、写入授权与 $ref 形态（不通过则本次调用拒绝、零写入）；通过后逐条独立结算（单条 edit 格式或执行失败会跳过、其余照常生效；以回执为准，回执列失败项时仅补发失败项）。不回显正文，仅后续依赖精确正文或元数据时再 context_read。`,
+    world_patch:
+      "批量编辑一份已获写入资格的状态文档。第一条编辑执行前，Runtime 校验目标、edits 数组、整批的写入资格和每个 $ref 对象的形态，任一预检不通过则整批拒绝、零写入。预检通过后按顺序逐条独立结算，在该条内解析具体 $ref 目标，失败项跳过，其余可照常生效。",
     world_create:
-      '在 Runtime 已知状态目录中新建文档。parent 须为初始索引或 state_list 返回的 @dir-*（根目录 @dir-/，冻结 frame 的空 catalog 目录可用，未知目录被拒）。refHint 是创建时建议的小写 ASCII 短引用（非 world/ 路径），后续以 Runtime 返回的 @短引用 为准。YAML 整文档引用只能写 {$ref:"@短引用"}（须来自 Runtime 返回，禁造文档 id）。',
-    world_retire:
-      "退役或恢复已获写入资格的精确状态文档（target 为 @短引用）。retired:true 移出后续 frame catalog 注入但保留可列、可搜、可读、可引用与可恢复；retired:false 恢复参与。不影响显式全文注入，普通字段变化用 world_patch。",
+      "在 Runtime 已知的目录中新建状态文档。文档身份由 Runtime 分配。",
+    world_retire: "退役或恢复已获写入资格的状态文档。普通编辑用 world_patch。",
     artifact_emit:
       "提交本次后置请求预先声明的产物。只能传 output name 与 payload；频道、key、内容类型、renderer、保存策略和权威含义由 Runtime contract 固定。",
     artifact_clear:

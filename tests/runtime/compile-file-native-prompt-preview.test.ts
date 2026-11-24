@@ -1370,7 +1370,7 @@ context:
         parent: { type: "string", minLength: 1 },
       },
     });
-    expect(historyList?.inputSchema).toEqual({
+    expect(historyList?.inputSchema).toMatchObject({
       type: "object",
       additionalProperties: false,
       required: [],
@@ -1404,34 +1404,9 @@ context:
       /"(?:oneOf|allOf|anyOf)"/u,
     );
 
-    const patch = compiled.tools.find(({ name }) => name === "world_patch");
-    expect(patch?.description).toContain(
-      "Markdown: locators exclude the # title",
-    );
-    expect(patch?.description).toContain("set_metadata");
-    expect(patch?.description).toContain('{$ref:"@short-ref"}');
-    expect(patch?.description).toContain("never invent document ids");
-    expect(patch?.description).toContain("plain text");
-    expect(patch?.description).toContain("world_create");
-    const create = compiled.tools.find(({ name }) => name === "world_create");
-    expect(create?.description).toContain('{$ref:"@short-ref"}');
-    expect(create?.description).toContain("never invent document ids");
-    expect(
-      (
-        create?.inputSchema as {
-          properties?: { body?: Record<string, unknown> };
-        }
-      ).properties?.body,
-    ).toEqual({ type: "string" });
     expect(compiled.logicalMessages[0]?.markdown).toContain(
       "Only Runtime can formally write an operation into the world",
     );
-    expect(patch?.description).toContain("replace_body");
-    expect(patch?.description).toContain("append adds to an existing sequence");
-    expect(patch?.description).toContain("remove");
-    expect(patch?.description).toContain("zero-based array index");
-    expect(patch?.description).toContain("Body is not echoed");
-    expect(patch?.description).toContain("re-read with context_read only if");
     expect(stateList?.description).toContain("@dir-/");
     expect(stateList?.description).toContain("state directory");
     expect(stateList?.description).toContain(
@@ -1439,9 +1414,6 @@ context:
     );
     expect(historyList?.description).toContain("oldest to newest");
     expect(historyList?.description).toContain("committed timeline history");
-    expect(create?.description).toContain("state_list");
-    expect(create?.description).toContain("unknown directories are rejected");
-    expect(create?.description).not.toContain("context_list");
     expect(compiled.tools.map(({ name }) => name)).toContain("world_retire");
 
     const chinese = fileNativeToolsForNames(
@@ -2730,54 +2702,58 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
       });
       const historyList = compiled.tools.find(
         ({ name }) => name === "history_list",
-      )?.description;
+      );
       const historySearch = compiled.tools.find(
         ({ name }) => name === "history_search",
-      )?.description;
+      );
       const historyRead = compiled.tools.find(
         ({ name }) => name === "history_read",
       )?.description;
 
-      expect(historyList).toBeDefined();
-      expect(historySearch).toBeDefined();
+      for (const tool of [historyList, historySearch]) {
+        expect(tool?.inputSchema).toHaveProperty(
+          "properties.cursor.description",
+          expect.stringContaining("history_changed"),
+        );
+      }
       expect(historyRead).toBeDefined();
 
       if (locale === "zh-CN") {
-        expect(historyList).toContain("Authority 接受顺序");
-        expect(historyList).toContain("历史背景仅说明采集时刻状态");
-        expect(historyList).toContain("不认证事实或授予角色知识");
-        expect(historyList).toContain("{cursor}");
-        expect(historyList).toContain("history_changed");
-        expect(historySearch).toContain("零命中不证明事件未发生");
-        expect(historySearch).toContain("after 须早于 before");
-        expect(historySearch).toContain("{cursor}");
-        expect(historySearch).toContain("history_changed");
+        expect(historyList?.description).toContain("Authority 接受顺序");
+        expect(historyList?.description).toContain(
+          "历史背景仅说明采集时刻状态",
+        );
+        expect(historyList?.description).toContain("不认证事实或授予角色知识");
+        expect(historyList?.description).toContain("{cursor}");
+        expect(historySearch?.description).toContain("零命中不证明事件未发生");
+        expect(historySearch?.description).toContain("after 须早于 before");
+        expect(historySearch?.description).toContain("{cursor}");
         expect(historyRead).toContain("无摘要、无截断、无正文分页");
-        expect(historyRead).toContain("两模式互斥");
-        expect(historyRead).toContain("合计<=20");
-        expect(historyRead).toContain("计数单位为消息而非回合");
+        expect(historyRead).toContain("只传 latest，或传 ref");
+        expect(historyRead).toContain("合计最多 20 条消息，另含锚点");
       } else {
-        expect(historyList).toContain("Authority acceptance order");
-        expect(historyList).toContain(
+        expect(historyList?.description).toContain(
+          "Authority acceptance order",
+        );
+        expect(historyList?.description).toContain(
           "Historical background reflects capture-time state only",
         );
-        expect(historyList).toContain(
+        expect(historyList?.description).toContain(
           "neither certifies facts nor grants character knowledge",
         );
-        expect(historyList).toContain("{cursor}");
-        expect(historyList).toContain("history_changed");
-        expect(historySearch).toContain(
+        expect(historyList?.description).toContain("{cursor}");
+        expect(historySearch?.description).toContain(
           "Zero matches do not prove an event never happened",
         );
-        expect(historySearch).toContain("after must precede before");
-        expect(historySearch).toContain("{cursor}");
-        expect(historySearch).toContain("history_changed");
+        expect(historySearch?.description).toContain(
+          "after must precede before",
+        );
+        expect(historySearch?.description).toContain("{cursor}");
         expect(historyRead).toContain(
           "without summaries, truncation or body pagination",
         );
-        expect(historyRead).toContain("mutually exclusive");
-        expect(historyRead).toContain("before+after<=20");
-        expect(historyRead).toContain("Counts are messages, not turns");
+        expect(historyRead).toContain("Pass latest alone or ref");
+        expect(historyRead).toContain("at most 20 messages besides the anchor");
       }
     },
   );
@@ -2799,31 +2775,72 @@ describe("Batch 2B mechanics, history and shared tool description contracts (#24
         .filter(({ role }) => role === "runtime_system")
         .map(({ markdown }) => markdown)
         .join("\n");
-      expect(patch?.description).toContain('"locator":{"markdown":[]}');
+      expect(patch?.inputSchema).toHaveProperty(
+        "properties.edits.items.oneOf.3.properties.locator.properties.markdown.description",
+        expect.stringContaining(
+          locale === "zh-CN"
+            ? "用 [] 在正文末尾"
+            : "Use [] to add a top-level section",
+        ),
+      );
+      expect(patch?.inputSchema).toHaveProperty(
+        "properties.edits.items.oneOf.0.properties.value.description",
+        expect.stringContaining(
+          locale === "zh-CN" ? '{$ref:"@短引用"}' : '{$ref:"@short-ref"}',
+        ),
+      );
+      expect(create?.inputSchema).toHaveProperty(
+        "properties.body.type",
+        "string",
+      );
+      expect(create?.inputSchema).toHaveProperty(
+        "properties.body.description",
+        expect.stringContaining(
+          locale === "zh-CN" ? '{$ref:"@短引用"}' : '{$ref:"@short-ref"}',
+        ),
+      );
+      expect(create?.inputSchema).toHaveProperty(
+        "properties.parent.description",
+        expect.stringContaining("state_list"),
+      );
+      expect(patch?.inputSchema).toHaveProperty(
+        "properties.edits.description",
+        expect.stringContaining(
+          locale === "zh-CN"
+            ? "仅补发回执列出的失败项"
+            : "Resend only failures listed in the receipt",
+        ),
+      );
       if (locale === "zh-CN") {
         expect(patch?.description).toContain(
-          "先校验 target、edits 数组、写入授权与 $ref 形态",
+          "校验目标、edits 数组、整批的写入资格和每个 $ref 对象的形态",
         );
         expect(patch?.description).toContain("零写入");
-        expect(patch?.description).toContain("单条 edit 格式或执行失败会跳过");
-        expect(patch?.description).toContain("仅补发失败项");
-        expect(create?.description).toContain("建议的小写 ASCII 短引用");
-        expect(create?.description).toContain("以 Runtime 返回的 @短引用 为准");
+        expect(patch?.description).toContain("失败项跳过，其余可照常生效");
+        expect(create?.inputSchema).toHaveProperty(
+          "properties.refHint.description",
+          expect.stringMatching(/建议短引用.*ASCII.*回执中的 @短引用/u),
+        );
         expect(runtimeText).toContain(
           "单次 world_patch 先校验目标、edits 数组、写入授权与 $ref 形态",
         );
         expect(runtimeText).toContain("单条 edit 格式或执行失败会被跳过");
       } else {
         expect(patch?.description).toContain(
-          "target, edits array, write authorization, and $ref handle syntax are checked first",
+          "Before the first edit, Runtime checks the target, edits array, write authorization for the whole batch, and the shape of every $ref object",
         );
-        expect(patch?.description).toContain("zero writes");
         expect(patch?.description).toContain(
-          "an invalid or failed individual edit is skipped while others apply",
+          "rejecting the whole batch without writes",
         );
-        expect(patch?.description).toContain("resend only listed failures");
-        expect(create?.description).toContain("short-reference hint");
-        expect(create?.description).toContain("returned by Runtime");
+        expect(patch?.description).toContain(
+          "a failed edit is skipped while others can apply",
+        );
+        expect(create?.inputSchema).toHaveProperty(
+          "properties.refHint.description",
+          expect.stringMatching(
+            /Suggested short reference.*ASCII.*returned @short-ref/u,
+          ),
+        );
         expect(runtimeText).toContain(
           "A single world_patch first checks target, the edits array, write authorization, and $ref handle syntax",
         );
