@@ -369,6 +369,7 @@ export class WorldRevisionSession {
   async discard(input: {
     worldId: string;
     epochId: string;
+    expectedRevision?: string;
   }): Promise<V1WorldRevisionOverview> {
     await this.#mutate(async () => {
       await this.#assertNoRunningConversation(input.worldId);

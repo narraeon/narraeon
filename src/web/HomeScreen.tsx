@@ -2,6 +2,10 @@ import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useState, type ReactNode } from "react";
 import { relativeActivityTime } from "./worldActivityPresentation.ts";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
 
 export interface HomeContentPackage {
   localId: string;
@@ -19,6 +23,12 @@ export interface HomeWorld {
   playerTurns: number;
   /** No turn ledger yet; opening the world runs the storage upgrade. */
   pendingUpgrade?: true;
+}
+
+interface HomeDeletion {
+  kind: "world" | "package";
+  id: string;
+  title: string;
 }
 
 export function HomeScreen({
@@ -88,11 +98,44 @@ export function HomeScreen({
   const [packageNameDraft, setPackageNameDraft] = useState("");
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailure, setRenameFailure] = useState("");
+  const [confirmation, setConfirmation] =
+    useState<ConfirmationRequest<HomeDeletion> | null>(null);
   const pending = importPending || samplePending;
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
   ).length;
   const repairPackageCount = contentPackages.length - usablePackageCount;
+
+  function requestDeletion(
+    action: HomeDeletion,
+    opener: HTMLButtonElement,
+  ): void {
+    setConfirmation({
+      action,
+      opener,
+      fallback: opener.closest("details")?.querySelector("summary") ?? null,
+      message: uiText(
+        action.kind === "world"
+          ? "删除世界“{title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。"
+          : "删除内容包“{title}”？它会从本机移除，且无法撤销。已创建的世界不受影响。",
+        { title: action.title },
+      ),
+      confirmLabel: uiText("删除"),
+    });
+  }
+
+  function decideDeletion(confirmed: boolean): void {
+    setConfirmation(null);
+    if (!confirmed || pending || confirmation === null) return;
+    const { kind, id, title } = confirmation.action;
+    if (kind === "world") {
+      const world = worlds.find((item) => item.worldId === id);
+      if (world?.title === title) onDeleteWorld(world);
+    } else {
+      const item = contentPackages.find((item) => item.localId === id);
+      if (item?.title === title) onDeletePackage(item);
+    }
+  }
 
   return (
     <main className="home-dashboard">
@@ -217,7 +260,16 @@ export function HomeScreen({
                           title: world.title,
                         })}
                         disabled={pending}
-                        onClick={() => onDeleteWorld(world)}
+                        onClick={(event) =>
+                          requestDeletion(
+                            {
+                              kind: "world",
+                              id: world.worldId,
+                              title: world.title,
+                            },
+                            event.currentTarget,
+                          )
+                        }
                       >
                         {uiText("删除")}
                       </button>
@@ -395,7 +447,16 @@ export function HomeScreen({
                               title: item.title,
                             })}
                             disabled={pending}
-                            onClick={() => onDeletePackage(item)}
+                            onClick={(event) =>
+                              requestDeletion(
+                                {
+                                  kind: "package",
+                                  id: item.localId,
+                                  title: item.title,
+                                },
+                                event.currentTarget,
+                              )
+                            }
                           >
                             {uiText("删除")}
                           </button>
@@ -559,6 +620,12 @@ export function HomeScreen({
             uiText(" · {count} 份待修复", { count: repairPackageCount })}
         </span>
       </footer>
+      {confirmation !== null && (
+        <ConfirmationDialog
+          request={confirmation}
+          onDecision={decideDeletion}
+        />
+      )}
     </main>
   );
 }

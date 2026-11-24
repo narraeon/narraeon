@@ -571,25 +571,53 @@ for (const kind of ["setting", "revision"] as const) {
     await send(page, "Conversation retained after deletion.");
     await page.getByRole("button", { name: "全新上下文", exact: true }).click();
     await send(page, "Conversation selected for deletion.");
+    const selected = (await target.overview()).latest?.sessionId;
+    expect(selected).toBeDefined();
     await silenceObservation(page);
-    let deletes = 0;
+    const deletes: string[] = [];
     await page.route("**/api/runtime/v1", async (route) => {
-      if (runtimeInput(route)?.type !== `${target.prefix}.session.delete`)
+      const input = runtimeInput(route);
+      if (
+        input?.type !== "setting-improvement.session.delete" &&
+        input?.type !== "world.revision.session.delete"
+      )
         return route.continue();
-      deletes++;
+      expect(input.type).toBe(`${target.prefix}.session.delete`);
+      deletes.push(input.sessionId);
       const response = await route.fetch();
       expect(response.ok()).toBe(true);
       await route.abort("failed");
     });
     await page.getByRole("button", { name: "历史", exact: true }).click();
-    page.once("dialog", (dialog) => dialog.accept());
-    await page
+    const opener = page
       .locator("li")
       .filter({
         has: page.locator(".setting-history-select[aria-pressed=true]"),
       })
-      .locator(".setting-history-delete")
-      .click();
+      .locator(".setting-history-delete");
+    const dialog = page.getByRole("dialog", {
+      name:
+        kind === "setting"
+          ? /删除对话“Conversation selected for deletion.”.*内容包当前树的改动不会回滚/
+          : /删除对话“Conversation selected for deletion.”.*修订工作树中的改动不会回滚/,
+    });
+    const cancel = dialog.getByRole("button", { name: "取消", exact: true });
+    const confirm = dialog.getByRole("button", { name: "删除", exact: true });
+    await opener.click();
+    await expect(cancel).toBeFocused();
+    await expect(confirm).toHaveClass(/danger-button/);
+    expect(
+      await page.evaluate(() =>
+        (
+          window as { narraeonAndroidBack?: () => boolean }
+        ).narraeonAndroidBack?.(),
+      ),
+    ).toBe(true);
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    expect(deletes).toEqual([]);
+    await opener.click();
+    await confirm.dblclick();
     await expect(
       userText(page, "Conversation retained after deletion."),
     ).toHaveCount(1);
@@ -597,7 +625,7 @@ for (const kind of ["setting", "revision"] as const) {
       userText(page, "Conversation selected for deletion."),
     ).toHaveCount(0);
     await expect(syncNotice(page)).toHaveCount(0);
-    expect(deletes).toBe(1);
+    expect(deletes).toEqual([selected]);
     expect(providerCalls).toBe(2);
   });
 

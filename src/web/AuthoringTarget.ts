@@ -539,6 +539,7 @@ export function worldRevisionTarget(
               type: "world.revision.discard",
               worldId: id,
               epochId: epoch.epochId,
+              expectedRevision: epoch.revision,
             },
       );
     },

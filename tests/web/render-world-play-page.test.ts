@@ -1968,10 +1968,6 @@ describe("世界游玩页面", () => {
   test.each(["apply", "discard"] as const)(
     "世界修订 %s 成功后读取失败，明确提示刷新失败且不重复发布",
     async (action) => {
-      vi.stubGlobal(
-        "confirm",
-        vi.fn(() => true),
-      );
       const epoch = worldRevisionEpoch([]);
       let finished = false;
       const client = {
@@ -2019,6 +2015,14 @@ describe("世界游玩页面", () => {
       });
       await waitFor(() => expect(button.disabled).toBe(false));
       fireEvent.click(button);
+      if (action === "discard")
+        fireEvent.click(
+          within(
+            screen.getByRole("dialog", {
+              name: /所有尚未应用的手动和 AI 修改/,
+            }),
+          ).getByRole("button", { name: "放弃" }),
+        );
       const expected =
         action === "apply"
           ? "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：暂时无法同步"

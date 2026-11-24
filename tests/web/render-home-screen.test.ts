@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -361,56 +362,51 @@ describe("世界工作区主页", () => {
         };
       throw new Error(`unexpected request: ${input.type}`);
     });
-    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
-    try {
-      render(
-        createElement(App, { client: { request } as unknown as RuntimeClient }),
-      );
-      await screen.findByRole("button", { name: "打开内容包：待改名" });
-      fireEvent.click(
-        screen.getByRole("button", { name: "重命名内容包：待改名" }),
-      );
-      const save = screen.getByRole("button", { name: "保存内容包标题" });
-      expect(save.hasAttribute("disabled")).toBe(true);
-      fireEvent.change(screen.getByLabelText("内容包标题"), {
-        target: { value: "  新标题  " },
-      });
-      fireEvent.click(save);
-      await screen.findByRole("button", { name: "打开内容包：新标题" });
-      expect(request).toHaveBeenCalledWith({
-        type: "content.rename",
-        packageId: "package-target",
-        name: "新标题",
-      });
-      fireEvent.click(
-        screen.getByRole("button", { name: "删除内容包：新标题" }),
-      );
-      expect(request).not.toHaveBeenCalledWith({
-        type: "content.delete",
-        packageId: "package-target",
-      });
-      confirm.mockReturnValue(true);
-      fireEvent.click(
-        screen.getByRole("button", { name: "删除内容包：新标题" }),
-      );
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("button", { name: "打开内容包：新标题" }),
-        ).toBeNull(),
-      );
-      expect(request).toHaveBeenCalledWith({
-        type: "content.delete",
-        packageId: "package-target",
-      });
+    render(
+      createElement(App, { client: { request } as unknown as RuntimeClient }),
+    );
+    await screen.findByRole("button", { name: "打开内容包：待改名" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "重命名内容包：待改名" }),
+    );
+    const save = screen.getByRole("button", { name: "保存内容包标题" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByLabelText("内容包标题"), {
+      target: { value: "  新标题  " },
+    });
+    fireEvent.click(save);
+    await screen.findByRole("button", { name: "打开内容包：新标题" });
+    expect(request).toHaveBeenCalledWith({
+      type: "content.rename",
+      packageId: "package-target",
+      name: "新标题",
+    });
+    const opener = screen.getByRole("button", { name: "删除内容包：新标题" });
+    const confirmation = () =>
+      within(screen.getByRole("dialog", { name: /删除内容包“新标题”/ }));
+    fireEvent.click(opener);
+    fireEvent.click(confirmation().getByRole("button", { name: "取消" }));
+    expect(request).not.toHaveBeenCalledWith({
+      type: "content.delete",
+      packageId: "package-target",
+    });
+    fireEvent.click(opener);
+    fireEvent.click(confirmation().getByRole("button", { name: "删除" }));
+    await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "打开内容包：第一份" }),
-      ).toBeTruthy();
-      expect(
-        request.mock.calls.some(([input]) => input.type === "content.read"),
-      ).toBe(false);
-    } finally {
-      confirm.mockRestore();
-    }
+        screen.queryByRole("button", { name: "打开内容包：新标题" }),
+      ).toBeNull(),
+    );
+    expect(request).toHaveBeenCalledWith({
+      type: "content.delete",
+      packageId: "package-target",
+    });
+    expect(
+      screen.getByRole("button", { name: "打开内容包：第一份" }),
+    ).toBeTruthy();
+    expect(
+      request.mock.calls.some(([input]) => input.type === "content.read"),
+    ).toBe(false);
   });
 
   test("应用保存界面语言并在重新加载后继续使用", async () => {

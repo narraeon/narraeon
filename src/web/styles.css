@@ -10012,7 +10012,8 @@ dialog.world-dialog-scrim::backdrop {
 }
 
 /* Creation dialog: the mode is always chosen; the scheme appears only for tabletop. */
-.create-package-dialog {
+.create-package-dialog,
+.confirmation-dialog {
   width: min(34rem, calc(100% - 2rem));
   max-height: calc(100dvh - 2rem);
   margin: auto;
@@ -10024,8 +10025,27 @@ dialog.world-dialog-scrim::backdrop {
   box-shadow: 0 8px 30px rgb(37 49 59 / 10%);
 }
 
-.create-package-dialog::backdrop {
+.create-package-dialog::backdrop,
+.confirmation-dialog::backdrop {
   background: rgb(37 49 59 / 18%);
+}
+
+.confirmation-dialog {
+  padding: 1.25rem 1.4rem;
+  overflow-wrap: anywhere;
+}
+
+.confirmation-dialog > p {
+  margin: 0 0 1rem;
+}
+
+.confirmation-dialog > .button-row {
+  justify-content: flex-end;
+}
+
+.confirmation-dialog button:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .create-package-form {

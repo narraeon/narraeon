@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -283,10 +284,6 @@ test("每轮调用先折叠成窄条，再逐层展开，并可一次全部收�
 
 test("左右侧栏承载历史删除、文件预览和同一份文件编辑器", async () => {
   const onDeleteSession = vi.fn(() => Promise.resolve());
-  vi.stubGlobal(
-    "confirm",
-    vi.fn(() => true),
-  );
   renderPanel(onDeleteSession);
 
   const historyRail = document.querySelector(
@@ -296,6 +293,10 @@ test("左右侧栏承载历史删除、文件预览和同一份文件编辑器",
   fireEvent.click(screen.getByRole("button", { name: "历史" }));
   expect(historyRail.getAttribute("aria-hidden")).toBe("false");
   fireEvent.click(screen.getByRole("button", { name: "删除对话：修改开场" }));
+  const confirmation = within(
+    screen.getByRole("dialog", { name: /删除对话“修改开场”/ }),
+  );
+  fireEvent.click(confirmation.getByRole("button", { name: "删除" }));
   await waitFor(() =>
     expect(onDeleteSession).toHaveBeenCalledWith("setting-test"),
   );

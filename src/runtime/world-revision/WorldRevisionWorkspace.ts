@@ -314,9 +314,12 @@ export class WorldRevisionWorkspace {
   async discard(input: {
     worldId: string;
     epochId: string;
+    expectedRevision?: string;
   }): Promise<StoredWorldRevisionEpoch> {
     const handle = revisionHandle(input);
     const epoch = await this.#withMutableEpoch(handle, async (current) => {
+      if (input.expectedRevision !== undefined)
+        assertExpectedRevision(current, input.expectedRevision);
       current.lifecycle = "discarded";
       current.finishedAt = Date.now();
       current.updatedAt = current.finishedAt;

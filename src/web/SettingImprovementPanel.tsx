@@ -42,6 +42,7 @@ import type {
   V1SettingImprovementView,
   V1SettingPromptPreview,
   V1WorldRevisionChangeSet,
+  V1WorldRevisionEpochView,
   V1WorldRevisionSealedEpochView,
 } from "../protocol/v1.ts";
 import {
@@ -51,11 +52,27 @@ import {
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
 import { PackageGameplaySection } from "./PackageGameplaySection.tsx";
 import { useAndroidBack } from "./androidBridge.ts";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
 import { SyncNotice } from "./SyncNotice.tsx";
 
 export type SettingImprovementView = AuthoringConversationView;
+
+type RevisionDiscardTarget = Pick<
+  V1WorldRevisionEpochView,
+  "epochId" | "revision"
+>;
+type AuthoringConfirmation =
+  | { kind: "delete-session"; item: V1SettingImprovementHistoryItem }
+  | {
+      kind: "discard-revision";
+      epoch: RevisionDiscardTarget;
+      worldName: string;
+    };
 
 interface SettingImprovementPanelProps {
   target?: "content-package" | "world-revision";
@@ -113,7 +130,7 @@ interface SettingImprovementPanelProps {
   /** A saved-tree change is in flight, so no file draft may start. */
   draftsLocked?: boolean;
   revisionActions?: {
-    active?: boolean;
+    discardTarget: RevisionDiscardTarget | null;
     applyLabel?: string;
     changedFileCount: number;
     canApply: boolean;
@@ -121,7 +138,7 @@ interface SettingImprovementPanelProps {
     changes: V1WorldRevisionChangeSet[];
     sealedEpochs: V1WorldRevisionSealedEpochView[];
     onApply: () => Promise<void>;
-    onDiscard: () => Promise<void>;
+    onDiscard: (epoch: RevisionDiscardTarget) => Promise<void>;
   };
 }
 
@@ -186,6 +203,9 @@ export function SettingImprovementPanel({
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
     null,
   );
+  const [confirmation, setConfirmation] =
+    useState<ConfirmationRequest<AuthoringConfirmation> | null>(null);
+  const historyButton = useRef<HTMLButtonElement>(null);
   const [rollingBackFile, setRollingBackFile] = useState<{
     changeSetId: string;
     path: string;
@@ -238,6 +258,18 @@ export function SettingImprovementPanel({
   const rollbackDisabled =
     loading || interactionLocked || hasUnsavedFileDraft || draftsLocked;
   const revisingWorld = target === "world-revision";
+  const historyLocked =
+    loading ||
+    rollbackRunning ||
+    finishingRevision ||
+    editing !== null ||
+    (!revisingWorld && (running || hasUnsavedFileDraft));
+  const discardTarget = revisionActions?.discardTarget ?? null;
+  const discardLocked =
+    loading ||
+    interactionLocked ||
+    hasUnsavedFileDraft ||
+    discardTarget === null;
   const rollbackableChangeSetIds =
     revisionActions === undefined
       ? undefined
@@ -367,34 +399,85 @@ export function SettingImprovementPanel({
       detail.removeAttribute("open");
   };
 
-  const deleteSession = async (
+  const requestSessionDeletion = (
     item: V1SettingImprovementHistoryItem,
-  ): Promise<void> => {
+    opener: HTMLButtonElement,
+  ): void => {
     if (
-      editing !== null ||
-      (target === "content-package" &&
-        (interactionLocked || hasUnsavedFileDraft || loading)) ||
+      historyLocked ||
       item.runStatus === "running" ||
-      deletingSessionId !== null ||
-      !globalThis.confirm(
-        uiText(
-          revisingWorld
-            ? "删除对话“{title}”？只会删除对话记录；修订工作树中的改动不会回滚。此操作无法撤销。"
-            : "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。",
-          { title: item.excerpt || uiText("未命名对话") },
-        ),
-      )
+      deletingSessionId !== null
     )
       return;
-    setDeletingSessionId(item.sessionId);
+    setConfirmation({
+      action: { kind: "delete-session", item },
+      opener,
+      fallback: historyButton.current,
+      message: uiText(
+        revisingWorld
+          ? "删除对话“{title}”？只会删除对话记录；修订工作树中的改动不会回滚。此操作无法撤销。"
+          : "删除对话“{title}”？只会删除这份对话记录；已经写入内容包当前树的改动不会回滚。此操作无法撤销。",
+        { title: item.excerpt || uiText("未命名对话") },
+      ),
+      confirmLabel: uiText("删除"),
+    });
+  };
+
+  const deleteSession = async (sessionId: string): Promise<void> => {
+    setDeletingSessionId(sessionId);
     try {
-      await onDeleteSession(item.sessionId);
+      await onDeleteSession(sessionId);
     } catch {
       // The parent projects the Runtime failure into the conversation surface.
     } finally {
       setDeletingSessionId(null);
     }
   };
+
+  function requestRevisionDiscard(opener: HTMLButtonElement): void {
+    if (discardLocked || discardTarget === null) return;
+    setConfirmation({
+      action: {
+        kind: "discard-revision",
+        epoch: discardTarget,
+        worldName: packageName,
+      },
+      opener,
+      fallback: historyButton.current,
+      message: uiText(
+        "放弃“{name}”的这次世界修订？所有尚未应用的手动和 AI 修改都会丢失。",
+        { name: packageName },
+      ),
+      confirmLabel: uiText("放弃"),
+    });
+  }
+
+  function decideConfirmation(confirmed: boolean): void {
+    setConfirmation(null);
+    if (!confirmed || confirmation === null) return;
+    const action = confirmation.action;
+    if (action.kind === "delete-session") {
+      const item = history.find(
+        ({ sessionId }) => sessionId === action.item.sessionId,
+      );
+      if (
+        !historyLocked &&
+        deletingSessionId === null &&
+        item !== undefined &&
+        item.runStatus !== "running" &&
+        item.updatedAt === action.item.updatedAt &&
+        item.excerpt === action.item.excerpt
+      )
+        void deleteSession(item.sessionId);
+    } else if (
+      !discardLocked &&
+      packageName === action.worldName &&
+      discardTarget?.epochId === action.epoch.epochId &&
+      discardTarget.revision === action.epoch.revision
+    ) {
+      void revisionActions?.onDiscard(action.epoch);
+    }
+  }
 
   const rollbackFile = async (
     changeSetId: string,
@@ -452,6 +535,7 @@ export function SettingImprovementPanel({
             </button>
           )}
           <button
+            ref={historyButton}
             type="button"
             className={leftRailOpen ? "is-current" : ""}
             aria-pressed={leftRailOpen}
@@ -531,13 +615,8 @@ export function SettingImprovementPanel({
             <button
               type="button"
               className="danger-button"
-              disabled={
-                loading ||
-                interactionLocked ||
-                hasUnsavedFileDraft ||
-                revisionActions.active === false
-              }
-              onClick={() => void revisionActions.onDiscard()}
+              disabled={discardLocked}
+              onClick={(event) => requestRevisionDiscard(event.currentTarget)}
             >
               {uiText("放弃")}
             </button>
@@ -1000,21 +1079,14 @@ export function SettingImprovementPanel({
               history={history}
               latestSessionId={latestSessionId}
               selectedSessionId={view?.sessionId ?? null}
-              loading={
-                loading ||
-                rollbackRunning ||
-                finishingRevision ||
-                editing !== null ||
-                (target === "content-package" &&
-                  (running || hasUnsavedFileDraft))
-              }
+              loading={historyLocked}
               deletingSessionId={deletingSessionId}
               onSelectSession={async (sessionId) => {
                 setUnconfirmedDraft(null);
                 await onSelectSession(sessionId);
                 setLeftRailOpen(false);
               }}
-              onDeleteSession={deleteSession}
+              onDeleteSession={requestSessionDeletion}
               onFreshContext={openFreshComposer}
             />
           </div>
@@ -1095,6 +1167,12 @@ export function SettingImprovementPanel({
           </div>
         </aside>
       </div>
+      {confirmation !== null && (
+        <ConfirmationDialog
+          request={confirmation}
+          onDecision={decideConfirmation}
+        />
+      )}
     </main>
   );
 }
@@ -1118,7 +1196,10 @@ function SettingConversationHistory({
   onFreshContext: () => void;
   deletingSessionId: string | null;
   onSelectSession: (sessionId: string) => Promise<void>;
-  onDeleteSession: (item: V1SettingImprovementHistoryItem) => Promise<void>;
+  onDeleteSession: (
+    item: V1SettingImprovementHistoryItem,
+    opener: HTMLButtonElement,
+  ) => void;
 }): React.JSX.Element {
   const revisingWorld = target === "world-revision";
   return (
@@ -1210,7 +1291,9 @@ function SettingConversationHistory({
                     deletingSessionId !== null ||
                     item.runStatus === "running"
                   }
-                  onClick={() => void onDeleteSession(item)}
+                  onClick={(event) =>
+                    onDeleteSession(item, event.currentTarget)
+                  }
                 >
                   {deleting ? "…" : uiText("删除")}
                 </button>

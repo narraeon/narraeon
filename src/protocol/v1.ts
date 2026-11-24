@@ -320,7 +320,12 @@ export type V1Request =
       epochId: string;
       expectedRevision: string;
     }
-  | { type: "world.revision.discard"; worldId: string; epochId: string }
+  | {
+      type: "world.revision.discard";
+      worldId: string;
+      epochId: string;
+      expectedRevision?: string;
+    }
   | {
       type: "world.derive";
       operationId: string;
@@ -1359,6 +1364,16 @@ const requiredFields: Record<
 };
 
 function validateRequestFields(request: Record<string, unknown>): void {
+  if (
+    request.type === "world.revision.discard" &&
+    request.expectedRevision !== undefined &&
+    (typeof request.expectedRevision !== "string" ||
+      request.expectedRevision === "")
+  )
+    throw new V1ProtocolError(
+      "invalid_request",
+      "world.revision.discard.expectedRevision is invalid",
+    );
   if (
     [
       "play.chain.append",

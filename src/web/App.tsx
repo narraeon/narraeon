@@ -769,19 +769,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     setNotice(uiText("世界已重命名为“{name}”。", { name: renamed.title }));
   }
 
-  async function deleteWorld(world: {
-    worldId: string;
-    title: string;
-  }): Promise<void> {
-    if (
-      !globalThis.confirm(
-        uiText(
-          "删除世界“{title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。",
-          { title: world.title },
-        ),
-      )
-    )
-      return;
+  async function deleteWorld(world: HomeWorld): Promise<void> {
     try {
       await client.request({ type: "world.delete", worldId: world.worldId });
       updateWorkspace((current) => ({
@@ -1134,17 +1122,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onImportPackage={() => void importPackage()}
             onOpenPackage={(packageId) => void openPackage(packageId)}
             onRenamePackage={(item, name) => renamePackage(name, item.localId)}
-            onDeletePackage={(item) => {
-              if (
-                globalThis.confirm(
-                  uiText(
-                    "删除内容包“{title}”？它会从本机移除，且无法撤销。已创建的世界不受影响。",
-                    { title: item.title },
-                  ),
-                )
-              )
-                void contentCommand("content.delete", item.localId);
-            }}
+            onDeletePackage={(item) =>
+              void contentCommand("content.delete", item.localId)
+            }
             onOpenWorld={openWorld}
             onRenameWorld={async (world, name) => {
               try {

@@ -2,6 +2,7 @@ import type { AuthoringConversationView } from "./AuthoringTarget.ts";
 import type {
   ContentTreeFile,
   V1SettingImprovementRollbackResult,
+  V1WorldRevisionEpochView,
 } from "../protocol/v1.ts";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
@@ -592,6 +593,7 @@ export class AuthoringWorkspace {
   }
   async finish(
     action: "apply" | "discard",
+    expectedEpoch?: Pick<V1WorldRevisionEpochView, "epochId" | "revision">,
   ): Promise<{ changed: boolean } | null> {
     const snapshot = this.state.target;
     const epoch = snapshot?.revision?.epoch;
@@ -601,6 +603,9 @@ export class AuthoringWorkspace {
       this.state.loading ||
       snapshot === null ||
       !epoch?.locked ||
+      (expectedEpoch !== undefined &&
+        (epoch.epochId !== expectedEpoch.epochId ||
+          epoch.revision !== expectedEpoch.revision)) ||
       this.state.dirty ||
       this.target.finish === undefined ||
       (action === "apply" && epoch.diagnostics.length > 0)
