@@ -611,7 +611,7 @@ export function SillyTavernImport({
                             <h3>{prompt.name}</h3>
                             {prompt.content !== undefined && (
                               <>
-                                <h4>{uiText("正文")}</h4>
+                                <h4>{uiText("提示词正文")}</h4>
                                 {renderContent(prompt.content)}
                               </>
                             )}

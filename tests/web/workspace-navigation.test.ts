@@ -102,7 +102,9 @@ test.each(["model-draft", "reopened-presets"])(
       expect(screen.getByLabelText<HTMLInputElement>("配置名称").value).toBe(
         "新的模型草稿",
       );
-      expect(screen.queryByRole("heading", { name: "玩法预设" })).toBeNull();
+      expect(
+        screen.queryByRole("heading", { name: "玩法预设工作台" }),
+      ).toBeNull();
     } else {
       expect(screen.getByLabelText<HTMLSelectElement>("切换预设").value).toBe(
         scenario.otherId,
