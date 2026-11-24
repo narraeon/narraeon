@@ -15,3 +15,5 @@ Android 版本把整个后端作为 App 进程内的 Node 运行时运行，不�
 - **自行编译 Node 或使用 lite 构建**。首版使用 full 版以减少变量；lite 版（去掉 ICU、inspector、`node:sqlite` 与类型剥离）作为后续的体积优化单独评估。
 
 [ADR-0044](0044-runtime-is-single-process-and-recovers-by-retry.md) 的单进程假设与此兼容：Node 运行时在一个 App 进程里只启动一次，崩溃后由玩家重试。
+
+Runtime 在接受游玩、设定完善或世界修订生成后，通过同进程 Unix socket 通知原生服务。服务只在生成期间持有部分唤醒锁，多项生成共用一次最长 15 分钟的持锁窗口，全部结算后才进入空闲。Android 15 回报 `dataSync` 超时时，服务释放锁并停止，等系统确认服务停止后结束 App 进程。再次打开 App 会在新进程中启动 Node，并从原数据目录恢复。

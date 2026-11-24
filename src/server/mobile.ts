@@ -1,8 +1,10 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { inspect } from "node:util";
 
 import { resolveAppPaths } from "../runtime/config/appPaths.ts";
+import { GenerationActivity } from "../runtime/GenerationActivity.ts";
 import { parseWebPort, startWebServer } from "./startWebServer.ts";
 
 // Mobile entry: started inside the Android app's Node runtime. The native shell
@@ -38,13 +40,20 @@ try {
     );
 
   const port = parseWebPort(process.env.NARRAEON_PORT);
-  const server = await startWebServer({
-    paths,
-    staticRoot,
-    host: "127.0.0.1",
-    port,
-    mobileStartupKey: Buffer.from(startupKey, "hex"),
-  });
+  const generationSocket = process.env.NARRAEON_GENERATION_SOCKET;
+  delete process.env.NARRAEON_GENERATION_SOCKET;
+  const server = await startWebServer(
+    {
+      paths,
+      staticRoot,
+      host: "127.0.0.1",
+      port,
+      mobileStartupKey: Buffer.from(startupKey, "hex"),
+    },
+    generationSocket === undefined
+      ? undefined
+      : connectGenerationActivity(generationSocket),
+  );
 
   const address = server.server.address();
   const listeningPort =
@@ -53,6 +62,16 @@ try {
 } catch (error: unknown) {
   recordCrash("startup", error);
   process.exitCode = 1;
+}
+
+function connectGenerationActivity(name: string): GenerationActivity {
+  // A leading NUL selects the same abstract socket namespace as LocalServerSocket.
+  const socket = createConnection({ path: `\0${name}` });
+  socket.on("error", (error) => recordCrash("generation wake lock", error));
+  socket.unref();
+  return new GenerationActivity((active) => {
+    if (!socket.destroyed) socket.write(active ? "1" : "0");
+  });
 }
 
 function recordCrash(kind: string, value: unknown): void {

@@ -1,3 +1,4 @@
+import type { GenerationActivity } from "../GenerationActivity.ts";
 import {
   supersededPlayEvents,
   publicAttempt,
@@ -371,6 +372,7 @@ export class PlayCallChain {
   /** Worlds whose release is queued in their WorldQueue slot. */
   readonly #releasing = new Set<string>();
   readonly #advances: PlayAdvanceLifecycle<PlayCallChainSession>;
+  readonly #generationActivity: GenerationActivity | undefined;
 
   constructor(
     worlds: FileNativeWorldStore,
@@ -380,8 +382,10 @@ export class PlayCallChain {
     changed: (worldId: string) => void = () => {
       /* No observers attached. */
     },
+    generationActivity?: GenerationActivity,
   ) {
     this.changed = changed;
+    this.#generationActivity = generationActivity;
     this.#worlds = worlds;
     this.#compiler = compiler;
     this.#artifacts = artifacts;
@@ -849,10 +853,12 @@ export class PlayCallChain {
     this.#invocationSettled.set(input.chainId, settled);
     this.#touchWorld(input.worldId);
     this.changed(input.worldId);
+    const endGeneration = this.#generationActivity?.start();
     try {
       await this.#worlds.assertWorldRevisionUnlocked(input.worldId);
       return await run(invocation.controller.signal);
     } finally {
+      endGeneration?.();
       if (this.#activeInvocations.get(input.chainId) === invocation)
         this.#activeInvocations.delete(input.chainId);
       this.#enforceResidentLimit();

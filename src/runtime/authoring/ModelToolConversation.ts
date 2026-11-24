@@ -1,3 +1,4 @@
+import type { GenerationActivity } from "../GenerationActivity.ts";
 import {
   ModelResponseFormatError,
   validateModelToolCalls,
@@ -131,6 +132,7 @@ export interface ModelToolConversationRun<
   ) => Promise<void>;
   view: (session: Session) => View;
   changed?: (durable: boolean) => void;
+  generationActivity?: GenerationActivity;
   failure?: {
     emptyResponse?: string;
     cancelled?: string;
@@ -251,7 +253,9 @@ export class ModelToolConversation<
       streaming: emptyStreaming(),
       toolReceived: false,
     };
+    const endGeneration = input.generationActivity?.start();
     live.promise = this.#execute(input, live).finally(() => {
+      endGeneration?.();
       if (this.#runs.get(input.session.sessionId) === live)
         this.#runs.delete(input.session.sessionId);
       input.changed?.(true);

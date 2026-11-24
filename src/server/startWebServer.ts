@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 
+import type { GenerationActivity } from "../runtime/GenerationActivity.ts";
 import type { AppPaths } from "../runtime/config/appPaths.ts";
 import { prepareDataRoot } from "../runtime/config/dataRootCleanup.ts";
 import { createRuntime } from "./createRuntime.ts";
@@ -23,11 +24,12 @@ export interface StartWebServerInput {
 
 export async function startWebServer(
   input: StartWebServerInput,
+  generationActivity?: GenerationActivity,
 ): Promise<FastifyInstance> {
   await prepareDataRoot(input.paths.dataRoot);
   let server: FastifyInstance | undefined;
   try {
-    const runtime = await createRuntime(input.paths);
+    const runtime = await createRuntime(input.paths, generationActivity);
     server = await createServer({
       runtime,
       staticRoot: input.staticRoot,

@@ -1,3 +1,4 @@
+import type { GenerationActivity } from "../GenerationActivity.ts";
 import {
   authoringConversationTurns,
   readAuthoringCallContext,
@@ -154,9 +155,11 @@ export class WorldRevisionSession {
   readonly #live: WorldRevisionLiveScope;
   readonly #conversation: WorldRevisionLiveScope["conversation"];
   readonly #changed: (id: string, durable: boolean) => void;
+  readonly #generationActivity: GenerationActivity | undefined;
 
   constructor(input: {
     changed?: (id: string, durable: boolean) => void;
+    generationActivity?: GenerationActivity;
     store: FileNativeWorldRevisionStore;
     workspace: WorldRevisionWorkspace;
     worlds: FileNativeWorldStore;
@@ -167,6 +170,7 @@ export class WorldRevisionSession {
     bindPlayPreset: () => Promise<PlayPresetBinding>;
     preview: (input: WorldRevisionPreviewInput) => PromptPreview;
   }) {
+    this.#generationActivity = input.generationActivity;
     this.#changed =
       input.changed ??
       (() => {
@@ -883,6 +887,9 @@ export class WorldRevisionSession {
   ): Promise<V1WorldRevisionView> {
     let activeTransaction: ActiveTransaction | null = null;
     return this.#conversation.run({
+      ...(this.#generationActivity === undefined
+        ? {}
+        : { generationActivity: this.#generationActivity }),
       changed: (durable) => this.#changed(session.worldId, durable),
       session,
       host,
