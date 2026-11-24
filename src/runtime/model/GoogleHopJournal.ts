@@ -5,9 +5,10 @@ import {
   readdir,
   rename,
   rm,
+  rmdir,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { GoogleHopEvidence, ModelHostWireRequest } from "./ModelHost.ts";
 import { isSafeGoogleHop, withGoogleHop } from "./GoogleRequestPreview.ts";
 
@@ -18,7 +19,7 @@ function ownerDirectory(root: string, owner: string): string {
   return join(root, createHash("sha256").update(owner).digest("hex"));
 }
 
-/** Each hop has its own file, so unrelated exchanges never overwrite one another. */
+/** A writer can discard its owner directory. Callers remove expired roots. */
 export function writeGoogleHop(
   root: string,
   owner: string,
@@ -39,17 +40,20 @@ export function writeGoogleHop(
     .then(async () => {
       if (!(await retained())) return;
       const temporary = `${path}.${randomUUID()}.tmp`;
-      await mkdir(directory, { recursive: true, mode: 0o700 });
+      let keepOwner = true;
       try {
+        await mkdir(directory, { recursive: true, mode: 0o700 });
         await writeFile(temporary, `${snapshot}\n`, { mode: 0o600 });
-        if (!(await retained())) return;
-        await rename(temporary, path);
-        if (!(await retained()))
-          await rm(root, { recursive: true, force: true });
+        keepOwner = await retained();
+        if (keepOwner) await rename(temporary, path);
       } finally {
         await rm(temporary, { force: true });
-        if (!(await retained()))
-          await rm(root, { recursive: true, force: true });
+        if (!keepOwner || !(await retained())) {
+          await rm(directory, { recursive: true, force: true });
+          // Recursive mkdir may have recreated the root after caller cleanup.
+          // Removing it only when empty preserves any sibling owner.
+          await rmdir(root).catch(() => undefined);
+        }
       }
     });
   pendingWrites.set(path, pending);
@@ -94,7 +98,7 @@ export async function readGoogleHops(
     }
   }
   for (const [path, hop] of pendingSnapshots)
-    if (path.startsWith(`${directory}/`)) {
+    if (dirname(path) === directory) {
       try {
         const existing = wire.googleHops?.find(
           (item) =>
