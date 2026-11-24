@@ -3,6 +3,52 @@ import { describe, expect, test } from "vitest";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 describe("WorldDocumentStore open/query Interface", () => {
+  test("字面搜索将组合字符、emoji 与兼容展开映射到完整原文字形", () => {
+    const line = "青铜钥匙 👩🏽‍🚀 e\u0301 ﬃ İ ΟΣ ㄱㅏ";
+    const contents = markdownDocument() + "\n" + line + "\n";
+    const snapshot = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [{ path: "state/rules.md", contents }],
+    });
+    for (const [query, text] of [
+      ["🚀", "👩🏽‍🚀"],
+      ["É", "e\u0301"],
+      ["f", "ﬃ"],
+      ["i\u0307", "İ"],
+      ["οσ", "ΟΣ"],
+    ] as const) {
+      const start = contents.indexOf(text);
+      const end = start + text.length;
+      expect(snapshot.query({ kind: "literal_search", query })).toMatchObject({
+        ok: true,
+        page: { total: 1 },
+        matches: [
+          {
+            text,
+            range: {
+              start: {
+                offset: start,
+                byteOffset: Buffer.byteLength(contents.slice(0, start)),
+                column: line.indexOf(text) + 1,
+              },
+              end: {
+                offset: end,
+                byteOffset: Buffer.byteLength(contents.slice(0, end)),
+                column: line.indexOf(text) + 1 + text.length,
+              },
+            },
+            excerpt: { text: line },
+          },
+        ],
+      });
+    }
+    for (const query of ["ος", "가"])
+      expect(snapshot.query({ kind: "literal_search", query })).toMatchObject({
+        ok: true,
+        page: { total: 0 },
+      });
+  });
+
   test.each([
     {
       layout: "content_package" as const,

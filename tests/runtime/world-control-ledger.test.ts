@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import {
+  createHistoryQuery,
+  historyEntries,
+} from "../../src/runtime/history/HistoryTools.ts";
 import { FileNativeWorldRevisionStore } from "../../src/runtime/world-revision/FileNativeWorldRevisionStore.ts";
 import { WorldRevisionWorkspace } from "../../src/runtime/world-revision/WorldRevisionWorkspace.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
@@ -103,6 +107,19 @@ test("世界修订应用是一轮：回退到应用之前时 control/ 与 state/
 test("控制编辑应用是一轮 control_apply：只推进一轮，回退到应用之前时控制恢复", async () => {
   const fixture = await world();
   await commitPlay(fixture, "genesis", "第一句。");
+  const searchHistory = async () => {
+    const binding = await fixture.store.bindPlayCallChain(fixture.worldId);
+    return createHistoryQuery(
+      fixture.worldId,
+      historyEntries(binding.history, binding.historyBackgrounds),
+    );
+  };
+  const firstPage = (await searchHistory()).search({
+    queries: ["第一句", "quiet"],
+    limit: 1,
+  });
+  if (!firstPage.ok || firstPage.nextCursor === null)
+    throw new Error("Expected two matching messages");
   const before = await fixture.store.readSurface(fixture.worldId, "control");
 
   await fixture.store.saveControlDraft(fixture.worldId, [
@@ -125,6 +142,14 @@ test("控制编辑应用是一轮 control_apply：只推进一轮，回退到应
       ({ path }) => path === "blocks/archive.md",
     )?.contents,
   ).toBe("# 档案\n");
+  expect(
+    (await searchHistory()).search({ cursor: firstPage.nextCursor }),
+  ).toMatchObject({
+    ok: true,
+    matches: 2,
+    nextCursor: null,
+    messages: [{ message: { position: 1, isOpening: true } }],
+  });
 
   await fixture.store.rewindPlayerRevision(fixture.worldId, "commit:1");
 

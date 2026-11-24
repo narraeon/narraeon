@@ -5,6 +5,12 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import {
+  mapLiteralSource,
+  normalizeHistoryText,
+  normalizeLiteral,
+  type OriginalRange,
+} from "../LiteralSearch.ts";
 
 export interface HistoryMessageInput {
   readonly id: string;
@@ -408,20 +414,26 @@ export class HistoryQuery {
       const start = Number(query.start);
       const end = Number(query.end);
       const limit = Number(query.limit);
-      const found = this.messages.slice(start, end).flatMap((message) => {
-        if (
-          typeof query.within === "string" &&
-          !historyScopeMatches(message, query.within)
-        )
-          return [];
-        const hit = searchMessage(message, queries, caseSensitive);
-        return hit.hits.length > 0 &&
-          (match === "any" || hit.hits.length === queries.length)
-          ? [hit]
-          : [];
-      });
-      if (order === "newest_first") found.reverse();
-      const page = found.slice(offset, offset + limit);
+      const scope = typeof query.within === "string" ? query.within : null;
+      const terms = queries.map((word) => ({
+        query: word,
+        needle: normalizeLiteral(word, caseSensitive),
+      }));
+      const page: { message: HistoryMessage; normalized: string }[] = [];
+      let matches = 0;
+      for (let step = 0; step < end - start; step++) {
+        const index = order === "newest_first" ? end - step - 1 : start + step;
+        const message = this.messages[index]!;
+        if (scope !== null && !historyScopeMatches(message, scope)) continue;
+        const normalized = normalizeHistoryText(message.text, caseSensitive);
+        const contains = ({ needle }: SearchTerm) =>
+          normalized.includes(needle);
+        if (!(match === "all" ? terms.every(contains) : terms.some(contains)))
+          continue;
+        if (matches >= offset && page.length < limit)
+          page.push({ message, normalized });
+        matches++;
+      }
       return {
         ok: true,
         kind: "search",
@@ -434,12 +446,14 @@ export class HistoryQuery {
         caseSensitive,
         match,
         order,
-        within: typeof query.within === "string" ? query.within : null,
+        within: scope,
         legacy: tool === "legacy_context_search",
-        matches: found.length,
-        messages: page,
+        matches,
+        messages: page.map(({ message, normalized }) =>
+          searchHit(message, normalized, terms, caseSensitive),
+        ),
         nextCursor:
-          offset + page.length >= found.length
+          offset + page.length >= matches
             ? null
             : this.#cursor(tool, query, offset + page.length, "later"),
       };
@@ -647,44 +661,27 @@ function integer(
   return value;
 }
 
-function normalizeLiteral(value: string, caseSensitive: boolean): string {
-  const normalized = value.normalize("NFKC");
-  return caseSensitive ? normalized : normalized.toLocaleLowerCase("und");
-}
-interface MatchRange {
-  start: number;
-  end: number;
+interface SearchTerm {
+  query: string;
+  needle: string;
 }
 
-function searchMessage(
+function searchHit(
   message: HistoryMessage,
-  queries: string[],
+  normalized: string,
+  terms: SearchTerm[],
   caseSensitive: boolean,
 ): HistorySearchHit {
-  // Grapheme clusters keep combining sequences together during normalization.
-  // Each normalized UTF-16 unit maps to the original cluster's code-point
-  // interval; expansions (ligatures, full-width letters, dotted I) stay exact.
   const source = Array.from(message.text);
-  const mapping: MatchRange[] = [];
-  let normalized = "";
-  let originalOffset = 0;
-  for (const { segment } of new Intl.Segmenter("und", {
-    granularity: "grapheme",
-  }).segment(message.text)) {
-    const end = originalOffset + Array.from(segment).length;
-    const transformed = normalizeLiteral(segment, caseSensitive);
-    normalized += segment.normalize("NFKC");
-    transformed
-      .split("")
-      .forEach(() => mapping.push({ start: originalOffset, end }));
-    originalOffset = end;
-  }
-  // Case conversion uses the entire normalized text so contextual lowercasing
-  // (such as final Greek sigma) matches the existing literal-search rules.
-  if (!caseSensitive) normalized = normalized.toLocaleLowerCase("und");
-  const perQuery = queries.map((query) => {
-    const needle = normalizeLiteral(query, caseSensitive);
-    const ranges: MatchRange[] = [];
+  // Contextual casing in the normalized message can change sigma's form
+  // without changing the width used to map it back to the original grapheme.
+  const { ranges: mapping } = mapLiteralSource(
+    message.text,
+    caseSensitive,
+    "codePoints",
+  );
+  const perQuery = terms.map(({ query, needle }) => {
+    const ranges: OriginalRange[] = [];
     let offset = 0;
     while (offset <= normalized.length - needle.length) {
       const found = normalized.indexOf(needle, offset);
@@ -700,8 +697,8 @@ function searchMessage(
   const allRanges = perQuery
     .flatMap(({ ranges }) => ranges)
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  const windows: MatchRange[] = [];
-  const add = (range: MatchRange): boolean => {
+  const windows: OriginalRange[] = [];
+  const add = (range: OriginalRange): boolean => {
     const window = {
       start: Math.max(0, range.start - 80),
       end: Math.min(source.length, range.end + 80),

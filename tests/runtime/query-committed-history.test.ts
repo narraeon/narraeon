@@ -216,6 +216,35 @@ test("快照 cursor 拒绝历史变更、世界/工具混用、参数混用和�
   ).toMatchObject({ code: "history_invalid_cursor" });
 });
 
+test("历史片段保留完整命中字形和码点偏移，兼容规范化尊重原字形边界", () => {
+  const text = "界".repeat(100) + "👩🏽‍🚀" + "尾".repeat(200) + " ㄱㅏ ﬃ";
+  const history = new HistoryQuery("world-a", [
+    { id: "message.12.1.narrator", role: "narrator", text },
+  ]);
+  expect(history.search({ queries: ["🚀", "가", "f"] })).toMatchObject({
+    matches: 1,
+    messages: [
+      {
+        hits: [
+          { query: "🚀", count: 1 },
+          { query: "f", count: 2 },
+        ],
+        fragments: [
+          {
+            text: "界".repeat(80) + "👩🏽‍🚀" + "尾".repeat(80),
+            start: 21,
+            end: 184,
+            omittedBefore: true,
+            omittedAfter: true,
+          },
+          { text: "尾".repeat(76) + " ㄱㅏ ﬃ" },
+        ],
+        omittedMatches: false,
+      },
+    ],
+  });
+});
+
 test("列表锚点是相邻区间，空窗口、边界及参数恢复明确", () => {
   const history = new HistoryQuery("world-a", messages);
   expect(
