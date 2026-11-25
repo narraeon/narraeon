@@ -776,12 +776,19 @@ export async function listTurns(root: string): Promise<WorldTurnRecord[]> {
   return structuredClone(turnsThrough(view, view.head));
 }
 
-function turnsThrough(view: LedgerView, position: number): WorldTurnRecord[] {
-  const turns = [];
-  for (const [sequence, { record }] of view.turns) {
-    if (sequence <= position) turns.push(record);
+function* turnsBackFrom(
+  view: LedgerView,
+  position: number,
+): IterableIterator<WorldTurnRecord> {
+  while (position > 0) {
+    const record = view.turns.get(position)!.record;
+    yield record;
+    position = record.restoresSequence ?? position - 1;
   }
-  return turns.reverse();
+}
+
+function turnsThrough(view: LedgerView, position: number): WorldTurnRecord[] {
+  return [...turnsBackFrom(view, position)].reverse();
 }
 
 /** Internal reader. Returned records are borrowed from the cached view. */
@@ -851,8 +858,34 @@ export async function readLedgerFiles(
   files: Map<string, string>;
   turns: WorldTurnRecord[];
 }> {
-  const { dirs = [], paths = [], includeTurns = false } = selection;
-  for (const path of [...dirs, ...paths]) assertSafePath(path);
+  const {
+    sequence: position,
+    files,
+    projection: turns,
+  } = await readLedgerProjection(root, sequence, (_position, turnsBack) => ({
+    ...selection,
+    projection: selection.includeTurns ? [...turnsBack()].reverse() : [],
+  }));
+  return { sequence: position, files, turns };
+}
+
+/** Choose the files for a projection from the same view used to recover them. */
+export async function readLedgerProjection<Projection>(
+  root: string,
+  sequence: number | undefined,
+  select: (
+    position: number,
+    turnsBack: () => IterableIterator<WorldTurnRecord>,
+  ) => {
+    dirs?: readonly string[];
+    paths?: readonly string[];
+    projection: Projection;
+  },
+): Promise<{
+  sequence: number;
+  files: Map<string, string>;
+  projection: Projection;
+}> {
   const key = resolve(root);
   const readers = activeReaders.get(key) ?? { generation: 0, count: 0 };
   activeReaders.set(key, readers);
@@ -862,6 +895,14 @@ export async function readLedgerFiles(
       const generation = readers.generation;
       const view = await loadView(root);
       const position = resolvePosition(view, sequence ?? view.head);
+      const {
+        dirs = [],
+        paths = [],
+        projection,
+      } = select(position, () => turnsBackFrom(view, position));
+      if (dirs.length === 0 && paths.length === 0)
+        return { sequence: position, files: new Map(), projection };
+      for (const path of [...dirs, ...paths]) assertSafePath(path);
       const stable = async () =>
         (await readHead(root)) === view.head &&
         readers.generation === generation;
@@ -886,8 +927,7 @@ export async function readLedgerFiles(
         continue;
       }
       if (!(await stable())) continue;
-      const turns = includeTurns ? turnsThrough(view, position) : [];
-      return { sequence: position, files, turns };
+      return { sequence: position, files, projection };
     }
     throw new WorldTurnLedgerError(
       "read_conflict",

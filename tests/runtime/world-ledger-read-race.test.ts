@@ -500,3 +500,203 @@ function commitPayload(sequence: number) {
     nextAdditionalMaterials: [],
   };
 }
+
+test("maintenance rebuild reads a fixed number of ledger heads across historical and current endpoints", async () => {
+  const { root, worldId, worlds } = await worldArchiveFixture();
+  roots.push(root);
+  const worldRoot = join(root, "worlds-file-native", worldId);
+  const authority = new WorldLedgerAuthority(worldRoot);
+  await worlds.rewindPlayerRevision(worldId, "genesis");
+  const genesis = (await worlds.readSurface(worldId, "state"))[0]!.contents;
+  let head = "genesis";
+  let contents = genesis;
+  const append = async (round: number) => {
+    const next = `${genesis}观察: ${round}\n`;
+    const { commit } = await authority.appendCommit({
+      operationId: `maintenance-turn-${round}`,
+      parentHead: head,
+      mode: "play",
+      playContext: "maintenance-context",
+      worldClock: `时刻 ${round}`,
+      historyAppend: [{ role: "player", exactText: "继续观察。" }],
+      stateChanges: [replaceSituation(contents, next)],
+      nextMaterials: [],
+    });
+    head = commit.head;
+    contents = next;
+  };
+  for (let round = 1; round <= 3; round++) await append(round);
+  const earlier = head;
+  for (let round = 4; round <= 30; round++) await append(round);
+  const latest = head;
+  const paths: string[] = [];
+  const current = new FileNativeWorldStore(root);
+  const historical = new FileNativeWorldStore(root);
+  expect(await current.currentHead(worldId)).toBe(latest);
+  expect(await historical.currentHead(worldId)).toBe(latest);
+  race.beforeRead = (path) => {
+    paths.push(path);
+    return Promise.resolve();
+  };
+  const ledgerHead = join(worldRoot, "runtime", "head.json");
+  const stateFile = join(worldRoot, "state", "current-situation.yaml");
+  const earlyFacts = await historical.readDocumentMaintenance(worldId, earlier);
+  expect(earlyFacts["current-situation"]?.lastBodyWrite).toEqual({
+    kind: "play",
+    context: 1,
+    round: 3,
+    worldTime: "时刻 3",
+  });
+  expect(paths.filter((path) => path === ledgerHead)).toHaveLength(2);
+  expect(paths.filter((path) => path === stateFile)).toHaveLength(0);
+  paths.length = 0;
+  const latestFacts = await current.readDocumentMaintenance(worldId, latest);
+  expect(latestFacts["current-situation"]).toMatchObject({
+    lastBodyWrite: { context: 1, round: 30, worldTime: "时刻 30" },
+    lastMetadataWrite: { kind: "world_origin" },
+    observedContexts: 1,
+    bodyChangedContexts: 1,
+    metadataChangedContexts: 0,
+  });
+  expect(paths.filter((path) => path === ledgerHead)).toHaveLength(2);
+  expect(paths.filter((path) => path === stateFile)).toHaveLength(1);
+  paths.length = 0;
+  expect(await current.readDocumentMaintenance(worldId, latest)).toEqual(
+    latestFacts,
+  );
+  expect(paths.filter((path) => path === ledgerHead)).toHaveLength(1);
+  expect(paths.filter((path) => path === stateFile)).toHaveLength(0);
+  race.beforeRead = undefined;
+
+  await append(31);
+  paths.length = 0;
+  race.beforeRead = (path) => {
+    paths.push(path);
+    return Promise.resolve();
+  };
+  const extended = await current.readDocumentMaintenance(worldId);
+  expect(extended["current-situation"]?.lastBodyWrite).toMatchObject({
+    round: 31,
+    worldTime: "时刻 31",
+  });
+  expect(paths.filter((path) => path === ledgerHead)).toHaveLength(2);
+  expect(paths.filter((path) => path === stateFile)).toHaveLength(1);
+  race.beforeRead = undefined;
+  expect(
+    await new FileNativeWorldStore(root).readDocumentMaintenance(worldId),
+  ).toEqual(extended);
+});
+
+test("maintenance caches follow a rewind and bad state bytes make diagnostics unavailable", async () => {
+  const { root, worldId, worlds } = await worldArchiveFixture();
+  roots.push(root);
+  const worldRoot = join(root, "worlds-file-native", worldId);
+  const authority = new WorldLedgerAuthority(worldRoot);
+  const parent = await worlds.currentHead(worldId);
+  const original = (await worlds.readSurface(worldId, "state"))[0]!.contents;
+  const append = async (
+    parentHead: string,
+    id: string,
+    next: string,
+    playContext: string,
+  ) =>
+    (
+      await authority.appendCommit({
+        operationId: id,
+        parentHead,
+        mode: "play",
+        playContext,
+        historyAppend: [{ role: "player", exactText: "看看旅店。" }],
+        stateChanges: [replaceSituation(original, next)],
+        nextMaterials: [],
+      })
+    ).commit.head;
+  const body = `${original}时间: 半夜\n`;
+  const discarded = await append(
+    parent,
+    "maintenance-body",
+    body,
+    "discarded-context",
+  );
+  const { commits } = await authority.readStateHistory(
+    discarded,
+    (head) => head === parent,
+  );
+  const projected = commits[0]!;
+  projected.playContext = "mutated context";
+  projected.historyAppend[0]!.exactText = " ";
+  projected.changes[0]!.stableShortRef = "mutated-ref";
+  expect(await authority.commitAt(discarded)).toMatchObject({
+    playContext: "discarded-context",
+    historyAppend: [{ exactText: "看看旅店。" }],
+    stateChanges: [{ stableShortRef: "current-situation" }],
+  });
+
+  const beforeRewind = await worlds.readDocumentMaintenance(worldId, discarded);
+  expect(beforeRewind["current-situation"]).toMatchObject({
+    lastBodyWrite: { kind: "play", context: 2, round: 1, worldTime: null },
+    bodyChangedContexts: 1,
+    observedContexts: 2,
+  });
+
+  const parentFacts = await worlds.readDocumentMaintenance(worldId, parent);
+  await worlds.rewindPlayerRevision(worldId, parent);
+  const physical = await readFile(
+    join(worldRoot, "runtime", "head.json"),
+    "utf8",
+  );
+  const { sequence } = JSON.parse(physical) as { sequence: number };
+  expect(
+    await worlds.readDocumentMaintenance(worldId, `commit:${sequence}`),
+  ).toEqual(parentFacts);
+  expect(await worlds.readDocumentMaintenance(worldId)).toEqual(parentFacts);
+  await expect(
+    worlds.readDocumentMaintenance(worldId, discarded),
+  ).rejects.toMatchObject({ code: "discarded" });
+
+  const metadata = original.replace(
+    "summary: 旅店门边。",
+    "summary: 旅店大门。",
+  );
+  const kept = await append(
+    parent,
+    "maintenance-metadata",
+    metadata,
+    "kept-context",
+  );
+  const afterRewind = await worlds.readDocumentMaintenance(worldId, kept);
+  expect(afterRewind["current-situation"]).toEqual({
+    ...parentFacts["current-situation"],
+    lastMetadataWrite: { kind: "play", context: 2, round: 1, worldTime: null },
+    metadataChangedContexts: 1,
+    observedContexts: 2,
+  });
+  const statePath = join(worldRoot, "state", "current-situation.yaml");
+  await writeFile(statePath, original);
+  const restarted = new FileNativeWorldStore(root);
+  expect(await restarted.inspectDocumentMaintenance(worldId, kept)).toEqual({
+    documentMaintenance: {},
+    documentMaintenanceUnavailableReason:
+      "State change content conflicts with its commit: current-situation.yaml",
+  });
+  expect(await restarted.readDocumentMaintenance(worldId, parent)).toEqual(
+    parentFacts,
+  );
+  await writeFile(statePath, metadata);
+  expect(await restarted.readDocumentMaintenance(worldId, kept)).toEqual(
+    afterRewind,
+  );
+});
+
+function replaceSituation(previous: string, next: string) {
+  return {
+    kind: "replace" as const,
+    documentId: "situation.current",
+    stableShortRef: "current-situation",
+    relativePath: "current-situation.yaml",
+    codec: "yaml" as const,
+    expectedPreviousHash: hash(previous),
+    nextHash: hash(next),
+    canonicalNextBytes: next,
+  };
+}

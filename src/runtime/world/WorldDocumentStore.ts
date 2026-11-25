@@ -48,6 +48,11 @@ export class WorldDocumentStore {
     Object.freeze(this);
   }
 
+  /** Open the next snapshot, reusing inspections of byte-identical files. */
+  withFiles(files: readonly WorldDocumentFile[]): WorldDocumentStore {
+    return new WorldDocumentStore(this.#index.withFiles(files));
+  }
+
   revise(request: WorldDocumentRevisionRequest): WorldDocumentRevisionResult {
     return new WorldDocumentRevision(
       this.#index,

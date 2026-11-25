@@ -142,6 +142,46 @@ describe("WorldDocumentStore open/query Interface", () => {
     },
   );
 
+  test("相邻文档快照重新检查未改动文档的引用和身份", () => {
+    const hero = { path: "state/hero.yaml", contents: yamlDocument() };
+    const gate = {
+      path: "state/gate.yaml",
+      contents: yamlDocument({
+        id: "place.gate",
+        ref: "gate",
+        title: "城门",
+        body: "守卫: { $ref: character.hero }\n",
+      }),
+    };
+    const valid = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [hero, gate],
+    });
+    expect(valid.diagnostics).toEqual([]);
+
+    const missing = valid.withFiles([gate]);
+    expect(missing.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "document_reference_invalid",
+        logicalPath: gate.path,
+      }),
+    );
+    const duplicate = valid.withFiles([
+      hero,
+      gate,
+      { ...hero, path: "state/duplicate.yaml" },
+    ]);
+    expect(duplicate.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "document_identity_duplicate",
+        logicalPath: hero.path,
+      }),
+    );
+    expect(missing.withFiles([gate, hero]).diagnostics).toEqual([]);
+    expect(duplicate.withFiles([gate, hero]).diagnostics).toEqual([]);
+    expect(valid.diagnostics).toEqual([]);
+  });
+
   test("待修复快照用稳定诊断隔离损坏文档，目录仍可观察合法文档", () => {
     const snapshot = WorldDocumentStore.open({
       layout: "content_package",

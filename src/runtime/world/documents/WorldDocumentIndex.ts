@@ -63,17 +63,33 @@ export class WorldDocumentIndex {
   readonly status: WorldDocumentSnapshotStatus;
   readonly entries: readonly InternalDocumentEntry[];
   readonly #cursorSecret = randomBytes(32);
+  readonly #fileInspections = new Map<string, InternalDocumentEntry>();
 
   constructor(
     layout: WorldDocumentLayout,
     files: readonly WorldDocumentFile[],
+    previousFiles?: ReadonlyMap<string, InternalDocumentEntry>,
   ) {
     this.layout = layout;
     this.logicalRoot = layout === "content_package" ? "world" : "state";
     this.files = freeze(files.map((file) => freezeFile(file)));
     this.entries = this.files
       .filter(({ path }) => path.startsWith(`${this.logicalRoot}/`))
-      .map((file) => inspectDocumentFile(file, this.logicalRoot));
+      .map((file) => {
+        const cached = previousFiles?.get(file.path);
+        const inspection =
+          cached?.file.contents === file.contents &&
+          cached.file.encoding === file.encoding
+            ? cached
+            : freeze(inspectDocumentFile(file, this.logicalRoot));
+        this.#fileInspections.set(file.path, inspection);
+        // Snapshot-wide checks add diagnostics to this entry alone.
+        return {
+          ...inspection,
+          file,
+          diagnostics: [...inspection.diagnostics],
+        };
+      });
 
     this.#diagnoseDuplicateLogicalPaths();
     diagnoseDuplicateHeaders(this.entries);
@@ -85,6 +101,10 @@ export class WorldDocumentIndex {
     this.status = this.diagnostics.length === 0 ? "usable" : "needs_repair";
     freeze(this.entries);
     Object.freeze(this);
+  }
+
+  withFiles(files: readonly WorldDocumentFile[]): WorldDocumentIndex {
+    return new WorldDocumentIndex(this.layout, files, this.#fileInspections);
   }
 
   query(request: WorldDocumentQuery): WorldDocumentQueryResult {

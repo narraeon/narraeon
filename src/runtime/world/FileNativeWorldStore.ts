@@ -604,6 +604,7 @@ export class FileNativeWorldStore {
         // 删除期间的并发读取可能重新填充缓存，删除后再失效一次。
         forgetLedger(root);
         this.#currentStorage.delete(worldId);
+        this.#documentMaintenanceCache.delete(worldId);
         for (const operationId of this.#retainedOperationIds.get(worldId) ?? [])
           this.#operationOutcomes.delete(operationId);
         this.#retainedOperationIds.delete(worldId);
@@ -2110,7 +2111,6 @@ export class FileNativeWorldStore {
     const root = join(this.#worldsRoot, worldId);
     await readPublicationAt(root);
     const authority = new WorldLedgerAuthority(root);
-    const selectedHead = head ?? (await authority.readHead()).head;
     let cache = this.#documentMaintenanceCache.get(worldId);
     if (cache === undefined) {
       cache = new Map();
@@ -2120,7 +2120,7 @@ export class FileNativeWorldStore {
         );
       this.#documentMaintenanceCache.set(worldId, cache);
     }
-    return readDocumentMaintenanceFacts(authority, selectedHead, cache);
+    return readDocumentMaintenanceFacts(authority, head, cache);
   }
 
   async readAuthorityEndpoint(

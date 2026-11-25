@@ -29,9 +29,9 @@ import {
   appendTurnWithDigest,
   initializeLedger,
   readEndpoint,
-  readFileAt,
   readHead as readLedgerHead,
   readLedgerFiles,
+  readLedgerProjection,
   readTreeAt,
   readTurnHistory,
   type WorldTurnFileChange,
@@ -385,34 +385,109 @@ export class WorldLedgerAuthority {
     return structuredClone(this.#commitFromRecord(sequence, record));
   }
 
-  /** 某一轮修改的状态文件内容：即该轮结束时的文件，并校验哈希。 */
-  async readStateChangeContents(
-    commit: WorldTurnCommit,
-    change: WorldStateChangeStored,
-  ): Promise<string | null> {
-    const contents = await readFileAt(
+  /** Recover the state versions needed to extend a cached maintenance prefix. */
+  async readStateHistory(
+    head: string | undefined,
+    hasPrefix: (head: string) => boolean,
+  ): Promise<{
+    head: string;
+    prefixHead: string;
+    genesisState: ContentTreeFile[];
+    commits: {
+      mode: WorldCommitMode;
+      playContext: string | undefined;
+      worldClock: string | undefined;
+      historyAppend: Pick<WorldHistoryMessage, "role" | "exactText">[];
+      changes: (Pick<
+        WorldStateChangeStored,
+        "kind" | "relativePath" | "stableShortRef"
+      > & {
+        contents: string | null;
+      })[];
+    }[];
+  }> {
+    const { sequence, files, projection } = await readLedgerProjection(
       this.#root,
-      commit.sequence,
-      `state/${change.relativePath}`,
+      head === undefined ? undefined : parsePosition(head),
+      (position, turnsBack) => {
+        let prefixHead = headName(position);
+        const suffix: { record: WorldTurnRecord; commit: WorldTurnCommit }[] =
+          [];
+        const paths = new Set<string>();
+        let hasCachedPrefix = hasPrefix(prefixHead);
+        if (!hasCachedPrefix) {
+          for (const record of turnsBack()) {
+            if (record.mode === "rewind") continue;
+            const commit = this.#commitFromRecord(record.sequence, record);
+            if (commit.head !== prefixHead)
+              throw new Error("Document maintenance history is not reachable");
+            if (hasPrefix(prefixHead)) {
+              hasCachedPrefix = true;
+              break;
+            }
+            suffix.push({ record, commit });
+            for (const change of commit.stateChanges)
+              if (change.kind !== "delete")
+                paths.add(`state/${change.relativePath}`);
+            prefixHead = commit.parentHead;
+          }
+        }
+        if (!hasCachedPrefix && prefixHead !== "genesis")
+          throw new Error("Document maintenance history is not reachable");
+        const readGenesis = !hasCachedPrefix && !hasPrefix("genesis");
+        return {
+          dirs: readGenesis ? ["state"] : [],
+          paths: [...paths],
+          projection: { prefixHead, suffix, readGenesis },
+        };
+      },
     );
-    if (change.kind === "delete") {
-      if (contents !== null)
-        throw new WorldAuthorityError(
-          "corrupt",
-          `Deleted state document still exists in its commit: ${change.relativePath}`,
-        );
-      return null;
-    }
-    if (
-      change.nextHash === null ||
-      contents === null ||
-      sha256Hex(contents) !== change.nextHash
-    )
-      throw new WorldAuthorityError(
-        "corrupt",
-        `State change content conflicts with its commit: ${change.relativePath}`,
-      );
-    return contents;
+
+    // An after-image is the next visible turn's before-image for that path,
+    // or the selected endpoint's file when no later turn changed it.
+    const commits = projection.suffix.map(({ record, commit }) => {
+      const changes = commit.stateChanges.map((change) => {
+        const contents =
+          change.kind === "delete"
+            ? null
+            : (files.get(`state/${change.relativePath}`) ?? null);
+        if (
+          change.kind !== "delete" &&
+          (contents === null || sha256Hex(contents) !== change.nextHash)
+        )
+          throw new WorldAuthorityError(
+            "corrupt",
+            `State change content conflicts with its commit: ${change.relativePath}`,
+          );
+        return {
+          kind: change.kind,
+          relativePath: change.relativePath,
+          stableShortRef: change.stableShortRef,
+          contents,
+        };
+      });
+      for (const { path, before } of record.files) {
+        if (!path.startsWith("state/")) continue;
+        if (before === null) files.delete(path);
+        else files.set(path, before);
+      }
+      return {
+        mode: commit.mode,
+        playContext: commit.playContext,
+        worldClock: commit.worldClock,
+        historyAppend: commit.historyAppend.map(({ role, exactText }) => ({
+          role,
+          exactText,
+        })),
+        changes,
+      };
+    });
+    return {
+      head: headName(sequence),
+      prefixHead: projection.prefixHead,
+      genesisState: projection.readGenesis ? surfaceFiles(files, "state") : [],
+      commits: commits.reverse(),
+    };
   }
 
   /**

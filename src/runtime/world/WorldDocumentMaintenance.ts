@@ -7,7 +7,6 @@ import { WorldDocumentStore } from "./WorldDocumentStore.ts";
 import {
   isCorrectionCommit,
   type WorldLedgerAuthority,
-  type WorldTurnCommit,
 } from "./WorldLedgerAuthority.ts";
 
 export interface DocumentMaintenanceState {
@@ -23,41 +22,31 @@ export interface DocumentMaintenanceState {
 /** Reachable committed bytes only. Cached prefixes are disposable accelerators. */
 export async function readDocumentMaintenanceFacts(
   authority: WorldLedgerAuthority,
-  head: string,
+  head: string | undefined,
   cache: Map<string, DocumentMaintenanceState>,
 ): Promise<Record<string, WorldDocumentMaintenance>> {
-  const exact = cache.get(head);
-  if (exact !== undefined) return structuredClone(exact.facts);
-  const timeline: WorldTurnCommit[] = [];
-  let cursor = head;
-  const seen = new Set<string>();
-  while (cursor !== "genesis" && !cache.has(cursor)) {
-    const commit = await authority.commitAt(cursor);
-    if (commit === null || seen.has(cursor))
-      throw new Error("Document maintenance history is not reachable");
-    seen.add(cursor);
-    timeline.push(commit);
-    cursor = commit.parentHead;
-  }
-  timeline.reverse();
-  const prefix = cache.get(cursor);
+  const cachedPrefixes = new Map(cache);
+  const history = await authority.readStateHistory(head, (candidate) =>
+    cachedPrefixes.has(candidate),
+  );
+  const prefix = cachedPrefixes.get(history.prefixHead);
+  if (history.prefixHead === history.head && prefix !== undefined)
+    return structuredClone(prefix.facts);
   const files =
     prefix === undefined
       ? new Map(
-          (await authority.recoverState("genesis")).map(
-            ({ path, contents }) => [path, contents],
-          ),
+          history.genesisState.map(({ path, contents }) => [path, contents]),
         )
       : new Map(prefix.files);
-  const snapshot = () =>
-    WorldDocumentStore.open({
-      layout: "world_state",
-      files: [...files].map(([path, contents]) => ({
-        path: `state/${path}`,
-        contents,
-      })),
-    });
-  let previous = snapshot();
+  const snapshotFiles = () =>
+    [...files].map(([path, contents]) => ({
+      path: `state/${path}`,
+      contents,
+    }));
+  let previous = WorldDocumentStore.open({
+    layout: "world_state",
+    files: snapshotFiles(),
+  });
   const facts: Record<string, WorldDocumentMaintenance> = structuredClone(
     prefix?.facts ?? {},
   );
@@ -95,7 +84,8 @@ export async function readDocumentMaintenanceFacts(
   );
   let inputPosition = prefix?.inputPosition ?? 0;
   let unassignedPlayer = prefix?.unassignedPlayer ?? false;
-  for (const commit of timeline) {
+  for (const commit of history.commits) {
+    const { changes } = commit;
     let context =
       commit.playContext === undefined
         ? undefined
@@ -115,20 +105,11 @@ export async function readDocumentMaintenanceFacts(
         else unassignedPlayer = true;
       } else if (message.role === "narrator") unassignedPlayer = false;
     }
-    if (commit.stateChanges.length === 0) continue;
-    const changed = await Promise.all(
-      commit.stateChanges.map(async (change) => ({
-        change,
-        contents:
-          change.kind === "delete"
-            ? null
-            : await authority.readStateChangeContents(commit, change),
-      })),
-    );
-    for (const { change, contents } of changed)
-      if (contents === null) files.delete(change.relativePath);
-      else files.set(change.relativePath, contents);
-    const next = snapshot();
+    if (changes.length === 0) continue;
+    for (const { relativePath, contents } of changes)
+      if (contents === null) files.delete(relativePath);
+      else files.set(relativePath, contents);
+    const next = previous.withFiles(snapshotFiles());
     const position: WorldWritePosition = {
       kind: isCorrectionCommit(commit.mode)
         ? "correction"
@@ -139,9 +120,8 @@ export async function readDocumentMaintenanceFacts(
       round: context?.round ?? inputPosition,
       worldTime: commit.worldClock ?? null,
     };
-    for (const { change } of changed) {
-      if (change.kind === "delete") continue;
-      const ref = change.stableShortRef;
+    for (const { kind, stableShortRef: ref } of changes) {
+      if (kind === "delete") continue;
       const before = previous.query({
         kind: "read_document",
         document: { shortRef: ref },
@@ -202,7 +182,7 @@ export async function readDocumentMaintenanceFacts(
   for (const fact of Object.values(facts))
     fact.observedContexts = contexts.size;
   if (cache.size >= 8) cache.delete(cache.keys().next().value!);
-  cache.set(head, {
+  cache.set(history.head, {
     files,
     facts,
     bodyContexts,

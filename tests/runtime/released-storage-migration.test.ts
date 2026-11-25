@@ -131,6 +131,20 @@ test("含时间线修订的 V3 世界迁移为单个修订轮，修订后的端�
   await expect(
     store.recoverEndpoint(fixture.worldId, "commit:5"),
   ).resolves.toEqual(fixture.endpoints["commit:5"]);
+  // 迁移后，维护统计应沿折叠轮的逻辑父端点回到世界起点。
+  const facts = await store.readDocumentMaintenance(
+    fixture.worldId,
+    "commit:5",
+  );
+  expect(facts["current-situation"]).toMatchObject({
+    baselineKind: "world_origin",
+    baselineBytes: 24,
+    lastBodyWrite: { kind: "world_origin", worldTime: null },
+    lastMetadataWrite: { kind: "world_origin", worldTime: null },
+  });
+  expect(facts).toEqual(
+    await store.readDocumentMaintenance(fixture.worldId, "genesis"),
+  );
   // 被替换的旧轮不保留；它们的端点不再可达。
   await expect(
     store.recoverEndpoint(fixture.worldId, "commit:1"),
