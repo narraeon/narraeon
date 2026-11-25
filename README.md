@@ -120,7 +120,7 @@ node dist/node/cli/main.js web
 
 3. **Edit or improve the setting.** Edit files directly, or connect a model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
 4. **Review the orchestration.** The built-in orchestration is ready to use and follows the selected language. Orchestrations hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
-5. **Create a world.** Copy a usable content package into a new independent world. You can save it, reopen it, and read the opening before connecting a model.
+5. **Create a world.** Copy a usable content package into a new independent world. You can save it, reopen it, and read the opening before connecting a model. If you select a protagonist template, review it in the new world and choose **Confirm and customize** or **Skip and read opening**. Customization becomes part of the world when you review and apply it.
 6. **Connect a model when you’re ready to play.** Open **Configure model** from the world. Choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's context-window and maximum-output limits. For a local Chat Completions server on `localhost`, `127.0.0.0/8`, or `[::1]`, choose **No API key** to list and use its models without a key. Save and enable the connection to return to the same world with your draft. Send the action when you’re ready.
 
 ## How play works

@@ -1529,3 +1529,72 @@
   border-block-start: 1px solid currentColor;
   padding-block: 0.75rem;
 }
+
+.protagonist-confirmation-page {
+  width: min(100%, 45rem);
+  margin-inline: auto;
+  padding: clamp(0.75rem, 4vw, 2rem);
+}
+
+.protagonist-confirmation-card {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+  overflow-wrap: anywhere;
+  padding: clamp(0.85rem, 4vw, 1.5rem);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.protagonist-confirmation-card :where(h1, h2, p) {
+  margin-block: 0;
+}
+
+.protagonist-confirmation-card h1 {
+  font-size: 1.4rem;
+}
+
+.protagonist-confirmation-card h2 {
+  margin-block-end: 0.4rem;
+  font-size: 1.05rem;
+}
+
+.protagonist-template-preview,
+.protagonist-customization-response,
+.protagonist-customization-changes,
+.protagonist-customization-reply {
+  min-width: 0;
+  padding-block-start: 0.75rem;
+  border-block-start: 1px solid var(--line);
+}
+
+.protagonist-template-body {
+  max-block-size: min(35vh, 16rem);
+  overflow: auto;
+}
+
+.protagonist-confirmation-card pre {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.protagonist-customization-reply {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.protagonist-customization-reply textarea {
+  width: 100%;
+}
+
+.protagonist-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.protagonist-confirmation-actions button {
+  max-width: 100%;
+  white-space: normal;
+}

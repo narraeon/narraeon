@@ -100,6 +100,12 @@ import {
 import { ArtifactDebugger } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
 import { PlayContextUsage } from "./PlayContextUsage.tsx";
+import { ProtagonistConfirmationCard } from "./ProtagonistConfirmationCard.tsx";
+import {
+  readProtagonistCustomization,
+  saveProtagonistCustomization,
+  type ProtagonistCustomization,
+} from "./ProtagonistCustomization.ts";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
@@ -151,9 +157,8 @@ export function WorldPage({
   onNavigationProtectionChange,
   onReadingPreferencesChange,
   initialReadingPreferences = defaultAppReadingPreferences,
-  protagonistRevision,
-  onProtagonistRevisionStarted,
-  onProtagonistRevisionFinished,
+  initialProtagonistCustomization,
+  onProtagonistCustomizationFinished,
 }: {
   client: WorldPageClient;
   worldId: string;
@@ -173,9 +178,8 @@ export function WorldPage({
   ) => void;
   onReadingPreferencesChange?: (value: AppReadingPreferences) => void;
   initialReadingPreferences?: AppReadingPreferences;
-  protagonistRevision?: { message: string; started: boolean };
-  onProtagonistRevisionStarted?: () => void;
-  onProtagonistRevisionFinished?: () => void;
+  initialProtagonistCustomization?: ProtagonistCustomization;
+  onProtagonistCustomizationFinished?: () => void;
 }): React.JSX.Element {
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
@@ -198,9 +202,14 @@ export function WorldPage({
     setLeftRailOpen(false);
     setRightRailOpen(false);
   });
-  const [dialog, setDialog] = useState<WorldDialog>(
-    protagonistRevision === undefined ? null : "revision",
+  const [dialog, setDialog] = useState<WorldDialog>(null);
+  const [protagonistCustomization, setProtagonistCustomization] = useState(
+    () =>
+      readProtagonistCustomization(worldId) ??
+      initialProtagonistCustomization ??
+      null,
   );
+  const [protagonistBusy, setProtagonistBusy] = useState(false);
   const [readingPreferences, setReadingPreferences] = useState(
     initialReadingPreferences,
   );
@@ -264,9 +273,41 @@ export function WorldPage({
     workspace: revisionWorkspace,
     state: authoring,
     conversation,
-  } = useAuthoringWorkspace(client, "revision", worldId, dialog === "revision");
+  } = useAuthoringWorkspace(
+    client,
+    "revision",
+    worldId,
+    dialog === "revision" || protagonistCustomization !== null,
+  );
   const revisionOverview =
-    dialog === "revision" ? (authoring.target?.revision ?? null) : null;
+    dialog === "revision" || protagonistCustomization !== null
+      ? (authoring.target?.revision ?? null)
+      : null;
+  const changeProtagonistCustomization = useCallback(
+    (next: ProtagonistCustomization | null) => {
+      saveProtagonistCustomization(worldId, next);
+      setProtagonistCustomization(next);
+      if (next === null) onProtagonistCustomizationFinished?.();
+    },
+    [worldId, onProtagonistCustomizationFinished],
+  );
+  const finishingProtagonistEpoch = protagonistCustomization?.epochId;
+  useEffect(() => {
+    if (finishingProtagonistEpoch === undefined) return;
+    return revisionWorkspace.subscribe(() => {
+      const overview = revisionWorkspace.getSnapshot().target?.revision;
+      if (
+        overview?.sealedEpochs.some(
+          ({ epochId }) => epochId === finishingProtagonistEpoch,
+        )
+      )
+        changeProtagonistCustomization(null);
+    });
+  }, [
+    revisionWorkspace,
+    finishingProtagonistEpoch,
+    changeProtagonistCustomization,
+  ]);
   const revisionFiles = authoring.files;
   const revisionDirty = dialog === "revision" && authoring.dirty;
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
@@ -294,7 +335,11 @@ export function WorldPage({
   const navigationDirty =
     revisionDirty || controlDirty || authoringNavigation.dirty;
   const navigationBusy =
-    authoringNavigation.busy || pending === "control-apply";
+    authoringNavigation.busy ||
+    protagonistBusy ||
+    (protagonistCustomization !== null &&
+      authoring.view?.runStatus === "running") ||
+    pending === "control-apply";
   useLayoutEffect(() => {
     onNavigationProtectionChange?.({
       dirty: navigationDirty,
@@ -1149,12 +1194,19 @@ export function WorldPage({
     setDialog(next);
   }
 
+  function rememberProtagonistFinish(epochId: string): void {
+    if (protagonistCustomization !== null)
+      changeProtagonistCustomization({ ...protagonistCustomization, epochId });
+  }
+
   async function applyRevision(): Promise<void> {
+    if (activeRevisionEpoch?.locked === true)
+      rememberProtagonistFinish(activeRevisionEpoch.epochId);
     const result = await revisionWorkspace.finish("apply");
     if (result === null) return;
     acceptWorldChange();
     revisionWorkspace.close();
-    onProtagonistRevisionFinished?.();
+    if (protagonistCustomization !== null) changeProtagonistCustomization(null);
     setDialog(null);
     if (result.changed) setForceFreshContext(true);
     try {
@@ -1179,11 +1231,12 @@ export function WorldPage({
   async function discardRevision(
     epoch: Pick<V1WorldRevisionEpochView, "epochId" | "revision">,
   ): Promise<void> {
+    rememberProtagonistFinish(epoch.epochId);
     const result = await revisionWorkspace.finish("discard", epoch);
     if (result === null) return;
     worldTarget.accept({ complete: false });
     revisionWorkspace.close();
-    onProtagonistRevisionFinished?.();
+    if (protagonistCustomization !== null) changeProtagonistCustomization(null);
     setDialog(null);
     try {
       await refreshWorld(false);
@@ -1548,6 +1601,9 @@ export function WorldPage({
         onNavigationProtectionChange={setAuthoringNavigation}
         key={worldId}
         target="world-revision"
+        {...(protagonistCustomization === null
+          ? {}
+          : { backLabel: uiText("返回主角确认") })}
         packageName={worldTitle}
         modelConfigured={modelConfigured}
         hasUnsavedFileDraft={revisionDirty}
@@ -1579,26 +1635,25 @@ export function WorldPage({
           title: worldTitle,
           onRename: () => undefined,
         }}
-        {...(authoring.target === null ||
-        protagonistRevision === undefined ||
-        protagonistRevision.started
-          ? {}
-          : {
-              initialMessage: protagonistRevision.message,
-              onInitialMessageStarted: () => {
-                onProtagonistRevisionStarted?.();
-                revisionWorkspace.startFresh();
-              },
-            })}
         onConfigureModel={onConfigureModel}
         onBack={() => {
+          if (protagonistCustomization !== null) {
+            const latestSessionId = revisionOverview?.latest?.sessionId;
+            if (
+              latestSessionId !== undefined &&
+              latestSessionId !== authoring.view?.sessionId
+            )
+              void revisionWorkspace.selectSession(latestSessionId);
+            setDialog(null);
+            return;
+          }
           revisionWorkspace.close();
           setDialog(null);
           void refreshWorld(false).catch((reason: unknown) =>
             setFeedback({ kind: "error", text: errorMessage(reason) }),
           );
         }}
-        {...(protagonistRevision !== undefined ||
+        {...(protagonistCustomization !== null ||
         epoch?.locked === true ||
         (revisionOverview?.sealedEpochs.length ?? 0) > 0
           ? {
@@ -1607,13 +1662,13 @@ export function WorldPage({
                   epoch?.locked === true
                     ? { epochId: epoch.epochId, revision: epoch.revision }
                     : null,
-                ...(protagonistRevision === undefined
+                ...(protagonistCustomization === null
                   ? {}
                   : { applyLabel: uiText("应用并开始游玩") }),
                 changedFileCount: epoch?.diff.length ?? 0,
                 canApply:
                   epoch?.locked === true &&
-                  modelConfigured &&
+                  (modelConfigured || protagonistCustomization !== null) &&
                   epoch.diagnostics.length === 0,
                 applying: authoring.applying,
                 changes: epoch?.changes ?? [],
@@ -1623,6 +1678,28 @@ export function WorldPage({
               },
             }
           : {})}
+      />
+    );
+  }
+
+  if (protagonistCustomization !== null) {
+    return (
+      <ProtagonistConfirmationCard
+        worldTitle={worldTitle}
+        customization={protagonistCustomization}
+        onChange={changeProtagonistCustomization}
+        workspace={revisionWorkspace}
+        authoring={authoring}
+        modelConfigured={modelConfigured}
+        onConfigureModel={onConfigureModel}
+        onAdvanced={() => openRevision()}
+        onApply={applyRevision}
+        onDiscard={async () => {
+          if (activeRevisionEpoch !== null)
+            await discardRevision(activeRevisionEpoch);
+          else changeProtagonistCustomization(null);
+        }}
+        onBusyChange={setProtagonistBusy}
       />
     );
   }

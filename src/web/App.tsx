@@ -31,7 +31,11 @@ import { SyncNotice } from "./SyncNotice.tsx";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { compareWorldActivity } from "../shared/world-activity-order.ts";
 import { saveFile } from "./androidBridge.ts";
-import { WorldCreation } from "./WorldCreation.ts";
+import {
+  saveProtagonistCustomization,
+  type ProtagonistCustomization,
+} from "./ProtagonistCustomization.ts";
+import { WorldCreation, type CreatedWorldReceipt } from "./WorldCreation.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
 import { CreateContentPackageDialog } from "./CreateContentPackageDialog.tsx";
@@ -139,7 +143,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setCreationSyncError(failed ? error : undefined);
       }),
   );
-  const creationTemplate = useRef<ProtagonistTemplate | undefined>(undefined);
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigation, setChildNavigation] =
@@ -168,11 +171,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const files = authoring.files;
   const packageDetail = authoring.target?.packageDetail ?? null;
   const [worldId, setWorldId] = useState("");
-  const [protagonistRevision, setProtagonistRevision] = useState<{
+  const [newProtagonist, setNewProtagonist] = useState<{
     worldId: string;
-    message: string;
-    started: boolean;
+    customization: ProtagonistCustomization;
   } | null>(null);
+  const clearNewProtagonist = useCallback(() => setNewProtagonist(null), []);
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
   const [localeRejection, setLocaleRejection] = useState<string | null>(null);
@@ -1006,7 +1009,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     creatingWorldRef.current = true;
     setCreatingWorld(true);
     const packageId = selected;
-    creationTemplate.current = template;
     try {
       const authoring = await creationOverviewTarget.read();
       if (authoring === null) return;
@@ -1023,6 +1025,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageDetail?.localId === packageId
           ? packageDetail.treeRevision
           : undefined,
+        template,
       );
       acceptCreatedWorld(created);
     } catch (error: unknown) {
@@ -1034,25 +1037,33 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  function acceptCreatedWorld(created: HomeWorld): void {
-    const template = creationTemplate.current;
-    if (template !== undefined)
-      setProtagonistRevision({
-        worldId: created.worldId,
-        message: uiText(
-          "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
-          { body: template.body },
-        ),
-        started: false,
-      });
-    acceptWorld(created);
-    openWorld(created.worldId);
+  function acceptCreatedWorld({
+    world,
+    customization,
+  }: CreatedWorldReceipt): void {
+    if (customization !== null) {
+      saveProtagonistCustomization(world.worldId, customization);
+      setNewProtagonist({ worldId: world.worldId, customization });
+    }
+    acceptWorld(world);
+    openWorld(world.worldId);
   }
 
   async function rereadCreation(): Promise<void> {
     const created = await worldCreation.recover();
     if (created !== null) acceptCreatedWorld(created);
   }
+
+  const restoreCreation = useEffectEvent(async () => {
+    const created = await worldCreation.restore(client);
+    if (created !== null) acceptCreatedWorld(created);
+  });
+
+  const creationLocation =
+    screen === "create" ? "#/create" : screen === "content" ? selected : null;
+  useEffect(() => {
+    if (creationLocation !== null) void restoreCreation();
+  }, [creationLocation]);
 
   function openWorld(id: string): void {
     switchLocation({ screen: "world", worldId: id });
@@ -1192,15 +1203,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     screen === "world" ? (
       <WorldPage
         showWorkspaceBack={false}
-        {...(protagonistRevision?.worldId === worldId
-          ? {
-              protagonistRevision,
-              onProtagonistRevisionStarted: () =>
-                setProtagonistRevision((current) =>
-                  current === null ? null : { ...current, started: true },
-                ),
-              onProtagonistRevisionFinished: () => setProtagonistRevision(null),
-            }
+        {...(newProtagonist?.worldId === worldId
+          ? { initialProtagonistCustomization: newProtagonist.customization }
           : {})}
         key={worldId}
         client={client}
@@ -1210,6 +1214,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         activeModelProtocol={activeModel?.provider}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
+        onProtagonistCustomizationFinished={clearNewProtagonist}
         initialComposerDraft={
           restoredWorldDraft?.worldId === worldId ? restoredWorldDraft : null
         }

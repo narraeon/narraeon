@@ -74,7 +74,10 @@ export function writeBrowserWorkspaceEntry(
   position: number,
   creationSelection?: CreationSelection,
 ): BrowserWorkspaceEntry {
+  const current: unknown = window.history.state;
+  const sameEntry = mode === "replace" && hash === window.location.hash;
   const state = {
+    ...(sameEntry && typeof current === "object" ? current : {}),
     narraeonPosition: position,
     ...(creationSelection === undefined
       ? {}
