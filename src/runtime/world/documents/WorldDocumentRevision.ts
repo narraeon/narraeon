@@ -9,7 +9,7 @@ import {
   type InternalDocumentEntry,
   parseRestrictedYaml,
   scanMarkdownHeadings,
-} from "./WorldDocumentCodec.ts";
+} from "../../../shared/world-documents/WorldDocumentCodec.ts";
 import { WorldDocumentIndex } from "./WorldDocumentIndex.ts";
 import {
   copyLocator,
@@ -23,7 +23,7 @@ import {
   validMarkdownLocator,
   validRelativePath,
   validYamlLocator,
-} from "./WorldDocumentSource.ts";
+} from "../../../shared/world-documents/WorldDocumentSource.ts";
 import type {
   WorldDocumentCodec,
   WorldDocumentDescriptor,

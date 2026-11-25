@@ -33,7 +33,7 @@ import {
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
 import { withModelPrompt } from "../../shared/prompt-arrangement.ts";
-import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
+import { parseRestrictedYamlDocument } from "../../shared/restricted-yaml.ts";
 import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 export { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
 import type { HistoryBackground } from "../history/HistoryBackground.ts";

@@ -8,29 +8,20 @@ import { mapLiteralSource, normalizeLiteral } from "../../LiteralSearch.ts";
 import {
   inspectDocumentFile,
   type InternalDocumentEntry,
-} from "./WorldDocumentCodec.ts";
+} from "../../../shared/world-documents/WorldDocumentCodec.ts";
 import {
-  diagnoseDuplicateHeaders,
-  diagnoseReferences,
   projectExplicitReferenceValues,
-  projectYamlValue,
-  selectYamlReferences,
   uniqueDocumentDescriptors,
-} from "./WorldDocumentReferences.ts";
+} from "../../../shared/world-documents/WorldDocumentReferences.ts";
+import { WorldDocumentReadIndex } from "../../../shared/world-documents/WorldDocumentReadIndex.ts";
 import {
-  copyLocator,
   diagnostic,
   freeze,
-  groupBy,
   hasOnlyKeys,
   isRecord,
-  locatorStartsWith,
   sourceRange,
-  validMarkdownLocator,
   validRelativePath,
-  validYamlLocator,
-  yamlLocatorKey,
-} from "./WorldDocumentSource.ts";
+} from "../../../shared/world-documents/WorldDocumentSource.ts";
 import type {
   WorldDocumentCatalogEntry,
   WorldDocumentCatalogQuery,
@@ -41,65 +32,39 @@ import type {
   WorldDocumentLayout,
   WorldDocumentLiteralSearchQuery,
   WorldDocumentLiteralSearchResult,
-  WorldDocumentLocator,
   WorldDocumentQuery,
   WorldDocumentQueryFailure,
   WorldDocumentQueryResult,
-  WorldDocumentReadQuery,
-  WorldDocumentReadResult,
-  WorldDocumentSelectNodeQuery,
-  WorldDocumentSelectNodeResult,
-  WorldDocumentSnapshotStatus,
   WorldDocumentSourceRange,
-} from "./WorldDocumentTypes.ts";
+} from "../../../shared/world-documents/WorldDocumentTypes.ts";
 
-/** Queryable index of one fixed document tree, including its private cursor scope. */
-export class WorldDocumentIndex {
-  readonly id = `world-document-snapshot:${randomUUID()}`;
-  readonly layout: WorldDocumentLayout;
-  readonly logicalRoot: "world" | "state";
-  readonly files: readonly WorldDocumentFile[];
-  readonly diagnostics: readonly WorldDocumentDiagnostic[];
-  readonly status: WorldDocumentSnapshotStatus;
-  readonly entries: readonly InternalDocumentEntry[];
+/** Runtime queries of one fixed document tree, including its private cursor scope. */
+export class WorldDocumentIndex extends WorldDocumentReadIndex {
   readonly #cursorSecret = randomBytes(32);
-  readonly #fileInspections = new Map<string, InternalDocumentEntry>();
+  readonly #fileInspections: ReadonlyMap<string, InternalDocumentEntry>;
 
   constructor(
     layout: WorldDocumentLayout,
     files: readonly WorldDocumentFile[],
     previousFiles?: ReadonlyMap<string, InternalDocumentEntry>,
   ) {
-    this.layout = layout;
-    this.logicalRoot = layout === "content_package" ? "world" : "state";
-    this.files = freeze(files.map((file) => freezeFile(file)));
-    this.entries = this.files
-      .filter(({ path }) => path.startsWith(`${this.logicalRoot}/`))
-      .map((file) => {
+    const inspections = new Map<string, InternalDocumentEntry>();
+    super(
+      `world-document-snapshot:${randomUUID()}`,
+      layout,
+      files,
+      (file, logicalRoot) => {
         const cached = previousFiles?.get(file.path);
         const inspection =
           cached?.file.contents === file.contents &&
           cached.file.encoding === file.encoding
             ? cached
-            : freeze(inspectDocumentFile(file, this.logicalRoot));
-        this.#fileInspections.set(file.path, inspection);
-        // Snapshot-wide checks add diagnostics to this entry alone.
-        return {
-          ...inspection,
-          file,
-          diagnostics: [...inspection.diagnostics],
-        };
-      });
-
-    this.#diagnoseDuplicateLogicalPaths();
-    diagnoseDuplicateHeaders(this.entries);
-    diagnoseReferences(this.entries);
-    for (const entry of this.entries) freeze(entry.diagnostics);
-    this.diagnostics = freeze(
-      this.entries.flatMap(({ diagnostics }) => diagnostics),
+            : freeze(inspectDocumentFile({ ...file }, logicalRoot));
+        inspections.set(file.path, inspection);
+        return inspection;
+      },
     );
-    this.status = this.diagnostics.length === 0 ? "usable" : "needs_repair";
-    freeze(this.entries);
+    this.#fileInspections = inspections;
     Object.freeze(this);
   }
 
@@ -109,7 +74,7 @@ export class WorldDocumentIndex {
 
   query(request: WorldDocumentQuery): WorldDocumentQueryResult {
     if (!isRecord(request) || typeof request.kind !== "string")
-      return this.#failure(null, null, [
+      return this.failure(null, null, [
         diagnostic({
           code: "query_invalid",
           message:
@@ -118,9 +83,9 @@ export class WorldDocumentIndex {
       ]);
     if (request.kind === "catalog") return this.#catalog(request);
     if (request.kind === "literal_search") return this.#literalSearch(request);
-    if (request.kind === "read_document") return this.#readDocument(request);
-    if (request.kind === "select_node") return this.#selectNode(request);
-    return this.#failure(null, null, [
+    if (request.kind === "read_document" || request.kind === "select_node")
+      return this.queryExact(request);
+    return this.failure(null, null, [
       diagnostic({
         code: "query_invalid",
         message: "WorldDocumentStore.query accepts only closed query requests",
@@ -141,7 +106,7 @@ export class WorldDocumentIndex {
         "cursor",
       ])
     )
-      return this.#failure("catalog", request, [
+      return this.failure("catalog", request, [
         diagnostic({
           code: "query_invalid",
           message: "Catalog contains undeclared query conditions",
@@ -159,7 +124,7 @@ export class WorldDocumentIndex {
       limit < 1 ||
       limit > 100
     )
-      return this.#failure("catalog", request, [
+      return this.failure("catalog", request, [
         diagnostic({
           code: "query_invalid",
           message:
@@ -280,7 +245,7 @@ export class WorldDocumentIndex {
         "cursor",
       ])
     )
-      return this.#failure("literal_search", request, [
+      return this.failure("literal_search", request, [
         diagnostic({
           code: "query_invalid",
           message: "literal_search contains undeclared query conditions",
@@ -298,7 +263,7 @@ export class WorldDocumentIndex {
       (request.caseSensitive !== undefined &&
         typeof request.caseSensitive !== "boolean")
     )
-      return this.#failure("literal_search", request, [
+      return this.failure("literal_search", request, [
         diagnostic({
           code: "query_invalid",
           message:
@@ -312,7 +277,7 @@ export class WorldDocumentIndex {
       | { readonly document: WorldDocumentDescriptor } = null;
     if (request.within !== undefined) {
       if (!isRecord(request.within))
-        return this.#failure("literal_search", request, [
+        return this.failure("literal_search", request, [
           diagnostic({
             code: "query_invalid",
             message: "literal_search within must be a closed query scope",
@@ -327,7 +292,7 @@ export class WorldDocumentIndex {
           request.within.directory !== "" &&
           !validRelativePath(request.within.directory)
         )
-          return this.#failure("literal_search", request, [
+          return this.failure("literal_search", request, [
             diagnostic({
               code: "query_invalid",
               message:
@@ -353,7 +318,7 @@ export class WorldDocumentIndex {
       ) {
         const resolved = this.resolveSelector(request.within.document);
         if ("diagnostics" in resolved)
-          return this.#failure(
+          return this.failure(
             "literal_search",
             request,
             resolved.diagnostics,
@@ -362,7 +327,7 @@ export class WorldDocumentIndex {
         candidates = [resolved.entry];
         within = freeze({ document: resolved.entry.descriptor! });
       } else
-        return this.#failure("literal_search", request, [
+        return this.failure("literal_search", request, [
           diagnostic({
             code: "query_invalid",
             message:
@@ -373,7 +338,7 @@ export class WorldDocumentIndex {
 
     const query = normalizeLiteral(request.query, caseSensitive);
     if (query.length === 0)
-      return this.#failure("literal_search", request, [
+      return this.failure("literal_search", request, [
         diagnostic({
           code: "query_invalid",
           message: "literal_search cannot be empty after normalization",
@@ -409,7 +374,7 @@ export class WorldDocumentIndex {
           caseSensitive,
         )) {
           if (matches.length >= maxLiteralSearchMatches)
-            return this.#failure("literal_search", request, [
+            return this.failure("literal_search", request, [
               diagnostic({
                 code: "capacity_exceeded",
                 message:
@@ -507,323 +472,6 @@ export class WorldDocumentIndex {
     });
   }
 
-  #readDocument(
-    request: WorldDocumentReadQuery,
-  ): WorldDocumentReadResult | WorldDocumentQueryFailure {
-    if (!hasOnlyKeys(request, ["kind", "document", "referenceProjection"]))
-      return this.#failure("read_document", request, [
-        diagnostic({
-          code: "query_invalid",
-          message: "read_document contains undeclared query conditions",
-        }),
-      ]);
-    if (
-      request.referenceProjection !== undefined &&
-      request.referenceProjection !== "short_ref"
-    )
-      return this.#failure("read_document", request, [
-        diagnostic({
-          code: "query_invalid",
-          message:
-            "read_document referenceProjection, when present, must be short_ref",
-        }),
-      ]);
-    const resolved = this.resolveSelector(request.document);
-    if ("diagnostics" in resolved)
-      return this.#failure(
-        "read_document",
-        request,
-        resolved.diagnostics,
-        resolved.document,
-      );
-    const bodyRange = resolved.entry.bodyRange;
-    if (bodyRange === undefined)
-      return this.#failure(
-        "read_document",
-        request,
-        [
-          diagnostic({
-            code: "document_header_invalid",
-            logicalPath: resolved.entry.file.path,
-            documentId: resolved.entry.descriptor!.documentId,
-            message: "World document has no readable body range",
-          }),
-        ],
-        resolved.entry.descriptor,
-      );
-    const completeBody =
-      request.referenceProjection === "short_ref"
-        ? projectExplicitReferenceValues(
-            resolved.entry.file.contents,
-            bodyRange,
-            resolved.entry.references,
-            uniqueDocumentDescriptors(this.entries),
-            true,
-          )
-        : resolved.entry.file.contents.slice(
-            bodyRange.start.offset,
-            bodyRange.end.offset,
-          );
-    return freeze({
-      kind: "read_document" as const,
-      ok: true as const,
-      snapshotId: this.id,
-      snapshotStatus: this.status,
-      scope: freeze({
-        layout: this.layout,
-        logicalRoot: this.logicalRoot,
-        document: resolved.entry.descriptor!,
-      }),
-      coverage: freeze({
-        status: "complete" as const,
-        excludedDocuments: 0 as const,
-      }),
-      document: resolved.entry.descriptor!,
-      codec: resolved.entry.codec!,
-      body: completeBody,
-      diagnostics: freeze([]),
-    });
-  }
-
-  #selectNode(
-    request: WorldDocumentSelectNodeQuery,
-  ): WorldDocumentSelectNodeResult | WorldDocumentQueryFailure {
-    if (!hasOnlyKeys(request, ["kind", "document", "locator"]))
-      return this.#failure("select_node", request, [
-        diagnostic({
-          code: "query_invalid",
-          message: "select_node contains undeclared query conditions",
-        }),
-      ]);
-    if (!isRecord(request.locator))
-      return this.#failure("select_node", request, [
-        diagnostic({
-          code: "query_invalid",
-          message: "select_node must declare one closed locator",
-        }),
-      ]);
-    const resolved = this.resolveSelector(request.document);
-    if ("diagnostics" in resolved)
-      return this.#failure(
-        "select_node",
-        request,
-        resolved.diagnostics,
-        resolved.document,
-      );
-    const entry = resolved.entry;
-    const locator = request.locator;
-    if (
-      entry.codec === "yaml" &&
-      validYamlLocator(locator) &&
-      entry.yaml !== undefined
-    ) {
-      const publicLocator = freeze({ yaml: freeze([...locator.yaml]) });
-      const damagedSelection = entry.diagnostics.filter(
-        (problem) =>
-          problem.code === "document_reference_invalid" &&
-          problem.locator !== undefined &&
-          "yaml" in problem.locator &&
-          yamlLocatorsOverlap(locator.yaml, problem.locator.yaml),
-      );
-      if (damagedSelection.length > 0)
-        return this.#failure(
-          "select_node",
-          request,
-          damagedSelection,
-          entry.descriptor,
-        );
-      const value = locateYamlValue(entry.yaml.body, locator.yaml);
-      const node = entry.yaml.nodes.find(
-        ({ locatorKey }) => locatorKey === yamlLocatorKey(locator.yaml),
-      );
-      if (value === unresolved || node === undefined)
-        return this.#locatorFailure(entry, publicLocator, "locator_not_found");
-      const projected = projectYamlValue(
-        value,
-        uniqueDocumentDescriptors(this.entries),
-      );
-      return this.#selected(
-        entry,
-        publicLocator,
-        {
-          codec: "yaml",
-          locator: publicLocator,
-          value: projected,
-          range: node.range,
-        },
-        selectYamlReferences(
-          entry,
-          publicLocator,
-          uniqueDocumentDescriptors(this.entries),
-        ),
-      );
-    }
-    if (
-      entry.codec === "markdown" &&
-      validMarkdownLocator(locator) &&
-      entry.markdown !== undefined
-    ) {
-      const publicLocator = freeze({
-        markdown: freeze([...locator.markdown]),
-      });
-      const key = markdownLocatorKey(locator.markdown);
-      const headings = entry.markdown.headings.filter(
-        ({ locatorKey }) => locatorKey === key,
-      );
-      if (headings.length === 0)
-        return this.#locatorFailure(entry, publicLocator, "locator_not_found");
-      if (headings.length > 1)
-        return this.#locatorFailure(entry, publicLocator, "locator_ambiguous");
-      const heading = headings[0]!;
-      const markdown = entry.file.contents.slice(
-        heading.range.start.offset,
-        heading.range.end.offset,
-      );
-      return this.#selected(
-        entry,
-        publicLocator,
-        {
-          codec: "markdown",
-          locator: publicLocator,
-          markdown,
-          range: heading.range,
-        },
-        [],
-      );
-    }
-    return this.#locatorFailure(entry, copyLocator(locator), "locator_invalid");
-  }
-
-  #selected(
-    entry: InternalDocumentEntry & { descriptor?: WorldDocumentDescriptor },
-    locator: WorldDocumentLocator,
-    node: WorldDocumentSelectNodeResult["node"],
-    references: WorldDocumentSelectNodeResult["references"],
-  ): WorldDocumentSelectNodeResult {
-    return freeze({
-      kind: "select_node" as const,
-      ok: true as const,
-      snapshotId: this.id,
-      snapshotStatus: this.status,
-      scope: freeze({
-        layout: this.layout,
-        logicalRoot: this.logicalRoot,
-        document: entry.descriptor!,
-        locator,
-      }),
-      coverage: freeze({
-        status: "complete" as const,
-        excludedDocuments: 0 as const,
-      }),
-      document: entry.descriptor!,
-      node: freeze(node),
-      references: freeze(references),
-      diagnostics: freeze([]),
-    });
-  }
-
-  #locatorFailure(
-    entry: InternalDocumentEntry,
-    locator: WorldDocumentLocator,
-    code: "locator_ambiguous" | "locator_invalid" | "locator_not_found",
-  ): WorldDocumentQueryFailure {
-    return this.#failure(
-      "select_node",
-      { document: entry.file.path, locator },
-      [
-        diagnostic({
-          code,
-          logicalPath: entry.file.path,
-          ...(entry.descriptor === undefined
-            ? {}
-            : { documentId: entry.descriptor.documentId }),
-          locator,
-          message:
-            "Logical-node locator cannot be resolved uniquely for the target codec",
-        }),
-      ],
-      entry.descriptor,
-    );
-  }
-
-  resolveSelector(selector: unknown):
-    | { readonly entry: InternalDocumentEntry }
-    | {
-        readonly diagnostics: readonly WorldDocumentDiagnostic[];
-        readonly document?: WorldDocumentDescriptor;
-      } {
-    if (!isRecord(selector) || Object.keys(selector).length !== 1)
-      return {
-        diagnostics: freeze([
-          diagnostic({
-            code: "query_invalid",
-            message:
-              "A document selector must declare only documentId, shortRef, or logicalPath",
-          }),
-        ]),
-      };
-    let matches: readonly InternalDocumentEntry[];
-    if (
-      typeof selector.documentId === "string" &&
-      selector.documentId.length > 0
-    )
-      matches = this.entries.filter(
-        ({ descriptor }) => descriptor?.documentId === selector.documentId,
-      );
-    else if (
-      typeof selector.shortRef === "string" &&
-      selector.shortRef.length > 0
-    )
-      matches = this.entries.filter(
-        ({ descriptor }) => descriptor?.shortRef === selector.shortRef,
-      );
-    else if (
-      typeof selector.logicalPath === "string" &&
-      selector.logicalPath.length > 0
-    )
-      matches = this.entries.filter(
-        ({ file }) => file.path === selector.logicalPath,
-      );
-    else
-      return {
-        diagnostics: freeze([
-          diagnostic({
-            code: "query_invalid",
-            message: "Document-selector value must be a non-empty string",
-          }),
-        ]),
-      };
-    if (matches.length === 0)
-      return {
-        diagnostics: freeze([
-          diagnostic({
-            code: "document_not_found",
-            message: "Target world document does not exist in the snapshot",
-          }),
-        ]),
-      };
-    if (matches.length > 1)
-      return {
-        diagnostics: freeze([
-          diagnostic({
-            code: "document_ambiguous",
-            message: "Target world document is not unique in the snapshot",
-          }),
-          ...matches.flatMap(({ diagnostics }) => diagnostics),
-        ]),
-      };
-    const entry = matches[0]!;
-    const blockingDiagnostics = blockingDocumentDiagnostics(entry);
-    if (entry.descriptor === undefined || blockingDiagnostics.length > 0)
-      return {
-        diagnostics: blockingDiagnostics,
-        ...(entry.descriptor === undefined
-          ? {}
-          : { document: entry.descriptor }),
-      };
-    return { entry };
-  }
-
   #cursor(scope: string, offset: number): string {
     const payload = Buffer.from(JSON.stringify({ offset }), "utf8").toString(
       "base64url",
@@ -889,7 +537,7 @@ export class WorldDocumentIndex {
     requestKind: "catalog" | "literal_search" | "read_document",
     scope: unknown,
   ): WorldDocumentQueryFailure {
-    return this.#failure(requestKind, scope, [
+    return this.failure(requestKind, scope, [
       diagnostic({
         code: "cursor_invalid",
         message:
@@ -897,80 +545,11 @@ export class WorldDocumentIndex {
       }),
     ]);
   }
-
-  #failure(
-    requestKind: WorldDocumentQuery["kind"] | null,
-    scope: unknown,
-    diagnostics: readonly WorldDocumentDiagnostic[],
-    document?: WorldDocumentDescriptor,
-  ): WorldDocumentQueryFailure {
-    return freeze({
-      kind: "error" as const,
-      ok: false as const,
-      requestKind,
-      snapshotId: this.id,
-      snapshotStatus: this.status,
-      scope: freeze(copyPublicValue(scope)),
-      ...(document === undefined ? {} : { document }),
-      diagnostics: freeze([...diagnostics]),
-    });
-  }
-
-  #diagnoseDuplicateLogicalPaths(): void {
-    const groups = groupBy(this.entries, ({ file }) => file.path);
-    for (const entries of groups.values()) {
-      if (entries.length < 2) continue;
-      for (const entry of entries)
-        entry.diagnostics.push(
-          diagnostic({
-            code: "logical_path_duplicate",
-            logicalPath: entry.file.path,
-            range: sourceRange(
-              entry.file.contents,
-              0,
-              entry.file.contents.length,
-            ),
-            message:
-              "The fixed file set contains duplicate world-document logical paths",
-          }),
-        );
-    }
-  }
 }
 
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/u;
 
 const maxLiteralSearchMatches = 10_000;
-
-const unresolved = Symbol("world-document-node-unresolved");
-
-function locateYamlValue(
-  body: Record<string, unknown>,
-  locator: readonly (string | number)[],
-): unknown {
-  let current: unknown = body;
-  for (const segment of locator) {
-    if (
-      typeof segment === "string" &&
-      isRecord(current) &&
-      Object.hasOwn(current, segment)
-    )
-      current = current[segment];
-    else if (
-      typeof segment === "number" &&
-      Array.isArray(current) &&
-      segment >= 0 &&
-      segment < current.length
-    )
-      current = current[segment];
-    else return unresolved;
-  }
-  return current;
-}
-
-function markdownLocatorKey(locator: readonly string[]): string {
-  return JSON.stringify(locator.map((part) => part.normalize("NFKC")));
-}
 
 function literalMatches(
   source: string,
@@ -1015,14 +594,6 @@ function lineExcerptRange(
   return sourceRange(source, start, end);
 }
 
-function freezeFile(file: WorldDocumentFile): WorldDocumentFile {
-  return freeze({
-    path: file.path,
-    contents: file.contents,
-    ...(file.encoding === undefined ? {} : { encoding: file.encoding }),
-  });
-}
-
 function validDeclaredDirectories(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
@@ -1033,49 +604,8 @@ function validDeclaredDirectories(value: unknown): value is string[] {
   );
 }
 
-function blockingDocumentDiagnostics(
-  entry: InternalDocumentEntry,
-): readonly WorldDocumentDiagnostic[] {
-  return entry.diagnostics.filter(
-    ({ code }) =>
-      code !== "locator_ambiguous" && code !== "document_reference_invalid",
-  );
-}
-
 function literalSearchBlockingDiagnostics(
   entry: InternalDocumentEntry,
 ): readonly WorldDocumentDiagnostic[] {
   return entry.diagnostics.filter(({ code }) => code !== "locator_ambiguous");
-}
-
-function yamlLocatorsOverlap(
-  left: readonly (string | number)[],
-  right: readonly (string | number)[],
-): boolean {
-  return locatorStartsWith(left, right) || locatorStartsWith(right, left);
-}
-
-function copyPublicValue(
-  value: unknown,
-  seen = new WeakSet<object>(),
-): unknown {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    value === undefined
-  )
-    return value;
-  if (typeof value !== "object") return null;
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
-  if (Array.isArray(value))
-    return value.map((entry) => copyPublicValue(entry, seen));
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      copyPublicValue(entry, seen),
-    ]),
-  );
 }

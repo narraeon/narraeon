@@ -1,6 +1,6 @@
 import { isMap, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
-import { documentCodec } from "../../../shared/world-document-format.ts";
-import { parseRestrictedYamlDocument } from "../../RestrictedYaml.ts";
+import { documentCodec } from "../world-document-format.ts";
+import { parseRestrictedYamlDocument } from "../restricted-yaml.ts";
 import { inspectYamlReferences } from "./WorldDocumentReferences.ts";
 import {
   diagnostic,

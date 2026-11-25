@@ -6,6 +6,8 @@ import type {
   WorldDocumentSourceRange,
 } from "./WorldDocumentTypes.ts";
 
+const encoder = new TextEncoder();
+
 export const documentIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
 
 export const shortRefPattern = /^[a-z][a-z0-9-]*$/u;
@@ -68,7 +70,7 @@ function sourcePoint(source: string, offset: number): WorldDocumentSourcePoint {
   const lineStart = before.lastIndexOf("\n") + 1;
   return freeze({
     offset,
-    byteOffset: Buffer.byteLength(before, "utf8"),
+    byteOffset: encoder.encode(before).byteLength,
     line: before.split("\n").length,
     column: offset - lineStart + 1,
   });
@@ -184,11 +186,11 @@ export function hasOnlyKeys(
   return Object.keys(value).every((key) => allowedSet.has(key));
 }
 
-export function groupBy<T>(
+export function groupBy<T, Key>(
   values: readonly T[],
-  keyFor: (value: T) => string,
-): Map<string, T[]> {
-  const result = new Map<string, T[]>();
+  keyFor: (value: T) => Key,
+): Map<Key, T[]> {
+  const result = new Map<Key, T[]>();
   for (const value of values) {
     const key = keyFor(value);
     const group = result.get(key);

@@ -8,7 +8,7 @@ import { describe, expect, test } from "vitest";
 import {
   PlayerViewRenderer,
   type PlayerViewRenderInput,
-} from "../../src/runtime/world/PlayerViewRenderer.ts";
+} from "../../src/shared/PlayerViewRenderer.ts";
 import { FileNativeWorldStore } from "../../src/runtime/world/FileNativeWorldStore.ts";
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 

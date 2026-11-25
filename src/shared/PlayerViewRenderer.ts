@@ -3,23 +3,29 @@ import { parseDocument } from "yaml";
 import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
-} from "../../protocol/playerViews.ts";
+} from "../protocol/playerViews.ts";
 import type {
   WorldDocumentLocator,
   WorldDocumentQueryFailure,
   WorldDocumentSelectNodeResult,
   WorldDocumentSelector,
-  WorldDocumentStore,
+  WorldDocumentQueryResult,
+  WorldDocumentReadQuery,
+  WorldDocumentSelectNodeQuery,
   WorldDocumentValue,
-} from "./WorldDocumentStore.ts";
+} from "./world-documents/WorldDocumentTypes.ts";
 
 export type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
-} from "../../protocol/playerViews.ts";
+} from "../protocol/playerViews.ts";
 
 export interface PlayerViewRenderInput {
-  snapshot: Pick<WorldDocumentStore, "query">;
+  snapshot: {
+    query(
+      request: WorldDocumentReadQuery | WorldDocumentSelectNodeQuery,
+    ): WorldDocumentQueryResult;
+  };
   control: string;
 }
 
@@ -47,6 +53,8 @@ type ItemResolution =
       itemId?: string;
       message: string;
     };
+
+const encoder = new TextEncoder();
 
 const maxItemsPerView = 128;
 const maxRenderedBytesPerView = 64 * 1024;
@@ -132,10 +140,9 @@ export class PlayerViewRenderer {
           continue;
         }
 
-        const itemBytes = Buffer.byteLength(
+        const itemBytes = encoder.encode(
           JSON.stringify(resolved.item),
-          "utf8",
-        );
+        ).byteLength;
         if (renderedBytes + itemBytes > maxRenderedBytesPerView) {
           diagnostics.push({
             code: "capacity_exceeded",
@@ -247,7 +254,9 @@ function resolveItem(
  * prompt compiler already resolves `@shortRef`; a view that silently rendered
  * nothing for it was the only place the two disagreed.
  */
-function playerViewDocumentSelector(handle: string): WorldDocumentSelector {
+export function playerViewDocumentSelector(
+  handle: string,
+): WorldDocumentSelector {
   return handle.startsWith("@")
     ? { shortRef: handle.slice(1) }
     : { documentId: handle };
@@ -344,6 +353,18 @@ function selectionFailure(
       ok: false,
       code: "unresolved_selector",
       message: `Document not found: ${handle}`,
+    };
+  if (codes.has("document_ambiguous"))
+    return {
+      ok: false,
+      code: "unresolved_selector",
+      message: `Document is ambiguous: ${handle}`,
+    };
+  if (codes.has("locator_ambiguous"))
+    return {
+      ok: false,
+      code: "unresolved_selector",
+      message: "The Markdown heading path is ambiguous",
     };
   if (codes.has("document_reference_invalid"))
     return {
