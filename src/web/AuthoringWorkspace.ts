@@ -109,8 +109,19 @@ export class AuthoringWorkspace {
     };
   };
   private update(patch: Partial<AuthoringWorkspaceState>): void {
-    this.state = { ...this.state, ...patch };
+    const next = { ...this.state, ...patch };
+    if (this.active && next.view?.runStatus === "running") {
+      if (this.timer === undefined) {
+        next.now = Date.now();
+        this.timer = setInterval(() => this.update({ now: Date.now() }), 1000);
+      }
+    } else if (this.timer !== undefined) this.stopClock();
+    this.state = next;
     for (const listener of this.listeners) listener();
+  }
+  private stopClock(): void {
+    clearInterval(this.timer);
+    this.timer = undefined;
   }
   private accept(snapshot: AuthoringTargetSnapshot, receipt = true): void {
     if (receipt) this.reader.accept({ complete: false });
@@ -269,13 +280,9 @@ export class AuthoringWorkspace {
       notice: "",
     });
     const valid = this.current();
-    this.timer = setInterval(() => {
-      if (this.active) this.update({ now: Date.now() });
-    }, 1000);
     await this.reader.read();
     if (!valid() || this.state.target === null) return;
     this.update({
-      now: Date.now(),
       notice: uiText(
         this.state.target?.revision?.epoch?.locked
           ? this.target.messages.locked
@@ -314,6 +321,7 @@ export class AuthoringWorkspace {
           if (status !== null && view?.sessionId === status.sessionId) {
             this.progressVersion++;
             this.update({
+              now: Date.now(),
               view: {
                 ...view,
                 runStatus: status.runStatus,
@@ -322,7 +330,6 @@ export class AuthoringWorkspace {
             });
           }
         }
-        if (alive()) this.update({ now: Date.now() });
       },
       (connection) => {
         if (!alive()) return;
@@ -359,8 +366,7 @@ export class AuthoringWorkspace {
     this.saving = null;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    clearInterval(this.timer);
-    this.timer = undefined;
+    this.stopClock();
   }
   startFresh(): void {
     if (!this.active || this.state.applying) return;

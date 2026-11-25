@@ -145,7 +145,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     state: authoring,
     conversation,
   } = useAuthoringWorkspace(client, "setting", selected, screen === "content");
-  const filesDirty = authoring.dirty;
+  const filesDirty = screen === "content" && authoring.dirty;
   const files = authoring.files;
   const packageDetail = authoring.target?.packageDetail ?? null;
   const [worldId, setWorldId] = useState("");
@@ -171,7 +171,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     modelDraftDirty ||
     childNavigation.dirty;
   const navigationBusy =
-    authoring.view?.runStatus === "running" ||
+    (screen === "content" && authoring.view?.runStatus === "running") ||
     importPending ||
     archivePending ||
     samplePending ||

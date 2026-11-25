@@ -87,6 +87,83 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const kind of ["setting", "revision"] as const) {
+  test(`${kind} in-page Back protects active requests and confirms leaving a file draft`, async ({
+    page,
+  }) => {
+    const target = await prepare(page, kind);
+    const back = page.getByRole("button", {
+      name: kind === "setting" ? "返回工作区" : "返回游玩",
+      exact: true,
+    });
+    const modelSettings = page.getByRole("button", {
+      name: "模型设置",
+      exact: true,
+    });
+    const confirmation = page.getByRole("dialog", {
+      name: "此页有未保存的修改。要放弃修改并离开吗？",
+    });
+    let release!: () => void;
+    const responseGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/runtime/v1", async (route) => {
+      if (runtimeInput(route)?.type === `${target.prefix}.message`)
+        await responseGate;
+      await route.continue();
+    });
+    try {
+      await composer(page).fill("Please consider this location.");
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      await expect(back).toBeDisabled();
+      await expect(modelSettings).toBeDisabled();
+    } finally {
+      release();
+    }
+    await expect(
+      page.getByText("The authoring reply is visible.", { exact: true }),
+    ).toBeVisible();
+    await expect(back).toBeEnabled();
+
+    let editor = await openEditor(page, kind);
+    const original = await editor.inputValue();
+    await editor.fill(`${original}\nLocal file changes.`);
+    await page
+      .getByRole("button", { name: "收起文件面板", exact: true })
+      .click();
+    const originalAddress = page.url();
+    await expect(back).toBeEnabled();
+    await back.click();
+    await expect(confirmation).toBeVisible();
+    await confirmation
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
+    await expect(back).toBeFocused();
+    await expect(page).toHaveURL(originalAddress);
+    editor = await openEditor(page, kind);
+    await expect(editor).toHaveValue(`${original}\nLocal file changes.`);
+    await page
+      .getByRole("button", { name: "收起文件面板", exact: true })
+      .click();
+
+    await back.click();
+    await confirmation
+      .getByRole("button", { name: "放弃并离开", exact: true })
+      .click();
+    if (kind === "setting") {
+      await expect(page).toHaveURL(/#\/$/u);
+      await page.goBack();
+      await expect(confirmation).toHaveCount(0);
+    } else {
+      await expect(page).toHaveURL(originalAddress);
+      await expect(page.getByLabel("故事时间线")).toBeVisible();
+      await modelSettings.click();
+      await expect(page).toHaveURL(/#\/models$/u);
+      await page.goBack();
+      await target.open();
+    }
+    await expect(await openEditor(page, kind)).toHaveValue(original);
+  });
+
   test(`${kind} first-load failures retry once and offer a read-only recovery`, async ({
     page,
   }) => {

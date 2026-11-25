@@ -164,6 +164,100 @@ function fixture(kind: "setting" | "revision") {
 }
 
 test.each(["setting", "revision"] as const)(
+  "%s publishes clock updates only while a request is running",
+  async (kind) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const f = fixture(kind);
+    const { workspace } = f;
+    const listener = vi.fn();
+    const unsubscribe = workspace.subscribe(listener);
+    const advance = async () => {
+      listener.mockClear();
+      await vi.advanceTimersByTimeAsync(3_000);
+    };
+    const publish = async (view: V1SettingImprovementView) => {
+      f.setLatest(view);
+      const publication = f.publish(false);
+      await vi.advanceTimersByTimeAsync(0);
+      await publication;
+    };
+    try {
+      await workspace.open();
+      await advance();
+      expect(listener).not.toHaveBeenCalled();
+
+      workspace.editFiles([
+        { path: "control/frame.yaml", contents: "local draft" },
+      ]);
+      expect(listener).toHaveBeenCalled();
+      expect(workspace.getSnapshot().dirty).toBe(true);
+
+      const ready = f.view("recent");
+      const running = {
+        ...ready,
+        runStatus: "running" as const,
+        progress: {
+          ...ready.progress,
+          exchange: 1,
+          updatedAt: Date.now(),
+          streaming: {
+            reasoningChars: 0,
+            textChars: 9,
+            toolChars: 0,
+            tail: "live text",
+            visibleText: "live text",
+            receivedAt: Date.now(),
+          },
+        },
+      };
+      listener.mockClear();
+      await publish(running);
+      expect(listener).toHaveBeenCalled();
+      expect(workspace.getSnapshot()).toMatchObject({
+        files: [{ contents: "local draft" }],
+        dirty: true,
+        view: { progress: running.progress },
+        now: Date.now(),
+      });
+      await advance();
+      expect(listener).toHaveBeenCalledTimes(3);
+      expect(workspace.getSnapshot().now).toBe(Date.now());
+
+      await publish(ready);
+      await advance();
+      expect(listener).not.toHaveBeenCalled();
+
+      await publish(running);
+      const original = f.request.getMockImplementation()!;
+      const cancelled = { ...ready, runStatus: "interrupted" as const };
+      f.request.mockImplementation(async (input) => {
+        if (input.type.endsWith(".cancel")) {
+          f.setLatest(cancelled);
+          return cancelled;
+        }
+        return original(input);
+      });
+      await workspace.cancel();
+      expect(workspace.getSnapshot().view?.runStatus).toBe("interrupted");
+      await advance();
+      expect(listener).not.toHaveBeenCalled();
+
+      await publish(running);
+      workspace.close();
+      expect(f.subscribers.size).toBe(0);
+      await advance();
+      expect(listener).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      workspace.close();
+      unsubscribe();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test.each(["setting", "revision"] as const)(
   "%s hydration preserves the editing baseline and reset uses the latest files",
   async (kind) => {
     const f = fixture(kind);

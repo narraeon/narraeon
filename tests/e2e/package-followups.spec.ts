@@ -266,6 +266,12 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     ).toBeVisible();
     await expect(reply()).toHaveCount(1);
     await expect(reply().locator("iframe")).toHaveCount(2);
+    const debuggerRegion = page.getByRole("region", {
+      name: "产物调试器",
+      exact: true,
+    });
+    await expect(page.locator(".is-story-mode")).toBeVisible();
+    await expect(debuggerRegion).toHaveCount(0);
     const assertPermissions = async (
       targetWorldId: string,
       enabled: boolean,
@@ -435,9 +441,7 @@ test("普通作者编辑包后置请求后创建世界，经真实 Runtime 派�
     expect(requests).toBe(2);
 
     await expect(
-      page
-        .getByRole("region", { name: "产物调试器", exact: true })
-        .getByText("扩展诊断", { exact: true }),
+      debuggerRegion.getByText("扩展诊断", { exact: true }),
     ).toBeVisible();
     await page.goto(url);
     await page.locator(".workspace-locale-picker select").selectOption("en");

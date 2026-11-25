@@ -73,6 +73,7 @@ type RevisionDiscardTarget = Pick<
 >;
 type AuthoringConfirmation =
   | { kind: "delete-session"; item: V1SettingImprovementHistoryItem }
+  | { kind: "leave-revision" }
   | {
       kind: "discard-revision";
       epoch: RevisionDiscardTarget;
@@ -221,6 +222,7 @@ export function SettingImprovementPanel({
   );
   const [confirmation, setConfirmation] =
     useState<ConfirmationRequest<AuthoringConfirmation> | null>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
   const historyButton = useRef<HTMLButtonElement>(null);
   const [rollingBackFile, setRollingBackFile] = useState<{
     changeSetId: string;
@@ -476,7 +478,9 @@ export function SettingImprovementPanel({
     setConfirmation(null);
     if (!confirmed || confirmation === null) return;
     const action = confirmation.action;
-    if (action.kind === "delete-session") {
+    if (action.kind === "leave-revision") {
+      if (!navigationBusy) onBack();
+    } else if (action.kind === "delete-session") {
       const item = history.find(
         ({ sessionId }) => sessionId === action.item.sessionId,
       );
@@ -516,12 +520,20 @@ export function SettingImprovementPanel({
     }
   };
 
-  // During a world revision Back returns to play like the ← button, and stays on
-  // the page while that button is disabled. Elsewhere this page has its own
-  // address, so page history handles Back.
-  useAndroidBack(revisingWorld, () => {
-    if (!interactionLocked && !hasUnsavedFileDraft) onBack();
-  });
+  function requestBack(): void {
+    if (navigationBusy) return;
+    if (revisingWorld && navigationDirty) {
+      setConfirmation({
+        action: { kind: "leave-revision" },
+        opener: backButton.current,
+        message: uiText("此页有未保存的修改。要放弃修改并离开吗？"),
+        confirmLabel: uiText("放弃并离开"),
+      });
+    } else onBack();
+  }
+
+  // World revision is a panel within play. Content authoring has its own address.
+  useAndroidBack(revisingWorld, requestBack);
   useAndroidBack(leftRailOpen || rightRailOpen, () => {
     setLeftRailOpen(false);
     setRightRailOpen(false);
@@ -546,9 +558,10 @@ export function SettingImprovementPanel({
         >
           {(revisingWorld || showWorkspaceBack) && (
             <button
+              ref={backButton}
               type="button"
-              disabled={interactionLocked || hasUnsavedFileDraft}
-              onClick={onBack}
+              disabled={navigationBusy}
+              onClick={requestBack}
               aria-label={uiText(revisingWorld ? "返回游玩" : "返回工作区")}
             >
               ←

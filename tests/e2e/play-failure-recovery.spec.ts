@@ -5,7 +5,7 @@ import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
 
 type ProviderStep =
   | { kind: "reject" | "disconnect" | "context_limit" }
-  | { kind: "text"; text: string };
+  | { kind: "text" | "output_limit"; text: string };
 let provider: Server;
 let providerUrl = "";
 const steps: ProviderStep[] = [];
@@ -26,12 +26,12 @@ test.beforeAll(async () => {
       const step = steps.shift();
       if (step?.kind === "disconnect") {
         response.destroy();
-      } else if (step?.kind === "text") {
+      } else if (step?.kind === "text" || step?.kind === "output_limit") {
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.end(
           [
             `data: ${JSON.stringify({ choices: [{ delta: { content: step.text } }] })}\n\n`,
-            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: step.kind === "output_limit" ? "length" : "stop" }] })}\n\n`,
             "data: [DONE]\n\n",
           ].join(""),
         );
@@ -557,6 +557,106 @@ test("protocol switch is temporary and restored protocol accepts changed model s
       }),
     )
     .toMatchObject({ status: "ready", chainId: initial.chainId });
+});
+
+test("model settings on the failure card confirms leaving a control draft", async ({
+  page,
+}) => {
+  steps.length = 0;
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  const model = {
+    provider: "chat_completions",
+    modelId: "failure-model",
+    contextWindowTokens: 64_000,
+    maxOutputTokens: 8_192,
+  } as const;
+  await runtime(page, {
+    type: "model.save",
+    connection: {
+      ...model,
+      name: "Failure recovery fixture",
+      presetId: "custom",
+      baseUrl: providerUrl,
+      apiKey: "fixture-secret",
+    },
+  });
+  const { localId } = await runtime<{ localId: string }>(page, {
+    type: "content.create",
+  });
+  const { world } = await runtime<{ world: { worldId: string } }>(page, {
+    type: "world.create",
+    operationId: crypto.randomUUID(),
+    packageId: localId,
+    model,
+  });
+  await page.goto(`/#/world/${world.worldId}`);
+  const address = page.url();
+  steps.push({ kind: "output_limit", text: "An incomplete response" });
+  await page.getByLabel("你的行动").fill("I open the door.");
+  await page
+    .getByRole("button", { name: "从全新上下文发送行动", exact: true })
+    .click();
+  const adjustOutput = page.getByRole("button", {
+    name: "调整最大输出",
+    exact: true,
+  });
+  await expect(adjustOutput).toBeEnabled();
+
+  const manage = page.getByRole("dialog", { name: "世界管理" });
+  const draft = manage.getByLabel("世界控制文件（JSON）");
+  const openControl = async () => {
+    await page.getByRole("button", { name: "世界管理", exact: true }).click();
+    await manage.getByText("世界控制 · 高级编辑", { exact: true }).click();
+  };
+  const closeManage = () =>
+    manage.getByRole("button", { name: "关闭", exact: true }).click();
+  await openControl();
+  const original = await draft.inputValue();
+  const changed = `${original}\n `;
+  await draft.fill(changed);
+  await closeManage();
+
+  const dialog = page.getByRole("dialog", {
+    name: "此页有未保存的修改。要放弃修改并离开吗？",
+  });
+  await expect(adjustOutput).toBeEnabled();
+  await adjustOutput.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(adjustOutput).toBeFocused();
+  await expect(page).toHaveURL(address);
+  await openControl();
+  await expect(draft).toHaveValue(changed);
+
+  let release!: () => void;
+  const previewGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/runtime/v1", async (route) => {
+    const { request } = route.request().postDataJSON() as {
+      request: V1Request;
+    };
+    if (request.type === "world.control-draft.save") await previewGate;
+    await route.continue();
+  });
+  try {
+    await manage
+      .getByRole("button", { name: "预览世界控制", exact: true })
+      .click();
+    await closeManage();
+    await expect(adjustOutput).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(adjustOutput).toBeEnabled();
+  await adjustOutput.click();
+  await dialog.getByRole("button", { name: "放弃并离开", exact: true }).click();
+  await expect(page).toHaveURL(/#\/models$/u);
+  await page.goBack();
+  await expect(page).toHaveURL(address);
+  await openControl();
+  await expect(draft).toHaveValue(original);
 });
 
 async function runtime<T = unknown>(
