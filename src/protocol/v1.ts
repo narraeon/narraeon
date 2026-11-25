@@ -122,7 +122,13 @@ export type V1Request =
   | { type: "content.copy"; packageId: string }
   | { type: "content.delete"; packageId: string }
   | { type: "content.rename"; packageId: string; name: string }
-  | { type: "content.import"; archiveBase64: string; title?: string }
+  | {
+      type: "content.import";
+      archiveBase64: string;
+      title?: string;
+      /** Request a library receipt when the client will open the package separately. */
+      receipt?: "summary";
+    }
   | { type: "content.export"; packageId: string }
   | { type: "setting-improvement.read"; packageId: string }
   | {
@@ -461,6 +467,8 @@ export interface V1SettingImprovementHistoryItem {
 }
 
 export interface V1SettingImprovementOverview {
+  /** Durable history revision captured alongside the overview. */
+  conversationRevision?: string;
   latest: V1SettingImprovementView | null;
   history: V1SettingImprovementHistoryItem[];
 }

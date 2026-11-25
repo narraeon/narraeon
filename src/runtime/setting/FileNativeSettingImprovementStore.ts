@@ -333,11 +333,21 @@ export class FileNativeSettingImprovementStore {
   async listSummariesByPackage(
     packageId: string,
   ): Promise<StoredSettingImprovementSummary[]> {
+    return (await this.summariesSnapshotByPackage(packageId)).summaries;
+  }
+
+  async summariesSnapshotByPackage(packageId: string): Promise<{
+    revision: string;
+    summaries: StoredSettingImprovementSummary[];
+  }> {
     await this.#mutationTail;
     await this.#refreshSummaryIndex();
-    return [...(this.#summariesByPackage.get(packageId)?.values() ?? [])]
-      .map((summary) => structuredClone(summary))
-      .sort(compareSummaries);
+    return {
+      revision: this.#packageRevisions.get(packageId) ?? "empty",
+      summaries: [...(this.#summariesByPackage.get(packageId)?.values() ?? [])]
+        .map((summary) => structuredClone(summary))
+        .sort(compareSummaries),
+    };
   }
 
   async summaryStatusByPackage(

@@ -380,7 +380,7 @@ export class V1Runtime {
           kind: "setting",
           value: {
             ...status,
-            revision: `${status.revision}:${contentTreeFingerprint(content.files)}`,
+            revision: `${status.revision}:${content.treeRevision}`,
           },
         };
       }

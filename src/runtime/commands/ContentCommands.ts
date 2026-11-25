@@ -4,7 +4,8 @@ import {
   maxPortableContentArchiveBase64Characters,
   maxPortableContentArchiveBytes,
 } from "../../protocol/contentTree.ts";
-import { type ContentWorkspace } from "../content/ContentWorkspace.ts";
+import type { ContentWorkspace } from "../content/ContentWorkspace.ts";
+import { summarizeContentPackage } from "../content/CurrentTreeContentLibrary.ts";
 import {
   convertSillyTavernContent,
   inspectSillyTavernContent,
@@ -51,11 +52,15 @@ export async function handleContentCommand(
         request.packageId,
         request.name,
       );
-    case "content.import":
-      return content.importPortableContentPackageArchive(
+    case "content.import": {
+      const imported = await content.importPortableContentPackageArchive(
         decodePortableContentArchive(request.archiveBase64),
         request.title === undefined ? {} : { title: request.title },
       );
+      return request.receipt === "summary"
+        ? summarizeContentPackage(imported)
+        : imported;
+    }
     case "content.sillytavern.inspect":
     case "content.sillytavern.preview":
     case "content.sillytavern.import": {

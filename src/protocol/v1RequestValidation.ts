@@ -468,12 +468,20 @@ const contentChecks: Partial<Record<Command, readonly Check[]>> = {
         !/^[^\r\n]{1,160}$/u.test(request.title.trim()),
       "content.import.title is invalid",
     ),
-    check(exactFields({ archiveBase64: string, title: string }), (request) => {
-      const extra = Object.keys(request).filter(
-        (key) => !["type", "archiveBase64", "title"].includes(key),
-      );
-      return `content.import contains unsupported fields: ${extra.join(", ")}`;
-    }),
+    field(
+      "receipt",
+      { const: "summary" },
+      "content.import.receipt must be summary",
+    ),
+    check(
+      exactFields({ archiveBase64: string, title: string, receipt: string }),
+      (request) => {
+        const extra = Object.keys(request).filter(
+          (key) => !["type", "archiveBase64", "title", "receipt"].includes(key),
+        );
+        return `content.import contains unsupported fields: ${extra.join(", ")}`;
+      },
+    ),
   ],
   "content.sillytavern.inspect": [
     check(

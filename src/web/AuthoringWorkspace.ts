@@ -313,12 +313,20 @@ export class AuthoringWorkspace {
       (observation, changed, isCurrent) => {
         const deliveryCurrent = () => alive() && isCurrent?.() !== false;
         if (!deliveryCurrent() || observation.kind !== this.target.kind) return;
+        const alreadyLoaded =
+          !receivedRevision &&
+          observation.kind === "setting" &&
+          observation.value.revision === this.state.target?.observationRevision;
         if (changed) {
-          // Let observation delivery continue while files hydrate. A newer
-          // revision needs a read begun after its notification.
-          void (receivedRevision ? this.reader.recover() : this.reader.read());
+          if (!alreadyLoaded) {
+            // A newer revision needs a read begun after its notification.
+            void (receivedRevision
+              ? this.reader.recover()
+              : this.reader.read());
+          }
           receivedRevision = true;
-        } else {
+        }
+        if (!changed || alreadyLoaded) {
           const status = observation.value.selected;
           const view = this.state.view;
           if (status !== null && view?.sessionId === status.sessionId) {

@@ -142,13 +142,13 @@ function fixture(kind: "setting" | "revision") {
     setLatest: (value: V1SettingImprovementView) => {
       latest = value;
     },
-    publish: async (durableChanged = true) => {
+    publish: async (durableChanged = true, revision = "next") => {
       for (const item of [...subscribers])
         await item.receive(
           {
             kind,
             value: {
-              revision: "next",
+              revision,
               selected: {
                 sessionId: latest.sessionId,
                 runStatus: latest.runStatus,
@@ -548,6 +548,50 @@ test("a late edit response cannot overwrite another selected session", async () 
   expect(f.workspace.getSnapshot().view?.sessionId).toBe("old");
   f.workspace.close();
 });
+
+test.each(["same", "new files", "new history"] as const)(
+  "the first setting observation only hydrates newer durable state (%s)",
+  async (first) => {
+    const f = fixture("setting");
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (input) =>
+      input.type === "setting-improvement.overview"
+        ? { ...f.overview(), conversationRevision: "history-1" }
+        : original(input),
+    );
+    await f.workspace.open();
+    f.request.mockClear();
+    try {
+      const latest = f.view("recent");
+      f.setLatest({
+        ...latest,
+        runStatus: "running",
+        progress: { ...latest.progress, updatedAt: 2 },
+      });
+      if (first === "new files") f.setFiles("changed before observation");
+      const fileRevision =
+        first === "new files" ? "changed before observation" : "saved";
+      const historyRevision =
+        first === "new history" ? "history-2" : "history-1";
+      await f.publish(true, `${historyRevision}:rev:${fileRevision}`);
+      const contentReads = () =>
+        f.request.mock.calls.filter(([input]) => input.type === "content.read")
+          .length;
+      expect(contentReads()).toBe(first === "same" ? 0 : 1);
+      expect(f.workspace.getSnapshot().files[0]?.contents).toBe(fileRevision);
+      expect(f.workspace.getSnapshot().view?.runStatus).toBe("running");
+
+      f.setFiles("changed again");
+      await f.publish(true, `${historyRevision}:rev:changed again`);
+      expect(contentReads()).toBe(first === "same" ? 1 : 2);
+      expect(f.workspace.getSnapshot().files[0]?.contents).toBe(
+        "changed again",
+      );
+    } finally {
+      f.workspace.close();
+    }
+  },
+);
 
 test("content package overview resolves before reading the file tree", async () => {
   const gate = deferred<unknown>();

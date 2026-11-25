@@ -218,7 +218,8 @@ export class SettingImprovementSession {
 
   async overview(packageId: string): Promise<V1SettingImprovementOverview> {
     return this.#authoring.mutate(async () => {
-      let summaries = await this.#store.listSummariesByPackage(packageId);
+      const snapshot = await this.#store.summariesSnapshotByPackage(packageId);
+      let summaries = snapshot.summaries;
       const latestSummary = summaries.find(
         (summary) => !summary.damagedContinuation,
       );
@@ -237,6 +238,7 @@ export class SettingImprovementSession {
         summaries = summaries.sort(compareStoredSummaries);
       }
       return {
+        conversationRevision: snapshot.revision,
         latest: latest === null ? null : await this.#readView(latest),
         history: summaries.map(settingImprovementHistoryItem),
       };

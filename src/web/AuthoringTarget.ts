@@ -63,11 +63,12 @@ export class AuthoringConflictError extends Error {
 }
 export interface AuthoringTargetSnapshot extends Omit<
   V1SettingImprovementOverview,
-  "latest"
+  "latest" | "conversationRevision"
 > {
   latest: AuthoringConversationView | null;
   files: ContentTreeFile[];
   packageDetail?: AuthoringPackageDetail;
+  observationRevision?: string;
   revision?: V1WorldRevisionOverview;
 }
 export interface AuthoringTargetMessages {
@@ -193,15 +194,25 @@ export function contentPackageTarget(
   id: string,
 ): AuthoringTarget {
   const read = async (): Promise<AuthoringTargetSnapshot> => {
-    const overview = await request<V1SettingImprovementOverview>(client, {
-      type: "setting-improvement.overview",
-      packageId: id,
-    });
+    const { conversationRevision, ...overview } =
+      await request<V1SettingImprovementOverview>(client, {
+        type: "setting-improvement.overview",
+        packageId: id,
+      });
     const detail = await request<AuthoringPackageDetail>(client, {
       type: "content.read",
       packageId: id,
     });
-    return { ...overview, files: detail.files, packageDetail: detail };
+    return {
+      ...overview,
+      files: detail.files,
+      packageDetail: detail,
+      ...(conversationRevision === undefined
+        ? {}
+        : {
+            observationRevision: `${conversationRevision}:${detail.treeRevision}`,
+          }),
+    };
   };
   return {
     kind: "setting",

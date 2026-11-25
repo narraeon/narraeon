@@ -551,7 +551,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           : {
               ...current,
               contentPackages: current.contentPackages.map((item) =>
-                item.localId === detail.localId ? { ...item, ...detail } : item,
+                item.localId === detail.localId
+                  ? {
+                      ...item,
+                      title: detail.title,
+                      gameplay: detail.gameplay,
+                      status: detail.status,
+                    }
+                  : item,
               ),
             },
       );
@@ -852,6 +859,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       const archiveBase64 = await readFileAsBase64(importArchive);
       const imported = await client.request<HomeContentPackage>({
         type: "content.import",
+        receipt: "summary",
         archiveBase64,
         title: contentPackageTitleFromArchiveName(importArchive.name),
       });

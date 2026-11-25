@@ -217,7 +217,7 @@ export class CurrentTreeContentLibrary {
         this.#limits,
       );
       const package_ = await this.#publishNewPackage(normalized, title);
-      return packageSummary(package_);
+      return summarizeContentPackage(package_);
     });
   }
 
@@ -315,7 +315,7 @@ export class CurrentTreeContentLibrary {
         );
       }
       const detail = await this.readPackage(entry.name);
-      packages.push(packageSummary(detail));
+      packages.push(summarizeContentPackage(detail));
     }
     return packages;
   }
@@ -357,12 +357,13 @@ export class CurrentTreeContentLibrary {
       reading: true,
     });
     try {
+      const package_ = lease.package;
       await ensureStoredPackageTitle(
         this.#packageRoot(localId),
         localId,
-        lease.package.title,
+        package_.title,
       );
-      return structuredClone(lease.package);
+      return package_;
     } finally {
       lease.release();
     }
@@ -451,7 +452,10 @@ export class CurrentTreeContentLibrary {
           localId,
           title: normalizedTitle,
         });
-        return packageSummary({ ...lease.package, title: normalizedTitle });
+        return summarizeContentPackage({
+          ...lease.package,
+          title: normalizedTitle,
+        });
       } finally {
         lease.release();
       }
@@ -545,7 +549,7 @@ export class CurrentTreeContentLibrary {
       let package_ = (await this.#readPackageSnapshot(localId)).package;
       const lease: CurrentTreeContentPackageOperationLease = {
         get package() {
-          return structuredClone(package_);
+          return copyPackageDetail(package_);
         },
         replace: async (files, options = {}) => {
           if (released) throw new CurrentTreeContentPackageBusyError();
@@ -561,7 +565,7 @@ export class CurrentTreeContentLibrary {
             normalized,
             options.signal,
           );
-          return structuredClone(package_);
+          return copyPackageDetail(package_);
         },
         release,
       };
@@ -602,10 +606,7 @@ export class CurrentTreeContentLibrary {
       await ensureStoredPackageTitle(packageRoot, localId, title);
       await writeDurableNewFile(
         temporaryPath,
-        serialize({
-          schemaVersion: 1,
-          files: normalized,
-        } satisfies StoredCurrentTree),
+        serializeCurrentTree(normalized),
       );
       signal?.throwIfAborted();
       await this.#beforeCurrentTreeReplace?.();
@@ -678,10 +679,7 @@ export class CurrentTreeContentLibrary {
       );
       await writeDurableNewFile(
         join(stagingPath, currentTreeFileName),
-        serialize({
-          schemaVersion: 1,
-          files: normalized,
-        } satisfies StoredCurrentTree),
+        serializeCurrentTree(normalized),
       );
       signal?.throwIfAborted();
       await this.#beforePackagePublish?.();
@@ -746,6 +744,18 @@ function detail(
   };
 }
 
+function copyPackageDetail({
+  files,
+  ...detail
+}: EditableContentPackageDetail): EditableContentPackageDetail {
+  // The file records contain only strings. Copying their objects isolates lease
+  // callers without allocating another copy of the document text.
+  return {
+    ...structuredClone(detail),
+    files: files.map((file) => ({ ...file })),
+  };
+}
+
 /**
  * Digest of every file's path, encoding and contents, independent of file
  * order. Equal trees always share a revision; a tree that returns to earlier
@@ -779,7 +789,7 @@ function summary(
   };
 }
 
-function packageSummary(
+export function summarizeContentPackage(
   package_: EditableContentPackageDetail,
 ): EditableContentPackageSummary {
   return {
@@ -998,9 +1008,23 @@ async function writeStoredLocalMetadata(
   }
 }
 
+function* serializeCurrentTree(
+  files: readonly ContentTreeFile[],
+): Iterable<string> {
+  // Encode one file at a time so staging never needs a second whole-tree string
+  // or its UTF-8 buffer. Readers still see the same JSON envelope.
+  yield '{"schemaVersion":1,"files":[';
+  let separator = "";
+  for (const file of files) {
+    yield separator + JSON.stringify(file);
+    separator = ",";
+  }
+  yield "]}\n";
+}
+
 async function writeDurableNewFile(
   path: string,
-  contents: string,
+  contents: string | Iterable<string>,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const handle = await open(path, "wx", 0o600);

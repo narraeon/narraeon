@@ -19,6 +19,10 @@ import {
   type V1PlayCallChainView,
   type V1Request,
 } from "../../src/protocol/v1.ts";
+import type {
+  EditableContentPackageDetail,
+  EditableContentPackageSummary,
+} from "../../src/runtime/content/ContentWorkspace.ts";
 import type { PlayCallChainObserver } from "../../src/runtime/play/PlayCallChain.ts";
 import type { RuntimeErrorRecord } from "../../src/runtime/RuntimeErrorLog.ts";
 import type { V1Runtime } from "../../src/runtime/V1Runtime.ts";
@@ -780,9 +784,79 @@ test("生产 HTTP 边界只接受显式 runtime/v1 envelope 并返回当前工�
     },
   });
   expect(uploaded.statusCode).toBe(200);
-  expect(uploaded.json()).toMatchObject({
+  const fullReceipt = uploaded.json<{
+    protocol: string;
+    result: EditableContentPackageDetail;
+  }>();
+  expect(fullReceipt).toMatchObject({
     protocol: "narraeon.runtime/v1",
-    result: { title: "雾港来信", status: "needs_repair" },
+    result: {
+      title: "雾港来信",
+      status: "needs_repair",
+      files: [
+        { path: "opening.md", contents: "你站在门前，屋内有人正等你回应。\n" },
+      ],
+    },
+  });
+
+  const summaryUpload = {
+    type: "content.import",
+    archiveBase64: archive.toString("base64"),
+    title: "雾港来信",
+    receipt: "summary",
+  };
+  const compactReceipt = await server.inject({
+    authority: "127.0.0.1:4317",
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers,
+    payload: { protocol: "narraeon.runtime/v1", request: summaryUpload },
+  });
+  expect(compactReceipt.statusCode).toBe(200);
+  const { result: summary } = compactReceipt.json<{
+    result: EditableContentPackageSummary;
+  }>();
+  expect(summary.localId).toMatch(/^package-/u);
+  expect(summary).toEqual({
+    localId: summary.localId,
+    title: "雾港来信",
+    status: "needs_repair",
+    gameplay: { mode: "interactive-fiction" },
+    documentCount: 0,
+    issueCount: fullReceipt.result.issueCount,
+  });
+  expect(summary.localId).not.toBe(fullReceipt.result.localId);
+  const opened = await server.inject({
+    authority: "127.0.0.1:4317",
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers,
+    payload: {
+      protocol: "narraeon.runtime/v1",
+      request: { type: "content.read", packageId: summary.localId },
+    },
+  });
+  expect(opened.statusCode).toBe(200);
+  expect(
+    opened.json<{ result: EditableContentPackageDetail }>().result,
+  ).toEqual({
+    ...fullReceipt.result,
+    localId: summary.localId,
+  });
+
+  const unknownReceipt = await server.inject({
+    authority: "127.0.0.1:4317",
+    method: "POST",
+    url: "/api/runtime/v1",
+    headers,
+    payload: {
+      protocol: "narraeon.runtime/v1",
+      request: { ...summaryUpload, receipt: "unexpected" },
+    },
+  });
+  expect(unknownReceipt.statusCode).toBe(400);
+  expect(unknownReceipt.json()).toMatchObject({
+    error: { code: "invalid_request" },
   });
 
   const invalidArchive = await server.inject({
