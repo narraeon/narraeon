@@ -309,9 +309,12 @@ export class WorldLedgerAuthority {
     };
   }
 
-  /** Read the published history without opening or repairing the world. */
-  async recoverCommittedHistory(): Promise<CommittedHistory> {
-    const { turns } = await readTurnHistory(this.#root);
+  /** Read the history through a published endpoint without reading world documents. */
+  async recoverCommittedHistory(head?: string): Promise<CommittedHistory> {
+    const { turns } = await readTurnHistory(
+      this.#root,
+      head === undefined ? undefined : parsePosition(head),
+    );
     return this.#recoverCommittedHistory(commitsFromTurns(turns));
   }
 
@@ -511,11 +514,12 @@ export class WorldLedgerAuthority {
     const sequence = physical + 1;
     const head = `commit:${String(sequence)}`;
 
+    const stateFiles =
+      input.stateChanges.length === 0
+        ? []
+        : await this.recoverState(current.head);
     const currentState = new Map(
-      (await this.recoverState(current.head)).map((file) => [
-        file.path,
-        file.contents,
-      ]),
+      stateFiles.map(({ path, contents }) => [path, contents]),
     );
     const changes: WorldTurnFileChange[] = [];
     for (const change of input.stateChanges) {

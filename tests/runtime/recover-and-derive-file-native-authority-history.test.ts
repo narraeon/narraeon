@@ -156,6 +156,22 @@ test("候选前像哈希不一致时拒绝提交，世界文件与端点都不�
   expect(await fixture.store.currentHead(fixture.worldId)).toBe("genesis");
 });
 
+test("修改状态时，即使前像和新内容哈希匹配，损坏的候选树仍被拒绝", async () => {
+  const { store, worldId } = await world();
+  const before = await store.recoverEndpoint(worldId);
+  await expect(
+    store.commitPlayStep({
+      worldId,
+      operationId: "invalid-candidate",
+      parentHead: before.head,
+      historyAppend: [{ role: "narrator", exactText: "不会提交。" }],
+      nextMaterials: [],
+      stateChanges: [change(initialSituation(), "情况: 缺少文档身份\n")],
+    }),
+  ).rejects.toMatchObject({ code: "candidate_validation_failed" });
+  expect(await store.recoverEndpoint(worldId)).toEqual(before);
+});
+
 test("时间线修订回退到被替换消息的父端点后追加修改稿，被替换的端点不再可达", async () => {
   const fixture = await world();
   const steps = [

@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
@@ -83,6 +83,30 @@ test("创建和每次玩家／主持提交更新本地缓存，摘录按 Unicode
     stateChanges: [],
   });
   expect(await activity(fixture.root, fixture.worldId)).toEqual(cached);
+});
+
+test("纯玩家与主持正文提交无需读取未改变的世界文档", async () => {
+  const fixture = await world();
+  const worldRoot = join(fixture.root, "worlds-file-native", fixture.worldId);
+  let head = "genesis";
+  for (const [index, role] of (["player", "narrator"] as const).entries()) {
+    vi.mocked(fs.readFile).mockClear();
+    const receipt = await play(
+      fixture,
+      `原文 ${role}`,
+      role,
+      head,
+      now + index,
+    );
+    head = receipt.head;
+    const reads = vi.mocked(fs.readFile).mock.calls.flatMap(([path]) => {
+      if (typeof path !== "string") return [];
+      const relativePath = relative(worldRoot, path);
+      const [surface] = relativePath.split(sep);
+      return surface === "state" || surface === "control" ? [relativePath] : [];
+    });
+    expect.soft(reads.sort(), `${role} document reads`).toEqual([]);
+  }
 });
 
 test("时间线修订、旧端点分叉和世界修订应用的摘要使用当前时间线", async () => {

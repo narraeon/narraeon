@@ -187,6 +187,62 @@ function hash(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+test("纯正文已写入历史文件但端点未发布时，读取仍使用已提交的快照", async () => {
+  const { root, worldId, worlds } = await worldArchiveFixture();
+  roots.push(root);
+  const historyRoot = join(root, "worlds-file-native", worldId, "history");
+  const before = await worlds.recoverEndpoint(worldId);
+  const beforeQuery = await worlds.openHistoryQuery(worldId);
+  const beforeSummary = await worlds.readWorldSummary(worldId);
+  const exactText = "船靠岸了。\n码头亮着灯。\n";
+  const operationId = "append-history-only";
+  const staged = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  race.afterRename = async (destination) => {
+    if (dirname(destination) !== historyRoot) return;
+    race.afterRename = undefined;
+    staged.resolve();
+    await resume.promise;
+  };
+  const advance = worlds.commitPlayStep({
+    worldId,
+    operationId,
+    parentHead: before.head,
+    historyAppend: [{ role: "narrator", exactText }],
+    stateChanges: [],
+    nextMaterials: before.additionalMaterials,
+  });
+  try {
+    await Promise.race([staged.promise, advance]);
+    expect(race.afterRename).toBeUndefined();
+    expect(await worlds.recoverEndpoint(worldId)).toEqual(before);
+    expect((await worlds.openHistoryQuery(worldId)).snapshotId).toBe(
+      beforeQuery.snapshotId,
+    );
+    expect(await worlds.readWorldSummary(worldId)).toEqual(beforeSummary);
+    expect(await worlds.getOperationOutcome(operationId)).toMatchObject({
+      outcome: "not_started",
+    });
+  } finally {
+    resume.resolve();
+    await advance;
+  }
+
+  const receipt = await advance;
+  expect(await worlds.getOperationOutcome(operationId)).toEqual(receipt);
+  expect(await worlds.currentEndpoint(worldId)).toEqual({
+    head: receipt.head,
+    operationId,
+  });
+  const afterQuery = await worlds.openHistoryQuery(worldId);
+  expect(afterQuery.snapshotId).not.toBe(beforeQuery.snapshotId);
+  expect(afterQuery.messages.at(-1)).toMatchObject({ text: exactText });
+  expect(await worlds.readWorldSummary(worldId)).toMatchObject({
+    excerpt: "船靠岸了。 码头亮着灯。",
+    playerTurns: beforeSummary.playerTurns,
+  });
+});
+
 test("readHead 在端点读取与视图解析之间被回退时，返回一致的当前端点", async () => {
   const root = await mkdtemp(join(tmpdir(), "narraeon-ledger-read-race-"));
   roots.push(root);

@@ -1918,53 +1918,59 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "The parent endpoint of the play operation has changed",
             );
-          const [basisState, basisControl] = await Promise.all([
-            authorityStore.recoverState(authority.head),
-            authorityStore.recoverControl(authority.head),
-          ]);
-          const candidateState = new Map(
-            basisState.map((file) => [file.path, file.contents]),
-          );
-          for (const change of input.stateChanges) {
-            assertRelativePath(change.relativePath);
-            const previous = candidateState.get(change.relativePath);
-            const previousHash =
-              previous === undefined ? null : sha256(previous);
-            const nextBytes = change.canonicalNextBytes;
-            const consistent =
-              change.kind === "delete"
-                ? previous !== undefined &&
-                  nextBytes === null &&
-                  change.nextHash === null
-                : nextBytes !== null &&
-                  change.nextHash !== null &&
-                  sha256(nextBytes) === change.nextHash;
-            if (previousHash !== change.expectedPreviousHash || !consistent)
-              throw new FileNativeWorldCreationError(
-                "operation_conflict",
-                `State-change hash conflicts: ${change.relativePath}`,
-              );
-            if (nextBytes === null) candidateState.delete(change.relativePath);
-            else candidateState.set(change.relativePath, nextBytes);
-          }
-          const inspection = inspectContentPackageCurrentTree(
-            [
-              ...[...candidateState].map(([path, contents]) => ({
-                path: `world/${path}`,
-                contents,
-              })),
-              ...(input.control ?? basisControl).map(({ path, contents }) => ({
-                path: `control/${path}`,
-                contents,
-              })),
-            ],
-            { requireOpening: false },
-          );
-          if (inspection.status !== "usable")
-            throw new FileNativeWorldCreationError(
-              "candidate_validation_failed",
-              `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
+          // Revalidate the document tree when a commit can change it.
+          if (input.stateChanges.length > 0 || input.control !== undefined) {
+            const [basisState, basisControl] = await Promise.all([
+              authorityStore.recoverState(authority.head),
+              authorityStore.recoverControl(authority.head),
+            ]);
+            const candidateState = new Map(
+              basisState.map((file) => [file.path, file.contents]),
             );
+            for (const change of input.stateChanges) {
+              assertRelativePath(change.relativePath);
+              const previous = candidateState.get(change.relativePath);
+              const previousHash =
+                previous === undefined ? null : sha256(previous);
+              const nextBytes = change.canonicalNextBytes;
+              const consistent =
+                change.kind === "delete"
+                  ? previous !== undefined &&
+                    nextBytes === null &&
+                    change.nextHash === null
+                  : nextBytes !== null &&
+                    change.nextHash !== null &&
+                    sha256(nextBytes) === change.nextHash;
+              if (previousHash !== change.expectedPreviousHash || !consistent)
+                throw new FileNativeWorldCreationError(
+                  "operation_conflict",
+                  `State-change hash conflicts: ${change.relativePath}`,
+                );
+              if (nextBytes === null)
+                candidateState.delete(change.relativePath);
+              else candidateState.set(change.relativePath, nextBytes);
+            }
+            const inspection = inspectContentPackageCurrentTree(
+              [
+                ...[...candidateState].map(([path, contents]) => ({
+                  path: `world/${path}`,
+                  contents,
+                })),
+                ...(input.control ?? basisControl).map(
+                  ({ path, contents }) => ({
+                    path: `control/${path}`,
+                    contents,
+                  }),
+                ),
+              ],
+              { requireOpening: false },
+            );
+            if (inspection.status !== "usable")
+              throw new FileNativeWorldCreationError(
+                "candidate_validation_failed",
+                `Candidate world failed mechanical validation: ${inspection.issues.map(({ message }) => message).join("; ")}`,
+              );
+          }
           const { commit, commitDigest } = await authorityStore.appendCommit({
             ...(input.playContext === undefined
               ? {}
@@ -2005,13 +2011,10 @@ export class FileNativeWorldStore {
               mode: input.mode,
             },
           );
-          const recovered = await authorityStore.recover(commit.head);
-          await updateWorldActivity(
-            root,
+          const { history } = await authorityStore.recoverCommittedHistory(
             commit.head,
-            recovered.history,
-            Date.now(),
           );
+          await updateWorldActivity(root, commit.head, history, Date.now());
           return structuredClone(outcome);
         },
       );
