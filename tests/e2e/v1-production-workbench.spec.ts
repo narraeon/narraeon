@@ -332,6 +332,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       await page.getByText("源码视图（frame.yaml）", { exact: true }).click();
       await page.getByLabel("直接编辑 control/frame.yaml").fill(file.contents);
     } else {
+      if (file.path === "control/player-views.yaml") {
+        await page.getByRole("button", { name: "源码", exact: true }).click();
+      }
       await page.getByLabel(`编辑 ${file.path}`).fill(file.contents);
     }
   }
