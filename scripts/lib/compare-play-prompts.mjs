@@ -16,8 +16,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parse, stringify } from "yaml";
 
 const source = fileURLToPath(new URL("../..", import.meta.url));
-const locale = "zh-CN";
-const arms = ["baseline", "short-tail", "style"];
+const defaultLocale = "zh-CN";
 const load = (root, path) =>
   import(pathToFileURL(join(root, "src", path)).href);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -29,6 +28,7 @@ export async function comparePlayPrompts({
   stylePath,
   removedTailLines,
   freeze,
+  matrix,
   minRepeats,
   preflightOnly = false,
   defaults: {
@@ -44,6 +44,9 @@ export async function comparePlayPrompts({
     repeatsArg = defaultRepeats,
     concurrencyArg = defaultConcurrency,
   ] = args;
+  const arms = matrix
+    ? ["baseline", "style"]
+    : ["baseline", "short-tail", "style"];
   const repeats = Number(repeatsArg);
   const concurrency = Number(concurrencyArg);
   assert(
@@ -92,7 +95,7 @@ export async function comparePlayPrompts({
     );
   }
 
-  async function styleOverlay(candidate) {
+  async function styleOverlay(candidates) {
     const root = join(tmp, "style-compiler");
     await mkdir(root);
     await cp(join(source, "src"), join(root, "src"), { recursive: true });
@@ -103,17 +106,21 @@ export async function comparePlayPrompts({
       "dir",
     );
     const path = join(root, "src/shared/default-preset-host.ts");
-    const text = await readFile(path, "utf8");
-    const pattern =
-      /^ {2}"blocks\/prose\.md": `# 叙事质感与节奏\n[^\x60]*`,$/mu;
-    assert.match(text, pattern);
-    await writeFile(
-      path,
-      text.replace(
+    let text = await readFile(path, "utf8");
+    for (const [locale, candidate] of Object.entries(candidates)) {
+      const title =
+        locale === "en" ? "Prose texture and pacing" : "叙事质感与节奏";
+      const pattern = new RegExp(
+        '^ {2}"blocks/prose\\.md": `# ' + title + "\\n[^\\x60]*`,$",
+        "mu",
+      );
+      assert.match(text, pattern);
+      text = text.replace(
         pattern,
         () => '  "blocks/prose.md": ' + JSON.stringify(candidate) + ",",
-      ),
-    );
+      );
+    }
+    await writeFile(path, text);
     return root;
   }
 
@@ -179,10 +186,46 @@ export async function comparePlayPrompts({
     });
   }
 
+  function providerMetadata(events) {
+    const disclosures = new Map();
+    const usage = [];
+    for (const event of events) {
+      if (typeof event !== "object" || event === null) continue;
+      const payload = event.response ?? event;
+      const identity = Object.fromEntries(
+        [
+          "model",
+          "model_version",
+          "system_fingerprint",
+          "created",
+          "created_at",
+        ]
+          .filter((key) => ["string", "number"].includes(typeof payload[key]))
+          .map((key) => [key, payload[key]]),
+      );
+      if (Object.keys(identity).length)
+        disclosures.set(JSON.stringify(identity), identity);
+      if (
+        payload.usage &&
+        !usage.some(({ values }) => isDeepStrictEqual(values, payload.usage))
+      )
+        usage.push({
+          event: event.type ?? "chat.completion.chunk",
+          values: payload.usage,
+        });
+    }
+    return {
+      disclosures: [...disclosures.values()],
+      usage,
+      eventCount: events.length,
+      malformedEvents: events.filter((event) => event?.malformedData).length,
+    };
+  }
+
   async function execute() {
     delete process.env.NARRAEON_PROVIDER_TRACE_PATH;
     await mkdir(evidence, { mode: 0o700 });
-    await mkdir(blind, { mode: 0o700 });
+    if (!preflightOnly || !matrix) await mkdir(blind, { mode: 0o700 });
     const config = resolve(configPath);
     assert.equal(config.split(/[\\/]/u).at(-1), "model-connections-v1.json");
     const stored = JSON.parse(await readFile(config, "utf8"));
@@ -213,30 +256,77 @@ export async function comparePlayPrompts({
       source,
       "runtime/prompt/FileNativePromptCompiler.ts",
     );
-    const connection = await new ModelConnectionStore(dirname(config)).bind();
-    freeze?.assertConnection(connection);
-    assert.equal(
-      connection.provider,
-      "openai_responses",
-      "Use the existing Responses experiment connection",
-    );
-    assert(
-      !connection.modelPrompt?.markdown?.trim(),
-      "Select an experiment connection without a user model prompt",
-    );
-    const binding = new FileNativeModelHost(connection).binding();
+    const connections = {};
+    if (matrix) {
+      for (const provider of matrix.providers) {
+        const matching = stored.connections.filter(
+          (item) =>
+            item.provider === provider && item.modelId === matrix.modelId,
+        );
+        assert.equal(
+          matching.length,
+          1,
+          `Expected one saved ${provider} connection`,
+        );
+        const [selected] = matching;
+        const root = join(tmp, "connection-" + provider);
+        await mkdir(root, { mode: 0o700 });
+        await writeFile(
+          join(root, "model-connections-v1.json"),
+          JSON.stringify({
+            schemaVersion: stored.schemaVersion,
+            activeConnectionId: selected.id,
+            connections: [selected],
+          }),
+          { mode: 0o600, flag: "wx" },
+        );
+        connections[provider] = await new ModelConnectionStore(root).bind();
+      }
+    } else {
+      const active = await new ModelConnectionStore(dirname(config)).bind();
+      assert.equal(
+        active.provider,
+        "openai_responses",
+        "Use the existing Responses experiment connection",
+      );
+      connections[active.provider] = active;
+    }
+    const providers = Object.keys(connections);
+    const connection = connections[providers[0]];
+    for (const selected of Object.values(connections)) {
+      freeze?.assertConnection(selected);
+      assert(
+        !selected.modelPrompt?.markdown?.trim(),
+        "Select an experiment connection without a user model prompt",
+      );
+    }
+
     let frozenRequests;
     const candidate = await readFile(stylePath, "utf8");
+    const candidates = { [defaultLocale]: candidate };
+    if (matrix) candidates.en = await readFile(matrix.enStylePath, "utf8");
     const { FileNativePromptCompiler: StyleCompiler } = await load(
-      await styleOverlay(candidate),
+      await styleOverlay(candidates),
       "runtime/prompt/FileNativePromptCompiler.ts",
     );
-    const baseline = presetModule.builtinDefaultPlayPresetBinding(locale);
-    const presets = {
-      baseline,
-      "short-tail": shortTailPreset(baseline, presetModule),
-      style: baseline,
-    };
+    const presetsByLocale = new Map(
+      [...new Set(scenes.map((scene) => scene.locale ?? defaultLocale))].map(
+        (locale) => {
+          const baseline = presetModule.builtinDefaultPlayPresetBinding(locale);
+          return [
+            locale,
+            {
+              baseline,
+              ...(!matrix && {
+                "short-tail": shortTailPreset(baseline, presetModule),
+              }),
+              style: baseline,
+            },
+          ];
+        },
+      ),
+    );
+    const binding = new FileNativeModelHost(connection).binding();
     const seeds = new Map();
     for (const scene of scenes) {
       const root = join(tmp, "seed-" + scene.id);
@@ -248,7 +338,9 @@ export async function comparePlayPrompts({
         packageFiles: packageFiles(scene),
         prompt: {
           modelBinding: binding,
-          hostBinding: presetModule.presetHostBinding(baseline),
+          hostBinding: presetModule.presetHostBinding(
+            presetsByLocale.get(scene.locale ?? defaultLocale).baseline,
+          ),
         },
       });
       assert.equal(created.outcome, "created");
@@ -260,7 +352,33 @@ export async function comparePlayPrompts({
       });
     }
     await save(evidence, "manifest.json", {
-      locale,
+      ...(matrix
+        ? {
+            connections: Object.fromEntries(
+              providers.map((provider) => {
+                const selected = connections[provider];
+                return [
+                  provider,
+                  {
+                    modelBinding: new FileNativeModelHost(selected).binding(),
+                    reasoningEffort: selected.reasoningEffort,
+                    reasoningSummary: selected.reasoningSummary,
+                    thinkingMode: selected.thinkingMode,
+                    thinkingBudgetTokens: selected.thinkingBudgetTokens,
+                    responsesTurnInstructions:
+                      selected.responsesTurnInstructions,
+                  },
+                ];
+              }),
+            ),
+            styleByLocale: Object.fromEntries(
+              Object.entries(candidates).map(([lang, markdown]) => [
+                lang,
+                { markdown, sha256: digest(markdown) },
+              ]),
+            ),
+          }
+        : { locale: defaultLocale }),
       arms,
       repeats,
       concurrency,
@@ -284,8 +402,11 @@ export async function comparePlayPrompts({
       })),
     });
 
-    async function run(scene, repeat, arm, offline) {
-      const id = [scene.id, repeat, arm].join("--");
+    async function run(scene, repeat, arm, offline, provider = providers[0]) {
+      const id = [scene.id, ...(matrix ? [provider] : []), repeat, arm].join(
+        "--",
+      );
+      const locale = scene.locale ?? defaultLocale;
       const seed = seeds.get(scene.id);
       const root = join(tmp, offline ? "offline-" + offline.id + "-" + id : id);
       const turns = [];
@@ -295,7 +416,7 @@ export async function comparePlayPrompts({
       try {
         await cp(seed.root, root, { recursive: true });
         const worlds = new FileNativeWorldStore(root);
-        const playPreset = presets[arm];
+        const playPreset = presetsByLocale.get(locale)[arm];
         const hostBinding = presetModule.presetHostBinding(playPreset);
         const compiler =
           arm === "style"
@@ -304,7 +425,7 @@ export async function comparePlayPrompts({
         const chains = new PlayCallChain(worlds, compiler);
         assert.deepEqual(await checkpoint(worlds, seed.worldId), seed.snapshot);
         const nativeHost = new FileNativeModelHost(
-          offline?.connection ?? connection,
+          offline?.connection ?? connections[provider],
           async (url, init) => {
             assert(!offline, "An offline preflight cannot dispatch");
             const body =
@@ -316,10 +437,25 @@ export async function comparePlayPrompts({
             ) {
               assert.deepEqual(
                 body,
-                frozenRequests.firstRequests[`${scene.id}:${arm}`].body,
+                frozenRequests.firstRequests[
+                  `${scene.id}:${matrix ? provider + ":" : ""}${arm}`
+                ].body,
               );
             }
             const wire = { body, ...size(init.body ?? ""), status: null };
+            if (matrix) {
+              const pathname = new URL(url).pathname;
+              wire.endpoint =
+                pathname.match(/\/(responses|chat\/completions)$/u)?.[0] ??
+                "unknown";
+              assert.equal(
+                wire.endpoint,
+                provider === "openai_responses"
+                  ? "/responses"
+                  : "/chat/completions",
+              );
+              wire.sentAt = new Date().toISOString();
+            }
             record.wire.push(wire);
             const response = await fetch(url, init);
             wire.status = response.status;
@@ -331,7 +467,12 @@ export async function comparePlayPrompts({
                   .text()
                   .then(
                     (raw) => {
-                      wire.responseEvents = parseResponsesStream(raw);
+                      const events = parseResponsesStream(raw);
+                      if (matrix) {
+                        wire.responseMetadata = providerMetadata(events);
+                      } else {
+                        wire.responseEvents = events;
+                      }
                     },
                     () => {
                       wire.unreadable = true;
@@ -363,7 +504,9 @@ export async function comparePlayPrompts({
             record.exchanges.push(entry);
             if (offline) {
               offlineRequest = { preview, request };
-              return { text: "离线预检。" };
+              return {
+                text: locale === "en" ? "Offline preflight." : "离线预检。",
+              };
             }
             const response = await nativeHost.exchange(request, {
               ...observer,
@@ -456,7 +599,10 @@ export async function comparePlayPrompts({
         assert.equal(error, undefined);
         assert(offlineRequest, JSON.stringify(turns[0]?.failureCode));
         offline.inspect(offlineRequest.preview, offlineRequest.request);
-        assert.equal(turns[0]?.finalNarrative, "离线预检。");
+        assert.equal(
+          turns[0]?.finalNarrative,
+          locale === "en" ? "Offline preflight." : "离线预检。",
+        );
         return;
       }
       const status =
@@ -471,6 +617,7 @@ export async function comparePlayPrompts({
       const result = {
         id,
         sceneId: scene.id,
+        ...(matrix && { provider }),
         repeat,
         arm,
         status,
@@ -492,6 +639,8 @@ export async function comparePlayPrompts({
     if (freeze) {
       frozenRequests = await freeze.preflight({
         connection,
+        connections,
+        candidates,
         scenes,
         arms,
         run,
@@ -504,20 +653,30 @@ export async function comparePlayPrompts({
       { length: repeats },
       (_, index) => index + 1,
     ).flatMap((repeat) =>
-      scenes.flatMap((scene, sceneIndex) =>
-        arms.map((_, armIndex) => ({
-          scene,
-          repeat,
-          arm: arms[(armIndex + repeat - 1 + sceneIndex) % arms.length],
-        })),
-      ),
+      scenes.flatMap((_, rank) => {
+        const sceneIndex = matrix ? (rank + repeat - 1) % scenes.length : rank;
+        const scene = scenes[sceneIndex];
+        const factors = matrix
+          ? arms.flatMap((_, armIndex) =>
+              providers.map((provider, providerIndex) => [
+                provider,
+                arms[(armIndex + providerIndex) % arms.length],
+              ]),
+            )
+          : arms.map((arm) => [providers[0], arm]);
+        return factors.map((_, index) => {
+          const [provider, arm] =
+            factors[(index + repeat - 1 + sceneIndex) % factors.length];
+          return { scene, repeat, arm, provider };
+        });
+      }),
     );
     const results = [];
     let next = 0;
     async function worker() {
       while (next < tasks.length) {
-        const { scene, repeat, arm } = tasks[next++];
-        results.push(await run(scene, repeat, arm));
+        const { scene, repeat, arm, provider } = tasks[next++];
+        results.push(await run(scene, repeat, arm, undefined, provider));
       }
     }
     await Promise.all(Array.from({ length: concurrency }, worker));
@@ -537,10 +696,13 @@ export async function comparePlayPrompts({
           ...anonymous.map(({ label, result }) => ({
             label,
             ...Object.fromEntries(
-              ["id", "sceneId", "repeat", "arm"].map((key) => [
-                key,
-                result[key],
-              ]),
+              [
+                "id",
+                "sceneId",
+                "repeat",
+                "arm",
+                ...(matrix ? ["provider"] : []),
+              ].map((key) => [key, result[key]]),
             ),
           })),
         );
@@ -558,8 +720,21 @@ export async function comparePlayPrompts({
           })),
         });
 
-        const left = members.find(({ arm }) => arm === "baseline");
         for (const right of members.filter(({ arm }) => arm !== "baseline")) {
+          const left = members.find(
+            ({ arm, provider }) =>
+              arm === "baseline" && provider === right.provider,
+          );
+          if (matrix) {
+            const check = matrix.verifyWirePair(
+              scene,
+              left,
+              right,
+              frozenRequests,
+            );
+            inputChecks.push({ left: left.id, right: right.id, ...check });
+            continue;
+          }
           const a = left.turns[0]?.wire[0]?.body;
           const b = right.turns[0]?.wire[0]?.body;
           if (!a || !b) {
@@ -655,7 +830,6 @@ export async function comparePlayPrompts({
         ),
       })),
     });
-    await save(blind, "readings.json", blindGroups);
     if (freeze)
       await writeFile(join(blind, "rubric.md"), freeze.rubric, {
         flag: "wx",
@@ -695,7 +869,7 @@ export async function comparePlayPrompts({
       flag: "wx",
       mode: 0o600,
     });
-    if (freeze) {
+    if (freeze && !matrix) {
       for (const scene of scenes) {
         const heading = "## " + scene.title + " ·";
         const first = markdown.findIndex((line) => line.startsWith(heading));
@@ -717,7 +891,9 @@ export async function comparePlayPrompts({
         );
       }
     }
+    await save(blind, "readings.json", blindGroups);
     const controlsFailed = inputChecks.some((check) => {
+      if (matrix) return !check.ok;
       if (
         check.missing ||
         check.baselineItemCount !== check.candidateItemCount ||
