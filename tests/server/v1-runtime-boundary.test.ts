@@ -159,7 +159,7 @@ test("写入前拒绝返回协议错误，存储故障仍返回服务错误", as
         world: { worldId },
       },
     } = created.json<{ result: { world: { worldId: string } } }>();
-    expect(created.json().result).not.toHaveProperty("preview");
+    expect(created.json()).not.toHaveProperty("result.preview");
     const startWithoutModel = await send({
       type: "play.chain.start",
       worldId,
@@ -189,7 +189,7 @@ test("写入前拒绝返回协议错误，存储故障仍返回服务错误", as
     const repeated = await send(create);
     expect(repeated.statusCode).toBe(200);
     expect(repeated.json()).toMatchObject({ result: { world: { worldId } } });
-    expect(repeated.json().result).toHaveProperty("preview");
+    expect(repeated.json()).toHaveProperty("result.preview");
     expect(
       (await send({ type: "world.revision.open", worldId })).statusCode,
     ).toBe(200);
