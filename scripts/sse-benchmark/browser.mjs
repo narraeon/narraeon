@@ -51,7 +51,7 @@ export async function preparePage(browser, url, worldId, playerText) {
           let framePending = false;
           const pending = () =>
             reader.querySelector(
-              ".call-chain-assistant.is-streaming > article > p",
+              ".call-chain-assistant.is-streaming > article p",
             );
           observer = new MutationObserver(() => {
             const start = now();
@@ -172,7 +172,7 @@ export async function submitFromPage({ page, button }, expected) {
   const receipt = await response;
   const result = (await receipt.json()).result;
   const narrative = page
-    .locator(".call-chain-assistant.is-narrative > article > p")
+    .locator(".call-chain-assistant.is-narrative > article p")
     .last();
   await narrative.filter({ hasText: expected }).waitFor({ state: "attached" });
   const finalText = await narrative.textContent();
