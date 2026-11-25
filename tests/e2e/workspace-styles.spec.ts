@@ -153,7 +153,19 @@ for (const locale of ["zh-CN", "en"] as const) {
       });
       await debug.scrollIntoViewIfNeeded();
       await expect(debug).toBeInViewport();
-      await expectHit(debug.getByRole("heading", { level: 2 }));
+      const debugHeading = debug.getByRole("heading", { level: 2 });
+      await expectHit(debugHeading);
+      await expect
+        .poll(() =>
+          debugHeading.evaluate((element) => {
+            const dock = document.querySelector(".world-composer-dock")!;
+            return (
+              element.getBoundingClientRect().bottom <=
+              dock.getBoundingClientRect().top
+            );
+          }),
+        )
+        .toBe(true);
       await page.screenshot({ path: testInfo.outputPath("debugger.png") });
 
       await page.goto("/");
