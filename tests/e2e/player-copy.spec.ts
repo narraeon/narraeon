@@ -527,7 +527,10 @@ for (const locale of ["zh-CN", "en"] as const) {
       for (const [index, recovery] of recoveryCases.entries()) {
         await runtime(page, { type: "model.delete", connectionId });
         await page.reload();
-        await expect(action).toBeDisabled();
+        await expect(action).toBeEditable();
+        await action.fill("Draft written before reconnecting");
+        await expect(page.locator(".world-composer-send")).toBeDisabled();
+        await action.clear();
         if (index === 0) {
           const regenerate = t("重新生成", "Regenerate");
           const menuButton = story.getByRole("button", {
