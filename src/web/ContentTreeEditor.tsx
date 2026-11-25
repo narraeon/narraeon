@@ -109,10 +109,10 @@ export function ContentTreeEditor({
             <p className="field-note">
               {mode === "world-revision"
                 ? uiText(
-                    "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。",
+                    "保存到修订后还可以回滚。应用修订后，改动才会进入当前世界。",
                   )
                 : uiText(
-                    "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。",
+                    "整批保存会更新内容包。之后用这个包创建的世界会使用这些改动。",
                   )}
             </p>
           </details>

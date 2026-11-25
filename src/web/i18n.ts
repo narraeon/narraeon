@@ -745,8 +745,8 @@ const englishMessages: Record<string, string> = {
   扩展展帧加载失败: "Extension iframe failed to load",
   产物诊断: "Artifact diagnostics",
   内容包当前树: "Current content-package tree",
-  "逐份编辑 YAML／Markdown；整批保存时才原子替换已保存版本。":
-    "Edit YAML and Markdown files individually; the saved version is replaced atomically only when the whole draft is saved.",
+  "整批保存会更新内容包。之后用这个包创建的世界会使用这些改动。":
+    "Saving updates the content package. Worlds created from this package after saving will use these changes.",
   内容包编辑状态: "Content-package editing status",
   "已保存版本：": "Saved version:",
   可用: "Usable",
@@ -2336,8 +2336,8 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   世界状态: "World state",
   修订工作树: "Revision worktree",
   "手动编辑和 AI 共用一份修订": "Manual edits and the model share one revision",
-  "手动编辑与 AI 共用这棵 state／control 工作树；保存后仍可逐次回滚，应用才会提交世界。":
-    "Manual edits and model changes share this state/control worktree. Saved changes remain individually reversible; only Apply commits the world.",
+  "保存到修订后还可以回滚。应用修订后，改动才会进入当前世界。":
+    "You can roll back saved revision edits. Applying the revision puts the changes into this world.",
   "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。":
     "State and control are locked to this worktree. Changes can be rolled back individually; play unlocks only after Apply or Discard.",
   "先配置并启用模型，才能让 AI 参与或应用世界修订；手动编辑和放弃仍然可用。":

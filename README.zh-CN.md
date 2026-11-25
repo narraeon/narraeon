@@ -151,7 +151,7 @@ Narraeon 不依赖一段无限增长的聊天。全新上下文会从当前世�
 
 文件面板收起时，如果未保存的文件修改暂停了对话，可以在消息输入框旁选择 **整批保存** 或 **放弃未保存修改**。在世界修订中，**保存到修订** 会更新修订工作树。**放弃未保存修改** 只清除本地文件改动，已保存的修订和修订锁仍会保留。
 
-在内容包和世界修订的文件编辑器里新建 YAML 或 Markdown 世界文档时，草稿会带上可编辑的 `$document` 文件头和不重复的短引用。YAML 正文写在文件头下方，Markdown 正文写在标题下方。[文件编辑器规格](docs/specs/web-workspace-and-observation.md#12-手动新建文件)
+新建世界文档时，工作台会填好文件头和不重复的短引用。在文件编辑器选中 YAML 或 Markdown 世界文档，可以用表单修改标题、摘要和别名。打开 `control/player-views.yaml`，选择一份文档和字段，就能预览玩家看到的值。两处都可直接编辑源码，修改和预览共用当前草稿。[文件编辑器说明](docs/specs/web-workspace-and-observation.md#13-世界文档与玩家视图编辑)
 
 更详细的创作方法见 [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md)。
 
