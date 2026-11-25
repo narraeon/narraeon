@@ -8,7 +8,7 @@ interface YamlProblem {
 
 export function parseRestrictedYamlDocument(
   source: string,
-  options: { rejectRawControlCharacters: boolean },
+  options: { rejectRawControlCharacters: boolean; keepSourceTokens?: boolean },
 ):
   | { document: ReturnType<typeof parseDocument>; problems?: never }
   | {
@@ -31,6 +31,7 @@ export function parseRestrictedYamlDocument(
     schema: "core",
     strict: true,
     uniqueKeys: true,
+    keepSourceTokens: options.keepSourceTokens ?? false,
   });
   const problems: YamlProblem[] = [
     ...document.errors,

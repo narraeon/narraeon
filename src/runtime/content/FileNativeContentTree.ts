@@ -1,6 +1,6 @@
 import { gameplayPath, readGameplay } from "../../protocol/gameplay.ts";
 import { readPackageFollowups } from "./PackageFollowups.ts";
-import { parseRestrictedYamlDocument } from "../RestrictedYaml.ts";
+import { parseRestrictedYamlDocument } from "../../shared/restricted-yaml.ts";
 
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
 import {

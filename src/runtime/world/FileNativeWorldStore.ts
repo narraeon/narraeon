@@ -58,7 +58,7 @@ import {
   type MaterialSelection,
   type PromptPreview,
 } from "../prompt/FileNativePromptCompiler.ts";
-import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
+import { PlayerViewRenderer } from "../../shared/PlayerViewRenderer.ts";
 import { WorldDocumentStore } from "./WorldDocumentStore.ts";
 import {
   readWorldActivity,

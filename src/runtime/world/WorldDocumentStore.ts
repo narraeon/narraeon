@@ -17,7 +17,7 @@ export {
   locatorStartsWith,
   validMarkdownLocator,
   validYamlLocator,
-} from "./documents/WorldDocumentSource.ts";
+} from "../../shared/world-documents/WorldDocumentSource.ts";
 
 export class WorldDocumentStore {
   static open(input: {

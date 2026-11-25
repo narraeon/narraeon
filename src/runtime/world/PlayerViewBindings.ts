@@ -1,5 +1,5 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
-import { PlayerViewRenderer } from "./PlayerViewRenderer.ts";
+import { PlayerViewRenderer } from "../../shared/PlayerViewRenderer.ts";
 import type { WorldDocumentStore } from "./WorldDocumentStore.ts";
 
 /** An annotation about UI reads, never document content or write permission. */
