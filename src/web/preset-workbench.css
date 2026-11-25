@@ -417,6 +417,9 @@
 .play-preset-screen .play-preset-save-state {
   font-size: 12px;
 }
+.play-preset-screen .play-preset-save-state p {
+  margin: 0;
+}
 .play-preset-screen .play-preset-panel-editor-list {
   list-style: none;
   padding: 0;

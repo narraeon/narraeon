@@ -111,6 +111,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [selected, setSelected] = useState<string>("");
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
+  const [deletingPackage, setDeletingPackage] = useState(false);
+  const deletingPackageRef = useRef(false);
   const [creationSyncFailed, setCreationSyncFailed] = useState(false);
   const [creationSyncError, setCreationSyncError] = useState<unknown>();
   const [worldCreation] = useState(
@@ -176,6 +178,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     archivePending ||
     samplePending ||
     creatingWorld ||
+    deletingPackage ||
     creatingPackage ||
     playPresetNavigation.busy ||
     (modelDraftDirty && pendingModelAction !== null) ||
@@ -696,6 +699,20 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageId = selected,
   ): Promise<void> {
     const origin = locationRef.current;
+    const deletingFromEditor =
+      origin.screen === "content" && type === "content.delete";
+    if (deletingFromEditor) {
+      if (
+        origin.packageId !== packageId ||
+        deletingPackageRef.current ||
+        navigationProtection.current.dirty ||
+        navigationProtection.current.busy ||
+        creatingWorldRef.current
+      )
+        return;
+      deletingPackageRef.current = true;
+      setDeletingPackage(true);
+    }
     try {
       if (type === "content.copy") {
         acceptPackage(
@@ -720,12 +737,17 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       if (
         locationRef.current === origin &&
         !navigationProtection.current.dirty &&
-        !navigationProtection.current.busy
+        (deletingFromEditor || !navigationProtection.current.busy)
       )
         switchLocation({ screen: "home" });
     } catch (error: unknown) {
       await workspaceTarget.recover();
       report(error);
+    } finally {
+      if (deletingFromEditor) {
+        deletingPackageRef.current = false;
+        setDeletingPackage(false);
+      }
     }
   }
 
@@ -1109,7 +1131,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               },
             })}
         hasUnsavedFileDraft={filesDirty}
-        draftsLocked={authoring.draftsLocked}
+        draftsLocked={authoring.draftsLocked || deletingPackage}
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
         onNavigationProtectionChange={setChildNavigation}
@@ -1152,7 +1174,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           },
           onCopy: () => void contentCommand("content.copy"),
           onExport: () => void exportPackage(),
-          onDelete: () => void contentCommand("content.delete"),
+          onDelete: () => void contentCommand("content.delete", selected),
           title:
             selectedPackage?.title ?? selectedPackageDetail?.title ?? selected,
           onRename: (name) => void renamePackage(name),

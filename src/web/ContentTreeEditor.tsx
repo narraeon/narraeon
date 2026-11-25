@@ -25,7 +25,8 @@ export interface ContentTreeEditorProps {
   onReset: () => void;
   onCopy: () => void;
   onExport: () => void;
-  onDelete: () => void;
+  onDelete: (opener: HTMLButtonElement) => void;
+  deleteDisabled?: boolean;
   title: string;
   onRename: (title: string) => void;
   selectedPath?: string;
@@ -47,6 +48,7 @@ export function ContentTreeEditor({
   onCopy,
   onExport,
   onDelete,
+  deleteDisabled = false,
   title,
   onRename,
   selectedPath,
@@ -261,8 +263,8 @@ export function ContentTreeEditor({
               <button
                 type="button"
                 className="danger-button"
-                disabled={dirty}
-                onClick={onDelete}
+                disabled={dirty || deleteDisabled}
+                onClick={(event) => onDelete(event.currentTarget)}
               >
                 {uiText("删除内容包")}
               </button>

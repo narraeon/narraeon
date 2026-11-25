@@ -473,3 +473,81 @@ function contentFiles() {
     },
   ];
 }
+
+test("repairing imported orchestration source exposes a named panel with real label references", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  const library = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  const fixture = library.presets.find(
+    ({ id }) => id === library.currentPresetId,
+  )!;
+  await page.goto(`/#/orchestrations/${fixture.id}`);
+  await page.getByText("编排方案管理", { exact: true }).click();
+  await page.getByLabel("选择要导入的编排方案").setInputFiles({
+    name: "待修复.orchestration.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify(
+        Object.entries(fixture.files).map(([path, contents]) => ({
+          path,
+          contents,
+        })),
+      ),
+    ),
+  });
+  await expect(page.getByText(/编排方案已导入为独立副本/u)).toBeVisible();
+  const imported = (
+    await runtime<FileNativePlayPresetLibrary>(page, {
+      type: "play.read",
+    })
+  ).presets.find(({ name }) => name === "待修复")!;
+
+  // The current importer validates new uploads. Persist an invalid draft on
+  // the imported copy to exercise the existing recovery path.
+  const brokenManifest = "format: [\n";
+  await runtime(page, {
+    type: "play.save",
+    presetId: imported.id,
+    name: imported.name,
+    files: { ...imported.files, "orchestration.yaml": brokenManifest },
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "修复导入原文", exact: true }).click();
+  const filesPanel = page.locator("#play-preset-panel-files");
+  await expect(filesPanel).toBeVisible();
+  const unresolvedLabels = await filesPanel.evaluate((element) =>
+    (element.getAttribute("aria-labelledby") ?? "")
+      .split(/\s+/u)
+      .filter((id) => !document.getElementById(id)),
+  );
+  expect(unresolvedLabels).toEqual([]);
+  await expect(filesPanel).toHaveAccessibleName("完整编排方案文件");
+  await expect(
+    page.getByRole("tabpanel", { name: "完整编排方案文件" }),
+  ).toBeVisible();
+  const source = filesPanel.getByRole("textbox", {
+    name: "编辑编排方案文件 orchestration.yaml",
+  });
+  await expect(source).toHaveValue(brokenManifest);
+  await source.fill(imported.files["orchestration.yaml"]!);
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(
+    page.getByText("编排方案检查通过", { exact: true }),
+  ).toBeVisible();
+
+  for (const name of ["游玩", "设定完善"]) {
+    const tab = page.getByRole("tab", { name, exact: true });
+    await tab.click();
+    const tabId = await tab.getAttribute("id");
+    const panelId = await tab.getAttribute("aria-controls");
+    const panel = page.getByRole("tabpanel", { name, exact: true });
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("id", panelId!);
+    await expect(panel).toHaveAttribute("aria-labelledby", tabId!);
+  }
+});

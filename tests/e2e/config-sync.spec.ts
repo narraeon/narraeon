@@ -169,6 +169,12 @@ test("model save and delete lost receipts reconcile the library once, and endpoi
   });
   await oldCard.getByRole("button", { name: "编辑", exact: true }).click();
   await oldCard.getByRole("button", { name: "删除", exact: true }).click();
+  const confirm = page.getByRole("dialog", {
+    name: /删除模型连接“后端已保存但回包丢失”/,
+  });
+  await expect(confirm).toBeVisible();
+  expect(deletes).toBe(0);
+  await confirm.getByRole("button", { name: "删除", exact: true }).click();
   await expect(page.getByLabel("配置名称")).toHaveValue("默认模型");
   expect(deletes).toBe(1);
   expect(reads).toBe(3);
