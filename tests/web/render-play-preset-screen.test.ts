@@ -203,6 +203,12 @@ test("删除回执生效后列表读取失败，重试只读取重建的编排�
   );
   fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
   fireEvent.click(screen.getByRole("button", { name: "删除编排方案" }));
+  expect(request).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(
+      screen.getByRole("dialog", { name: /删除编排方案“工作台”/u }),
+    ).getByRole("button", { name: "删除" }),
+  );
   await screen.findByText("暂时无法同步");
   expect(
     screen.getByText("编排方案已删除；删空后会自动重建默认编排方案。"),

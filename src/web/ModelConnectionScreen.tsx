@@ -9,6 +9,10 @@ import {
 } from "react";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
 
 import {
   hasCLIProxyThinkingSuffix,
@@ -106,6 +110,9 @@ export function ModelConnectionScreen({
   const localPending = useState<string | null>(null);
   const [pending, setPending] = pendingState ?? localPending;
   const [dirty, setDirty] = useState(false);
+  const [deletion, setDeletion] = useState<ConfirmationRequest<
+    Pick<ModelConnectionView, "id" | "name">
+  > | null>(null);
   const advancedOptions = useRef<HTMLDetailsElement>(null);
   const editing = useRef({ dirty, form, onLibraryChange });
   useEffect(() => {
@@ -373,8 +380,44 @@ export function ModelConnectionScreen({
     }
   }
 
+  function canDelete(connectionId: string): boolean {
+    return (
+      pending === null &&
+      !dirty &&
+      (library.activeConnectionId !== connectionId ||
+        library.connections.length === 1)
+    );
+  }
+
+  function requestDeletion(
+    { id, name }: ModelConnectionView,
+    opener: HTMLButtonElement,
+  ): void {
+    setDeletion({
+      action: { id, name },
+      opener,
+      message: uiText(
+        "删除模型连接“{name}”？配置和本机凭据都会被移除，且无法撤销。",
+        { name },
+      ),
+      confirmLabel: uiText("删除"),
+    });
+  }
+
+  function decideDeletion(confirmed: boolean): void {
+    setDeletion(null);
+    if (!confirmed || deletion === null) return;
+    const { id, name } = deletion.action;
+    if (
+      canDelete(id) &&
+      library.connections.some(
+        (connection) => connection.id === id && connection.name === name,
+      )
+    )
+      void remove(id);
+  }
+
   async function remove(connectionId: string): Promise<void> {
-    if (pending !== null) return;
     setPending(`delete:${connectionId}`);
     try {
       const next = await target.command(() =>
@@ -1167,12 +1210,10 @@ export function ModelConnectionScreen({
                   </button>
                   <button
                     className="danger-button"
-                    disabled={
-                      pending !== null ||
-                      dirty ||
-                      (isActive && library.connections.length > 1)
+                    disabled={!canDelete(connection.id)}
+                    onClick={(event) =>
+                      requestDeletion(connection, event.currentTarget)
                     }
-                    onClick={() => void remove(connection.id)}
                     type="button"
                   >
                     {pending === `delete:${connection.id}`
@@ -1190,6 +1231,9 @@ export function ModelConnectionScreen({
           })}
         </section>
       </fieldset>
+      {deletion !== null && (
+        <ConfirmationDialog request={deletion} onDecision={decideDeletion} />
+      )}
     </section>
   );
 }

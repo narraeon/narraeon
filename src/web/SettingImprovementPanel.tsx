@@ -73,6 +73,7 @@ type RevisionDiscardTarget = Pick<
 >;
 type AuthoringConfirmation =
   | { kind: "delete-session"; item: V1SettingImprovementHistoryItem }
+  | { kind: "delete-package"; title: string }
   | {
       kind: "discard-revision";
       epoch: RevisionDiscardTarget;
@@ -95,7 +96,9 @@ interface SettingImprovementPanelProps {
     now: number;
   };
   notice: string;
-  contentEditor: ContentTreeEditorProps;
+  contentEditor: Omit<ContentTreeEditorProps, "onDelete"> & {
+    onDelete: () => void;
+  };
   conversationActions: {
     onRead?: () => void;
     onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
@@ -278,6 +281,12 @@ export function SettingImprovementPanel({
   const rollbackDisabled =
     loading || interactionLocked || hasUnsavedFileDraft || draftsLocked;
   const revisingWorld = target === "world-revision";
+  const packageDeleteLocked =
+    revisingWorld ||
+    loading ||
+    interactionLocked ||
+    draftsLocked ||
+    contentEditor.dirty;
   const historyLocked =
     loading ||
     rollbackRunning ||
@@ -472,6 +481,21 @@ export function SettingImprovementPanel({
     });
   }
 
+  function requestPackageDeletion(opener: HTMLButtonElement): void {
+    if (packageDeleteLocked) return;
+    const { title } = contentEditor;
+    setConfirmation({
+      action: { kind: "delete-package", title },
+      opener,
+      fallback: opener.closest("details")?.querySelector("summary") ?? null,
+      message: uiText(
+        "删除内容包“{title}”？它会从本机移除，且无法撤销。已创建的世界不受影响。",
+        { title },
+      ),
+      confirmLabel: uiText("删除"),
+    });
+  }
+
   function decideConfirmation(confirmed: boolean): void {
     setConfirmation(null);
     if (!confirmed || confirmation === null) return;
@@ -489,6 +513,9 @@ export function SettingImprovementPanel({
         item.excerpt === action.item.excerpt
       )
         void deleteSession(item.sessionId);
+    } else if (action.kind === "delete-package") {
+      if (!packageDeleteLocked && contentEditor.title === action.title)
+        contentEditor.onDelete();
     } else if (
       !discardLocked &&
       packageName === action.worldName &&
@@ -1179,6 +1206,8 @@ export function SettingImprovementPanel({
               >
                 <ContentTreeEditor
                   {...contentEditor}
+                  deleteDisabled={packageDeleteLocked}
+                  onDelete={requestPackageDeletion}
                   selectedPath={selectedFilePath}
                   onSelectedPathChange={setSelectedFilePath}
                   embedded

@@ -1,4 +1,5 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
 import type { ProtagonistTemplatesView } from "../../src/protocol/protagonistTemplates.ts";
 import type {
   V1Request,
@@ -396,3 +397,215 @@ test("revision discard keeps newer work saved while the confirmation is open", a
   expect(world.head).toBe(epoch.baseHead);
   expect(world.worldRevision).toBeNull();
 });
+
+for (const locale of ["en", "zh-CN"] as const) {
+  const cn = locale === "zh-CN";
+  const cancelLabel = cn ? "取消" : "Cancel";
+  const confirmLabel = cn ? "删除" : "Delete";
+
+  async function cancelAndConfirmDeletion(
+    page: Page,
+    opener: Locator,
+    warning: RegExp,
+    writes: V1Request[],
+    expected: V1Request,
+    assertRetained: () => Promise<void>,
+  ): Promise<void> {
+    const url = page.url();
+    const dialog = page.getByRole("dialog", { name: warning });
+    const cancel = dialog.getByRole("button", { name: cancelLabel });
+    await opener.click();
+    await expect(dialog).toBeVisible({ timeout: 2_000 });
+    expect(writes).toEqual([]);
+    await expect(cancel).toBeFocused();
+    await cancel.click();
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+
+    await page.keyboard.press("Enter");
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+
+    await opener.click();
+    expect(await androidBack(page)).toBe(true);
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    expect(page.url()).toBe(url);
+    await assertRetained();
+    expect(writes).toEqual([]);
+
+    await opener.click();
+    await dialog.getByRole("button", { name: confirmLabel }).dblclick();
+    await expect(opener).toBeHidden();
+    expect(writes).toEqual([expected]);
+  }
+
+  test(`model deletion confirms the named connection (${locale})`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale });
+    await configureModel(page);
+    const name = "Connection to remove";
+    const library = await runtime<ModelConnectionLibraryView>(page, {
+      type: "model.save",
+      connection: {
+        ...model,
+        name,
+        presetId: "custom",
+        baseUrl: "http://127.0.0.1:1/v1",
+        apiKey: "fixture-key",
+      },
+    });
+    const connectionId = library.connections.find(
+      (item) => item.name === name,
+    )!.id;
+    await runtime(page, {
+      type: "model.select",
+      connectionId: library.connections.find(
+        (item) => item.id !== connectionId,
+      )!.id,
+    });
+    const writes = browserWrites(page, ["model.delete"]);
+    await page.goto("/#/models");
+    const card = page.getByRole("article").filter({ hasText: name });
+    const opener = card.getByRole("button", {
+      name: confirmLabel,
+      exact: true,
+    });
+    const input = page.getByLabel(cn ? "配置名称" : "Configuration name", {
+      exact: true,
+    });
+    await input.fill("Unsaved model draft");
+    await expect(opener).toBeDisabled();
+    await expect(input).toHaveValue("Unsaved model draft");
+    await page
+      .getByRole("button", {
+        name: cn ? "放弃修改" : "Discard changes",
+        exact: true,
+      })
+      .click();
+    await cancelAndConfirmDeletion(
+      page,
+      opener,
+      cn
+        ? /删除模型连接“Connection to remove”.*本机凭据/
+        : /Delete model connection “Connection to remove”.*local credentials/,
+      writes,
+      { type: "model.delete", connectionId },
+      async () => {
+        await expect(card).toBeVisible();
+      },
+    );
+    await expect(
+      page.getByText("Confirmation fixture", { exact: true }).first(),
+    ).toBeVisible();
+  });
+
+  test(`orchestration deletion confirms the named plan (${locale})`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale });
+    const name = "Orchestration to remove";
+    const { preset } = await runtime<{ preset: { id: string } }>(page, {
+      type: "play.create",
+      name,
+    });
+    const writes = browserWrites(page, ["play.delete"]);
+    await page.goto(`/#/orchestrations/${preset.id}`);
+    await page
+      .getByText(cn ? "编排方案操作" : "Orchestration actions", { exact: true })
+      .click();
+    const opener = page.getByRole("button", {
+      name: cn ? "删除编排方案" : "Delete orchestration",
+      exact: true,
+    });
+    const input = page.getByRole("textbox", {
+      name: cn ? "编排方案名称" : "Orchestration name",
+      exact: true,
+    });
+    await input.fill("Unsaved orchestration name");
+    await expect(opener).toBeDisabled();
+    await expect(input).toHaveValue("Unsaved orchestration name");
+    await input.fill(name);
+    await cancelAndConfirmDeletion(
+      page,
+      opener,
+      cn
+        ? /删除编排方案“Orchestration to remove”.*草稿.*无法撤销/
+        : /Delete orchestration “Orchestration to remove”.*draft.*cannot be undone/,
+      writes,
+      { type: "play.delete", presetId: preset.id },
+      async () => {
+        await expect(input).toHaveValue(name);
+      },
+    );
+    await expect(
+      page
+        .getByRole("combobox", {
+          name: cn ? "切换编排方案" : "Switch orchestration",
+        })
+        .getByRole("option", { name }),
+    ).toHaveCount(0);
+  });
+
+  test(`content editor deletion confirms the named package (${locale})`, async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale });
+    const { localId: packageId } = await runtime<{ localId: string }>(page, {
+      type: "content.create",
+    });
+    const name = "Package to remove";
+    await runtime(page, { type: "content.rename", packageId, name });
+    const writes = browserWrites(page, ["content.delete"]);
+    await page.goto(`/#/content/${packageId}`);
+    await page
+      .getByRole("navigation", {
+        name: cn ? "设定完善工具" : "Setting-improvement tools",
+      })
+      .getByRole("button", { name: cn ? "编辑" : "Edit", exact: true })
+      .click();
+    const rail = page.getByRole("complementary", {
+      name: cn ? "内容包文件编辑" : "Content-package file editing",
+    });
+    await rail
+      .getByText(cn ? "内容包操作" : "Content-package actions", { exact: true })
+      .click();
+    const opener = rail.getByRole("button", {
+      name: cn ? "删除内容包" : "Delete content package",
+      exact: true,
+    });
+    const fileDraft = rail.getByRole("textbox", {
+      name: cn ? "编辑 opening.md" : "Edit opening.md",
+      exact: true,
+    });
+    await fileDraft.fill("Unsaved opening text");
+    await expect(opener).toBeDisabled();
+    await expect(fileDraft).toHaveValue("Unsaved opening text");
+    await rail
+      .getByRole("button", {
+        name: cn ? "放弃未保存修改" : "Discard unsaved changes",
+        exact: true,
+      })
+      .click();
+    const titleDraft = rail.getByRole("textbox", {
+      name: cn ? "内容包标题" : "Content-package title",
+    });
+    await titleDraft.fill("Unsaved package title");
+    await cancelAndConfirmDeletion(
+      page,
+      opener,
+      cn
+        ? /删除内容包“Package to remove”.*已创建的世界不受影响/
+        : /Delete content package “Package to remove”.*Existing worlds are unaffected/,
+      writes,
+      { type: "content.delete", packageId },
+      async () => {
+        await expect(titleDraft).toHaveValue("Unsaved package title");
+      },
+    );
+    await expect(page).toHaveURL(/#\/$/);
+  });
+}

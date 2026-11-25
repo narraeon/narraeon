@@ -562,10 +562,16 @@ const englishMessages: Record<string, string> = {
   列在最近一次请求的材料中: "Listed in the latest request materials",
   查看下次发送的完整提示词预览:
     "View the full prompt preview for the next send",
-  "游玩在下一次正常发送生效，原样重试保留旧请求":
-    "Play changes take effect on the next normal send; exact retries retain the saved request.",
-  "· 游玩修改在下一次正常发送生效":
-    "· Play changes take effect on the next normal send",
+  "正常游玩发送使用当前方案的已应用修订，原样重试保留旧请求。":
+    "Normal play sends use the current orchestration’s applied revision. Exact retries use the saved request.",
+  "应用为当前编排方案后，下一次正常发送才会使用它。":
+    "Apply this orchestration to use it on the next normal send.",
+  "下一次正常发送将使用此编排方案的已应用修订。":
+    "The next normal send uses this orchestration’s applied revision.",
+  "下一次正常发送仍使用已应用的修订。请应用已保存的草稿以使其生效。":
+    "The next normal send still uses the applied revision. Apply the saved draft to use it.",
+  "下一次正常发送仍使用已应用的修订。请修复草稿后再应用。":
+    "The next normal send still uses the applied revision. Repair the draft before applying it.",
   "保留原生对话，重新编译当前提示和材料":
     "Preserve the native conversation and recompile current prompts and materials",
   "AI 在这段对话中读过": "What the AI has read in this conversation",
@@ -880,6 +886,8 @@ const englishMessages: Record<string, string> = {
     "Active model updated (no automatic fallback on errors).",
   "模型配置已从本机删除。":
     "The model configuration was deleted from this device.",
+  "删除模型连接“{name}”？配置和本机凭据都会被移除，且无法撤销。":
+    "Delete model connection “{name}”? Its configuration and local credentials will be removed. This cannot be undone.",
   "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。":
     "Cloned as “{name}”. The copy keeps the locally stored credential without switching the active configuration.",
   "保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时 Runtime 不会悄悄改用另一份配置。":
@@ -1012,6 +1020,8 @@ const playPresetEnglishMessages: Record<string, string> = {
   "编排方案已删除；删空后会自动重建默认编排方案。":
     "The orchestration was deleted. Deleting the last orchestration automatically rebuilds the default.",
   删除编排方案: "Delete orchestration",
+  "删除编排方案“{name}”？它的修订和草稿都会从编排方案库移除，且无法撤销。":
+    "Delete orchestration “{name}”? Its revisions and drafts will be removed from the orchestration library. This cannot be undone.",
   "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。":
     "Imported JavaScript is disabled by default. Enabling it means you trust these local files; it does not provide a security sandbox.",
   编排方案摘要: "Orchestration summary",

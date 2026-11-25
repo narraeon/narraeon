@@ -385,6 +385,12 @@ test.each([false, true])(
     await waitFor(() => expect(deleteButton.disabled).toBe(false));
     const before = request.mock.calls.length;
     fireEvent.click(deleteButton);
+    expect(request.mock.calls).toHaveLength(before);
+    fireEvent.click(
+      within(
+        screen.getByRole("dialog", { name: /删除内容包“当前创作”/u }),
+      ).getByRole("button", { name: "删除" }),
+    );
     await screen.findByRole("heading", { name: "世界工作区" });
     expect(window.location.hash).toBe("#/");
     expect(
@@ -663,6 +669,12 @@ test.each(["model", "preset"])(
     );
     fireEvent.click(screen.getByText("编排方案操作", { selector: "summary" }));
     fireEvent.click(screen.getByRole("button", { name: "删除编排方案" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: /删除编排方案/u })).getByRole(
+        "button",
+        { name: "删除" },
+      ),
+    );
     await screen.findByText(messages.preset);
     const callsBeforeClosing = request.mock.calls.length;
     const order = first === "model" ? ["model", "preset"] : ["preset", "model"];

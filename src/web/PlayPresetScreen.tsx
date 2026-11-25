@@ -17,6 +17,10 @@ import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
 import { SillyTavernImport } from "./SillyTavernImport.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
 import { type FollowupItem } from "../shared/ordered-followups.ts";
 import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
@@ -359,6 +363,9 @@ export function PlayPresetScreen({
     useState<PlayPresetWorkspaceView>("call_chain");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [deletion, setDeletion] = useState<ConfirmationRequest<
+    Pick<PlayPresetScreenPreset, "id" | "name">
+  > | null>(null);
 
   const saved = useMemo(
     () => library.presets.find(({ id }) => id === draft?.id),
@@ -408,6 +415,16 @@ export function PlayPresetScreen({
   const currentPreset = library.presets.find(
     ({ id }) => id === library.currentPresetId,
   );
+  const selectedIsCurrent = draft?.id === library.currentPresetId;
+  const nextSend = !selectedIsCurrent
+    ? uiText("应用为当前编排方案后，下一次正常发送才会使用它。")
+    : saved?.draft === undefined
+      ? uiText("下一次正常发送将使用此编排方案的已应用修订。")
+      : saved.draft.validation.status === "valid"
+        ? uiText(
+            "下一次正常发送仍使用已应用的修订。请应用已保存的草稿以使其生效。",
+          )
+        : uiText("下一次正常发送仍使用已应用的修订。请修复草稿后再应用。");
   const applyRead = useRef<
     ((next: PlayPresetScreenLibrary) => void) | undefined
   >(undefined);
@@ -700,12 +717,59 @@ export function PlayPresetScreen({
     });
   }
 
+  function requestDeletion(
+    { id, name }: PlayPresetScreenPreset,
+    opener: HTMLButtonElement,
+  ): void {
+    setDeletion({
+      action: { id, name },
+      opener,
+      fallback: opener.closest("details")?.querySelector("summary") ?? null,
+      message: uiText(
+        "删除编排方案“{name}”？它的修订和草稿都会从编排方案库移除，且无法撤销。",
+        { name },
+      ),
+      confirmLabel: uiText("删除"),
+    });
+  }
+
+  function decideDeletion(confirmed: boolean): void {
+    setDeletion(null);
+    if (!confirmed || dirty || deletion === null) return;
+    const { id, name } = deletion.action;
+    if (saved?.id !== id || saved.name !== name) return;
+
+    void run(async () => {
+      const receipt = await request<{ currentPresetId: string }>({
+        type: "play.delete",
+        presetId: id,
+      });
+      const remaining = library.presets.filter((preset) => preset.id !== id);
+      const currentStillPresent = remaining.some(
+        (preset) =>
+          preset.enabled !== false && preset.id === receipt.currentPresetId,
+      );
+      target.accept({ complete: false });
+      applyLibrary({
+        currentPresetId: receipt.currentPresetId,
+        presets: currentStillPresent ? remaining : [],
+      });
+      // Runtime rebuilds the default library after deletion of the last enabled preset.
+      if (!currentStillPresent) await target.read();
+      setFeedback({
+        kind: "status",
+        text: uiText("编排方案已删除；删空后会自动重建默认编排方案。"),
+      });
+    });
+  }
+
   return (
     <section
       ref={screenRef}
       className="play-preset-screen"
       aria-labelledby="play-preset-title"
       onPointerDownCapture={(event) => {
+        if (deletion !== null) return;
         for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
           openPresetMenus,
         ))
@@ -713,7 +777,7 @@ export function PlayPresetScreen({
             menu.open = false;
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape")
+        if (event.key === "Escape" && deletion === null)
           for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
             openPresetMenus,
           ))
@@ -732,7 +796,9 @@ export function PlayPresetScreen({
           <span>{uiText("当前使用的编排方案")}</span>
           <strong>{currentPreset?.name ?? uiText("未选择")}</strong>
           <small>
-            {uiText("游玩在下一次正常发送生效，原样重试保留旧请求")}
+            {uiText(
+              "正常游玩发送使用当前方案的已应用修订，原样重试保留旧请求。",
+            )}
           </small>
         </div>
       </header>
@@ -1018,38 +1084,8 @@ export function PlayPresetScreen({
                         type="button"
                         className="danger-button"
                         disabled={pending || dirty}
-                        onClick={() =>
-                          void run(async () => {
-                            const receipt = await request<{
-                              currentPresetId: string;
-                            }>({
-                              type: "play.delete",
-                              presetId: draft.id,
-                            });
-                            const remaining = library.presets.filter(
-                              (p) => p.id !== draft.id,
-                            );
-                            const currentStillPresent = remaining.some(
-                              (p) =>
-                                p.enabled !== false &&
-                                p.id === receipt.currentPresetId,
-                            );
-                            target.accept({ complete: false });
-                            applyLibrary({
-                              currentPresetId: receipt.currentPresetId,
-                              presets: currentStillPresent ? remaining : [],
-                            });
-                            // Runtime rebuilds the default library after deletion of the last enabled preset.
-                            if (!currentStillPresent) {
-                              await target.read();
-                            }
-                            setFeedback({
-                              kind: "status",
-                              text: uiText(
-                                "编排方案已删除；删空后会自动重建默认编排方案。",
-                              ),
-                            });
-                          })
+                        onClick={(event) =>
+                          requestDeletion(draft, event.currentTarget)
                         }
                       >
                         {uiText("删除编排方案")}
@@ -1132,19 +1168,14 @@ export function PlayPresetScreen({
               aria-label={uiText("编排方案编辑器")}
             >
               <header className="play-preset-editor-header">
-                <div>
-                  <h3>{draft.name}</h3>
-                  <p className="field-note">
-                    {uiText("· 游玩修改在下一次正常发送生效")}
-                  </p>
-                </div>
+                <h3>{draft.name}</h3>
                 <div className="play-preset-editor-badges">
                   <span
                     className={`play-preset-draft-state${dirty ? " dirty" : ""}`}
                   >
                     {dirty ? uiText("未保存修改") : uiText("已保存")}
                   </span>
-                  {draft.id === library.currentPresetId ? (
+                  {selectedIsCurrent ? (
                     <span className="play-preset-badge current">
                       {uiText("当前编排方案")}
                     </span>
@@ -1170,63 +1201,75 @@ export function PlayPresetScreen({
               {draft.structure &&
               (workspaceView === "call_chain" ||
                 workspaceView === "setting_improvement") ? (
-                <PresetWorkbenchEditor
-                  key={`${draft.id}:${workspaceView}`}
-                  structure={draft.structure}
-                  files={draft.files}
-                  authoring={workspaceView === "setting_improvement"}
-                  modelConnection={modelConnection}
-                  onEditModelConnection={onEditModelConnection}
-                  onChange={updateStructure}
-                  onWrite={updateFileAtPath}
-                  onResourceEdit={updateResources}
-                  promptPreview={
-                    <details className="preset-draft-preview">
-                      <summary>{uiText("发送给 AI 的内容预览")}</summary>
-                      {dirty ? (
-                        <p>
-                          {uiText(
-                            "请先保存当前修改；这里预览的是已保存且校验通过的编排方案，不包含未保存修改。",
-                          )}
-                        </p>
+                <div
+                  id={`play-preset-panel-${workspaceView}`}
+                  role="tabpanel"
+                  aria-labelledby={`play-preset-tab-${workspaceView}`}
+                >
+                  <PresetWorkbenchEditor
+                    key={`${draft.id}:${workspaceView}`}
+                    structure={draft.structure}
+                    files={draft.files}
+                    authoring={workspaceView === "setting_improvement"}
+                    modelConnection={modelConnection}
+                    onEditModelConnection={onEditModelConnection}
+                    onChange={updateStructure}
+                    onWrite={updateFileAtPath}
+                    onResourceEdit={updateResources}
+                    promptPreview={
+                      <details className="preset-draft-preview">
+                        <summary>{uiText("发送给 AI 的内容预览")}</summary>
+                        {dirty ? (
+                          <p>
+                            {uiText(
+                              "请先保存当前修改；这里预览的是已保存且校验通过的编排方案，不包含未保存修改。",
+                            )}
+                          </p>
+                        ) : (
+                          renderPromptPreview?.({
+                            presetId: draft.id,
+                            revision: draft.revision,
+                          })
+                        )}
+                      </details>
+                    }
+                    preview={(requestId, output) =>
+                      requestId && output ? (
+                        <PresetDraftPreview
+                          key={`${requestId}:${output}`}
+                          client={client}
+                          presetId={draft.id}
+                          revision={draft.revision}
+                          files={draft.files}
+                          structure={
+                            draft.structure as unknown as Record<
+                              string,
+                              unknown
+                            >
+                          }
+                          scriptsEnabled={draft.scriptsEnabled === true}
+                          requestId={requestId}
+                          output={output}
+                        />
                       ) : (
-                        renderPromptPreview?.({
-                          presetId: draft.id,
-                          revision: draft.revision,
-                        })
-                      )}
-                    </details>
-                  }
-                  preview={(requestId, output) =>
-                    requestId && output ? (
-                      <PresetDraftPreview
-                        key={`${requestId}:${output}`}
-                        client={client}
-                        presetId={draft.id}
-                        revision={draft.revision}
-                        files={draft.files}
-                        structure={
-                          draft.structure as unknown as Record<string, unknown>
-                        }
-                        scriptsEnabled={draft.scriptsEnabled === true}
-                        requestId={requestId}
-                        output={output}
-                      />
-                    ) : (
-                      <InterfaceExtensionPreview
-                        client={client}
-                        presetId={draft.id}
-                        revision={draft.revision}
-                        files={draft.files}
-                        structure={
-                          draft.structure as unknown as Record<string, unknown>
-                        }
-                        conflict={structuralConflict}
-                        scriptsEnabled={draft.scriptsEnabled === true}
-                      />
-                    )
-                  }
-                />
+                        <InterfaceExtensionPreview
+                          client={client}
+                          presetId={draft.id}
+                          revision={draft.revision}
+                          files={draft.files}
+                          structure={
+                            draft.structure as unknown as Record<
+                              string,
+                              unknown
+                            >
+                          }
+                          conflict={structuralConflict}
+                          scriptsEnabled={draft.scriptsEnabled === true}
+                        />
+                      )
+                    }
+                  />
+                </div>
               ) : null}
               {workspaceView === "files" ? (
                 <PresetFileWorkspace
@@ -1298,11 +1341,12 @@ export function PlayPresetScreen({
                         ? uiText("编排方案检查通过")
                         : uiText("草稿需要修复")}
                   </strong>
-                  <span>
-                    {draft.validation.status === "valid"
-                      ? uiText("· 游玩修改在下一次正常发送生效")
-                      : `[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
-                  </span>
+                  <p>{nextSend}</p>
+                  {draft.validation.status === "invalid" && (
+                    <span>
+                      {`[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
+                    </span>
+                  )}
                 </div>
                 <div className="play-preset-primary-actions">
                   {dirty ? (
@@ -1357,6 +1401,9 @@ export function PlayPresetScreen({
           )}
         </div>
       </fieldset>
+      {deletion !== null && (
+        <ConfirmationDialog request={deletion} onDecision={decideDeletion} />
+      )}
     </section>
   );
 }
@@ -1755,7 +1802,7 @@ function PresetFileWorkspace({
       id="play-preset-panel-files"
       className="play-preset-file-workspace"
       role="tabpanel"
-      aria-labelledby="play-preset-tab-files play-preset-files-title"
+      aria-labelledby="play-preset-files-title"
     >
       <header className="play-preset-workspace-heading">
         <div>
