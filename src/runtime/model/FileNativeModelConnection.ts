@@ -90,16 +90,21 @@ export function resolveConnection(
     supportsAllowedTools: connection.supportsAllowedTools ?? true,
     assistantPrefillMode: connection.assistantPrefillMode ?? "disabled",
   });
-  const issue = modelReasoningPolicyIssue({
-    provider: resolved.provider,
-    dialect: resolved.dialect,
-    modelId: resolved.modelId,
-    effort: resolved.reasoningEffort,
-    summary: resolved.reasoningSummary,
-    thinking: resolved.thinkingMode,
-    thinkingBudgetTokens: resolved.thinkingBudgetTokens,
-    maxOutputTokens: resolved.maxOutputTokens,
-  });
+  // Historical bindings can still be inspected. The Google encoder checks
+  // the current reasoning policy before it previews or sends a request.
+  const issue = modelReasoningPolicyIssue(
+    {
+      provider: resolved.provider,
+      dialect: resolved.dialect,
+      modelId: resolved.modelId,
+      effort: resolved.reasoningEffort,
+      summary: resolved.reasoningSummary,
+      thinking: resolved.thinkingMode,
+      thinkingBudgetTokens: resolved.thinkingBudgetTokens,
+      maxOutputTokens: resolved.maxOutputTokens,
+    },
+    { allowLegacyGoogleSettings: true },
+  );
   if (issue !== null) throw new Error(issue);
   return resolved;
 }

@@ -229,6 +229,7 @@ function validGoogleGenerationConfig(config: Record<string, unknown>): boolean {
     return true;
   if (config.thinking_level !== undefined) return false;
   let budget = config.thinking_budget;
+  // Earlier versions recorded nested standard budgets in historical previews.
   if (config.thinking !== undefined) {
     if (
       budget !== undefined ||

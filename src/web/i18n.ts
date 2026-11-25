@@ -2505,8 +2505,16 @@ const dynamicEnglishMessages: Record<string, string> = {
   "Effort（推理强度）": "Effort (reasoning intensity)",
   "Thinking（思考模式）": "Thinking mode",
   "Thinking（兼容预算模式）": "Thinking (compatibility budget mode)",
-  "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。":
-    "Google sends thinking_level for effort and thinking_summaries for summaries. Compatibility budget modes use thinking_budget instead of a level: adaptive sends -1, disabled sends 0, and manual sends the entered integer. Support depends on the endpoint and model.",
+  "标准 Google Interactions 用 thinking_level 控制推理强度，用 thinking_summaries 控制是否返回摘要。请按所用模型选择推理强度，或保留 Provider 默认。":
+    "Standard Google Interactions uses thinking_level for effort and thinking_summaries for summaries. Choose a level your model supports or leave it at Provider default.",
+  "CLIProxyAPI 用 thinking_level 控制推理强度，用 thinking_summaries 控制是否返回摘要。兼容预算模式用 thinking_budget，adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。":
+    "CLIProxyAPI uses thinking_level for effort and thinking_summaries for summaries. Compatibility budget modes use thinking_budget. Adaptive sends -1, disabled sends 0, and manual sends the entered integer.",
+  "这份配置含有旧的思考预算。请把兼容预算模式设为 Provider 默认，或选择模型支持的推理强度。如果端点是兼容代理，可以切换到 CLIProxyAPI 方言并保留预算。":
+    "This connection has a saved thinking budget. Set compatibility budget mode to Provider default or choose a level your model supports. If the endpoint is a compatible proxy, switch to the CLIProxyAPI dialect to keep the budget.",
+  "标准 Google Interactions 的 Gemini 4 Neon 和 Gemini 4 Hydrogen 支持 low、medium、high 和 xhigh。请重新选择推理强度或 Provider 默认。":
+    "Gemini 4 Neon and Gemini 4 Hydrogen on standard Google Interactions support low, medium, high, and xhigh. Choose one of those levels or Provider default.",
+  "标准 Google Interactions 的 xhigh 适用于 Gemini 4 Neon 和 Gemini 4 Hydrogen。请为当前连接选择可用的推理强度或 Provider 默认。":
+    "Standard Google Interactions supports xhigh for Gemini 4 Neon and Gemini 4 Hydrogen. Choose an available level for this connection or leave it at Provider default.",
   "Thinking 返回内容": "Returned thinking content",
   "Thinking budget tokens": "Thinking budget tokens",
   "手动 token 预算": "Manual token budget",

@@ -160,7 +160,7 @@ for (const locale of ["zh-CN", "en"] as const) {
         name: oldName,
         presetId: "custom",
         provider,
-        dialect: google ? "standard" : "cliproxyapi",
+        dialect: "cliproxyapi",
         baseUrl,
         apiKey,
         modelId,
@@ -285,6 +285,21 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(thinking).toHaveValue(google ? "auto" : "concise");
     if (google) {
       await expect(budget).toHaveValue("3072");
+      await label("端点方言", "Endpoint dialect").selectOption("standard");
+      await expect(budget).toHaveAttribute("readonly", "");
+      await model.fill("gemini-4-neon");
+      await expect(effort.locator('option[value="minimal"]')).toHaveCount(0);
+      await effort.selectOption("xhigh");
+      await expect(budget).toHaveCount(0);
+      await save.click();
+      await expect(
+        page.getByText("模型连接已保存并启用；后续请求只使用当前配置。"),
+      ).toBeVisible();
+      await page.reload();
+      await summary.press(toggleKey);
+      await expect(effort).toHaveValue("xhigh");
+      await expect(thinking).toHaveValue("auto");
+      await expect(budget).toHaveCount(0);
     } else {
       await expect(cache).toHaveValue("true");
       await expect(tools).toHaveValue("false");

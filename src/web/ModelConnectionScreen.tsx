@@ -11,12 +11,12 @@ import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 
 import {
+  googleThinkingLevelsFor,
   hasCLIProxyThinkingSuffix,
   isGoogleThinkingLevel,
   isSameModelServiceOrigin,
   modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
-  googleThinkingLevels,
   type AnthropicPromptCacheTtl,
   type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
@@ -155,6 +155,25 @@ export function ModelConnectionScreen({
     [form.presetId, library.presets],
   );
   const google = form.provider === "google_interactions";
+  const standardGoogle = google && form.dialect === "standard";
+  const googleLevels = googleThinkingLevelsFor(form.dialect, form.modelId);
+  const legacyGoogleBudget =
+    standardGoogle && form.thinkingMode !== "provider_default";
+  const unsupportedGoogleLevel =
+    google &&
+    isGoogleThinkingLevel(form.reasoningEffort) &&
+    !googleLevels.includes(form.reasoningEffort);
+  const googleReasoningWarning = legacyGoogleBudget
+    ? uiText(
+        "这份配置含有旧的思考预算。请把兼容预算模式设为 Provider 默认，或选择模型支持的推理强度。如果端点是兼容代理，可以切换到 CLIProxyAPI 方言并保留预算。",
+      )
+    : unsupportedGoogleLevel
+      ? uiText(
+          form.reasoningEffort === "minimal"
+            ? "标准 Google Interactions 的 Gemini 4 Neon 和 Gemini 4 Hydrogen 支持 low、medium、high 和 xhigh。请重新选择推理强度或 Provider 默认。"
+            : "标准 Google Interactions 的 xhigh 适用于 Gemini 4 Neon 和 Gemini 4 Hydrogen。请为当前连接选择可用的推理强度或 Provider 默认。",
+        )
+      : null;
   const savedConnection = library.connections.find(
     ({ id }) => id === form.connectionId,
   );
@@ -251,6 +270,13 @@ export function ModelConnectionScreen({
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (pending !== null) return;
+    if (googleReasoningWarning !== null) {
+      if (advancedOptions.current !== null) {
+        advancedOptions.current.open = true;
+        advancedOptions.current.querySelector("summary")?.focus();
+      }
+      return;
+    }
     const thinkingBudgetTokens =
       form.thinkingMode === "enabled"
         ? Number(form.thinkingBudgetTokens)
@@ -747,11 +773,18 @@ export function ModelConnectionScreen({
                       {uiText("Provider 默认")}
                     </option>
                     {google ? (
-                      googleThinkingLevels.map((level) => (
-                        <option key={level} value={level}>
-                          {level}
-                        </option>
-                      ))
+                      <>
+                        {googleLevels.map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                        {unsupportedGoogleLevel && (
+                          <option disabled value={form.reasoningEffort}>
+                            {form.reasoningEffort}
+                          </option>
+                        )}
+                      </>
                     ) : (
                       <>
                         {form.provider === "anthropic_messages" ? null : (
@@ -769,52 +802,70 @@ export function ModelConnectionScreen({
                     )}
                   </select>
                 </label>
-                <label htmlFor="model-thinking-mode">
-                  {uiText(
-                    google
-                      ? "Thinking（兼容预算模式）"
-                      : "Thinking（思考模式）",
-                  )}
-                  <select
-                    id="model-thinking-mode"
-                    disabled={!google && form.provider !== "anthropic_messages"}
-                    value={form.thinkingMode}
-                    onChange={(event) => {
-                      const thinkingMode = event.target
-                        .value as ModelThinkingMode;
-                      change({
-                        thinkingMode,
-                        ...(google && thinkingMode !== "provider_default"
-                          ? { reasoningEffort: "provider_default" }
-                          : {}),
-                        thinkingBudgetTokens:
-                          thinkingMode === "enabled"
-                            ? form.thinkingBudgetTokens ||
-                              defaultThinkingBudget(form.maxOutputTokens)
-                            : "",
-                        reasoningSummary:
-                          !google &&
-                          (thinkingMode === "provider_default" ||
-                            thinkingMode === "disabled")
-                            ? thinkingMode === "provider_default" &&
-                              cliProxySuffixControlsThinking({
-                                ...form,
-                                thinkingMode,
-                              })
-                              ? form.reasoningSummary
-                              : "provider_default"
-                            : form.reasoningSummary,
-                      });
-                    }}
-                  >
-                    <option value="provider_default">
-                      {uiText("Provider 默认")}
-                    </option>
-                    <option value="adaptive">adaptive</option>
-                    <option value="enabled">{uiText("手动 token 预算")}</option>
-                    <option value="disabled">disabled</option>
-                  </select>
-                </label>
+                {(!standardGoogle || legacyGoogleBudget) && (
+                  <label htmlFor="model-thinking-mode">
+                    {uiText(
+                      google
+                        ? "Thinking（兼容预算模式）"
+                        : "Thinking（思考模式）",
+                    )}
+                    <select
+                      id="model-thinking-mode"
+                      disabled={
+                        !google && form.provider !== "anthropic_messages"
+                      }
+                      value={form.thinkingMode}
+                      onChange={(event) => {
+                        const thinkingMode = event.target
+                          .value as ModelThinkingMode;
+                        change({
+                          thinkingMode,
+                          ...(google && thinkingMode !== "provider_default"
+                            ? { reasoningEffort: "provider_default" }
+                            : {}),
+                          thinkingBudgetTokens:
+                            thinkingMode === "enabled"
+                              ? form.thinkingBudgetTokens ||
+                                defaultThinkingBudget(form.maxOutputTokens)
+                              : "",
+                          reasoningSummary:
+                            !google &&
+                            (thinkingMode === "provider_default" ||
+                              thinkingMode === "disabled")
+                              ? thinkingMode === "provider_default" &&
+                                cliProxySuffixControlsThinking({
+                                  ...form,
+                                  thinkingMode,
+                                })
+                                ? form.reasoningSummary
+                                : "provider_default"
+                              : form.reasoningSummary,
+                        });
+                      }}
+                    >
+                      <option value="provider_default">
+                        {uiText("Provider 默认")}
+                      </option>
+                      {(!standardGoogle ||
+                        form.thinkingMode === "adaptive") && (
+                        <option disabled={standardGoogle} value="adaptive">
+                          adaptive
+                        </option>
+                      )}
+                      {(!standardGoogle || form.thinkingMode === "enabled") && (
+                        <option disabled={standardGoogle} value="enabled">
+                          {uiText("手动 token 预算")}
+                        </option>
+                      )}
+                      {(!standardGoogle ||
+                        form.thinkingMode === "disabled") && (
+                        <option disabled={standardGoogle} value="disabled">
+                          disabled
+                        </option>
+                      )}
+                    </select>
+                  </label>
+                )}
                 <label htmlFor="model-reasoning-summary">
                   {uiText("Thinking 返回内容")}
                   <select
@@ -861,7 +912,8 @@ export function ModelConnectionScreen({
                         ? undefined
                         : Math.max(1024, Number(form.maxOutputTokens) - 1)
                     }
-                    required
+                    readOnly={standardGoogle}
+                    required={!standardGoogle}
                     step={1}
                     type="number"
                     value={form.thinkingBudgetTokens}
@@ -873,9 +925,11 @@ export function ModelConnectionScreen({
               ) : null}
               <p className="field-note">
                 {uiText(
-                  google
-                    ? "Google 推理强度发送 thinking_level，摘要发送 thinking_summaries。兼容预算模式改用 thinking_budget：adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。具体支持取决于端点和模型。"
-                    : "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
+                  standardGoogle
+                    ? "标准 Google Interactions 用 thinking_level 控制推理强度，用 thinking_summaries 控制是否返回摘要。请按所用模型选择推理强度，或保留 Provider 默认。"
+                    : google
+                      ? "CLIProxyAPI 用 thinking_level 控制推理强度，用 thinking_summaries 控制是否返回摘要。兼容预算模式用 thinking_budget，adaptive 为 -1，disabled 为 0，手动模式发送填写的整数。"
+                      : "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。",
                 )}
               </p>
 
@@ -1028,6 +1082,11 @@ export function ModelConnectionScreen({
             </div>
           </details>
 
+          {googleReasoningWarning !== null && (
+            <p className="field-note" role="alert">
+              {googleReasoningWarning}
+            </p>
+          )}
           <div className="form-actions">
             <button disabled={pending !== null} type="submit">
               {pending === "save"
@@ -1270,13 +1329,16 @@ function reasoningForProvider(
   | "thinkingMode"
   | "thinkingBudgetTokens"
 > {
+  const effort = form.reasoningEffort;
   const reasoningEffort =
     (provider === "google_interactions" &&
-      !isGoogleThinkingLevel(form.reasoningEffort)) ||
+      (!isGoogleThinkingLevel(effort) ||
+        (provider !== form.provider &&
+          !googleThinkingLevelsFor(dialect, form.modelId).includes(effort)))) ||
     (provider === "anthropic_messages" &&
-      (form.reasoningEffort === "none" || form.reasoningEffort === "minimal"))
+      (effort === "none" || effort === "minimal"))
       ? "provider_default"
-      : form.reasoningEffort;
+      : effort;
   const thinkingMode =
     provider === form.provider &&
     (provider === "anthropic_messages" || provider === "google_interactions")

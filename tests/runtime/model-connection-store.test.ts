@@ -380,6 +380,128 @@ test("Google 自定义模型可保存推理设置并从磁盘重载", async () =
   );
 });
 
+test("Google 标准配置保留旧预算供编辑，新保存需要明确改用可用设置", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const connection = {
+    name: "Gemini",
+    presetId: "custom",
+    provider: "google_interactions",
+    baseUrl: "https://provider.invalid/v1beta",
+    modelId: "gemini-4-hydrogen",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 4_096,
+  } as const;
+  const budget = { thinkingMode: "enabled", thinkingBudgetTokens: 64 } as const;
+  const proxy = await store.save({
+    ...connection,
+    ...budget,
+    dialect: "cliproxyapi",
+    apiKey: "fixture",
+  });
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject({
+    ...budget,
+    dialect: "cliproxyapi",
+  });
+  const path = join(root, "model-connections-v1.json");
+  const legacy = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { dialect: string }[];
+  };
+  legacy.connections[0]!.dialect = "standard";
+  const legacyJson = JSON.stringify(legacy);
+  await writeFile(path, legacyJson);
+
+  const reopened = new ModelConnectionStore(root);
+  const connectionId = proxy.activeConnectionId!;
+  expect((await reopened.view()).connections[0]).toMatchObject({
+    id: connectionId,
+    dialect: "standard",
+    ...budget,
+  });
+  await expect(reopened.save({ ...connection, connectionId })).rejects.toThrow(
+    /does not support thinking budgets.*Provider default/u,
+  );
+  await expect(
+    reopened.save({
+      ...connection,
+      dialect: "standard",
+      apiKey: "fixture",
+      thinkingMode: "disabled",
+    }),
+  ).rejects.toThrow("does not support thinking budgets");
+  expect(await readFile(path, "utf8")).toBe(legacyJson);
+
+  const updated = {
+    ...connection,
+    connectionId,
+    reasoningEffort: "xhigh",
+    reasoningSummary: "auto",
+    thinkingMode: "provider_default",
+  } as const;
+  await expect(
+    reopened.save({ ...updated, modelId: "gemini-4-carbon" }),
+  ).rejects.toThrow(
+    "xhigh is available for Gemini 4 Neon and Gemini 4 Hydrogen",
+  );
+  await reopened.save(updated);
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject({
+    dialect: "standard",
+    modelId: "gemini-4-hydrogen",
+    reasoningEffort: "xhigh",
+    reasoningSummary: "auto",
+    thinkingMode: "provider_default",
+    thinkingBudgetTokens: null,
+  });
+});
+
+test("Google Gemini 4 Neon 的旧 minimal 保留供纠正，标准连接不能保存该等级", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const connection = {
+    name: "Gemini",
+    presetId: "google-interactions",
+    provider: "google_interactions",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    modelId: "gemini-4-neon",
+    contextWindowTokens: 128_000,
+    maxOutputTokens: 4_096,
+  } as const;
+  const reason = /minimal is unavailable.*choose Provider default/u;
+  await expect(
+    store.save({
+      ...connection,
+      apiKey: "fixture",
+      reasoningEffort: "minimal",
+    }),
+  ).rejects.toThrow(reason);
+  const { activeConnectionId } = await store.save({
+    ...connection,
+    apiKey: "fixture",
+  });
+  const connectionId = activeConnectionId!;
+  const path = join(root, "model-connections-v1.json");
+  const legacy = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { reasoningEffort: string }[];
+  };
+  legacy.connections[0]!.reasoningEffort = "minimal";
+  await writeFile(path, JSON.stringify(legacy));
+
+  const reopened = new ModelConnectionStore(root);
+  expect((await reopened.view()).connections[0]).toMatchObject({
+    id: connectionId,
+    reasoningEffort: "minimal",
+  });
+  await expect(reopened.save({ ...connection, connectionId })).rejects.toThrow(
+    reason,
+  );
+  await reopened.save({ ...connection, connectionId, reasoningEffort: "low" });
+  await expect(new ModelConnectionStore(root).bind()).resolves.toMatchObject({
+    dialect: "standard",
+    modelId: "gemini-4-neon",
+    reasoningEffort: "low",
+  });
+});
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { force: true, recursive: true })),

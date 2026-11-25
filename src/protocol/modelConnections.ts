@@ -43,7 +43,7 @@ export type ModelReasoningSummary =
 
 /**
  * Anthropic exposes thinking as a control independent from output effort.
- * Google budget modes select the alternative to a categorical thinking level.
+ * Google CLIProxyAPI budget modes select the alternative to a thinking level.
  * OpenAI-shaped protocols do not have an equivalent request field, so their
  * only valid value is provider_default.
  */
@@ -91,28 +91,47 @@ export function hasCLIProxyThinkingSuffix(modelId: string): boolean {
   );
 }
 
-export const googleThinkingLevels = [
+const googleThinkingLevels = [
   "minimal",
   "low",
   "medium",
   "high",
+  "xhigh",
 ] as const;
 
-export function isGoogleThinkingLevel(value: unknown): boolean {
+export function isGoogleThinkingLevel(
+  value: unknown,
+): value is (typeof googleThinkingLevels)[number] {
   return googleThinkingLevels.some((level) => level === value);
 }
 
+export function googleThinkingLevelsFor(
+  dialect: ModelProviderDialect,
+  modelId: string,
+) {
+  // https://aistudio.google.com/docs/thinking#thinking-levels
+  const supportsXHigh =
+    dialect === "standard" &&
+    /^(?:models\/)?gemini-4-(?:neon|hydrogen)$/u.test(modelId.trim());
+  return googleThinkingLevels.filter(
+    (level) => level !== (supportsXHigh ? "minimal" : "xhigh"),
+  );
+}
+
 /** One validation authority shared by storage and the wire adapter boundary. */
-export function modelReasoningPolicyIssue(input: {
-  provider: ModelProviderKind;
-  dialect: ModelProviderDialect;
-  modelId: string;
-  effort: ModelReasoningEffort;
-  summary: ModelReasoningSummary;
-  thinking?: ModelThinkingMode;
-  thinkingBudgetTokens?: number | null;
-  maxOutputTokens?: number;
-}): string | null {
+export function modelReasoningPolicyIssue(
+  input: {
+    provider: ModelProviderKind;
+    dialect: ModelProviderDialect;
+    modelId: string;
+    effort: ModelReasoningEffort;
+    summary: ModelReasoningSummary;
+    thinking?: ModelThinkingMode;
+    thinkingBudgetTokens?: number | null;
+    maxOutputTokens?: number;
+  },
+  { allowLegacyGoogleSettings = false } = {},
+): string | null {
   const thinking = input.thinking ?? "provider_default";
   const thinkingBudgetTokens = input.thinkingBudgetTokens ?? null;
   if (
@@ -123,10 +142,24 @@ export function modelReasoningPolicyIssue(input: {
     return "CLIProxyAPI model thinking suffixes override request effort and thinking; use either the model suffix with provider defaults or explicit request fields, not both";
   if (input.provider === "google_interactions") {
     if (
-      input.effort !== "provider_default" &&
-      !isGoogleThinkingLevel(input.effort)
+      !allowLegacyGoogleSettings &&
+      input.dialect === "standard" &&
+      thinking !== "provider_default"
     )
-      return "Google thinking level must be minimal, low, medium, or high";
+      return "Standard Google Interactions does not support thinking budgets. In Model Connections, choose Provider default or a thinking level supported by the model. Use the CLIProxyAPI dialect only with a compatible proxy.";
+    const { effort } = input;
+    if (effort !== "provider_default") {
+      if (!isGoogleThinkingLevel(effort))
+        return "Google thinking level must be minimal, low, medium, high, or xhigh on supported models";
+      if (
+        !googleThinkingLevelsFor(input.dialect, input.modelId).includes(effort)
+      ) {
+        if (effort === "xhigh")
+          return "Google Interactions xhigh is available for Gemini 4 Neon and Gemini 4 Hydrogen on the standard dialect. Choose Provider default or a thinking level supported by the model.";
+        if (!allowLegacyGoogleSettings)
+          return "Google Interactions minimal is unavailable for Gemini 4 Neon and Gemini 4 Hydrogen on the standard dialect. In Model Connections, choose Provider default, low, medium, high, or xhigh.";
+      }
+    }
     if (
       input.summary !== "provider_default" &&
       input.summary !== "auto" &&
