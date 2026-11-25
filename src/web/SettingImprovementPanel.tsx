@@ -26,7 +26,7 @@ import { createClientId } from "./ClientId.ts";
 import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
@@ -45,7 +45,6 @@ import type {
 } from "../protocol/v1.ts";
 import {
   ContentFileDraftActions,
-  ContentTreeEditor,
   type ContentTreeEditorProps,
 } from "./ContentTreeEditor.tsx";
 import { ModelUsageBreakdown } from "./ModelUsageBreakdown.tsx";
@@ -58,6 +57,7 @@ import {
 import { getWebLocale, uiText } from "./i18n.ts";
 import { UnifiedTextDiff } from "./UnifiedTextDiff.tsx";
 import { SyncNotice } from "./SyncNotice.tsx";
+import { AuthoringFileRail } from "./AuthoringFileRail.tsx";
 
 export type SettingImprovementView = AuthoringConversationView;
 
@@ -208,9 +208,6 @@ export function SettingImprovementPanel({
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [fileRailMode, setFileRailMode] = useState<FileRailMode>("preview");
-  const [selectedFilePath, setSelectedFilePath] = useState(
-    contentEditor.selectedPath ?? "",
-  );
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
     null,
   );
@@ -1153,82 +1150,19 @@ export function SettingImprovementPanel({
           </div>
         </aside>
 
-        <aside
-          className={`setting-overlay-rail setting-overlay-rail-right ${
-            fileRailMode === "edit" ? "is-editing" : ""
-          } ${rightRailOpen ? "is-open" : ""}`}
-          aria-hidden={!rightRailOpen}
-          aria-label={
-            fileRailMode === "edit"
-              ? uiText(revisingWorld ? "世界修订文件编辑" : "内容包文件编辑")
-              : uiText(revisingWorld ? "世界修订文件预览" : "内容包文件预览")
-          }
-        >
-          <header>
-            <div>
-              <strong>
-                {fileRailMode === "edit"
-                  ? uiText("编辑文件")
-                  : uiText("预览文件")}
-              </strong>
-            </div>
-            <button
-              type="button"
-              aria-label={uiText("收起文件面板")}
-              onClick={() => setRightRailOpen(false)}
-            >
-              ×
-            </button>
-          </header>
-          <nav
-            aria-label={uiText(
-              revisingWorld ? "世界修订文件视图" : "内容包文件视图",
-            )}
-          >
-            <button
-              type="button"
-              className={fileRailMode === "preview" ? "is-current" : ""}
-              onClick={() => setFileRailMode("preview")}
-            >
-              {uiText("预览")}
-            </button>
-            <button
-              type="button"
-              className={fileRailMode === "edit" ? "is-current" : ""}
-              disabled={interactionLocked || draftsLocked}
-              onClick={() => setFileRailMode("edit")}
-            >
-              {uiText("编辑")}
-            </button>
-          </nav>
-          <div className="setting-overlay-rail-body">
-            {fileRailMode === "preview" ? (
-              <SettingContentPreview
-                target={target}
-                files={contentEditor.files}
-                dirty={contentEditor.dirty}
-                selectedPath={selectedFilePath}
-                onSelect={setSelectedFilePath}
-                onEdit={() => setFileRailMode("edit")}
-                editDisabled={interactionLocked || draftsLocked}
-              />
-            ) : (
-              <fieldset
-                disabled={interactionLocked || draftsLocked}
-                style={{ display: "contents" }}
-              >
-                <ContentTreeEditor
-                  {...contentEditor}
-                  deleteDisabled={packageDeleteLocked}
-                  onDelete={requestPackageDeletion}
-                  selectedPath={selectedFilePath}
-                  onSelectedPathChange={setSelectedFilePath}
-                  embedded
-                />
-              </fieldset>
-            )}
-          </div>
-        </aside>
+        <AuthoringFileRail
+          target={target}
+          mode={fileRailMode}
+          open={rightRailOpen}
+          onModeChange={setFileRailMode}
+          onClose={() => setRightRailOpen(false)}
+          contentEditor={{
+            ...contentEditor,
+            deleteDisabled: packageDeleteLocked,
+            onDelete: requestPackageDeletion,
+          }}
+          editDisabled={interactionLocked || draftsLocked}
+        />
       </div>
       {confirmation !== null && (
         <ConfirmationDialog
@@ -1376,120 +1310,6 @@ function SettingConversationHistory({
         </ol>
       )}
     </section>
-  );
-}
-
-function SettingContentPreview({
-  target,
-  files,
-  dirty,
-  selectedPath,
-  onSelect,
-  onEdit,
-  editDisabled,
-}: {
-  target: "content-package" | "world-revision";
-  files: readonly ContentTreeFile[];
-  dirty: boolean;
-  selectedPath: string;
-  onSelect: (path: string) => void;
-  onEdit: () => void;
-  editDisabled: boolean;
-}): React.JSX.Element {
-  const revisingWorld = target === "world-revision";
-  const [query, setQuery] = useState("");
-  const ordered = useMemo(
-    () => [...files].sort((left, right) => left.path.localeCompare(right.path)),
-    [files],
-  );
-  const selected =
-    ordered.find(({ path }) => path === selectedPath) ??
-    ordered.find(({ path }) => path === "opening.md") ??
-    ordered[0];
-  const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
-  const visible =
-    normalizedQuery.length === 0
-      ? ordered
-      : ordered.filter(({ path }) =>
-          path.toLocaleLowerCase("zh-CN").includes(normalizedQuery),
-        );
-
-  return (
-    <div className="setting-content-preview">
-      <header>
-        <div>
-          <strong>
-            {uiText(revisingWorld ? "世界修订工作树" : "内容包当前树")}
-          </strong>
-          <small>
-            {dirty
-              ? uiText("正在预览未保存的文件草稿")
-              : uiText(
-                  revisingWorld
-                    ? "正在预览已保存的修订工作树"
-                    : "正在预览已保存的当前树",
-                )}
-          </small>
-        </div>
-        <span>{uiText("{count} 份文件", { count: files.length })}</span>
-      </header>
-      <label>
-        <span>{uiText("筛选文件")}</span>
-        <input
-          type="search"
-          value={query}
-          placeholder={uiText("人物、地点或文件名")}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-        />
-      </label>
-      <nav
-        aria-label={uiText(revisingWorld ? "世界修订文件树" : "内容包文件树")}
-      >
-        {visible.length === 0 ? (
-          <p>{uiText("没有匹配的文件。")}</p>
-        ) : (
-          visible.map((file) => (
-            <button
-              type="button"
-              key={file.path}
-              className={file.path === selected?.path ? "is-current" : ""}
-              aria-pressed={file.path === selected?.path}
-              onClick={() => onSelect(file.path)}
-            >
-              <code>{file.path}</code>
-            </button>
-          ))
-        )}
-      </nav>
-      {selected === undefined ? (
-        <div className="setting-content-preview-empty">
-          <p>
-            {uiText(
-              revisingWorld
-                ? "当前修订工作树还没有文件。"
-                : "当前内容包还没有文件。",
-            )}
-          </p>
-          <button type="button" disabled={editDisabled} onClick={onEdit}>
-            {uiText("新建第一份文件")}
-          </button>
-        </div>
-      ) : (
-        <article>
-          <header>
-            <code>{selected.path}</code>
-            <button type="button" disabled={editDisabled} onClick={onEdit}>
-              {uiText("编辑这份文件")}
-            </button>
-          </header>
-          {selected.encoding === "base64" ? (
-            <p>{uiText("二进制资源不在文本预览中展开。")}</p>
-          ) : (
-            <pre>{selected.contents}</pre>
-          )}
-        </article>
-      )}
-    </div>
   );
 }
 

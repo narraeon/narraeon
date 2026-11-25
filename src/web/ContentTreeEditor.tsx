@@ -8,6 +8,7 @@ import {
   type RevisionDocumentBase,
 } from "./DocumentWorkbench.tsx";
 import { uiText } from "./i18n.ts";
+import type { AuthoringFileView } from "./authoring-file-list.ts";
 
 export type ContentTreeIssue = DocumentWorkbenchIssue;
 
@@ -33,7 +34,6 @@ export interface ContentTreeEditorProps {
   title: string;
   onRename: (title: string) => void;
   selectedPath?: string;
-  onSelectedPathChange?: (path: string) => void;
   embedded?: boolean;
 }
 
@@ -81,11 +81,12 @@ export function ContentTreeEditor({
   deleteDisabled = false,
   title,
   onRename,
-  selectedPath,
-  onSelectedPathChange,
+  fileView,
   embedded = false,
   mode = "content-package",
-}: ContentTreeEditorProps): React.JSX.Element {
+}: ContentTreeEditorProps & {
+  fileView: AuthoringFileView;
+}): React.JSX.Element {
   const [titleDraft, setTitleDraft] = useState(title);
   const [lastTitle, setLastTitle] = useState(title);
   if (lastTitle !== title) {
@@ -154,10 +155,7 @@ export function ContentTreeEditor({
 
       <DocumentWorkbench
         {...(revisionBase === undefined ? {} : { revisionBase })}
-        {...(selectedPath === undefined ? {} : { selectedPath })}
-        {...(onSelectedPathChange === undefined
-          ? {}
-          : { onSelectedPathChange })}
+        fileView={fileView}
         workspace={
           mode === "world-revision"
             ? {

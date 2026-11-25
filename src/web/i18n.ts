@@ -762,7 +762,7 @@ const englishMessages: Record<string, string> = {
   当前草稿: "Current draft",
   文件: "Files",
   筛选文件: "Filter files",
-  "人物、地点或文件名": "Character, location, or file name",
+  "标题、短引用或路径": "Title, short reference, or path",
   内容包文件树: "Content-package file tree",
   "没有匹配的文件。": "No files match.",
   新建文件: "Create file",

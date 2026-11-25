@@ -191,6 +191,11 @@
   background: var(--surface);
 }
 @media (--workspace-mobile) {
+  :where(.workspace)
+    :global(.content-mobile-file-picker)
+    > :global(.content-file-filter) {
+    margin-top: 0;
+  }
   .sidebar > header,
   .sidebar > :global(.content-file-filter),
   .sidebar > :global(.content-file-list) {
