@@ -163,7 +163,7 @@ export interface WorldComposerDraft {
 }
 
 interface ControlPreviewAttempt {
-  source: string;
+  files: ContentTreeFile[];
   fingerprint?: string;
 }
 
@@ -289,7 +289,8 @@ export function WorldPage({
     (checkpointPreference?.worldId === worldId && checkpointPreference.fresh);
   const [observedCheckpoints, setObservedCheckpoints] = useState<string[]>([]);
   const [selectedDocument, setSelectedDocument] = useState("");
-  const [controlFiles, setControlFiles] = useState("[]");
+  const [controlEditorOpen, setControlEditorOpen] = useState(false);
+  const [controlFiles, setControlFiles] = useState<ContentTreeFile[]>([]);
   const [authoringNavigation, setAuthoringNavigation] = useState(
     idleWorkspaceNavigation,
   );
@@ -304,7 +305,7 @@ export function WorldPage({
     payload: Record<string, unknown>;
   } | null>(null);
   const controlPreview =
-    previewedControl?.attempt.source === controlFiles ? previewedControl : null;
+    previewedControl?.attempt.files === controlFiles ? previewedControl : null;
   const {
     workspace: revisionWorkspace,
     state: authoring,
@@ -405,7 +406,7 @@ export function WorldPage({
         );
       }
       if (!preserveControlDraft && next.control.length > 0) {
-        setControlFiles(JSON.stringify(next.control, null, 2));
+        setControlFiles(next.control);
         setControlDirty(false);
         controlPreviewAttempt.current = null;
         setPreviewedControl(null);
@@ -501,9 +502,11 @@ export function WorldPage({
     historyEndRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [openedWorldId]);
 
-  const stateVisible =
-    world !== null && (rightRailOpen || dialog === "reading");
   const managementVisible = dialog === "manage";
+  const controlEditorVisible = managementVisible && controlEditorOpen;
+  const stateVisible =
+    world !== null &&
+    (rightRailOpen || dialog === "reading" || controlEditorVisible);
   const {
     target: stateTarget,
     syncFailed: stateFailed,
@@ -537,7 +540,7 @@ export function WorldPage({
     worldId,
     "control",
     worldHead,
-    managementVisible,
+    controlEditorVisible,
     useCallback(
       (control: ContentTreeFile[] | null) => {
         if (control === null) return;
@@ -548,7 +551,9 @@ export function WorldPage({
         );
         setControlHead(worldHead ?? null);
         if (!controlDirtyRef.current)
-          setControlFiles(JSON.stringify(control, null, 2));
+          setControlFiles((previous) =>
+            sameControlFiles(previous, control) ? previous : control,
+          );
       },
       [worldHead, setControlHead, setWorld],
     ),
@@ -580,9 +585,9 @@ export function WorldPage({
     if (stateVisible && stateHead !== worldHead) void stateTarget.read();
   }, [stateTarget, stateVisible, stateHead, worldHead]);
   useEffect(() => {
-    if (managementVisible && controlHead !== worldHead)
+    if (controlEditorVisible && controlHead !== worldHead)
       void controlTarget.read();
-  }, [controlTarget, managementVisible, controlHead, worldHead]);
+  }, [controlTarget, controlEditorVisible, controlHead, worldHead]);
   useEffect(() => {
     if (managementVisible && runtimeHead !== worldHead)
       void runtimeTarget.read();
@@ -1252,7 +1257,7 @@ export function WorldPage({
     ),
   );
   useEffect(() => {
-    if (controlPreviewAttempt.current?.source !== controlFiles) {
+    if (controlPreviewAttempt.current?.files !== controlFiles) {
       controlPreviewAttempt.current = null;
       controlPreviewTarget.accept();
     }
@@ -1278,17 +1283,16 @@ export function WorldPage({
 
   async function previewControl(): Promise<void> {
     invalidateControlPreview();
-    const attempt: ControlPreviewAttempt = { source: controlFiles };
+    const attempt: ControlPreviewAttempt = { files: controlFiles };
     controlPreviewAttempt.current = attempt;
     setFeedback(null);
     setPending("control-preview");
     try {
-      const files = JSON.parse(attempt.source) as ContentTreeFile[];
       const receipt = await worldTarget.command(() =>
         client.request({
           type: "world.control-draft.save",
           worldId,
-          files,
+          files: attempt.files,
         }),
       );
       if (controlPreviewAttempt.current !== attempt) return;
@@ -1359,6 +1363,7 @@ export function WorldPage({
     // buttons unfocused, so use the actual opener consistently.
     opener.focus({ preventScroll: true });
     setReadingOpen(false);
+    if (next === "manage") setControlEditorOpen(false);
     setDialog(next);
   }
 
@@ -2603,6 +2608,7 @@ export function WorldPage({
                 <SyncNotice
                   failed={
                     controlFailed ||
+                    (controlEditorVisible && stateFailed) ||
                     runtimeFailed ||
                     controlPreviewFailed ||
                     syncFailed
@@ -2610,11 +2616,14 @@ export function WorldPage({
                   reason={
                     controlPreviewError ??
                     controlError ??
+                    (controlEditorVisible ? stateError : undefined) ??
                     runtimeError ??
                     worldSyncError
                   }
                   onRead={() => {
                     if (controlFailed) void controlTarget.recover();
+                    if (controlEditorVisible && stateFailed)
+                      void stateTarget.recover();
                     if (runtimeFailed) void runtimeTarget.recover();
                     if (controlPreviewFailed)
                       void controlPreviewTarget.recover();
@@ -2654,7 +2663,12 @@ export function WorldPage({
               setWorldNameDraft={setWorldNameDraft}
               pending={pending}
               activeStatus={activeStatus}
-              controlFiles={controlFiles}
+              controlEditorOpen={controlEditorOpen}
+              onControlEditorOpenChange={setControlEditorOpen}
+              controlFiles={
+                controlDirty || controlHead === worldHead ? controlFiles : null
+              }
+              controlState={stateHead === worldHead ? world.state : null}
               controlDirty={controlDirty}
               controlPreview={controlPreview?.payload ?? null}
               onControlFiles={(value) => {
@@ -2662,11 +2676,15 @@ export function WorldPage({
                 setControlDirty(true);
                 invalidateControlPreview();
               }}
-              onResetControl={() => {
-                setControlFiles(JSON.stringify(world.control, null, 2));
-                setControlDirty(false);
-                invalidateControlPreview();
-              }}
+              onResetControl={
+                controlHead !== worldHead
+                  ? undefined
+                  : () => {
+                      setControlFiles(world.control);
+                      setControlDirty(false);
+                      invalidateControlPreview();
+                    }
+              }
               onRename={() => void renameCurrentWorld()}
               onExportStory={(format) => void downloadStory(format)}
               onDerive={() => void deriveWorld(world.head)}
@@ -2740,6 +2758,23 @@ function selectedStateDocument(
 function turnNoteField(turnNote: string): { turnNote?: string } {
   const trimmed = turnNote.trim();
   return trimmed === "" ? {} : { turnNote: trimmed };
+}
+
+function sameControlFiles(
+  previous: readonly ContentTreeFile[],
+  next: readonly ContentTreeFile[],
+): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every((file, index) => {
+      const other = next[index];
+      return (
+        file.path === other?.path &&
+        file.contents === other.contents &&
+        file.encoding === other.encoding
+      );
+    })
+  );
 }
 
 function isControlDraftConflict(reason: unknown): boolean {

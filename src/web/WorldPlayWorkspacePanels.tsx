@@ -1,3 +1,4 @@
+import { WorldControlFilesEditor } from "./WorldControlFilesEditor.tsx";
 import { WorldPromptDiagnosticsPanel } from "./WorldPromptDiagnosticsPanel.tsx";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import {
@@ -743,7 +744,10 @@ export function WorldManagementDialog({
   setWorldNameDraft,
   pending,
   activeStatus,
+  controlEditorOpen,
+  onControlEditorOpenChange,
   controlFiles,
+  controlState,
   controlDirty,
   controlPreview,
   onControlFiles,
@@ -767,11 +771,14 @@ export function WorldManagementDialog({
   setWorldNameDraft: (value: string) => void;
   pending: string | null;
   activeStatus: string | null | undefined;
-  controlFiles: string;
+  controlEditorOpen: boolean;
+  onControlEditorOpenChange: (open: boolean) => void;
+  controlFiles: readonly ContentTreeFile[] | null;
+  controlState: readonly ContentTreeFile[] | null;
   controlDirty: boolean;
   controlPreview: unknown;
-  onControlFiles: (value: string) => void;
-  onResetControl: () => void;
+  onControlFiles: (value: ContentTreeFile[]) => void;
+  onResetControl: (() => void) | undefined;
   onRename: () => void;
   onExportStory: (format: "markdown" | "text") => void;
   onDerive: () => void;
@@ -781,6 +788,12 @@ export function WorldManagementDialog({
   modelConfigured: boolean;
   revisionLocked: boolean;
 }): React.JSX.Element {
+  const editingDisabled = revisionLocked || pending !== null;
+  const canPreview =
+    !editingDisabled && modelConfigured && controlFiles !== null;
+  const preview = () => {
+    if (canPreview) onPreviewControl();
+  };
   return (
     <WorldPlayDialog
       className="world-management-dialog"
@@ -879,67 +892,74 @@ export function WorldManagementDialog({
           </button>
         </article>
         {worldBackupExport}
-        <details className="manage-disclosure">
+        <details
+          className="manage-disclosure"
+          open={controlEditorOpen}
+          onToggle={(event) =>
+            onControlEditorOpenChange(event.currentTarget.open)
+          }
+        >
           <summary>{uiText("世界控制 · 高级编辑")}</summary>
-          <article className="manage-card control-card">
-            <div className="manage-card-copy">
-              <h3>{uiText("世界控制")}</h3>
-              <p>{uiText("世界控制修改需先预览，再一次性应用。")}</p>
-            </div>
-            <span className="control-draft-state">
-              {controlDirty
-                ? uiText("有尚未应用的修改")
-                : uiText("当前已应用控制")}
-            </span>
-            <label>
-              {uiText("世界控制文件（JSON）")}
-              <textarea
-                rows={18}
-                value={controlFiles}
-                disabled={revisionLocked}
-                onChange={(event) => onControlFiles(event.currentTarget.value)}
-              />
-            </label>
-            <div className="button-row">
-              <button
-                type="button"
-                disabled={
-                  pending !== null || !modelConfigured || revisionLocked
-                }
-                onClick={onPreviewControl}
-              >
-                {uiText("预览世界控制")}
-              </button>
-              <button
-                type="button"
-                disabled={
-                  pending !== null ||
-                  controlPreview === null ||
-                  activeStatus === "running" ||
-                  revisionLocked
-                }
-                onClick={onApplyControl}
-              >
-                {uiText("整批应用世界控制")}
-              </button>
-              {controlDirty && (
+          {controlEditorOpen && (
+            <article className="manage-card control-card">
+              <div className="manage-card-copy">
+                <h3>{uiText("世界控制")}</h3>
+                <p>{uiText("世界控制修改需先预览，再一次性应用。")}</p>
+              </div>
+              <span className="control-draft-state">
+                {controlDirty
+                  ? uiText("有尚未应用的修改")
+                  : uiText("当前已应用控制")}
+              </span>
+              {controlFiles === null ? (
+                <p className="field-note" role="status">
+                  {uiText("正在读取世界控制文件…")}
+                </p>
+              ) : (
+                <WorldControlFilesEditor
+                  files={controlFiles}
+                  state={controlState}
+                  editingDisabled={editingDisabled}
+                  dirty={controlDirty}
+                  onChange={onControlFiles}
+                  onPreview={preview}
+                />
+              )}
+              <div className="button-row">
+                <button type="button" disabled={!canPreview} onClick={preview}>
+                  {uiText("预览世界控制")}
+                </button>
                 <button
                   type="button"
-                  className="secondary-button"
-                  disabled={pending !== null}
-                  onClick={onResetControl}
+                  disabled={
+                    pending !== null ||
+                    controlPreview === null ||
+                    activeStatus === "running" ||
+                    revisionLocked
+                  }
+                  onClick={onApplyControl}
                 >
-                  {uiText("放弃控制修改")}
+                  {uiText("整批应用世界控制")}
                 </button>
+                {controlDirty && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={pending !== null || onResetControl === undefined}
+                    onClick={onResetControl}
+                  >
+                    {uiText("放弃控制修改")}
+                  </button>
+                )}
+              </div>
+              {controlPreview === null ? null : (
+                <details className="technical-details">
+                  <summary>{uiText("查看真实提示词预览结果")}</summary>
+                  <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
+                </details>
               )}
-            </div>
-            {controlPreview === null ? null : (
-              <details className="technical-details">
-                <summary>{uiText("查看真实提示词预览结果")}</summary>
-                <pre>{JSON.stringify(controlPreview, null, 2)}</pre>
-              </details>
-            )}
-          </article>
+            </article>
+          )}
         </details>
         <details className="manage-disclosure">
           <summary>{uiText("运行详情")}</summary>

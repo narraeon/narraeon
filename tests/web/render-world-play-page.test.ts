@@ -718,8 +718,10 @@ describe("世界游玩页面", () => {
       };
       const management = openManagement();
       fireEvent.change(
-        within(management).getByLabelText("世界控制文件（JSON）"),
-        { target: { value: "[]" } },
+        await within(management).findByRole("textbox", {
+          name: "编辑 control/player-views.yaml",
+        }),
+        { target: { value: "draft player views" } },
       );
       fireEvent.click(within(management).getByRole("button", { name: "关闭" }));
       expect(configure.disabled).toBe(false);
@@ -736,10 +738,13 @@ describe("世界游玩页面", () => {
       ).toBe("world");
       const retainedManagement = openManagement();
       expect(
-        within(retainedManagement).getByRole<HTMLTextAreaElement>("textbox", {
-          name: "世界控制文件（JSON）",
-        }).value,
-      ).toBe("[]");
+        (
+          await within(retainedManagement).findByRole<HTMLTextAreaElement>(
+            "textbox",
+            { name: "编辑 control/player-views.yaml" },
+          )
+        ).value,
+      ).toBe("draft player views");
       fireEvent.click(
         within(retainedManagement).getByRole("button", { name: "关闭" }),
       );
@@ -2314,11 +2319,11 @@ describe("世界游玩页面", () => {
         name: "创建分叉",
       }).disabled,
     ).toBe(true);
-    expect(
-      within(lockedManagement).getByLabelText<HTMLTextAreaElement>(
-        "世界控制文件（JSON）",
-      ).disabled,
-    ).toBe(true);
+    fireEvent.click(within(lockedManagement).getByText("世界控制 · 高级编辑"));
+    const lockedSource = await within(lockedManagement).findByRole("textbox", {
+      name: "编辑 control/player-views.yaml",
+    });
+    expect(lockedSource.matches(":disabled")).toBe(true);
     fireEvent.click(
       within(lockedManagement).getByRole("button", { name: "关闭" }),
     );

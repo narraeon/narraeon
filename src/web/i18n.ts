@@ -2085,7 +2085,13 @@ const worldPageEnglishMessages: Record<string, string> = {
   当前已应用控制: "Current control applied",
   "模型调用尚未返回；完成或中断后才能应用新控制。":
     "The model call has not returned. New control can be applied after it completes or is interrupted.",
-  "世界控制文件（JSON）": "World-control files (JSON)",
+  选择控制文件: "Choose control file",
+  "正在读取世界控制文件…": "Loading world-control files…",
+  "正在读取当前世界文档…": "Loading current world documents…",
+  "世界的玩法在创建后固定。": "Gameplay is fixed when the world is created.",
+  "请输入有效的控制文件路径。": "Enter a valid control file path.",
+  "路径与现有控制文件冲突。":
+    "The path conflicts with an existing control file.",
   世界控制文件: "World-control files",
   "正在预览…": "Previewing…",
   预览世界控制: "Preview world control",
