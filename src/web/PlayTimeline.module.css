@@ -181,6 +181,89 @@
   font-weight: 650;
 }
 
+.events article > header:has(.regenerationTrigger) {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+}
+
+.events article > header:has(.regenerationTrigger[aria-expanded="true"]) {
+  opacity: 1;
+}
+
+.events :global(.history-message-actions):has(.regenerationOptions) {
+  display: grid;
+  flex: 1 1 100%;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+}
+
+.regenerationControl {
+  display: contents;
+}
+
+.regenerationTrigger::after {
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-inline-start: 0.45rem;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: translateY(-2px) rotate(45deg);
+  content: "";
+}
+
+.regenerationTrigger[aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.regenerationOptions {
+  display: grid;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  gap: 0.15rem;
+  width: min(22rem, 100%);
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  scroll-margin-block: calc(var(--world-header-height, 0px) + 1rem)
+    calc(var(--world-composer-height, 0px) + 2rem);
+}
+
+.regenerationOptions button {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  letter-spacing: normal;
+  line-height: 1.35;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.regenerationOptions strong {
+  font-size: 0.85rem;
+}
+
+.regenerationOptions .regenerationDescription {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.regenerationOptions
+  button:not([aria-disabled="true"]):is(:hover, :focus-visible) {
+  background: var(--surface-selected);
+}
+
+.regenerationTrigger[aria-disabled="true"],
+.regenerationOptions button[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .events article p,
 :where(.column) :global(.call-chain-failure) p,
 :where(.column) :global(.call-chain-cancellation) p {

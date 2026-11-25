@@ -1947,7 +1947,12 @@ const worldPageEnglishMessages: Record<string, string> = {
   "正在创建…": "Creating…",
   创建分叉: "Create fork",
   重新生成: "Regenerate",
-  只重新生成叙事: "Regenerate narrative only",
+  只重写这段正文: "Rewrite just this reply",
+  "保留本轮已生效的结果和状态变化。":
+    "Keep the results and world changes already made this turn.",
+  整轮重来: "Redo the turn",
+  "撤回本轮进展，从你的行动重新推演。":
+    "Undo this turn’s progress and play it again from your action.",
   "正在重新生成叙事…": "Regenerating narrative…",
   "已重新生成叙事。": "Narrative regenerated.",
   "叙事生成中断；可以重新发送已保存的请求。":
