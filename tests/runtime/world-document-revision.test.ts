@@ -776,6 +776,46 @@ $document:
     expect(revised.changes[0]?.after.contents).not.toContain("旧序言");
   });
 
+  test("replacing the Markdown section at EOF retains the final newline", () => {
+    const path = "state/rules/lore.md";
+    const contents = markdownDocument({
+      id: "rule.lore",
+      ref: "lore",
+      title: "Rules",
+      body: "## Archive\n\nOld details.",
+    });
+    const source = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [{ path, contents: contents.trimEnd() }],
+    });
+    const revised = source.revise({
+      commands: [
+        {
+          kind: "patch",
+          document: { shortRef: "lore" },
+          edits: [
+            {
+              op: "replace_section",
+              locator: { markdown: ["Archive"] },
+              markdown: "## Archive\n\nNew details.",
+            },
+          ],
+        },
+      ],
+    });
+    expect(revised).toMatchObject({
+      ok: true,
+      changes: [
+        {
+          after: {
+            logicalPath: path,
+            contents: contents.replace("Old details.", "New details."),
+          },
+        },
+      ],
+    });
+  });
+
   test("Markdown section edits cannot inject headings outside the exact section subtree", () => {
     const original = markdownDocument({
       id: "rule.lore",

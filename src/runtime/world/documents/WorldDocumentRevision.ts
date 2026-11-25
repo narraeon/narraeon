@@ -1379,7 +1379,7 @@ function applyMarkdownRevisionEdit(
         message: "A Markdown patch edit must be a closed object with op",
       }),
     );
-  // Every applied Markdown edit keeps a single trailing newline.
+  // Whole-body, preamble and metadata writes keep a single trailing newline.
   const applied = (
     contents: string,
     nextMetadata: WorldDocumentMetadataInput,
@@ -1487,6 +1487,13 @@ function applyMarkdownRevisionEdit(
       }),
     );
   const locator = { markdown: [...edit.locator.markdown] } as const;
+  // A section splice preserves the exact source outside its selected region,
+  // including the end of the document when a different section is edited.
+  const appliedSection = (contents: string): RevisionEditResult => ({
+    kind: "applied",
+    contents,
+    metadata,
+  });
   if (edit.op === "remove_section") {
     if (!hasOnlyKeys(edit, ["op", "locator"]))
       return editFailed(
@@ -1503,9 +1510,8 @@ function applyMarkdownRevisionEdit(
         ? editTargetAbsent(locator)
         : editFailed(problem!);
     }
-    return applied(
+    return appliedSection(
       `${source.slice(0, section.start)}${source.slice(section.rawEnd)}`,
-      metadata,
     );
   }
   if (edit.op === "rename_section") {
@@ -1522,9 +1528,8 @@ function applyMarkdownRevisionEdit(
       );
     const section = markdownRevisionSection(source, locator.markdown);
     if ("diagnostics" in section) return editFailed(section.diagnostics[0]!);
-    return applied(
+    return appliedSection(
       `${source.slice(0, section.start)}${"#".repeat(section.level)} ${edit.title}${source.slice(section.headingEnd)}`,
-      metadata,
     );
   }
   if (
@@ -1573,10 +1578,7 @@ function applyMarkdownRevisionEdit(
               "replace_section new heading must keep the requested title and sit one level below its parent",
           }),
         );
-      return applied(
-        insertMarkdownBlock(source, parent.trimmedEnd, block),
-        metadata,
-      );
+      return appliedSection(insertMarkdownBlock(source, parent.rawEnd, block));
     }
     if (
       !blockIsSubtree ||
@@ -1591,10 +1593,10 @@ function applyMarkdownRevisionEdit(
             "replace_section first heading must preserve the exact original heading path",
         }),
       );
-    return applied(
-      `${source.slice(0, section.start)}${block}${source.slice(section.trimmedEnd)}`,
-      metadata,
-    );
+    const contents = `${source.slice(0, section.start)}${block}${source.slice(section.trimmedEnd)}`;
+    return section.rawEnd === source.length
+      ? applied(contents, metadata)
+      : appliedSection(contents);
   }
   const parent = markdownRevisionSection(source, locator.markdown);
   if ("diagnostics" in parent) return editFailed(parent.diagnostics[0]!);
@@ -1607,10 +1609,7 @@ function applyMarkdownRevisionEdit(
           "add_section must add a complete block with a heading one level lower",
       }),
     );
-  return applied(
-    insertMarkdownBlock(source, parent.trimmedEnd, block),
-    metadata,
-  );
+  return appliedSection(insertMarkdownBlock(source, parent.rawEnd, block));
 }
 
 function insertMarkdownBlock(
@@ -1618,7 +1617,14 @@ function insertMarkdownBlock(
   offset: number,
   block: string,
 ): string {
-  return `${source.slice(0, offset)}\n\n${block}${source.slice(offset)}`;
+  const before = source.slice(0, offset);
+  const after = source.slice(offset);
+  const leading = before.endsWith("\n\n")
+    ? ""
+    : before.endsWith("\n")
+      ? "\n"
+      : "\n\n";
+  return `${before}${leading}${block}${after === "" ? "\n" : "\n\n"}${after}`;
 }
 
 function markdownEnvelope(source: string):

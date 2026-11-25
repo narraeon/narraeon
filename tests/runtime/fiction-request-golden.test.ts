@@ -15,6 +15,7 @@ import {
   type PlayPresetBinding,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { settingImprovementToolDefinitions } from "../../src/runtime/setting/SettingAuthoringTransaction.ts";
+import { worldRevisionToolDefinitions } from "../../src/runtime/world-revision/WorldRevisionAuthoringTransaction.ts";
 
 /**
  * Fiction requests are the compatibility contract for tabletop work: every
@@ -105,6 +106,8 @@ import { settingImprovementToolDefinitions } from "../../src/runtime/setting/Set
  * digests moved, while the four authoring digests stayed the same.
  * #334 records the Runtime text locale in every compilation and the initial
  * preload notice in production bootstraps, so all 76 compilation digests moved.
+ * #355 adds Markdown section operations to the authoring tools. The four
+ * authoring digests moved, and the revision digests use the revision tools.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -213,7 +216,7 @@ function computeDigests(): Record<string, string> {
         epoch: { id: "epoch-golden", baseHead: "head-golden" },
         playPreset: binding,
         modelBinding,
-        tools: settingImprovementToolDefinitions(locale, fictionGameplay),
+        tools: worldRevisionToolDefinitions(locale, fictionGameplay),
       }),
     );
   }
@@ -397,11 +400,11 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "ef8795a5e3089d70d12cb9f72ee12e7bab1e44be8fb263817f3ba220c4242767",
   "revision/en":
-    "2359ae965e160fe8fc5b32a4fe85c4595cdeb20e7c248bba7031686b20886efb",
+    "066a11774f572304c6ad5f21c16230a8335adfa6b36c08a8518e740075709eff",
   "revision/zh-CN":
-    "cb633f87efab25ac2832633b92f79f5fbc1239b09d514477c2e460549a04bec1",
+    "4c72140f1f697d7401b5116cbf1aa252b379d3c30a42345d1c126e69c1a75dda",
   "setting/en":
-    "8013d74e583e2d56acee8b3f91391f35aea541b0fb1fcfd9a37fce8c2f94e2f4",
+    "e582a3fbc272a2170ccc0e612d0ead623f4ac1e8fd3529a42d498f2a3afd0cf7",
   "setting/zh-CN":
-    "59597247bc54812452ce6247c17b0121c74c5c34fd30e49991d01e8610c58c90",
+    "aae69254bf6743a7f0af9a70f900ac632c5f8a9a88dbb72a96ee5dceff49b828",
 };

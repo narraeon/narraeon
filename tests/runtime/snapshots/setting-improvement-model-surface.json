@@ -165,7 +165,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op \"set_metadata\" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.",
+            "description": "Patch a completely read world document by @ref or logical path. For YAML, locator is a non-empty array of map keys or zero-based array indexes. Use add or replace to write a value, append to add an item to an existing array, and remove to delete a node. For Markdown, locator lists exact heading titles from the top-level section down to the target, excluding the document’s # title and heading markers, e.g. [\"Harbor\", \"Watch\"]. For replace_section, send the complete section in markdown, starting with its heading at the same level. A missing section can be added under its existing parent. For add_section, locator names the parent (use [] for a new top-level section) and markdown starts with the new heading one level below it. Use rename_section with title for the new heading, and remove_section to delete the selected section. A section includes its subheadings. Use set_metadata with only the title, summary, or aliases that change.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -181,12 +181,15 @@
                     "replace",
                     "append",
                     "remove",
-                    "set_metadata"
+                    "set_metadata",
+                    "replace_section",
+                    "add_section",
+                    "rename_section",
+                    "remove_section"
                   ]
                 },
                 "locator": {
                   "type": "array",
-                  "minItems": 1,
                   "items": {
                     "type": [
                       "string",
@@ -195,6 +198,10 @@
                   }
                 },
                 "value": {},
+                "markdown": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "title": {
                   "type": "string",
                   "minLength": 1,
@@ -427,7 +434,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op \"set_metadata\" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.",
+            "description": "Patch a completely read world document by @ref or logical path. For YAML, locator is a non-empty array of map keys or zero-based array indexes. Use add or replace to write a value, append to add an item to an existing array, and remove to delete a node. For Markdown, locator lists exact heading titles from the top-level section down to the target, excluding the document’s # title and heading markers, e.g. [\"Harbor\", \"Watch\"]. For replace_section, send the complete section in markdown, starting with its heading at the same level. A missing section can be added under its existing parent. For add_section, locator names the parent (use [] for a new top-level section) and markdown starts with the new heading one level below it. Use rename_section with title for the new heading, and remove_section to delete the selected section. A section includes its subheadings. Use set_metadata with only the title, summary, or aliases that change.",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -443,12 +450,15 @@
                     "replace",
                     "append",
                     "remove",
-                    "set_metadata"
+                    "set_metadata",
+                    "replace_section",
+                    "add_section",
+                    "rename_section",
+                    "remove_section"
                   ]
                 },
                 "locator": {
                   "type": "array",
-                  "minItems": 1,
                   "items": {
                     "type": [
                       "string",
@@ -457,6 +467,10 @@
                   }
                 },
                 "value": {},
+                "markdown": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "title": {
                   "type": "string",
                   "minLength": 1,
@@ -861,7 +875,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op \"set_metadata\"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。",
+            "description": "按 @ref 或逻辑路径局部修改已完整读取的世界文档。YAML 的 locator 是由 map key 或从 0 开始的数组下标组成的非空数组。add 或 replace 写入值，append 向既有数组追加元素，remove 删除节点。Markdown 的 locator 按层级列出从顶层小节到目标小节的准确标题文字，不含文档一级标题与 # 标记，例如 [\"港口\", \"值守\"]。replace_section 的 markdown 以同名同级标题开头，包含完整小节；目标缺失时可在已有父节下新增。add_section 的 locator 指向父节（新增顶层小节用 []），markdown 以比父节低一级的新标题开头。rename_section 用 title 改标题，remove_section 删除目标节。小节包括它的子节。set_metadata 只提供要改的 title、summary 或 aliases。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -877,12 +891,15 @@
                     "replace",
                     "append",
                     "remove",
-                    "set_metadata"
+                    "set_metadata",
+                    "replace_section",
+                    "add_section",
+                    "rename_section",
+                    "remove_section"
                   ]
                 },
                 "locator": {
                   "type": "array",
-                  "minItems": 1,
                   "items": {
                     "type": [
                       "string",
@@ -891,6 +908,10 @@
                   }
                 },
                 "value": {},
+                "markdown": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "title": {
                   "type": "string",
                   "minLength": 1,
@@ -1123,7 +1144,7 @@
           },
           {
             "name": "setting_patch",
-            "description": "细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op \"set_metadata\"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。",
+            "description": "按 @ref 或逻辑路径局部修改已完整读取的世界文档。YAML 的 locator 是由 map key 或从 0 开始的数组下标组成的非空数组。add 或 replace 写入值，append 向既有数组追加元素，remove 删除节点。Markdown 的 locator 按层级列出从顶层小节到目标小节的准确标题文字，不含文档一级标题与 # 标记，例如 [\"港口\", \"值守\"]。replace_section 的 markdown 以同名同级标题开头，包含完整小节；目标缺失时可在已有父节下新增。add_section 的 locator 指向父节（新增顶层小节用 []），markdown 以比父节低一级的新标题开头。rename_section 用 title 改标题，remove_section 删除目标节。小节包括它的子节。set_metadata 只提供要改的 title、summary 或 aliases。",
             "inputSchema": {
               "type": "object",
               "additionalProperties": false,
@@ -1139,12 +1160,15 @@
                     "replace",
                     "append",
                     "remove",
-                    "set_metadata"
+                    "set_metadata",
+                    "replace_section",
+                    "add_section",
+                    "rename_section",
+                    "remove_section"
                   ]
                 },
                 "locator": {
                   "type": "array",
-                  "minItems": 1,
                   "items": {
                     "type": [
                       "string",
@@ -1153,6 +1177,10 @@
                   }
                 },
                 "value": {},
+                "markdown": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "title": {
                   "type": "string",
                   "minLength": 1,
