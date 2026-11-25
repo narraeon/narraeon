@@ -244,6 +244,50 @@ export function DocumentWorkbench({
           </span>
         </header>
         {filter}
+        <details className="content-new-file">
+          <summary>{uiText("新建文件")}</summary>
+          <div>
+            <label>
+              {uiText("新文件路径")}
+              <input
+                value={newPath}
+                placeholder={
+                  workspace.kind === "world-revision"
+                    ? "state/characters/name.yaml"
+                    : "world/characters/name.yaml"
+                }
+                onChange={(event) => {
+                  setNewPath(event.target.value);
+                  setNewPathTouched(true);
+                }}
+              />
+            </label>
+            {newPathTouched && newPathError.length > 0 && (
+              <p role="alert">{newPathError}</p>
+            )}
+            <p>
+              {uiText(
+                "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
+              )}
+            </p>
+            {newPathError.length === 0 &&
+              newPath.trim().startsWith(documentRoot) &&
+              documentCodec(newPath.trim()) === "markdown" && (
+                <p>
+                  {uiText(
+                    "修改 Markdown 文档标题时，文件头的 title 和正文的一级标题须一致。",
+                  )}
+                </p>
+              )}
+            <button
+              type="button"
+              disabled={newPathError.length > 0}
+              onClick={addFile}
+            >
+              {uiText("加入草稿")}
+            </button>
+          </div>
+        </details>
         <nav
           className="content-file-list"
           aria-label={
@@ -306,50 +350,6 @@ export function DocumentWorkbench({
             ))
           )}
         </nav>
-        <details className="content-new-file">
-          <summary>{uiText("新建文件")}</summary>
-          <div>
-            <label>
-              {uiText("新文件路径")}
-              <input
-                value={newPath}
-                placeholder={
-                  workspace.kind === "world-revision"
-                    ? "state/characters/name.yaml"
-                    : "world/characters/name.yaml"
-                }
-                onChange={(event) => {
-                  setNewPath(event.target.value);
-                  setNewPathTouched(true);
-                }}
-              />
-            </label>
-            {newPathTouched && newPathError.length > 0 && (
-              <p role="alert">{newPathError}</p>
-            )}
-            <p>
-              {uiText(
-                "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
-              )}
-            </p>
-            {newPathError.length === 0 &&
-              newPath.trim().startsWith(documentRoot) &&
-              documentCodec(newPath.trim()) === "markdown" && (
-                <p>
-                  {uiText(
-                    "修改 Markdown 文档标题时，文件头的 title 和正文的一级标题须一致。",
-                  )}
-                </p>
-              )}
-            <button
-              type="button"
-              disabled={newPathError.length > 0}
-              onClick={addFile}
-            >
-              {uiText("加入草稿")}
-            </button>
-          </div>
-        </details>
       </aside>
 
       <section

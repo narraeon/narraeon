@@ -131,13 +131,18 @@ for (const locale of appLocales) {
             ? t("世界修订文件编辑", "Edit world-revision files")
             : t("内容包文件编辑", "Content-package file editing"),
         });
-        await editor
-          .getByText(t("新建文件", "Create file"), { exact: true })
-          .click();
+        const createFile = editor.getByText(t("新建文件", "Create file"), {
+          exact: true,
+        });
+        const newPath = editor.getByLabel(t("新文件路径", "New file path"));
+        await createFile.click();
+        await expect(newPath).toBeVisible();
+        await createFile.press("Enter");
+        await expect(newPath).toBeHidden();
+        await createFile.press("Enter");
+        await expect(newPath).toBeVisible();
         const draftPath = `${revision ? "state" : "world"}/draft.md`;
-        await editor
-          .getByLabel(t("新文件路径", "New file path"))
-          .fill(draftPath);
+        await newPath.fill(draftPath);
         await editor
           .getByRole("button", { name: t("加入草稿", "Add to draft") })
           .click();
