@@ -11,6 +11,7 @@ import {
 } from "../support/runtimeServer.ts";
 
 const test = base.extend({
+  // eslint-disable-next-line no-empty-pattern -- Playwright parses the destructured fixture dependencies.
   baseURL: async ({}, use) => {
     const root = await mkdtemp(join(tmpdir(), "narraeon-create-model-setup-"));
     const servers = new RuntimeServerPool();
@@ -196,7 +197,7 @@ for (const leaveWhileEnabling of [false, true]) {
           (response.request().postDataJSON() as { request: V1Request }).request
             .type === "model.select",
       );
-      let release = () => {};
+      let release: () => void = () => undefined;
       const holdReceipt = new Promise<void>((resolve) => {
         release = resolve;
       });
