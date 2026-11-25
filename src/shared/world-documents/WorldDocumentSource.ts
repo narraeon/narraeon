@@ -22,21 +22,25 @@ export function scalarString(value: unknown): string | null {
     : null;
 }
 
+export type SourceRangeReader = (
+  rawStart: number,
+  rawEnd: number,
+) => WorldDocumentSourceRange;
+
 export function nodeRange(
-  source: string,
+  rangeAt: SourceRangeReader,
   node: unknown,
   baseOffset: number,
 ): WorldDocumentSourceRange {
   const range = isRangedNode(node) ? node.range : null;
-  return sourceRange(
-    source,
+  return rangeAt(
     baseOffset + (range?.[0] ?? 0),
     baseOffset + (range?.[1] ?? range?.[0] ?? 0),
   );
 }
 
 export function joinedNodeRange(
-  source: string,
+  rangeAt: SourceRangeReader,
   startNode: unknown,
   endNode: unknown,
   baseOffset: number,
@@ -45,11 +49,59 @@ export function joinedNodeRange(
   const end = isRangedNode(endNode)
     ? (endNode.range?.[1] ?? endNode.range?.[0] ?? start)
     : start;
-  return sourceRange(source, baseOffset + start, baseOffset + end);
+  return rangeAt(baseOffset + start, baseOffset + end);
 }
 
 export function isRangedNode(value: unknown): value is Node {
   return isScalar(value) || isMap(value) || isSeq(value);
+}
+
+/** Reuses line starts and UTF-8 prefix lengths while locating nodes in a file. */
+export function createSourceRangeReader(source: string): SourceRangeReader {
+  const lineStarts = [0];
+  for (
+    let newline = source.indexOf("\n");
+    newline >= 0;
+    newline = source.indexOf("\n", newline + 1)
+  )
+    lineStarts.push(newline + 1);
+
+  const blockSize = 256;
+  const boundaries = [0];
+  const byteOffsets = [0];
+  for (let offset = blockSize; offset <= source.length; offset += blockSize) {
+    // Keep surrogate pairs together when calculating UTF-8 prefix lengths.
+    const boundary =
+      /[\uD800-\uDBFF]/u.test(source.charAt(offset - 1)) &&
+      /[\uDC00-\uDFFF]/u.test(source.charAt(offset))
+        ? offset - 1
+        : offset;
+    byteOffsets.push(
+      byteOffsets.at(-1)! +
+        encoder.encode(source.slice(boundaries.at(-1), boundary)).byteLength,
+    );
+    boundaries.push(boundary);
+  }
+  const pointAt = (offset: number): WorldDocumentSourcePoint => {
+    let left = 0;
+    let right = lineStarts.length;
+    while (right - left > 1) {
+      const middle = Math.floor((left + right) / 2);
+      if (lineStarts[middle]! <= offset) left = middle;
+      else right = middle;
+    }
+
+    const block = Math.floor(offset / blockSize);
+    return {
+      offset,
+      byteOffset:
+        byteOffsets[block]! +
+        encoder.encode(source.slice(boundaries[block], offset)).byteLength,
+      line: left + 1,
+      column: offset - lineStarts[left]! + 1,
+    };
+  };
+  return (start, end) => boundedRange(source.length, start, end, pointAt);
 }
 
 export function sourceRange(
@@ -57,22 +109,30 @@ export function sourceRange(
   rawStart: number,
   rawEnd: number,
 ): WorldDocumentSourceRange {
-  const start = Math.max(0, Math.min(source.length, rawStart));
-  const end = Math.max(start, Math.min(source.length, rawEnd));
-  return freeze({
-    start: sourcePoint(source, start),
-    end: sourcePoint(source, end),
+  return boundedRange(source.length, rawStart, rawEnd, (offset) => {
+    const before = source.slice(0, offset);
+    const lineStart = before.lastIndexOf("\n") + 1;
+    return {
+      offset,
+      byteOffset: encoder.encode(before).byteLength,
+      line: before.split("\n").length,
+      column: offset - lineStart + 1,
+    };
   });
 }
 
-function sourcePoint(source: string, offset: number): WorldDocumentSourcePoint {
-  const before = source.slice(0, offset);
-  const lineStart = before.lastIndexOf("\n") + 1;
+function boundedRange(
+  sourceLength: number,
+  rawStart: number,
+  rawEnd: number,
+  pointAt: (offset: number) => WorldDocumentSourcePoint,
+): WorldDocumentSourceRange {
+  const start = Math.max(0, Math.min(sourceLength, rawStart));
+  const end = Math.max(start, Math.min(sourceLength, rawEnd));
+  const startPoint = pointAt(start);
   return freeze({
-    offset,
-    byteOffset: encoder.encode(before).byteLength,
-    line: before.split("\n").length,
-    column: offset - lineStart + 1,
+    start: startPoint,
+    end: start === end ? startPoint : pointAt(end),
   });
 }
 

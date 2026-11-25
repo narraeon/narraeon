@@ -3,6 +3,7 @@ import { documentCodec } from "../world-document-format.ts";
 import { parseRestrictedYamlDocument } from "../restricted-yaml.ts";
 import { inspectYamlReferences } from "./WorldDocumentReferences.ts";
 import {
+  createSourceRangeReader,
   diagnostic,
   documentIdPattern,
   freeze,
@@ -14,6 +15,7 @@ import {
   scalarString,
   shortRefPattern,
   sourceRange,
+  type SourceRangeReader,
   trimTrailingWhitespaceOffset,
   validRelativePath,
   yamlLocatorKey,
@@ -72,8 +74,9 @@ export function inspectDocumentFile(
     );
     return entry;
   }
-  if (entry.codec === "yaml") inspectYamlDocument(entry);
-  else inspectMarkdownDocument(entry);
+  const rangeAt = createSourceRangeReader(file.contents);
+  if (entry.codec === "yaml") inspectYamlDocument(entry, rangeAt);
+  else inspectMarkdownDocument(entry, rangeAt);
   return entry;
 }
 
@@ -133,37 +136,43 @@ const maxYamlDepth = 64;
 
 const maxYamlNodes = 100_000;
 
-function inspectYamlDocument(entry: InternalDocumentEntry): void {
-  const parsed = parseRestrictedYaml(entry, entry.file.contents, 0);
+function inspectYamlDocument(
+  entry: InternalDocumentEntry,
+  rangeAt: SourceRangeReader,
+): void {
+  const parsed = parseRestrictedYaml(entry, entry.file.contents, 0, rangeAt);
   if (parsed === null) return;
-  const header = readHeader(entry, parsed, false);
+  const header = readHeader(entry, parsed, false, rangeAt);
   if (header === null) return;
   entry.descriptor = header.descriptor;
   entry.headerRanges = header.ranges;
-  entry.bodyRange = yamlBodyRange(entry.file.contents, parsed.root);
+  entry.bodyRange = yamlBodyRange(entry.file.contents, parsed.root, rangeAt);
   entry.searchRanges = freeze([
     ...headerSearchRanges(header.ranges),
     entry.bodyRange,
   ]);
-  inspectYamlReferences(entry, parsed.root, []);
+  inspectYamlReferences(entry, parsed.root, [], rangeAt);
   entry.yaml = {
     body: freeze(
       Object.fromEntries(
         Object.entries(parsed.value).filter(([key]) => key !== "$document"),
       ),
     ),
-    nodes: freeze(indexYamlNodes(entry.file.contents, parsed.root)),
+    nodes: freeze(indexYamlNodes(entry.file.contents, parsed.root, rangeAt)),
   };
 }
 
-function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
+function inspectMarkdownDocument(
+  entry: InternalDocumentEntry,
+  rangeAt: SourceRangeReader,
+): void {
   const source = entry.file.contents;
   if (!source.startsWith("---\n")) {
     entry.diagnostics.push(
       diagnostic({
         code: "markdown_invalid",
         logicalPath: entry.file.path,
-        range: sourceRange(source, 0, Math.min(source.length, 3)),
+        range: rangeAt(0, Math.min(source.length, 3)),
         message: "Markdown must begin with $document front matter",
       }),
     );
@@ -175,26 +184,26 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
       diagnostic({
         code: "markdown_invalid",
         logicalPath: entry.file.path,
-        range: sourceRange(source, 0, Math.min(source.length, 3)),
+        range: rangeAt(0, Math.min(source.length, 3)),
         message: "Markdown front matter is not closed",
       }),
     );
     return;
   }
-  const parsed = parseRestrictedYaml(entry, source.slice(4, end), 4);
+  const parsed = parseRestrictedYaml(entry, source.slice(4, end), 4, rangeAt);
   if (parsed === null) return;
-  const header = readHeader(entry, parsed, true);
+  const header = readHeader(entry, parsed, true, rangeAt);
   if (header === null) return;
   entry.descriptor = header.descriptor;
   entry.headerRanges = header.ranges;
 
   const bodyStart = end + 5;
-  entry.bodyRange = sourceRange(source, bodyStart, source.length);
+  entry.bodyRange = rangeAt(bodyStart, source.length);
   entry.searchRanges = freeze([
     ...headerSearchRanges(header.ranges),
     entry.bodyRange,
   ]);
-  const headings = scanMarkdownHeadings(source, bodyStart).headings;
+  const headings = scanMarkdownHeadings(source, bodyStart, rangeAt).headings;
   const topLevel = headings.filter(({ level }) => level === 1);
   if (
     headings.length === 0 ||
@@ -212,8 +221,7 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
         code: "markdown_invalid",
         logicalPath: entry.file.path,
         documentId: header.descriptor.documentId,
-        range:
-          headings[0]?.range ?? sourceRange(source, bodyStart, source.length),
+        range: headings[0]?.range ?? rangeAt(bodyStart, source.length),
         message:
           "Markdown must have one h1 matching the technical title, and heading levels cannot be skipped",
       }),
@@ -255,7 +263,7 @@ function inspectMarkdownDocument(entry: InternalDocumentEntry): void {
     indexed.push({
       locator: freeze(locator),
       locatorKey: key,
-      range: sourceRange(source, heading.range.start.offset, end),
+      range: rangeAt(heading.range.start.offset, end),
     });
   }
   entry.markdown = { bodyStart, headings: freeze(indexed) };
@@ -265,6 +273,8 @@ export function parseRestrictedYaml(
   entry: InternalDocumentEntry,
   source: string,
   baseOffset: number,
+  rangeAt: SourceRangeReader = (start, end) =>
+    sourceRange(entry.file.contents, start, end),
 ): ParsedRestrictedYaml | null {
   const { document, problems } = parseRestrictedYamlDocument(source, {
     rejectRawControlCharacters: true,
@@ -275,8 +285,7 @@ export function parseRestrictedYaml(
         diagnostic({
           code: "yaml_invalid",
           logicalPath: entry.file.path,
-          range: sourceRange(
-            entry.file.contents,
+          range: rangeAt(
             baseOffset + problem.pos[0],
             baseOffset + problem.pos[1],
           ),
@@ -290,11 +299,7 @@ export function parseRestrictedYaml(
       diagnostic({
         code: "yaml_invalid",
         logicalPath: entry.file.path,
-        range: sourceRange(
-          entry.file.contents,
-          baseOffset,
-          baseOffset + source.length,
-        ),
+        range: rangeAt(baseOffset, baseOffset + source.length),
         message: "Top-level YAML must be a map",
       }),
     );
@@ -308,7 +313,7 @@ export function parseRestrictedYaml(
       diagnostic({
         code: "capacity_exceeded",
         logicalPath: entry.file.path,
-        range: nodeRange(entry.file.contents, document.contents, baseOffset),
+        range: nodeRange(rangeAt, document.contents, baseOffset),
         message: "YAML depth or node count exceeds world-document capacity",
       }),
     );
@@ -317,7 +322,7 @@ export function parseRestrictedYaml(
       diagnostic({
         code: "yaml_invalid",
         logicalPath: entry.file.path,
-        range: nodeRange(entry.file.contents, document.contents, baseOffset),
+        range: nodeRange(rangeAt, document.contents, baseOffset),
         message: "YAML numbers must be finite",
       }),
     );
@@ -332,6 +337,7 @@ function readHeader(
   entry: InternalDocumentEntry,
   parsed: ParsedRestrictedYaml,
   headerOnly: boolean,
+  rangeAt: SourceRangeReader,
 ): { descriptor: WorldDocumentDescriptor; ranges: HeaderRanges } | null {
   const first = parsed.root.items[0];
   if (
@@ -343,7 +349,7 @@ function readHeader(
       diagnostic({
         code: "document_header_invalid",
         logicalPath: entry.file.path,
-        range: nodeRange(entry.file.contents, parsed.root, parsed.baseOffset),
+        range: nodeRange(rangeAt, parsed.root, parsed.baseOffset),
         message: "$document must be the first document entry",
       }),
     );
@@ -387,11 +393,7 @@ function readHeader(
         ...(idPair?.value === undefined
           ? {}
           : {
-              range: nodeRange(
-                entry.file.contents,
-                idPair.value,
-                parsed.baseOffset,
-              ),
+              range: nodeRange(rangeAt, idPair.value, parsed.baseOffset),
             }),
         message:
           "$document.id must be a stable lowercase identity within the world",
@@ -412,11 +414,7 @@ function readHeader(
         ...(refPair?.value === undefined
           ? {}
           : {
-              range: nodeRange(
-                entry.file.contents,
-                refPair.value,
-                parsed.baseOffset,
-              ),
+              range: nodeRange(rangeAt, refPair.value, parsed.baseOffset),
             }),
         message: "$document.ref must be a stable lowercase short reference",
       }),
@@ -443,7 +441,7 @@ function readHeader(
         ...(id !== null && documentIdPattern.test(id)
           ? { documentId: id }
           : {}),
-        range: nodeRange(entry.file.contents, header, parsed.baseOffset),
+        range: nodeRange(rangeAt, header, parsed.baseOffset),
         message:
           "$document must contain valid id, ref, title, summary, aliases, and an optional boolean retired flag",
       }),
@@ -467,47 +465,27 @@ function readHeader(
       ...(idPair?.value === undefined
         ? {}
         : {
-            documentId: nodeRange(
-              entry.file.contents,
-              idPair.value,
-              parsed.baseOffset,
-            ),
+            documentId: nodeRange(rangeAt, idPair.value, parsed.baseOffset),
           }),
       ...(refPair?.value === undefined
         ? {}
         : {
-            shortRef: nodeRange(
-              entry.file.contents,
-              refPair.value,
-              parsed.baseOffset,
-            ),
+            shortRef: nodeRange(rangeAt, refPair.value, parsed.baseOffset),
           }),
       ...(titlePair?.value === undefined
         ? {}
         : {
-            title: nodeRange(
-              entry.file.contents,
-              titlePair.value,
-              parsed.baseOffset,
-            ),
+            title: nodeRange(rangeAt, titlePair.value, parsed.baseOffset),
           }),
       ...(summaryPair?.value === undefined
         ? {}
         : {
-            summary: nodeRange(
-              entry.file.contents,
-              summaryPair.value,
-              parsed.baseOffset,
-            ),
+            summary: nodeRange(rangeAt, summaryPair.value, parsed.baseOffset),
           }),
       ...(aliasesPair?.value === undefined
         ? {}
         : {
-            aliases: nodeRange(
-              entry.file.contents,
-              aliasesPair.value,
-              parsed.baseOffset,
-            ),
+            aliases: nodeRange(rangeAt, aliasesPair.value, parsed.baseOffset),
           }),
     }),
   };
@@ -516,6 +494,7 @@ function readHeader(
 function yamlBodyRange(
   source: string,
   root: YAMLMap<unknown, unknown>,
+  rangeAt: SourceRangeReader,
 ): WorldDocumentSourceRange {
   const firstBodyPair = root.items.find(
     ({ key }) => !scalarEquals(key, "$document"),
@@ -524,7 +503,7 @@ function yamlBodyRange(
     firstBodyPair === undefined || !isRangedNode(firstBodyPair.key)
       ? source.length
       : (firstBodyPair.key.range?.[0] ?? source.length);
-  return sourceRange(source, start, source.length);
+  return rangeAt(start, source.length);
 }
 
 function headerSearchRanges(ranges: HeaderRanges): WorldDocumentSourceRange[] {
@@ -536,6 +515,7 @@ function headerSearchRanges(ranges: HeaderRanges): WorldDocumentSourceRange[] {
 function indexYamlNodes(
   source: string,
   root: YAMLMap<unknown, unknown>,
+  rangeAt: SourceRangeReader,
 ): InternalYamlNode[] {
   const result: InternalYamlNode[] = [];
   const bodyPairs = root.items.filter(
@@ -544,14 +524,14 @@ function indexYamlNodes(
   if (bodyPairs.length === 0)
     result.push({
       locatorKey: yamlLocatorKey([]),
-      range: sourceRange(source, source.length, source.length),
+      range: rangeAt(source.length, source.length),
     });
   else {
     const first = bodyPairs[0]!;
     const last = bodyPairs.at(-1)!;
     result.push({
       locatorKey: yamlLocatorKey([]),
-      range: joinedNodeRange(source, first.key, last.value ?? last.key, 0),
+      range: joinedNodeRange(rangeAt, first.key, last.value ?? last.key, 0),
     });
   }
 
@@ -568,7 +548,7 @@ function indexYamlNodes(
         const childLocator = [...locator, key];
         result.push({
           locatorKey: yamlLocatorKey(childLocator),
-          range: nodeRange(source, pair.value ?? pair.key, 0),
+          range: nodeRange(rangeAt, pair.value ?? pair.key, 0),
         });
         visit(pair.value, childLocator);
       }
@@ -579,7 +559,7 @@ function indexYamlNodes(
         const childLocator = [...locator, index];
         result.push({
           locatorKey: yamlLocatorKey(childLocator),
-          range: nodeRange(source, child, 0),
+          range: nodeRange(rangeAt, child, 0),
         });
         visit(child, childLocator);
       });
@@ -600,6 +580,7 @@ interface MarkdownHeadingScan {
 export function scanMarkdownHeadings(
   source: string,
   bodyStart: number,
+  rangeAt: SourceRangeReader = createSourceRangeReader(source),
 ): MarkdownHeadingScan {
   const headings: {
     level: number;
@@ -635,7 +616,7 @@ export function scanMarkdownHeadings(
         headings.push({
           level: heading[1]!.length,
           title: rawTitle.trim(),
-          range: sourceRange(source, lineStart, lineEnd),
+          range: rangeAt(lineStart, lineEnd),
         });
       }
     }

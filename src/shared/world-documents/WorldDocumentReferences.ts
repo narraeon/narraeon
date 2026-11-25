@@ -14,6 +14,7 @@ import {
   nodeRange,
   scalarEquals,
   scalarString,
+  type SourceRangeReader,
 } from "./WorldDocumentSource.ts";
 import type {
   WorldDocumentDescriptor,
@@ -149,6 +150,7 @@ export function inspectYamlReferences(
   entry: InternalDocumentEntry,
   node: unknown,
   locator: readonly (string | number)[],
+  rangeAt: SourceRangeReader,
 ): void {
   if (isMap(node)) {
     const refPair = node.items.find(({ key }) => scalarEquals(key, "$ref"));
@@ -159,12 +161,8 @@ export function inspectYamlReferences(
       entry.references.push({
         targetId: node.items.length === 1 ? target : null,
         locator: freeze({ yaml: freeze([...locator]) }),
-        range: joinedNodeRange(entry.file.contents, startNode, endNode, 0),
-        valueRange: nodeRange(
-          entry.file.contents,
-          refPair.value ?? refPair.key,
-          0,
-        ),
+        range: joinedNodeRange(rangeAt, startNode, endNode, 0),
+        valueRange: nodeRange(rangeAt, refPair.value ?? refPair.key, 0),
       });
       return;
     }
@@ -178,20 +176,20 @@ export function inspectYamlReferences(
             ...(entry.descriptor === undefined
               ? {}
               : { documentId: entry.descriptor.documentId }),
-            range: nodeRange(entry.file.contents, pair.key, 0),
+            range: nodeRange(rangeAt, pair.key, 0),
             message: "YAML map keys must be strings",
           }),
         );
         continue;
       }
       if (locator.length === 0 && key === "$document") continue;
-      inspectYamlReferences(entry, pair.value, [...locator, key]);
+      inspectYamlReferences(entry, pair.value, [...locator, key], rangeAt);
     }
     return;
   }
   if (isSeq(node))
     node.items.forEach((child, index) =>
-      inspectYamlReferences(entry, child, [...locator, index]),
+      inspectYamlReferences(entry, child, [...locator, index], rangeAt),
     );
 }
 

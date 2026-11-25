@@ -1,6 +1,9 @@
 import { gameplayPath, readGameplay } from "../../protocol/gameplay.ts";
 import { readPackageFollowups } from "./PackageFollowups.ts";
-import { parseRestrictedYamlDocument } from "../../shared/restricted-yaml.ts";
+import {
+  exceedsRestrictedYamlShape,
+  parseRestrictedYamlDocument,
+} from "../../shared/restricted-yaml.ts";
 
 import type { ContentTreeFile } from "./ContentTreeFile.ts";
 import {
@@ -567,7 +570,7 @@ function parseRestrictedYaml(
     return undefined;
   }
   const value: unknown = document.toJS({ maxAliasCount: 0 });
-  if (!isRecord(value) || exceedsShapeLimit(value)) {
+  if (!isRecord(value) || exceedsRestrictedYamlShape(value)) {
     issue(
       issues,
       "unsafe_yaml",
@@ -844,20 +847,6 @@ function integerInRange(
     value >= minimum &&
     value <= maximum
   );
-}
-
-function exceedsShapeLimit(value: unknown): boolean {
-  let nodes = 0;
-  const visit = (candidate: unknown, depth: number): boolean => {
-    nodes += 1;
-    if (depth > 64 || nodes > 100_000) return true;
-    if (Array.isArray(candidate))
-      return candidate.some((item) => visit(item, depth + 1));
-    if (isRecord(candidate))
-      return Object.values(candidate).some((item) => visit(item, depth + 1));
-    return typeof candidate === "number" && !Number.isFinite(candidate);
-  };
-  return visit(value, 0);
 }
 
 function issue(
