@@ -136,11 +136,35 @@ function installReadingProbe(normalize, observerPath, narrative) {
     }
     return false;
   }
-  function historyGlyph(article, viewportBounds) {
+  function historyGlyph(article, viewportBounds, offset) {
     const [node] = body(article);
     const glyph =
       node && document.createTreeWalker(node, NodeFilter.SHOW_TEXT).nextNode();
-    return glyph && glyphPosition(node, glyph, 0, viewportBounds);
+    if (!glyph?.textContent.length) return null;
+    if (offset !== undefined)
+      return glyphPosition(node, glyph, offset, viewportBounds);
+    // The old fixture paragraph can straddle the header. Find the first line
+    // beneath it and choose a visible character on that line.
+    let first = 0;
+    let last = glyph.textContent.length - 1;
+    while (first < last) {
+      const middle = Math.floor((first + last) / 2);
+      if (
+        glyphPosition(node, glyph, middle, viewportBounds).top <
+        viewportBounds.top
+      )
+        first = middle + 1;
+      else last = middle;
+    }
+    for (
+      let index = first;
+      index < Math.min(first + 16, glyph.textContent.length);
+      index++
+    ) {
+      const position = glyphPosition(node, glyph, index, viewportBounds);
+      if (position.visible) return { ...position, offset: index };
+    }
+    return null;
   }
   function scrollState() {
     const { top, bottom } = bounds();
@@ -149,7 +173,8 @@ function installReadingProbe(normalize, observerPath, narrative) {
       [...reader.querySelectorAll(narrative)].find((article) =>
         text(body(article)).startsWith(userHistory.key),
       );
-    const glyph = historyGlyph(anchor, { top, bottom });
+    const glyph =
+      userHistory && historyGlyph(anchor, { top, bottom }, userHistory.offset);
     return {
       scrollTop: reader.scrollTop,
       distanceToBottom:
@@ -261,22 +286,18 @@ function installReadingProbe(normalize, observerPath, narrative) {
     scrolledToReply: () => frames.some(({ inViewport }) => inViewport),
     recordHistory() {
       const { top, bottom } = bounds();
-      const oldStory = [...reader.querySelectorAll(narrative)].find(
-        (article) => {
-          const y = article.getBoundingClientRect().top;
-          return (
-            y >= top &&
-            y < bottom &&
-            text(body(article)).startsWith("Harbor journal ") &&
-            historyGlyph(article, { top, bottom })?.visible
-          );
-        },
-      );
-      const key = text(body(oldStory)).match(/^Harbor journal \d+\./)?.[0];
-      if (!key) return null;
-      userHistory = { at: now(), key };
-      Object.assign(userHistory, scrollState());
-      return userHistory;
+      for (const article of reader.querySelectorAll(narrative)) {
+        const rect = article.getBoundingClientRect();
+        if (rect.bottom <= top || rect.top >= bottom) continue;
+        const key = text(body(article)).match(/^Harbor journal \d+\./)?.[0];
+        if (!key) continue;
+        const glyph = historyGlyph(article, { top, bottom });
+        if (!glyph) continue;
+        userHistory = { at: now(), key, offset: glyph.offset };
+        Object.assign(userHistory, scrollState());
+        return userHistory;
+      }
+      return null;
     },
     committed: () => finalAt !== undefined,
     collect() {
