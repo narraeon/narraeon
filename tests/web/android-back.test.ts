@@ -107,7 +107,7 @@ describe("Android 返回键", () => {
       createElement(WorkspaceHeader, {
         screen: "home",
         locale: "zh-CN",
-        localeDisabled: false,
+        localeSaving: false,
         navigationLocked: false,
         model: {
           connections: [],

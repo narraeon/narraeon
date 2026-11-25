@@ -241,6 +241,8 @@ test("a rejected language change keeps its reason after manual recovery", async 
     await route.continue();
   });
   await page.goto("/#/models");
+  const draft = page.getByLabel("配置名称");
+  await draft.fill("Retain this draft after rejection");
   await page.getByLabel("界面语言").selectOption("en");
   await expect(page.getByText("暂时无法同步", { exact: true })).toBeVisible();
   offline = false;
@@ -250,6 +252,7 @@ test("a rejected language change keeps its reason after manual recovery", async 
     page.getByText("偏好版本冲突，请核对后再保存。", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
+  await expect(draft).toHaveValue("Retain this draft after rejection");
 });
 
 test("first load retries once then offers a read-only recovery in the original position", async ({
@@ -353,6 +356,7 @@ test("a non-home workspace refresh failure keeps its receipt and draft with one 
     } else await route.continue();
   });
   await page.goto("/#/models");
+  await page.getByLabel("配置名称").fill("Keep this unsaved model");
   await page.getByLabel("界面语言").selectOption("en");
   await expect(
     page.getByText("Temporarily unable to sync", { exact: true }),
@@ -364,7 +368,9 @@ test("a non-home workspace refresh failure keeps its receipt and draft with one 
   await expect(
     page.getByText("Interface language saved.", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Configuration name").fill("Keep this unsaved model");
+  await expect(page.getByLabel("Configuration name")).toHaveValue(
+    "Keep this unsaved model",
+  );
   expect(reads).toBe(2);
   offline = false;
   await page.getByRole("button", { name: "Reload", exact: true }).click();

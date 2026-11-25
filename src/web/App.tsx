@@ -598,7 +598,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }, [workspace, screen, selected, navigationLocked, creatingWorld]);
 
   async function saveLocale(locale: AppLocale): Promise<void> {
-    if (workspace === null || localeSaving) return;
+    if (
+      workspace === null ||
+      workspace.preferences.locale === locale ||
+      localeSaving ||
+      navigationProtection.current.busy
+    )
+      return;
     setLocaleSaving(true);
     setLocaleRejection(null);
     try {
@@ -1292,7 +1298,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       <WorkspaceHeader
         screen={screen}
         locale={workspace.preferences.locale}
-        localeDisabled={localeSaving || navigationLocked}
+        localeSaving={localeSaving}
         navigationLocked={navigationBusy}
         model={workspace.model}
         modelBusy={pendingModelAction !== null || modelDraftDirty}

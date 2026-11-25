@@ -27,7 +27,7 @@ const creationDestinations = [
 export function WorkspaceHeader({
   screen,
   locale,
-  localeDisabled,
+  localeSaving,
   navigationLocked,
   model,
   modelBusy,
@@ -37,7 +37,7 @@ export function WorkspaceHeader({
 }: {
   screen: WorkspaceScreen;
   locale: AppLocale;
-  localeDisabled: boolean;
+  localeSaving: boolean;
   navigationLocked: boolean;
   model: ModelConnectionLibraryView;
   modelBusy: boolean;
@@ -211,10 +211,13 @@ export function WorkspaceHeader({
             <select
               aria-label={uiText("界面语言")}
               value={locale}
-              disabled={localeDisabled || navigationLocked}
-              onChange={(event) =>
-                onLocaleChange(event.currentTarget.value as AppLocale)
-              }
+              disabled={navigationLocked}
+              aria-disabled={localeSaving || undefined}
+              onChange={(event) => {
+                // Keep the control focused while its preference is saving.
+                if (!localeSaving)
+                  onLocaleChange(event.currentTarget.value as AppLocale);
+              }}
             >
               <option value="en">English</option>
               <option value="zh-CN">{uiText("简体中文")}</option>
