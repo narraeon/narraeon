@@ -87,6 +87,107 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const kind of ["setting", "revision"] as const) {
+  for (const locale of ["zh-CN", "en"] as const) {
+    test(`${kind} resolves a file draft beside the conversation with the drawer closed (${locale})`, async ({
+      page,
+    }) => {
+      const target = await prepare(page, kind, true, locale);
+      const chinese = locale === "zh-CN";
+      const draftMessage = "Continue with this conversation draft.";
+      await composer(page).fill(draftMessage);
+
+      const editor = await openEditor(page, kind, locale);
+      const saved = "Saved from the conversation.\n";
+      await editor.fill(saved);
+      const closeFiles = page.getByRole("button", {
+        name: chinese ? "收起文件面板" : "Close file panel",
+        exact: true,
+      });
+      await closeFiles.click();
+      await expect(editor).not.toBeVisible();
+
+      const { warning, save, discard } = fileDraftActions(page, kind, locale);
+      await expect(composer(page)).toBeDisabled();
+      await expect(warning).toBeVisible();
+
+      let saves = 0;
+      let revisionDiscards = 0;
+      let releaseSave!: () => void;
+      const saveGate = new Promise<void>((resolve) => {
+        releaseSave = resolve;
+      });
+      await page.route("**/api/runtime/v1", async (route) => {
+        const type = runtimeInput(route)?.type;
+        if (
+          type ===
+          (kind === "setting"
+            ? "content.replace"
+            : "world.revision.files.replace")
+        ) {
+          saves++;
+          await saveGate;
+        }
+        if (type === "world.revision.discard") revisionDiscards++;
+        await route.continue();
+      });
+
+      try {
+        await expect(discard).toBeEnabled();
+        await expect(save).toBeInViewport();
+        await discard.focus();
+        await page.keyboard.press("Shift+Tab");
+        await expect(save).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect.poll(() => saves).toBe(1);
+        await expect(save).toBeDisabled();
+        await expect(discard).toBeDisabled();
+        await expect(composer(page)).toBeDisabled();
+        await page.keyboard.press("Enter");
+        await openEditor(page, kind, locale);
+        const drawer = page
+          .getByRole("complementary")
+          .filter({ has: page.locator(".content-source-editor textarea") });
+        const drawerActions = fileDraftActions(page, kind, locale, drawer);
+        await expect(drawerActions.save).toBeDisabled();
+        await expect(drawerActions.discard).toBeDisabled();
+        await closeFiles.click();
+      } finally {
+        releaseSave();
+      }
+
+      await expect(composer(page)).toBeEnabled();
+      await expect(composer(page)).toHaveValue(draftMessage);
+      await expect(warning).toHaveCount(0);
+      const savedFiles = await target.files();
+      expect(
+        savedFiles.find((file) => file.path === "control/blocks/world.md")
+          ?.contents,
+      ).toBe(saved);
+
+      await openEditor(page, kind, locale);
+      await editor.fill("Discard this local draft.");
+      await closeFiles.click();
+      await expect(composer(page)).toBeDisabled();
+      await save.focus();
+      await page.keyboard.press("Tab");
+      await expect(discard).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(composer(page)).toBeEnabled();
+      await expect(composer(page)).toHaveValue(draftMessage);
+      await expect(warning).toHaveCount(0);
+      expect(await target.files()).toEqual(savedFiles);
+      expect(saves).toBe(1);
+      expect(revisionDiscards).toBe(0);
+      await openEditor(page, kind, locale);
+      await expect(editor).toHaveValue(saved);
+      await closeFiles.click();
+      await composer(page).press("Enter");
+      await expect(userText(page, draftMessage)).toBeVisible();
+      await expect(composer(page)).toBeEnabled();
+      expect(providerCalls).toBe(1);
+    });
+  }
+
   test(`${kind} in-page Back protects active requests and confirms leaving a file draft`, async ({
     page,
   }) => {
@@ -590,7 +691,49 @@ for (const kind of ["setting", "revision"] as const) {
     expect(providerCalls).toBe(1);
   });
 
-  test(`${kind} lost file-save receipt rereads without replay and retains the draft`, async ({
+  test(`${kind} a rejected file draft stays editable after saving from the conversation`, async ({
+    page,
+  }) => {
+    const target = await prepare(page, kind);
+    await send(page, "Keep this conversation through rejected validation.");
+    const baseline = await target.files();
+    const editor = await openEditor(page, kind);
+    const invalidPath =
+      kind === "setting" ? "control/gameplay.json" : "state/invalid.yaml";
+    const invalid = "This is not a valid document.\n";
+    await page.getByText("新建文件", { exact: true }).click();
+    await page.getByLabel("新文件路径", { exact: true }).fill(invalidPath);
+    await page.getByRole("button", { name: "加入草稿", exact: true }).click();
+    await editor.fill(invalid);
+    const closeFiles = page.getByRole("button", {
+      name: "收起文件面板",
+      exact: true,
+    });
+    await closeFiles.click();
+
+    const { save, discard } = fileDraftActions(page, kind);
+    await save.click();
+    await expect(page.getByRole("alert")).toContainText(
+      kind === "setting" ? "玩法文件必须是合法 JSON" : invalidPath,
+    );
+    await expect(composer(page)).toBeDisabled();
+    await expect(save).toBeEnabled();
+    expect(await target.files()).toEqual(baseline);
+    await openEditor(page, kind);
+    await page
+      .getByRole("button", { name: `打开 ${invalidPath}`, exact: true })
+      .click();
+    await expect(editor).toHaveValue(invalid);
+    await closeFiles.click();
+    await discard.click();
+    await expect(composer(page)).toBeEnabled();
+    expect(await target.files()).toEqual(baseline);
+    await expect(
+      userText(page, "Keep this conversation through rejected validation."),
+    ).toBeVisible();
+  });
+
+  test(`${kind} lost file-save receipt from the conversation rereads without replay and retains the draft`, async ({
     page,
   }) => {
     const target = await prepare(page, kind);
@@ -617,13 +760,17 @@ for (const kind of ["setting", "revision"] as const) {
       expect(response.ok()).toBe(true);
       await route.abort("failed");
     });
-    await page
-      .getByRole("button", {
-        name: kind === "setting" ? "整批保存" : "保存到修订",
-        exact: true,
-      })
-      .click();
+    const closeFiles = page.getByRole("button", {
+      name: "收起文件面板",
+      exact: true,
+    });
+    await closeFiles.click();
+    const { save, discard } = fileDraftActions(page, kind);
+    await save.click();
     await expect(page.getByRole("alert")).toContainText("无法连接");
+    await expect(composer(page)).toBeDisabled();
+    await expect(save).toBeEnabled();
+    await openEditor(page, kind);
     await expect(editor).toHaveValue(
       "Saved authoring file with a lost receipt.\n",
     );
@@ -631,9 +778,10 @@ for (const kind of ["setting", "revision"] as const) {
     expect(
       saved.find((file) => file.path === "control/blocks/world.md")?.contents,
     ).toBe("Saved authoring file with a lost receipt.\n");
-    await page
-      .getByRole("button", { name: "放弃未保存修改", exact: true })
-      .click();
+    await closeFiles.click();
+    await discard.click();
+    await expect(composer(page)).toBeEnabled();
+    await openEditor(page, kind);
     await expect(editor).toHaveValue(
       "Saved authoring file with a lost receipt.\n",
     );
@@ -861,6 +1009,48 @@ for (const kind of ["setting", "revision"] as const) {
     });
 }
 
+test("a conflicting content-package save explains the rejection with the drawer closed", async ({
+  page,
+}) => {
+  const target = await prepare(page, "setting");
+  const path = "control/blocks/world.md";
+  const { files, treeRevision } = await runtime<{
+    files: { path: string; contents: string }[];
+    treeRevision: string;
+  }>(page, { type: "content.read", packageId: target.id });
+  const editor = await openEditor(page, "setting");
+  const localEdit = "Keep this local file draft.\n";
+  const laterEdit = "Saved from another editor.\n";
+  await editor.fill(localEdit);
+  const closeFiles = page.getByRole("button", {
+    name: "收起文件面板",
+    exact: true,
+  });
+  await closeFiles.click();
+  await runtime(page, {
+    type: "content.replace",
+    packageId: target.id,
+    baseTreeRevision: treeRevision,
+    files: files.map((file) =>
+      file.path === path ? { ...file, contents: laterEdit } : file,
+    ),
+  });
+
+  const { save, discard } = fileDraftActions(page, "setting");
+  await save.click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "内容包已被其他操作修改，草稿已保留，尚未保存。",
+  );
+  await expect(composer(page)).toBeDisabled();
+  await openEditor(page, "setting");
+  await expect(editor).toHaveValue(localEdit);
+  await closeFiles.click();
+  await discard.click();
+  await expect(composer(page)).toBeEnabled();
+  await openEditor(page, "setting");
+  await expect(editor).toHaveValue(laterEdit);
+});
+
 test("world revision first-edit lock receipt is never replayed during read recovery", async ({
   page,
 }) => {
@@ -961,6 +1151,35 @@ function userText(page: Page, text: string) {
 function composer(page: Page) {
   return page.locator("#setting-conversation-input");
 }
+function fileDraftActions(
+  page: Page,
+  kind: Kind,
+  locale: "zh-CN" | "en" = "zh-CN",
+  controls = page.locator(".setting-conversation-composer"),
+) {
+  const chinese = locale === "zh-CN";
+  const saveLabel =
+    kind === "setting"
+      ? chinese
+        ? "整批保存"
+        : "Save all changes"
+      : chinese
+        ? "保存到修订"
+        : "Save to revision";
+  return {
+    warning: controls.getByText(
+      chinese
+        ? "请先保存或放弃文件编辑中的未保存修改。"
+        : "Save or discard the unsaved manual file edits first.",
+      { exact: true },
+    ),
+    save: controls.getByRole("button", { name: saveLabel, exact: true }),
+    discard: controls.getByRole("button", {
+      name: chinese ? "放弃未保存修改" : "Discard unsaved changes",
+      exact: true,
+    }),
+  };
+}
 function syncNotice(page: Page) {
   return page.getByText("暂时无法同步", { exact: true });
 }
@@ -1048,18 +1267,42 @@ async function interruptObservation(page: Page, terminal = false) {
     terminal,
   );
 }
-async function openEditor(page: Page, kind: Kind) {
+async function openEditor(
+  page: Page,
+  kind: Kind,
+  locale: "zh-CN" | "en" = "zh-CN",
+) {
+  const chinese = locale === "zh-CN";
   await page
     .getByRole("navigation", {
-      name: kind === "setting" ? "设定完善工具" : "世界修订工具",
+      name:
+        kind === "setting"
+          ? chinese
+            ? "设定完善工具"
+            : "Setting-improvement tools"
+          : chinese
+            ? "世界修订工具"
+            : "World-revision tools",
     })
-    .getByRole("button", { name: "编辑", exact: true })
+    .getByRole("button", { name: chinese ? "编辑" : "Edit", exact: true })
     .click();
   const rail = page.getByRole("complementary", {
-    name: kind === "setting" ? "内容包文件编辑" : "世界修订文件编辑",
+    name:
+      kind === "setting"
+        ? chinese
+          ? "内容包文件编辑"
+          : "Content-package file editing"
+        : chinese
+          ? "世界修订文件编辑"
+          : "Edit world-revision files",
   });
   await rail
-    .getByRole("button", { name: "打开 control/blocks/world.md", exact: true })
+    .getByRole("button", {
+      name: chinese
+        ? "打开 control/blocks/world.md"
+        : "Open control/blocks/world.md",
+      exact: true,
+    })
     .click();
   return rail.locator(".content-source-editor textarea");
 }
@@ -1074,8 +1317,14 @@ async function runtime<T = unknown>(
   expect(response.ok(), JSON.stringify(body.error)).toBe(true);
   return body.result;
 }
-async function prepare(page: Page, kind: Kind, open = true) {
-  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+async function prepare(
+  page: Page,
+  kind: Kind,
+  open = true,
+  locale: "zh-CN" | "en" = "zh-CN",
+) {
+  const chinese = locale === "zh-CN";
+  await runtime(page, { type: "preferences.save", locale });
   await runtime(page, {
     type: "model.save",
     connection: {
@@ -1113,13 +1362,22 @@ async function prepare(page: Page, kind: Kind, open = true) {
       ? ("setting-improvement" as const)
       : ("world.revision" as const);
   const target = {
+    id,
     prefix,
     open: async () => {
       await page.goto(`/#/${kind === "setting" ? "content" : "world"}/${id}`);
       if (kind === "revision") {
-        await page.getByRole("button", { name: "世界", exact: true }).click();
         await page
-          .getByRole("button", { name: "修订当前世界", exact: true })
+          .getByRole("button", {
+            name: chinese ? "世界" : "Worlds",
+            exact: true,
+          })
+          .click();
+        await page
+          .getByRole("button", {
+            name: chinese ? "修订当前世界" : "Revise current world",
+            exact: true,
+          })
           .click();
       }
     },

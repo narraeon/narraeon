@@ -6211,7 +6211,22 @@ summary {
 }
 
 .setting-improvement-blocker p,
+.setting-improvement-warning p {
+  margin: 0;
+}
+
 .setting-improvement-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.84rem;
+}
+
+.setting-improvement-warning .button-row {
+  gap: 0.5rem;
   margin: 0;
 }
 
@@ -6847,7 +6862,6 @@ summary {
 }
 
 .setting-reader-page .setting-improvement-blocker,
-.setting-reader-page .setting-improvement-warning,
 .setting-reader-page .setting-current-tree-notice,
 .setting-reader-page .setting-history-review-banner {
   width: min(100%, 48rem);
