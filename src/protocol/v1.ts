@@ -233,7 +233,8 @@ export type V1Request =
       type: "world.create";
       operationId: string;
       packageId: string;
-      model: ModelBinding;
+      /** Older callers can still request a preview with the active connection. */
+      model?: ModelBinding;
     }
   | { type: "world.archive.export"; worldId: string; operationId: string }
   | { type: "world.archive.import"; operationId: string; uploadId: string }

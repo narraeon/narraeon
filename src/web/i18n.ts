@@ -1936,8 +1936,11 @@ const worldPageEnglishMessages: Record<string, string> = {
   全新上下文从这里开始: "A new context begins here",
   故事还没有开始: "The story has not started",
   "写下你的第一个行动。": "Write your first action.",
-  "需要先配置模型连接才能游玩。":
-    "Configure a model connection before playing.",
+  "你可以先写下行动。配置模型连接后，再由你发送。":
+    "Write your action here. Once you connect a model, you can send it.",
+  "可以先创建世界并阅读开场，发送行动时再配置模型连接。":
+    "You can create the world and read its opening now. Connect a model when you’re ready to send an action.",
+  返回世界: "Back to world",
   配置模型: "Configure model",
   你的行动: "Your action",
   "描述你的行动；也可以留空并追加，让 AI 沿现有上下文续写…":

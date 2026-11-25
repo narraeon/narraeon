@@ -88,6 +88,7 @@ export function ModelConnectionScreen({
   library,
   onLibraryChange,
   onConnectionActivated,
+  onReturnToWorld,
   onNotice,
   onDirtyChange,
   pendingState,
@@ -96,6 +97,7 @@ export function ModelConnectionScreen({
   library: ModelConnectionLibraryView;
   onLibraryChange: (library: ModelConnectionLibraryView) => void;
   onConnectionActivated?: () => void;
+  onReturnToWorld?: () => void;
   onNotice: (notice: string) => void;
   onDirtyChange: (dirty: boolean) => void;
   pendingState?: [string | null, (next: string | null) => void];
@@ -511,6 +513,16 @@ export function ModelConnectionScreen({
               "保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时 Runtime 不会悄悄改用另一份配置。",
             )}
           </p>
+          {onReturnToWorld !== undefined && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onReturnToWorld}
+              disabled={dirty && pending !== null}
+            >
+              {uiText("返回世界")}
+            </button>
+          )}
         </div>
         <div className="model-active-summary">
           <span>{uiText("当前配置")}</span>

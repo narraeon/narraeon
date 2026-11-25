@@ -108,8 +108,7 @@ node dist/node/cli/main.js web
 ## First-time setup
 
 1. **Choose the interface language.** Use the language selector in the header. The choice is saved locally. It changes the interface and Runtime-owned default prompts, but it does not rewrite content or custom prompts you have already saved.
-2. **Configure a model connection.** Open **Model connection**, choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's real context-window and maximum-output limits. Saving a connection also makes it the active connection.
-3. **Prepare a content package.** Create a blank package or import a ZIP. A content package is a world template, not a live save. Its main surfaces are:
+2. **Prepare a content package.** Create a blank package or import a ZIP. A content package is a world template, not a live save. Its main surfaces are:
 
    ```text
    opening.md                 first prose the player reads
@@ -119,9 +118,10 @@ node dist/node/cli/main.js web
    control/player-views.yaml  persistent information shown beside the story
    ```
 
-4. **Edit or improve the setting.** Edit files directly, or ask the model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
-5. **Review the orchestration.** The built-in orchestration is ready to use and follows the selected language. Orchestrations hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
-6. **Create a world.** A usable content package can be copied into a new independent world. Later edits to the source package do not alter worlds that already exist. If you select a protagonist template, review it in the new world and choose **Confirm and customize** or **Skip and read opening**. Customization becomes part of the world when you review and apply it.
+3. **Edit or improve the setting.** Edit files directly, or connect a model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
+4. **Review the orchestration.** The built-in orchestration is ready to use and follows the selected language. Orchestrations hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
+5. **Create a world.** Copy a usable content package into a new independent world. You can save it, reopen it, and read the opening before connecting a model. If you select a protagonist template, review it in the new world and choose **Confirm and customize** or **Skip and read opening**. Customization becomes part of the world when you review and apply it.
+6. **Connect a model when you’re ready to play.** Open **Configure model** from the world. Choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's context-window and maximum-output limits. Save and enable the connection to return to the same world with your draft. Send the action when you’re ready.
 
 ## How play works
 

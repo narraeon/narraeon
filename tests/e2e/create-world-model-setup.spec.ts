@@ -95,7 +95,7 @@ async function prepareCreation(page: Page) {
   });
   await packagePicker.selectOption(packageId);
   await templatePicker.selectOption(templateId);
-  await expect(create).toBeDisabled();
+  await expect(create).toBeEnabled();
   await configure.click();
   await expect(page).toHaveURL(/#\/models$/u);
   return {

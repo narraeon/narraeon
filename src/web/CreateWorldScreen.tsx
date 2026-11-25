@@ -178,19 +178,19 @@ export function CreateWorldScreen({
           <p role="status">{uiText("内容包需要修复后才能创建世界。")}</p>
         )}
         {!modelConfigured && (
-          <button type="button" disabled={pending} onClick={onConfigureModel}>
-            {uiText("配置模型连接")}
-          </button>
+          <>
+            <small>
+              {uiText("可以先创建世界并阅读开场，发送行动时再配置模型连接。")}
+            </small>
+            <button type="button" disabled={pending} onClick={onConfigureModel}>
+              {uiText("配置模型连接")}
+            </button>
+          </>
         )}
         <button
           type="button"
           className="primary-button"
-          disabled={
-            pending ||
-            !modelConfigured ||
-            selected?.status !== "usable" ||
-            templatePending
-          }
+          disabled={pending || selected?.status !== "usable" || templatePending}
           onClick={() => onCreate(selectedTemplate)}
         >
           {pending ? uiText("正在创建世界…") : uiText("从当前内容包创建")}

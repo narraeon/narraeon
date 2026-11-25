@@ -138,7 +138,7 @@ export class WorldCreation {
     treeRevision?: string,
     template?: ProtagonistTemplate,
   ): Promise<CreatedWorldReceipt> {
-    const key = JSON.stringify([input, treeRevision, template?.id]);
+    const key = JSON.stringify([input.packageId, treeRevision, template?.id]);
     if (this.attempt?.key !== key) {
       this.clear();
       this.attempt = {

@@ -536,9 +536,9 @@ function playPreset(): PlayPresetBinding {
 
 function hostBinding(
   style = "Be restrained and specific. Do not act for the player.",
-): Parameters<
-  FileNativeWorldStore["createFromContentPackage"]
->[0]["prompt"]["hostBinding"] {
+): NonNullable<
+  Parameters<FileNativeWorldStore["createFromContentPackage"]>[0]["prompt"]
+>["hostBinding"] {
   return {
     hostPresetId: "play-timeline-layout-host",
     files: {

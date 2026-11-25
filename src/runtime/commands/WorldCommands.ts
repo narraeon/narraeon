@@ -66,26 +66,31 @@ export class WorldCommands {
           request.enabled,
         );
       case "world.create": {
-        const [package_, connection, preset] = await Promise.all([
+        const [package_, packageScriptGrants, connection] = await Promise.all([
           this.#services.content.readCurrentTreeContentPackage(
             request.packageId,
           ),
-          this.#services.models.bind(),
-          this.#services.playPresets.bindCurrent(),
+          this.#services.content.readPackageScriptGrants(request.packageId),
+          request.model === undefined
+            ? null
+            : this.#services.models.bindActiveIfPresent(),
         ]);
         return this.#services.worlds.createFromContentPackage({
           operationId: request.operationId,
           sourcePackageId: request.packageId,
           sourcePackageTitle: package_.title,
-          packageScriptGrants:
-            await this.#services.content.readPackageScriptGrants(
-              request.packageId,
-            ),
+          packageScriptGrants,
           packageFiles: package_.files,
-          prompt: {
-            hostBinding: presetHostBinding(preset),
-            modelBinding: new FileNativeModelHost(connection).binding(),
-          },
+          ...(connection === null
+            ? {}
+            : {
+                prompt: {
+                  hostBinding: presetHostBinding(
+                    await this.#services.playPresets.bindCurrent(),
+                  ),
+                  modelBinding: new FileNativeModelHost(connection).binding(),
+                },
+              }),
         });
       }
       case "world.creation-outcome":

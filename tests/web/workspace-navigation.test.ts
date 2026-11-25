@@ -811,8 +811,8 @@ test("顶栏不选择任意世界，快捷创建使用当前编辑的内容包�
   expect(creates()[0]).toMatchObject({
     type: "world.create",
     packageId: "chosen",
-    model: { modelId: "test" },
   });
+  expect(creates()[0]).not.toHaveProperty("model");
   await waitFor(() => expect(create.hasAttribute("disabled")).toBe(false));
   fireEvent.click(create);
   await waitFor(() => expect(creates()).toHaveLength(2));
