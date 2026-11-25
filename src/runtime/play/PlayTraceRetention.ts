@@ -14,7 +14,6 @@ import { FileNativePlayDocuments } from "./PlayDocumentTools.ts";
 import type { WorldDocumentLocator } from "../world/WorldDocumentStore.ts";
 import {
   cloneSharingPromptRuns,
-  currentPlayPrompt,
   playPromptRunsThroughEvents,
 } from "./PlayPromptRun.ts";
 import { isPlayerRoundMarker, playerInputAppend } from "./PlayContinuity.ts";
@@ -205,30 +204,15 @@ function assembleRetainedTrace(
 
 export function restorePlayDocuments(
   files: Readonly<Record<string, string>>,
-  context: Pick<
-    PersistedPlayCallChainContext,
-    | "bootstrap"
-    | "tools"
-    | "playPreset"
-    | "followups"
-    | "playPresetScriptsEnabled"
-    | "promptRuns"
-    | "completedTools"
-  >,
+  context: Pick<PersistedPlayCallChainContext, "bootstrap" | "completedTools">,
   events: readonly V1PlayCallChainEvent[],
 ): FileNativePlayDocuments {
   const documents = new FileNativePlayDocuments(files);
   try {
-    // Read authorizations are memory-only (ADR-0044). A restored prefix starts
-    // from its bootstrap, then replays the exact reads the retained transcript
-    // still shows the model, so it is not asked to read again what it has
-    // already seen. Stale write authority is caught by the commit's hash.
-    const runs = playPromptRunsThroughEvents(context, events);
-    documents.bindBootstrap(
-      currentPlayPrompt({ ...context, promptRuns: runs }).bootstrap,
-    );
-    for (const read of completedReadsThroughEvents(context, events))
-      documents.replayRead(read.shortRef, read.locator);
+    // Initial coverage and exact reads grant scopes. Later settled edits can
+    // invalidate those scopes even when the same address still resolves.
+    documents.bindBootstrap(context.bootstrap);
+    replayAuthorizationEvents(documents, context, events);
   } catch (error: unknown) {
     throw new PlayCallChainError(
       `Call-chain document authorization could not be restored: ${
@@ -240,35 +224,49 @@ export function restorePlayDocuments(
 }
 
 /**
- * The exact document scopes successfully read by context_read within the
- * selected event prefix, in event order. Tool results are keyed by exchange and
- * call ID, and the exchange is the one of the nearest preceding assistant event.
+ * Replay only completed tool results in the selected event prefix. Repeated
+ * results from a duplicate call ID did not execute against the live documents.
  */
-function completedReadsThroughEvents(
+function replayAuthorizationEvents(
+  documents: FileNativePlayDocuments,
   context: Pick<PersistedPlayCallChainContext, "completedTools">,
   events: readonly V1PlayCallChainEvent[],
-): { shortRef: string; locator: WorldDocumentLocator | null }[] {
+): void {
   const completed = new Map(
-    context.completedTools.map((tool) => [tool.key, tool.result]),
+    context.completedTools.map((tool) => [tool.key, tool]),
   );
-  const reads: { shortRef: string; locator: WorldDocumentLocator | null }[] =
-    [];
-  let exchange = 0;
+  const calls = new Map<string, unknown>();
+  let assistant: Extract<V1PlayCallChainEvent, { kind: "assistant" }> | null =
+    null;
   for (const event of events) {
-    if (event.kind === "assistant") {
-      exchange = event.exchange;
-      continue;
+    if (event.kind === "player" || event.kind === "assistant") {
+      calls.clear();
+      assistant =
+        event.kind === "assistant" && event.status === "completed"
+          ? event
+          : null;
+    } else if (event.kind === "tool_call" && !event.replayed) {
+      calls.set(event.callId, event.arguments);
+    } else if (
+      event.kind === "tool_result" &&
+      event.ok &&
+      !event.replayed &&
+      assistant !== null
+    ) {
+      const tool = completed.get(`${assistant.exchange}:${event.callId}`);
+      if (!tool?.result.ok || tool.name !== (event.executedName ?? event.name))
+        continue;
+      if (tool.name === "world_patch")
+        documents.replayPatch(tool.result, calls.get(event.callId));
+      if (tool.name === "world_create" && assistant.committedHead !== undefined)
+        documents.replayCreation(tool.result);
+      if (tool.name === "context_read") {
+        const authorization: unknown = tool.result.readAuthorization;
+        if (isReplayableReadAuthorization(authorization))
+          documents.replayRead(authorization.shortRef, authorization.locator);
+      }
     }
-    if (event.kind !== "tool_result" || !event.ok) continue;
-    const result = completed.get(`${exchange}:${event.callId}`);
-    const authorization: unknown = result?.readAuthorization;
-    if (!result?.ok || !isReplayableReadAuthorization(authorization)) continue;
-    reads.push({
-      shortRef: authorization.shortRef,
-      locator: structuredClone(authorization.locator),
-    });
   }
-  return reads;
 }
 
 function isReplayableReadAuthorization(

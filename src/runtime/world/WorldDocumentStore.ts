@@ -12,7 +12,12 @@ import type {
 } from "./documents/WorldDocumentTypes.ts";
 
 export type * from "./documents/WorldDocumentTypes.ts";
-export { formatWorldDocumentLocator } from "./documents/WorldDocumentSource.ts";
+export {
+  formatWorldDocumentLocator,
+  locatorStartsWith,
+  validMarkdownLocator,
+  validYamlLocator,
+} from "./documents/WorldDocumentSource.ts";
 
 export class WorldDocumentStore {
   static open(input: {

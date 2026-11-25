@@ -34,6 +34,9 @@ import {
 import type { FileNativeStateChange } from "../world/FileNativeWorldStore.ts";
 import {
   formatWorldDocumentLocator,
+  locatorStartsWith,
+  validMarkdownLocator,
+  validYamlLocator,
   type WorldDocumentEditOutcome,
   type WorldDocumentStore,
   type WorldDocumentDescriptor,
@@ -54,6 +57,13 @@ import {
 export interface PlayDocumentToolResult extends ContextToolResult {
   nextMaterials?: MaterialSelection[];
   resolution?: ResolutionReceipt;
+  /** Document identity recorded when Authority commits world_create. */
+  createdDocumentId?: string;
+  /** Applied edits that can invalidate an earlier exact read. */
+  patchAuthorization?: {
+    shortRef: string;
+    edits: PatchScopeEdit[];
+  };
   /** Internal receipt settled by PlayCallChain only after Authority commits. */
   candidateWrite?: {
     shortRef: string;
@@ -180,6 +190,45 @@ export class FileNativePlayDocuments {
       this.#candidate.snapshot,
       shortRef,
       locator,
+    );
+  }
+
+  replayCreation(result: PlayDocumentToolResult): void {
+    if (result.createdDocumentId !== undefined) {
+      const snapshot = this.#candidate.snapshot;
+      const created = documentById(snapshot, result.createdDocumentId);
+      if (created !== null)
+        authorizeRead(this.#reads, snapshot.id, created.shortRef, null);
+      return;
+    }
+    // Published receipts contain the allocated short ref, which may differ
+    // from the model's refHint. Only a settled success can grant a scope.
+    const shortRef = /^@([a-z][a-z0-9-]*) write succeeded(?:\n|$)/u.exec(
+      result.markdown,
+    )?.[1];
+    if (shortRef !== undefined) this.replayRead(shortRef, null);
+  }
+
+  replayPatch(result: PlayDocumentToolResult, args: unknown): void {
+    const recorded =
+      result.patchAuthorization ?? legacyPatchAuthorization(args);
+    if (
+      recorded === undefined ||
+      typeof recorded.shortRef !== "string" ||
+      !Array.isArray(recorded.edits)
+    )
+      return;
+    const scopes = this.#reads.documents.get(recorded.shortRef);
+    if (scopes == null) return;
+    this.#reads.documents.set(
+      recorded.shortRef,
+      scopesAfterPatch(
+        scopes,
+        recorded.edits.flatMap((edit) => {
+          const scopeEdit = patchScopeEdit(edit);
+          return scopeEdit === null ? [] : [scopeEdit];
+        }),
+      ),
     );
   }
 
@@ -343,6 +392,16 @@ export class FileNativePlayDocuments {
 type PlayCandidate = WorldStateRevision;
 
 type AuthorizedLocator = WorldDocumentLocator;
+interface PatchScopeEdit {
+  op:
+    | "add"
+    | "remove"
+    | "remove_section"
+    | "rename_section"
+    | "replace"
+    | "replace_section";
+  locator: AuthorizedLocator;
+}
 interface WriteAuthorizations {
   snapshotId: string;
   documents: Map<string, AuthorizedLocator[] | null>;
@@ -487,28 +546,26 @@ function applyPlayCandidatePatch(
     args.edits.length > 32
   )
     return toolFailure("world_patch requires a target and 1 to 32 edits.");
+  const edits: unknown[] = args.edits;
   const ref = args.target.replace(/^@/u, "");
   const target = documentDescriptorByRef(candidate.snapshot, ref);
   if (target === null) return toolFailure(`Target @${ref} does not exist.`);
-  const retainedAuthorization = authorizationsAfterEdits(
-    reads.documents.get(ref),
-    args.edits,
-  );
+  const authorization = reads.documents.get(ref);
   if (
     reads.snapshotId !== candidate.snapshot.id ||
-    retainedAuthorization === undefined
+    !permitsPatch(authorization, edits)
   )
     return toolFailure(
       `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
     );
   try {
-    assertToolReferenceHandles(args.edits);
+    assertToolReferenceHandles(edits);
     const revised = candidate.snapshot.revise({
       commands: [
         {
           kind: "patch",
           document: { documentId: target.documentId },
-          edits: args.edits as readonly WorldDocumentRevisionEdit[],
+          edits: edits as readonly WorldDocumentRevisionEdit[],
         },
       ],
     });
@@ -529,6 +586,11 @@ function applyPlayCandidatePatch(
       );
     const editDetails = formatToolEditDetails(revised.editOutcomes);
     const status = `@${target.shortRef} ${changed ? "pending write" : "unchanged"}`;
+    const scopeEdits = revised.editOutcomes.flatMap(({ editIndex, status }) => {
+      const edit =
+        status === "applied" ? patchScopeEdit(edits[editIndex]) : null;
+      return edit === null ? [] : [edit];
+    });
     const previousSnapshot = candidate.snapshot;
     acceptWorldStateRevision(candidate, revised);
     carryWriteAuthorizations(
@@ -537,26 +599,17 @@ function applyPlayCandidatePatch(
       reads,
       revised.changes,
     );
-    if (retainedAuthorization === null)
+    if (authorization === null)
       authorizeRead(reads, candidate.snapshot.id, ref, null);
-    else
-      for (const locator of retainedAuthorization) {
-        const selected = candidate.snapshot.query({
-          kind: "select_node",
-          document: { shortRef: ref },
-          locator,
-        });
-        if (selected.kind === "select_node" && selected.ok)
-          authorizeRead(
-            reads,
-            candidate.snapshot.id,
-            ref,
-            selected.node.locator,
-          );
-      }
+    else {
+      reads.documents.delete(ref);
+      for (const locator of scopesAfterPatch(authorization, scopeEdits))
+        authorizeResolvedRead(reads, candidate.snapshot, ref, locator);
+    }
     return {
       ok: true,
       markdown: editDetails === "" ? status : `${status} · ${editDetails}`,
+      patchAuthorization: { shortRef: ref, edits: scopeEdits },
       candidateWrite: {
         shortRef: target.shortRef,
         changed,
@@ -570,67 +623,97 @@ function applyPlayCandidatePatch(
   }
 }
 
-function authorizationsAfterEdits(
+function permitsPatch(
   authorization: AuthorizedLocator[] | null | undefined,
   edits: unknown[],
-): AuthorizedLocator[] | null | undefined {
-  if (authorization === null || authorization === undefined)
-    return authorization;
+): authorization is AuthorizedLocator[] | null {
+  if (authorization == null) return authorization === null;
   for (const edit of edits) {
-    if (!record(edit) || edit.op === "set_metadata" || !record(edit.locator))
-      return undefined;
-    const requested = Array.isArray(edit.locator.yaml)
-      ? { codec: "yaml", path: edit.locator.yaml }
-      : Array.isArray(edit.locator.markdown)
-        ? { codec: "markdown", path: edit.locator.markdown }
-        : null;
+    if (!record(edit) || edit.op === "set_metadata") return false;
+    const { locator } = edit;
     if (
-      requested === null ||
-      !authorization.some((allowed) => {
-        const path = "yaml" in allowed ? allowed.yaml : allowed.markdown;
-        return (
-          requested.codec in allowed &&
-          path.every((segment, index) => requested.path[index] === segment)
-        );
-      })
+      (!validYamlLocator(locator) && !validMarkdownLocator(locator, true)) ||
+      !authorization.some((allowed) => includesScope(allowed, locator))
     )
-      return undefined;
-    // A removed/replaced subtree or shifted array address is no longer proof
-    // about its old descendants. Check each edit before moving to the next so
-    // a batch cannot use a deleted array item to overwrite its unread successor.
-    authorization = authorization.filter((allowed) => {
-      if (!(requested.codec in allowed)) return true;
-      const path = "yaml" in allowed ? allowed.yaml : allowed.markdown;
-      const withinEdit = requested.path.every(
-        (segment, index) => path[index] === segment,
-      );
-      if (
-        withinEdit &&
-        ["remove", "remove_section", "rename_section"].includes(String(edit.op))
-      )
-        return false;
-      if (
-        withinEdit &&
-        path.length > requested.path.length &&
-        ["replace", "replace_section"].includes(String(edit.op))
-      )
-        return false;
-      if (edit.op === "remove" && requested.codec === "yaml") {
-        const index = requested.path.length - 1;
-        const removed: unknown = requested.path[index];
-        const current = path[index];
+      return false;
+    // A batch cannot spend the scope for a deleted item on its unread successor.
+    const scopeEdit = patchScopeEdit(edit);
+    if (scopeEdit !== null)
+      authorization = scopesAfterPatch(authorization, [scopeEdit]);
+  }
+  return true;
+}
+
+function patchScopeEdit(edit: unknown): PatchScopeEdit | null {
+  if (!record(edit)) return null;
+  const { op, locator } = edit;
+  if (
+    op !== "add" &&
+    op !== "remove" &&
+    op !== "remove_section" &&
+    op !== "rename_section" &&
+    op !== "replace" &&
+    op !== "replace_section"
+  )
+    return null;
+  return validYamlLocator(locator) || validMarkdownLocator(locator, true)
+    ? { op, locator }
+    : null;
+}
+
+function includesScope(
+  outer: AuthorizedLocator,
+  inner: AuthorizedLocator,
+): boolean {
+  if ("yaml" in outer)
+    return "yaml" in inner && locatorStartsWith(inner.yaml, outer.yaml);
+  return (
+    "markdown" in inner && locatorStartsWith(inner.markdown, outer.markdown)
+  );
+}
+
+function scopesAfterPatch(
+  scopes: AuthorizedLocator[],
+  edits: readonly PatchScopeEdit[],
+): AuthorizedLocator[] {
+  return scopes.filter((scope) =>
+    edits.every(({ op, locator }) => {
+      if (op === "remove" && "yaml" in locator && "yaml" in scope) {
+        const index = locator.yaml.length - 1;
+        const removed = locator.yaml[index];
+        const current = scope.yaml[index];
         if (
           typeof removed === "number" &&
           typeof current === "number" &&
           current >= removed &&
-          requested.path.slice(0, -1).every((segment, i) => path[i] === segment)
+          locatorStartsWith(scope.yaml, locator.yaml.slice(0, index))
         )
           return false;
       }
-      return true;
-    });
-  }
-  return authorization;
+      if (!includesScope(locator, scope)) return true;
+      return (
+        (op === "add" || op === "replace" || op === "replace_section") &&
+        includesScope(scope, locator)
+      );
+    }),
+  );
+}
+
+function legacyPatchAuthorization(
+  args: unknown,
+): PlayDocumentToolResult["patchAuthorization"] {
+  if (!record(args) || typeof args.target !== "string") return undefined;
+  const schema = runtimeToolInputSchema("world_patch");
+  const repaired =
+    schema === null ? args : coerceToolArguments(schema, args).arguments;
+  if (!record(repaired) || !Array.isArray(repaired.edits)) return undefined;
+  // Older settlements retain the requested edits. Where they did not record
+  // per-edit outcomes, revoke any scope that an accepted edit could invalidate.
+  const edits = repaired.edits.flatMap((edit) => {
+    const scopeEdit = patchScopeEdit(edit);
+    return scopeEdit === null ? [] : [scopeEdit];
+  });
+  return { shortRef: args.target.replace(/^@/u, ""), edits };
 }
 
 function formatToolEditDetails(

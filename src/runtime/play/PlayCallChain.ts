@@ -3753,17 +3753,20 @@ function finalizeWriteReceipts(settlement: {
   trailingEvents: V1PlayCallChainEvent[];
   transcriptAppend: ModelHostAppendItem[];
 }): void {
-  const committedWriteRefs = new Set(
-    settlement.stateChanges.map(({ stableShortRef }) => stableShortRef),
+  const committedWrites = new Map(
+    settlement.stateChanges.map((change) => [change.stableShortRef, change]),
   );
   const markdownByCall = new Map<string, string>();
   for (const completed of settlement.completedTools) {
     const candidateWrite = completed.result.candidateWrite;
     if (!completed.result.ok || candidateWrite === undefined) continue;
+    const committedWrite = committedWrites.get(candidateWrite.shortRef);
     const markdown = settlement.documents.settledWriteReceipt(
       candidateWrite,
-      committedWriteRefs.has(candidateWrite.shortRef),
+      committedWrite !== undefined,
     );
+    if (completed.name === "world_create" && committedWrite?.kind === "create")
+      completed.result.createdDocumentId = committedWrite.documentId;
     completed.result.markdown = markdown;
     delete completed.result.candidateWrite;
     const callId = completed.key.slice(completed.key.indexOf(":") + 1);
