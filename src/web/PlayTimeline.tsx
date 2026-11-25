@@ -232,6 +232,7 @@ export function PlayTimeline({
           return (
             <li
               key={group.key}
+              data-timeline-item={group.key}
               className="story-context-boundary"
               role="separator"
               aria-label={uiText("全新上下文从这里开始")}
@@ -263,7 +264,11 @@ export function PlayTimeline({
           );
         if (item.kind === "genesis")
           return (
-            <li key={group.key} className={`${item.role}-message`}>
+            <li
+              key={group.key}
+              data-timeline-item={group.key}
+              className={`${item.role}-message`}
+            >
               <article>
                 <header>
                   <strong>
@@ -535,6 +540,7 @@ function TimelineEvent({
   const [revisionContinuation, setRevisionContinuation] =
     useState<PlayerRevisionContinuation>("auto");
   const eventId = event.id;
+  const timelineItem = `event:${chainId}:${eventId}`;
   const {
     target: detailTarget,
     syncFailed: detailFailed,
@@ -561,7 +567,7 @@ function TimelineEvent({
 
   if (event.kind === "player")
     return (
-      <li className="call-chain-player">
+      <li className="call-chain-player" data-timeline-item={timelineItem}>
         <article>
           <header>
             <strong>{uiText("玩家")}</strong>
@@ -731,6 +737,7 @@ function TimelineEvent({
     return (
       <li
         className={`call-chain-assistant is-${event.status} is-${responseClass}`}
+        data-timeline-item={timelineItem}
       >
         <article>
           <header>
@@ -820,7 +827,7 @@ function TimelineEvent({
   if (event.kind === "tool_call") return null;
   if (event.kind === "tool_result")
     return event.resolution === undefined ? null : (
-      <li className="call-chain-resolution">
+      <li className="call-chain-resolution" data-timeline-item={timelineItem}>
         <ResolutionCard receipt={event.resolution} />
       </li>
     );
@@ -863,7 +870,11 @@ function TimelineEvent({
 
   if (event.kind === "cancellation")
     return (
-      <li className="call-chain-cancellation" role="status">
+      <li
+        className="call-chain-cancellation"
+        data-timeline-item={timelineItem}
+        role="status"
+      >
         <strong>{uiText("生成已取消")}</strong>
         <p>
           {uiText(
@@ -874,7 +885,11 @@ function TimelineEvent({
     );
 
   return (
-    <li className="call-chain-failure" role="alert">
+    <li
+      className="call-chain-failure"
+      data-timeline-item={timelineItem}
+      role="alert"
+    >
       <PlayFailureNotice
         failureKind={event.failureKind}
         canRetry={failureRecovery?.canRetry ?? false}

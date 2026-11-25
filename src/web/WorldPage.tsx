@@ -67,6 +67,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import type {
   ContentTreeFile,
@@ -117,7 +118,6 @@ type WorldDialog = "revision" | "reading" | "manage" | null;
 type PendingAction =
   | "play-fresh"
   | "play-append"
-  | "timeline-page"
   | "control-preview"
   | "control-apply"
   | "rename"
@@ -125,6 +125,24 @@ type PendingAction =
   | "revise"
   | "derive"
   | "archive-export";
+
+function captureTimelineAnchor(
+  reader: HTMLElement,
+): { id: string; top: number } | null {
+  const headerInset =
+    parseFloat(getComputedStyle(reader).scrollPaddingTop) || 0;
+  const visibleTop = reader.getBoundingClientRect().top + headerInset;
+  let anchor: { id: string; top: number } | null = null;
+  for (const item of reader.querySelectorAll<HTMLElement>(
+    "[data-timeline-item]",
+  )) {
+    const bounds = item.getBoundingClientRect();
+    if (bounds.height === 0) continue;
+    anchor = { id: item.dataset.timelineItem!, top: bounds.top };
+    if (bounds.bottom > visibleTop) break;
+  }
+  return anchor;
+}
 
 interface Feedback {
   kind: "status" | "error";
@@ -222,7 +240,10 @@ export function WorldPage({
   const [turnNote, setTurnNote] = useState(
     initialComposerDraft?.turnNote ?? "",
   );
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [pendingAction, setPending] = useState<PendingAction | null>(null);
+  const [earlierTimelineLoading, setEarlierTimelineLoading] = useState(false);
+  const pending =
+    pendingAction ?? (earlierTimelineLoading ? "timeline-page" : null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [supersededFailure, setSupersededFailure] = useState<{
     worldId: string;
@@ -317,6 +338,7 @@ export function WorldPage({
   const [bridgeEvents, setBridgeEvents] = useState<Record<string, string[]>>(
     {},
   );
+  const readerRef = useRef<HTMLElement>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const { ref: composerTextareaAttach, textareaRef: composerTextareaRef } =
@@ -1063,6 +1085,15 @@ export function WorldPage({
   }
 
   const timelineCursor = playTimeline?.nextCursor ?? null;
+  const displayedTimeline = useRef(playTimeline);
+  useLayoutEffect(() => {
+    displayedTimeline.current = playTimeline;
+  }, [playTimeline]);
+  const earlierTimelineDisabled =
+    earlierTimelineLoading ||
+    (pendingAction !== null &&
+      pendingAction !== "play-fresh" &&
+      pendingAction !== "play-append");
   const {
     target: earlierTimelineTarget,
     syncFailed: earlierTimelineFailed,
@@ -1082,27 +1113,61 @@ export function WorldPage({
     ),
     useCallback(
       (earlier: V1PlayTimelinePage | null) => {
-        if (earlier === null) return;
-        setPlayTimeline((current) =>
-          current === null
-            ? earlier
-            : current.generation !== earlier.generation
-              ? current
-              : {
+        if (earlier?.worldId !== worldId) return;
+        const canPrepend = (
+          current: V1PlayTimelinePage | null,
+        ): current is V1PlayTimelinePage =>
+          current?.worldId === worldId &&
+          current.generation === earlier.generation &&
+          current.nextCursor === timelineCursor;
+        if (!canPrepend(displayedTimeline.current)) return;
+
+        // Capture just before inserting the page so scrolling while it loads
+        // sets the new reading position.
+        const reader = readerRef.current;
+        const anchor = reader === null ? null : captureTimelineAnchor(reader);
+        flushSync(() =>
+          setPlayTimeline((current) =>
+            canPrepend(current)
+              ? {
                   ...current,
                   items: [...earlier.items, ...current.items],
                   nextCursor: earlier.nextCursor,
-                },
+                }
+              : current,
+          ),
         );
+        const updated = displayedTimeline.current;
+        if (
+          reader === null ||
+          anchor === null ||
+          updated?.generation !== earlier.generation ||
+          updated.nextCursor !== earlier.nextCursor
+        )
+          return;
+
+        const item = reader.querySelector<HTMLElement>(
+          `[data-timeline-item="${CSS.escape(anchor.id)}"]`,
+        );
+        if (item === null) return;
+        // Measuring the remaining drift accounts for any browser anchoring.
+        const drift = item.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(drift) >= 0.5)
+          reader.scrollBy({ top: drift, behavior: "instant" });
       },
-      [setPlayTimeline],
+      [setPlayTimeline, timelineCursor, worldId],
     ),
   );
-  async function loadEarlierTimeline(): Promise<void> {
-    if (timelineCursor === null) return;
-    setPending("timeline-page");
-    await earlierTimelineTarget.read();
-    setPending(null);
+  async function loadEarlierTimeline(recover = false): Promise<void> {
+    if (timelineCursor === null || earlierTimelineDisabled) return;
+    setEarlierTimelineLoading(true);
+    try {
+      await (recover
+        ? earlierTimelineTarget.recover()
+        : earlierTimelineTarget.read());
+    } finally {
+      setEarlierTimelineLoading(false);
+    }
   }
 
   const {
@@ -1783,6 +1848,7 @@ export function WorldPage({
           />
 
           <section
+            ref={readerRef}
             className="world-reader-scroll"
             aria-label={uiText("世界游玩")}
           >
@@ -1792,20 +1858,20 @@ export function WorldPage({
               aria-label={uiText("故事时间线")}
             >
               <ArtifactExtensionMount mount="story" />
-              {playTimeline?.nextCursor === null ? null : (
+              {timelineCursor === null ? null : (
                 <>
                   <SyncNotice
                     failed={earlierTimelineFailed}
                     reason={earlierTimelineError}
-                    onRead={() => void earlierTimelineTarget.recover()}
+                    onRead={() => void loadEarlierTimeline(true)}
                   />
                   <button
                     type="button"
                     className="secondary-button timeline-load-earlier"
-                    disabled={pending !== null}
+                    disabled={earlierTimelineDisabled}
                     onClick={() => void loadEarlierTimeline()}
                   >
-                    {pending === "timeline-page"
+                    {earlierTimelineLoading
                       ? uiText("正在加载…")
                       : uiText("加载更早的故事")}
                   </button>
