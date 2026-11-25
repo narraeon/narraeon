@@ -108,9 +108,12 @@ node dist/node/cli/main.js web
 5. **创建世界。**把可用的内容包复制成独立世界。你可以先保存世界，随时重开并阅读开场白。如果选了主角模板，新世界会显示确认卡。你可以「确认并定制」，也可以「跳过，阅读开场」。定制结果经你审阅并应用后才会写入世界。
 6. **准备游玩时配置模型。**在世界里打开“配置模型”，选择 Provider 预设或自定义端点，填写 API Key、模型 ID、上下文窗口和最大输出限制。若本机 Chat Completions 服务使用 `localhost`、`127.0.0.0/8` 或 `[::1]`，可在“鉴权方式”选择“无需 API Key”，直接拉取并使用模型。保存并启用连接后会回到同一个世界，并保留你写下的行动。准备好后再发送。
 
-### 试用中文叙事文风
+### 试用叙事文风
 
-[下载简体中文叙事文风试用包](https://raw.githubusercontent.com/narraeon/narraeon/refs/heads/main/docs/orchestrations/chinese-prose-trial.orchestration.json)。如果浏览器打开了 JSON 正文，将它另存为 `chinese-prose-trial.orchestration.json`。
+- [下载简体中文叙事文风试用包](https://raw.githubusercontent.com/narraeon/narraeon/refs/heads/main/docs/orchestrations/chinese-prose-trial.orchestration.json)
+- [下载英文叙事文风试用包](https://raw.githubusercontent.com/narraeon/narraeon/refs/heads/main/docs/orchestrations/english-prose-trial.orchestration.json)
+
+如果浏览器打开了 JSON 正文，将它另存为 `chinese-prose-trial.orchestration.json` 或 `english-prose-trial.orchestration.json`。
 
 打开**创作工具 → 编排方案 → 编排方案管理 → 导入编排方案**，选择下载的文件。要开始试用，在导入的副本底部点击**应用为当前编排方案**。试用期间，设定完善会通过「未来游玩参考」读取自定义文风块的全文。
 
