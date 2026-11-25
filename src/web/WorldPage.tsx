@@ -1767,7 +1767,7 @@ export function WorldPage({
                 <div className="story-empty-state">
                   <span aria-hidden="true">✦</span>
                   <h3>{uiText("故事还没有开始")}</h3>
-                  <p>{uiText("描述你的行动，从当前世界开始一条调用链。")}</p>
+                  <p>{uiText("写下你的第一个行动。")}</p>
                 </div>
               ) : (
                 <Transcript

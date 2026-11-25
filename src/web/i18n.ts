@@ -779,7 +779,7 @@ const englishMessages: Record<string, string> = {
   内容包标题: "Content-package title",
   导入的内容包: "Imported content package",
   重命名: "Rename",
-  复制为新本地身份: "Copy as a new local identity",
+  创建独立副本: "Create an independent copy",
   "导出 ZIP": "Export ZIP",
   删除内容包: "Delete content package",
   "请输入文件路径。": "Enter a file path.",
@@ -1910,8 +1910,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   加载更早的已提交叙事: "Load earlier committed narrative",
   全新上下文从这里开始: "A new context begins here",
   故事还没有开始: "The story has not started",
-  "描述你的行动，从当前世界开始一条调用链。":
-    "Describe your action to start a call chain from the current world.",
+  "写下你的第一个行动。": "Write your first action.",
   "需要先配置模型连接才能游玩。":
     "Configure a model connection before playing.",
   配置模型: "Configure model",

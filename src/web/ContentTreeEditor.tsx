@@ -250,7 +250,7 @@ export function ContentTreeEditor({
                 disabled={dirty}
                 onClick={onCopy}
               >
-                {uiText("复制为新本地身份")}
+                {uiText("创建独立副本")}
               </button>
               <button
                 type="button"
