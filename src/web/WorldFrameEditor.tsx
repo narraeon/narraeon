@@ -1,7 +1,7 @@
 import { browserUUID } from "./browser-uuid.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useMemo, useState } from "react";
-import { isMap, isNode, isSeq, parse, stringify } from "yaml";
+import { useId, useMemo, useState } from "react";
+import { isMap, isNode, isSeq, stringify } from "yaml";
 
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import {
@@ -9,11 +9,19 @@ import {
   parseRestrictedYamlDocument,
 } from "../shared/restricted-yaml.ts";
 import {
-  documentCodec,
-  markdownFrontMatter,
-} from "../shared/world-document-format.ts";
+  validMarkdownLocator,
+  validYamlLocator,
+} from "../shared/world-documents/WorldDocumentSource.ts";
+import {
+  buildWorldDocumentDraft,
+  type WorldDocumentDraftLayout,
+  type WorldDocumentDraftLocator,
+} from "./world-document-draft-index.ts";
 
 const worldFrameFormat = "narraeon.world-frame/v1";
+type WorldDocumentDraft = ReturnType<typeof buildWorldDocumentDraft>;
+type NodeLocator = NonNullable<WorldDocumentDraftLocator>;
+type EditableLocator = { yaml: string[] } | { markdown: string[] };
 
 type FrameRecord = Record<string, unknown>;
 type FrameSlot = Record<string, unknown> & { kind: string };
@@ -35,6 +43,7 @@ interface DocumentOption {
   title: string;
   path: string;
   codec: "yaml" | "markdown";
+  retired: boolean;
   yamlLocators: readonly YamlLocatorOption[];
 }
 
@@ -141,18 +150,28 @@ const optionalSlotKinds = [
 export function WorldFrameEditor({
   contents,
   files,
+  layout = "content_package",
   dirty,
   onChange,
   onSave,
 }: {
   contents: string;
   files: readonly ContentTreeFile[];
+  layout?: WorldDocumentDraftLayout;
   dirty: boolean;
   onChange: (contents: string) => void;
   onSave: () => void;
 }): React.JSX.Element {
   const parsed = useMemo(() => readWorldFrame(contents), [contents]);
-  const documents = useMemo(() => contentDocumentOptions(files), [files]);
+  const worldDraft = useMemo(
+    () => buildWorldDocumentDraft(files, layout),
+    [files, layout],
+  );
+  const documents = useMemo(
+    () => frameDocumentOptions(worldDraft),
+    [worldDraft],
+  );
+  const { logicalRoot } = worldDraft.snapshot;
   const markdownBlocks = useMemo(() => controlMarkdownBlocks(files), [files]);
   const directories = useMemo(() => worldDirectories(documents), [documents]);
   const [newInstructionPath, setNewInstructionPath] = useState("");
@@ -187,6 +206,7 @@ export function WorldFrameEditor({
     newSlotKind,
     documents,
     directories,
+    logicalRoot,
   );
 
   const updateFrame = (update: (draft: FrameYaml) => void): void => {
@@ -696,6 +716,7 @@ export function WorldFrameEditor({
                         ordinal={index + 1}
                         documents={documents}
                         directories={directories}
+                        worldDraft={worldDraft}
                         canRemove={
                           !isRequiredSlot(entry.slot.kind) ||
                           countSlot(contextEntries, entry.slot.kind) > 1
@@ -789,6 +810,7 @@ function FrameSlotCard({
   ordinal,
   documents,
   directories,
+  worldDraft,
   canRemove,
   first,
   last,
@@ -800,6 +822,7 @@ function FrameSlotCard({
   ordinal: number;
   documents: readonly DocumentOption[];
   directories: readonly DirectoryOption[];
+  worldDraft: WorldDocumentDraft;
   canRemove: boolean;
   first: boolean;
   last: boolean;
@@ -809,8 +832,6 @@ function FrameSlotCard({
 }): React.JSX.Element {
   const definition = slotDefinition(slot.kind);
   const documentHandleValue = stringValue(slot.document);
-  const selectedDocument = findDocument(documents, documentHandleValue);
-  const locator = readLocator(slot.locator, selectedDocument?.codec ?? "yaml");
   const from = isRecord(slot.from) ? slot.from : {};
   const fromDocument = stringValue(from.document);
   const selectedFromDocumentCandidate = findDocument(documents, fromDocument);
@@ -913,10 +934,12 @@ function FrameSlotCard({
               });
             }}
           />
-          <LocatorField
-            label={`${locator.kind === "yaml" ? uiText("YAML 路径") : uiText("Markdown 标题路径")} ${ordinal}`}
-            locator={locator}
-            onChange={(next) => onChange({ ...slot, locator: next })}
+          <NodeLocatorField
+            ordinal={ordinal}
+            worldDraft={worldDraft}
+            handle={documentHandleValue}
+            value={slot.locator}
+            onChange={(locator) => onChange({ ...slot, locator })}
           />
           <RequiredField slot={slot} ordinal={ordinal} onChange={onChange} />
         </div>
@@ -975,6 +998,7 @@ function FrameSlotCard({
             label={uiText("目录 {index}", { index: ordinal })}
             value={stringValue(slot.directory)}
             directories={directories}
+            root={worldDraft.snapshot.logicalRoot}
             onChange={(directory) => onChange({ ...slot, directory })}
           />
           <NumberField
@@ -1064,7 +1088,7 @@ function DocumentField({
       </select>
       <small className="world-frame-association-note">
         {selected === undefined
-          ? uiText("只列出内容包中带可识别 $document 技术头的实际文件。")
+          ? uiText("只列出当前草稿中可读取的世界文档。")
           : uiText("实际关联 {path}；frame.yaml 保存 @短引用：{handle}", {
               path: selected.path,
               handle: documentHandle(selected),
@@ -1078,11 +1102,13 @@ function DirectoryField({
   label,
   value,
   directories,
+  root,
   onChange,
 }: {
   label: string;
   value: string;
   directories: readonly DirectoryOption[];
+  root: "world" | "state";
   onChange: (directory: string) => void;
 }): React.JSX.Element {
   const selected = directories.find(({ directory }) => directory === value);
@@ -1103,21 +1129,175 @@ function DirectoryField({
         )}
         {directories.map((directory) => (
           <option key={directory.directory} value={directory.directory}>
-            world/{directory.directory}/ — {directory.documentCount}{" "}
+            {root}/{directory.directory}/ — {directory.documentCount}{" "}
             {uiText("份文档")}
           </option>
         ))}
       </select>
       <small className="world-frame-association-note">
         {selected === undefined
-          ? uiText("只列出当前内容包内确实包含可识别文档的目录。")
-          : uiText(
-              "实际关联 world/{directory}/；创建世界后对应 state/{directory}/。",
-              { directory: selected.directory },
-            )}
+          ? uiText("只列出当前草稿中含可识别文档的目录。")
+          : root === "world"
+            ? uiText(
+                "实际关联 world/{directory}/；创建世界后对应 state/{directory}/。",
+                { directory: selected.directory },
+              )
+            : uiText("实际关联 state/{directory}/。", {
+                directory: selected.directory,
+              })}
       </small>
     </label>
   );
+}
+
+function NodeLocatorField({
+  ordinal,
+  worldDraft,
+  handle,
+  value,
+  onChange,
+}: {
+  ordinal: number;
+  worldDraft: WorldDocumentDraft;
+  handle: string;
+  value: unknown;
+  onChange: (locator: NodeLocator) => void;
+}): React.JSX.Element {
+  const statusId = useId();
+  const [active, setActive] = useState(false);
+  const document = worldDraft.resolve(handle);
+  const options = useMemo(() => {
+    const result = new Map<string, NodeLocator>();
+    const codec = worldDraft.resolve(handle)?.codec;
+    for (const choice of worldDraft.choices(handle)) {
+      // The shared picker uses null for a whole document. Only the YAML
+      // root has an exact node locator that the frame compiler can read.
+      const exact = choice ?? (codec === "yaml" ? { yaml: [] } : null);
+      if (exact !== null) result.set(JSON.stringify(exact), exact);
+    }
+    return result;
+  }, [worldDraft, handle]);
+  const locator = readLocator(value, document?.codec ?? "yaml");
+  const kind = document?.codec ?? locator.kind;
+  const currentKey = frameNodeLocatorKey(value);
+  const selected =
+    currentKey === undefined ? undefined : options.get(currentKey);
+  const unresolved = value !== undefined && selected === undefined;
+  // Keep large lists out of inactive cards while still showing their selection.
+  const visible =
+    active || options.size <= 100
+      ? [...options]
+      : selected === undefined
+        ? []
+        : [[JSON.stringify(selected), selected] as const];
+  const hints =
+    visible.length === 0 ? undefined : worldDraft.choiceHints(handle);
+  const label =
+    kind === "yaml"
+      ? uiText("选择 YAML 节点（插槽 {index}）", { index: ordinal })
+      : uiText("选择 Markdown 标题（插槽 {index}）", { index: ordinal });
+
+  return (
+    <div className="world-frame-reference-locator">
+      <label>
+        {label}
+        <select
+          aria-label={label}
+          aria-describedby={unresolved ? statusId : undefined}
+          aria-invalid={unresolved || undefined}
+          value={
+            selected === undefined
+              ? unresolved
+                ? "unresolved"
+                : ""
+              : currentKey
+          }
+          disabled={document === undefined}
+          onFocus={() => setActive(true)}
+          onPointerDown={() => setActive(true)}
+          onBlur={() => setActive(false)}
+          onChange={(event) => {
+            const next = options.get(event.currentTarget.value);
+            if (next !== undefined) onChange(next);
+          }}
+        >
+          <option value="" disabled>
+            {document === undefined
+              ? uiText("先选择来源文件")
+              : uiText("选择一个节点")}
+          </option>
+          {unresolved && (
+            <option value="unresolved" disabled>
+              {storedNodePath(value, locator)}
+            </option>
+          )}
+          {visible.map(([key, choice]) => {
+            const path = "yaml" in choice ? choice.yaml : choice.markdown;
+            const name =
+              path.length === 0
+                ? uiText("YAML 正文根节点")
+                : formatFrameNodePath(path);
+            const hint = hints?.get(key);
+            return (
+              <option key={key} value={key}>
+                {hint === undefined ? name : `${name} · ${hint}`}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      {unresolved && (
+        <small id={statusId} className="world-frame-association-note">
+          {uiText("当前路径无法解析或不唯一。请选择其他节点，或手动修正路径。")}
+        </small>
+      )}
+      <details className="world-frame-locator-advanced">
+        <summary>{uiText("高级：手动填写节点路径")}</summary>
+        <LocatorField
+          label={`${kind === "yaml" ? uiText("YAML 路径") : uiText("Markdown 标题路径")} ${ordinal}`}
+          locator={{ kind, path: locator.path }}
+          onChange={onChange}
+        />
+      </details>
+    </div>
+  );
+}
+
+function frameNodeLocatorKey(value: unknown): string | undefined {
+  if (
+    validYamlLocator(value) &&
+    value.yaml.every((part) => typeof part === "string")
+  )
+    return JSON.stringify({ yaml: value.yaml });
+  if (validMarkdownLocator(value))
+    return JSON.stringify({
+      markdown: value.markdown.map((part) => part.normalize("NFKC")),
+    });
+  return undefined;
+}
+
+function storedNodePath(
+  value: unknown,
+  locator: ReturnType<typeof readLocator>,
+): string {
+  if (validYamlLocator(value)) {
+    return value.yaml.length === 0
+      ? uiText("YAML 正文根节点")
+      : formatFrameNodePath(value.yaml.map(String));
+  }
+  return locator.path.length === 0
+    ? uiText("当前路径不可用")
+    : formatFrameNodePath(locator.path);
+}
+
+function formatFrameNodePath(path: readonly string[]): string {
+  return path
+    .map((part) =>
+      part === "" || part.trim() !== part || /[›·"\\\r\n\t]/u.test(part)
+        ? JSON.stringify(part)
+        : part,
+    )
+    .join(" › ");
 }
 
 function ReferenceLocatorField({
@@ -1131,7 +1311,7 @@ function ReferenceLocatorField({
   manualLabel: string;
   document: DocumentOption | undefined;
   locator: { kind: "yaml" | "markdown"; path: string[] };
-  onChange: (locator: Record<string, string[]>) => void;
+  onChange: (locator: EditableLocator) => void;
 }): React.JSX.Element {
   const options = document?.yamlLocators ?? [];
   const currentKey = yamlLocatorKey(locator.path);
@@ -1214,23 +1394,36 @@ function LocatorField({
 }: {
   label: string;
   locator: { kind: "yaml" | "markdown"; path: string[] };
-  onChange: (locator: Record<string, string[]>) => void;
+  onChange: (locator: EditableLocator) => void;
 }): React.JSX.Element {
+  const [edit, setEdit] = useState<{ raw: string; key: string }>();
+  const savedKey = JSON.stringify(locator);
   return (
     <label>
       {label}
       <textarea
         rows={3}
-        value={locator.path.join("\n")}
-        placeholder={uiText("每行一个层级；留空表示文档根")}
-        onChange={(event) =>
-          onChange({
-            [locator.kind]: event.currentTarget.value
-              .split("\n")
-              .map((part) => part.trim())
-              .filter(Boolean),
-          })
+        value={edit?.key === savedKey ? edit.raw : locator.path.join("\n")}
+        placeholder={
+          locator.kind === "yaml"
+            ? uiText("每行一个层级；留空表示文档根")
+            : uiText("每行填写一个标题层级")
         }
+        onBlur={() => setEdit(undefined)}
+        onChange={(event) => {
+          const raw = event.currentTarget.value;
+          const parts = raw
+            .split("\n")
+            .map((part) => part.trim())
+            .filter(Boolean);
+          setEdit({
+            raw,
+            key: JSON.stringify({ kind: locator.kind, path: parts }),
+          });
+          onChange(
+            locator.kind === "yaml" ? { yaml: parts } : { markdown: parts },
+          );
+        }}
       />
     </label>
   );
@@ -1431,38 +1624,19 @@ function frameContext(frame: FrameRecord): FrameContextEntry[] | null {
   return frame.context as FrameContextEntry[];
 }
 
-function contentDocumentOptions(
-  files: readonly ContentTreeFile[],
-): DocumentOption[] {
-  const options: DocumentOption[] = [];
-  for (const file of files) {
-    if (file.encoding !== undefined || !file.path.startsWith("world/"))
-      continue;
-    const codec = documentCodec(file.path);
-    if (codec === null) continue;
-    try {
-      const source =
-        codec === "markdown"
-          ? markdownFrontMatter(file.contents)
-          : file.contents;
-      const value: unknown = parse(source);
-      if (!isRecord(value) || !isRecord(value.$document)) continue;
-      const id = stringValue(value.$document.id);
-      const ref = stringValue(value.$document.ref);
-      const title = stringValue(value.$document.title);
-      if (id.length === 0 || ref.length === 0) continue;
-      options.push({
-        id,
-        ref,
-        title: title.length > 0 ? title : ref,
-        path: file.path,
-        codec,
-        yamlLocators: codec === "yaml" ? yamlLocatorOptions(value) : [],
-      });
-    } catch {
-      // Runtime diagnostics remain the authoritative parser result.
-    }
-  }
+function frameDocumentOptions(draft: WorldDocumentDraft): DocumentOption[] {
+  const options = draft.documents.map((document) => {
+    let yamlLocators: readonly YamlLocatorOption[] | undefined;
+    return {
+      ...document,
+      ref: document.ref.slice(1),
+      get yamlLocators() {
+        return (yamlLocators ??= yamlLocatorOptions(
+          draft.yamlBody(document.ref),
+        ));
+      },
+    };
+  });
   // The current situation is the binding an author reaches for first. Its id
   // is only "situation.current" in hand-written packages; anything the runtime
   // created carries a random one, so the short ref has to count too.
@@ -1501,9 +1675,9 @@ function worldDirectories(
 ): DirectoryOption[] {
   const documentCounts = new Map<string, number>();
   for (const document of documents) {
-    const match = /^world\/(.+)\/[^/]+$/u.exec(document.path);
-    if (match === null) continue;
-    const directory = match[1]!;
+    if (document.retired) continue;
+    const directory = document.path.split("/").slice(1, -1).join("/");
+    if (directory === "") continue;
     documentCounts.set(directory, (documentCounts.get(directory) ?? 0) + 1);
   }
   return [...documentCounts]
@@ -1637,9 +1811,12 @@ function optionalSlotUnavailableReason(
   kind: (typeof optionalSlotKinds)[number]["kind"],
   documents: readonly DocumentOption[],
   directories: readonly DirectoryOption[],
+  root: "world" | "state",
 ): string | null {
   if (kind === "catalog" && directories.length === 0)
-    return uiText("先在 world/ 的子目录中创建带 $document 技术头的文档。");
+    return uiText("先在 {root}/ 的子目录中创建带 $document 技术头的文档。", {
+      root,
+    });
   if (
     kind === "reference_targets" &&
     !documents.some(({ codec }) => codec === "yaml")
