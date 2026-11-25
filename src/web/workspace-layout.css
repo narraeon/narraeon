@@ -545,6 +545,22 @@
 }
 .world-reader-page {
   --world-header-height: 80px;
+  --world-composer-inset: 1.1rem;
+}
+@media (--world-reader-narrow) {
+  .world-reader-page {
+    --world-composer-inset: 0.5rem;
+  }
+}
+@media (--workspace-mobile) {
+  .world-reader-page {
+    --world-composer-inset: 8px;
+  }
+}
+.world-reader-scroll {
+  /* Keep scroll targets clear of the floating header and composer. */
+  scroll-padding-block: var(--world-header-height)
+    calc(var(--world-composer-height) + var(--world-composer-inset));
 }
 /* Cover the story between the floating controls and behind the title. */
 .world-reader-shell::before {

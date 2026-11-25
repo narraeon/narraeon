@@ -226,8 +226,7 @@
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--surface);
-  scroll-margin-block: calc(var(--world-header-height, 0px) + 1rem)
-    calc(var(--world-composer-height, 0px) + 2rem);
+  scroll-margin-block: 1rem 2rem;
 }
 
 .regenerationOptions button {
