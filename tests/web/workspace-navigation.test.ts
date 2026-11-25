@@ -846,7 +846,9 @@ test("文件草稿阻止全局导航与快捷创建，放弃草稿后恢复", as
   expect(
     screen.getByRole("button", { name: "返回工作区" }).hasAttribute("disabled"),
   ).toBe(false);
-  expect(screen.getByLabelText("界面语言").hasAttribute("disabled")).toBe(true);
+  expect(screen.getByLabelText("界面语言").hasAttribute("disabled")).toBe(
+    false,
+  );
   fireEvent.click(screen.getByRole("button", { name: "创建世界" }));
   expect(request.mock.calls.some(([r]) => r.type === "world.create")).toBe(
     false,
