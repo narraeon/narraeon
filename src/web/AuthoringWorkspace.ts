@@ -31,6 +31,7 @@ export interface AuthoringWorkspaceState {
   /** True while Runtime changes the saved tree outside the editor; no file draft can start. */
   draftsLocked: boolean;
   loading: boolean;
+  savingFiles: boolean;
   applying: boolean;
   requestFailure: string | null;
   syncFailed: boolean;
@@ -57,6 +58,7 @@ export class AuthoringWorkspace {
     conflict: false,
     draftsLocked: false,
     loading: true,
+    savingFiles: false,
     applying: false,
     requestFailure: null,
     syncFailed: false,
@@ -273,6 +275,7 @@ export class AuthoringWorkspace {
       conflict: false,
       draftsLocked: false,
       loading: true,
+      savingFiles: false,
       applying: false,
       requestFailure: null,
       syncFailed: false,
@@ -703,9 +706,12 @@ export class AuthoringWorkspace {
     if (this.saving !== null) return this.saving;
     const submitted = cloneFiles(this.state.files);
     const saving = this.saveDraft(submitted).finally(() => {
-      if (this.saving === saving) this.saving = null;
+      if (this.saving !== saving) return;
+      this.saving = null;
+      this.update({ savingFiles: false });
     });
     this.saving = saving;
+    this.update({ savingFiles: true });
     return saving;
   }
   private async saveDraft(submitted: ContentTreeFile[]): Promise<void> {
@@ -758,7 +764,13 @@ export class AuthoringWorkspace {
   }
   /** Discards the draft after a rejected save and adopts the saved tree Runtime reported. */
   loadLatest(): void {
-    if (!this.active || this.state.applying || !this.state.conflict) return;
+    if (
+      !this.active ||
+      this.state.applying ||
+      this.saving !== null ||
+      !this.state.conflict
+    )
+      return;
     this.update({
       files: cloneFiles(this.state.serverFiles),
       baseline: cloneFiles(this.state.serverFiles),
@@ -770,7 +782,7 @@ export class AuthoringWorkspace {
     });
   }
   resetFiles(): void {
-    if (!this.active || this.state.applying) return;
+    if (!this.active || this.state.applying || this.saving !== null) return;
     this.update({
       files: cloneFiles(this.state.serverFiles),
       baseline: cloneFiles(this.state.serverFiles),

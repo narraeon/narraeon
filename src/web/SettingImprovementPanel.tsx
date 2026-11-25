@@ -51,6 +51,7 @@ import type {
   V1WorldRevisionSealedEpochView,
 } from "../protocol/v1.ts";
 import {
+  ContentFileDraftActions,
   ContentTreeEditor,
   type ContentTreeEditorProps,
 } from "./ContentTreeEditor.tsx";
@@ -164,7 +165,7 @@ export function SettingImprovementPanel({
   packageName,
   modelConfigured,
   hasUnsavedFileDraft,
-  loading,
+  loading: loadingTarget,
   conversation: {
     view,
     history,
@@ -245,6 +246,8 @@ export function SettingImprovementPanel({
     observer.observe(composer);
     return () => observer.disconnect();
   }, []);
+  const loading = loadingTarget || contentEditor.saving === true;
+  const fileSaveConflict = !rightRailOpen && contentEditor.conflict === true;
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
   const finishingRevision = revisionActions?.applying === true;
@@ -768,12 +771,6 @@ export function SettingImprovementPanel({
               </section>
             ) : null}
 
-            {hasUnsavedFileDraft ? (
-              <p className="setting-improvement-warning" role="status">
-                {uiText("请先保存或放弃文件编辑中的未保存修改。")}
-              </p>
-            ) : null}
-
             <p className="setting-current-tree-notice" role="note">
               {revisingWorld
                 ? uiText(
@@ -1044,6 +1041,25 @@ export function SettingImprovementPanel({
         </section>
 
         <footer ref={composerRef} className="setting-conversation-composer">
+          {hasUnsavedFileDraft && (
+            <div className="setting-improvement-warning">
+              <p role={fileSaveConflict ? "alert" : "status"}>
+                {uiText(
+                  fileSaveConflict
+                    ? "内容包已被其他操作修改，草稿已保留，尚未保存。"
+                    : "请先保存或放弃文件编辑中的未保存修改。",
+                )}
+              </p>
+              {!rightRailOpen && (
+                <ContentFileDraftActions
+                  mode={target}
+                  disabled={loading || interactionLocked || draftsLocked}
+                  onSave={contentEditor.onSave}
+                  onReset={contentEditor.onReset}
+                />
+              )}
+            </div>
+          )}
           <label htmlFor="setting-conversation-input">
             {startingFresh
               ? uiText("用全新上下文给 AI 发消息")

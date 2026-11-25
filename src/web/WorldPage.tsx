@@ -1551,6 +1551,7 @@ export function WorldPage({
             (epoch?.diagnostics.length ?? 0) === 0 ? "usable" : "needs_repair",
           issues: epoch?.diagnostics ?? [],
           dirty: revisionDirty,
+          saving: authoring.savingFiles,
           onFilesChange: (files) => revisionWorkspace.editFiles(files),
           onSave: () => void revisionWorkspace.saveFiles(),
           onReset: () => revisionWorkspace.resetFiles(),

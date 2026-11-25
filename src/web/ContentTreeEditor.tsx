@@ -17,6 +17,7 @@ export interface ContentTreeEditorProps {
   status: "usable" | "needs_repair";
   issues: readonly ContentTreeIssue[];
   dirty: boolean;
+  saving?: boolean;
   /** The last save was rejected because the saved tree changed; the draft is kept. */
   conflict?: boolean;
   onFilesChange: (files: ContentTreeFile[]) => void;
@@ -34,12 +35,38 @@ export interface ContentTreeEditorProps {
   embedded?: boolean;
 }
 
+export function ContentFileDraftActions({
+  mode,
+  disabled,
+  onSave,
+  onReset,
+}: Pick<ContentTreeEditorProps, "mode" | "onSave" | "onReset"> & {
+  disabled: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="button-row">
+      <button type="button" disabled={disabled} onClick={onSave}>
+        {mode === "world-revision" ? uiText("保存到修订") : uiText("整批保存")}
+      </button>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={disabled}
+        onClick={onReset}
+      >
+        {uiText("放弃未保存修改")}
+      </button>
+    </div>
+  );
+}
+
 export function ContentTreeEditor({
   scriptPermission,
   files,
   status,
   issues,
   dirty,
+  saving = false,
   conflict = false,
   onFilesChange,
   onSave,
@@ -176,7 +203,7 @@ export function ContentTreeEditor({
         {conflict && onLoadLatest !== undefined && (
           <div className="content-save-conflict" role="alert">
             <p>{uiText("内容包已被其他操作修改，草稿已保留，尚未保存。")}</p>
-            <button type="button" onClick={onLoadLatest}>
+            <button type="button" disabled={saving} onClick={onLoadLatest}>
               {uiText("加载最新版本")}
             </button>
           </div>
@@ -198,21 +225,12 @@ export function ContentTreeEditor({
                   )}
             </span>
           </div>
-          <div className="button-row">
-            <button type="button" disabled={!dirty} onClick={onSave}>
-              {mode === "world-revision"
-                ? uiText("保存到修订")
-                : uiText("整批保存")}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={!dirty}
-              onClick={onReset}
-            >
-              {uiText("放弃未保存修改")}
-            </button>
-          </div>
+          <ContentFileDraftActions
+            mode={mode}
+            disabled={!dirty || saving}
+            onSave={onSave}
+            onReset={onReset}
+          />
         </div>
         {mode === "content-package" ? (
           <details className="content-package-actions">

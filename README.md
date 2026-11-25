@@ -155,6 +155,8 @@ A content package is editable before play. You can keep several packages, copy t
 
 In setting improvement, ask the model to discuss a plan or to edit the package directly. The Runtime executes calls from each complete tool response in order and publishes all successful changes together to the current package. The conversation shows the file diffs and the results of checks such as reference validation and Prompt Preview. Creating a world gives it its own copy of the package files.
 
+If unsaved file edits pause the conversation while the file panel is closed, use **Save all changes** or **Discard unsaved changes** beside the message box. World revision offers **Save to revision** for the revision worktree. **Discard unsaved changes** clears only local file edits and keeps the saved revision and its lock.
+
 For a detailed Chinese authoring guide, see [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md).
 
 ## Language behavior

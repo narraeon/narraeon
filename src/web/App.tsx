@@ -1278,6 +1278,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             "needs_repair",
           issues: selectedPackageDetail?.issues ?? [],
           dirty: filesDirty,
+          saving: authoring.savingFiles,
           conflict: authoring.conflict,
           onFilesChange: (nextFiles) => authoringWorkspace.editFiles(nextFiles),
           onSave: () => {
