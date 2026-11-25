@@ -16,9 +16,11 @@ export function CreateWorldScreen({
   client,
   packages,
   selectedId,
+  selectedTemplateId,
   pending,
   modelConfigured,
   onSelect,
+  onTemplateSelect,
   onCreate,
   onEdit,
   onConfigureModel,
@@ -32,9 +34,11 @@ export function CreateWorldScreen({
     status: "usable" | "needs_repair";
   }[];
   selectedId: string;
+  selectedTemplateId: string;
   pending: boolean;
   modelConfigured: boolean;
   onSelect: (id: string) => void;
+  onTemplateSelect: (id: string) => void;
   onCreate: (template?: ProtagonistTemplate) => void;
   onEdit: () => void;
   onConfigureModel: () => void;
@@ -43,7 +47,6 @@ export function CreateWorldScreen({
   ) => void;
 }): React.JSX.Element {
   const [templates, setTemplates] = useState<ProtagonistTemplate[]>([]);
-  const [templateId, setTemplateId] = useState("");
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [managingTemplates, setManagingTemplates] = useState(false);
   const {
@@ -67,6 +70,19 @@ export function CreateWorldScreen({
     void templateTarget.read().finally(() => setTemplatesLoading(false));
   }, [templateTarget]);
   const selected = packages.find(({ localId }) => localId === selectedId);
+  const selectedTemplate = templates.find(
+    ({ id }) => id === selectedTemplateId,
+  );
+  const templatePending =
+    selectedTemplateId !== "" && (templatesLoading || templatesFailed);
+  useEffect(() => {
+    if (
+      selectedTemplateId !== "" &&
+      !templatePending &&
+      selectedTemplate === undefined
+    )
+      onTemplateSelect("");
+  }, [onTemplateSelect, selectedTemplateId, selectedTemplate, templatePending]);
   const [preview, setPreview] = useState<{
     packageId: string;
     opening: string;
@@ -114,6 +130,11 @@ export function CreateWorldScreen({
               disabled={pending}
               onChange={(event) => onSelect(event.currentTarget.value)}
             >
+              {selected === undefined && (
+                <option value="" disabled>
+                  {uiText("请选择内容包")}
+                </option>
+              )}
               {packages.map((item) => (
                 <option key={item.localId} value={item.localId}>
                   {`${item.title} · ${gameplayLabel(item.gameplay, getWebLocale())}`}
@@ -127,9 +148,9 @@ export function CreateWorldScreen({
           {uiText("主角模板")}
           <select
             aria-label={uiText("主角模板")}
-            value={templateId}
+            value={selectedTemplate?.id ?? ""}
             disabled={pending || templatesLoading}
-            onChange={(event) => setTemplateId(event.currentTarget.value)}
+            onChange={(event) => onTemplateSelect(event.currentTarget.value)}
           >
             <option value="">{uiText("不使用")}</option>
             {templates.map((template) => (
@@ -163,11 +184,12 @@ export function CreateWorldScreen({
           type="button"
           className="primary-button"
           disabled={
-            pending || !modelConfigured || selected?.status !== "usable"
+            pending ||
+            !modelConfigured ||
+            selected?.status !== "usable" ||
+            templatePending
           }
-          onClick={() =>
-            onCreate(templates.find(({ id }) => id === templateId))
-          }
+          onClick={() => onCreate(selectedTemplate)}
         >
           {pending ? uiText("正在创建世界…") : uiText("从当前内容包创建")}
         </button>
@@ -204,8 +226,6 @@ export function CreateWorldScreen({
           onChange={(view) => {
             templateTarget.accept();
             setTemplates(view.templates);
-            if (!view.templates.some(({ id }) => id === templateId))
-              setTemplateId("");
           }}
           onClose={() => setManagingTemplates(false)}
           {...(onNavigationProtectionChange === undefined

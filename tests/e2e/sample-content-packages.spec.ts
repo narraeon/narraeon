@@ -92,20 +92,44 @@ for (const locale of appLocales) {
 
         // The configured endpoint is deliberately unreachable. Creation and the
         // authored opening require no Provider exchange; this does not test AI play.
-        await runtime(page, {
-          type: "model.save",
-          connection: {
-            name: "Sample creation fixture",
-            presetId: "custom",
-            provider: "chat_completions",
-            baseUrl: "http://127.0.0.1:1/v1",
-            apiKey: "sample-fixture",
-            modelId: "sample-fixture",
-            contextWindowTokens: 128000,
-            maxOutputTokens: 16000,
-            reasoningEffort: "provider_default",
-          },
-        });
+        const packagePicker = page.getByLabel(
+          chinese ? "创建世界的内容包" : "Content package for the new world",
+          { exact: true },
+        );
+        const sourceId = await packagePicker.inputValue();
+        await page
+          .getByRole("button", {
+            name: chinese ? "配置模型连接" : "Configure model connection",
+            exact: true,
+          })
+          .click();
+        await expect(page).toHaveURL(/#\/models$/u);
+        await page
+          .getByLabel("Base URL", { exact: true })
+          .fill("http://127.0.0.1:1/v1");
+        await page
+          .getByLabel("API Key", { exact: true })
+          .fill("sample-fixture");
+        await page
+          .getByLabel(chinese ? "模型 ID" : "Model ID", { exact: true })
+          .fill("sample-fixture");
+        await page
+          .getByRole("button", {
+            name: chinese
+              ? "保存模型连接并启用"
+              : "Save and enable model connection",
+            exact: true,
+          })
+          .click();
+        await expect(page).toHaveURL(/#\/create$/u);
+        await expect(packagePicker).toHaveValue(sourceId);
+        expect(
+          (
+            await runtime<{ worlds: unknown[] }>(page, {
+              type: "workspace.read",
+            })
+          ).worlds,
+        ).toEqual([]);
         await page.reload();
         await expect(start).toHaveCount(0);
         await expect(page).toHaveURL(/#\/create$/u);

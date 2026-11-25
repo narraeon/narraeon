@@ -87,6 +87,7 @@ export function ModelConnectionScreen({
   client,
   library,
   onLibraryChange,
+  onConnectionActivated,
   onNotice,
   onDirtyChange,
   pendingState,
@@ -94,6 +95,7 @@ export function ModelConnectionScreen({
   client: RuntimeClient;
   library: ModelConnectionLibraryView;
   onLibraryChange: (library: ModelConnectionLibraryView) => void;
+  onConnectionActivated?: () => void;
   onNotice: (notice: string) => void;
   onDirtyChange: (dirty: boolean) => void;
   pendingState?: [string | null, (next: string | null) => void];
@@ -332,6 +334,7 @@ export function ModelConnectionScreen({
       );
       if (saved !== undefined) edit(saved);
       onNotice(uiText("模型连接已保存并启用；后续请求只使用当前配置。"));
+      if (next.configured && saved !== undefined) onConnectionActivated?.();
     } catch (error: unknown) {
       const options = advancedOptions.current;
       if (
@@ -368,6 +371,13 @@ export function ModelConnectionScreen({
       );
       acceptLibrary(next);
       onNotice(uiText("已切换当前模型配置（出错时不会自动切换到其他模型）。"));
+      if (
+        !dirty &&
+        next.configured &&
+        next.activeConnectionId === connectionId &&
+        next.connections.some(({ id }) => id === connectionId)
+      )
+        onConnectionActivated?.();
     } catch (error: unknown) {
       onNotice(errorMessage(error));
     } finally {

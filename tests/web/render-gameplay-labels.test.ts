@@ -128,9 +128,11 @@ describe("玩法标签", () => {
           },
         ],
         selectedId: "package-tabletop",
+        selectedTemplateId: "",
         pending: false,
         modelConfigured: true,
         onSelect: vi.fn(),
+        onTemplateSelect: vi.fn(),
         onCreate: vi.fn(),
         onEdit: vi.fn(),
         onConfigureModel: vi.fn(),
@@ -163,26 +165,27 @@ describe("玩法标签", () => {
         ) as Promise<T>,
     };
     const onCreate = vi.fn();
-    render(
-      createElement(CreateWorldScreen, {
-        client,
-        packages: [
-          {
-            localId: "package-tabletop",
-            title: "雾港来信",
-            status: "usable" as const,
-            gameplay: tabletopD20,
-          },
-        ],
-        selectedId: "package-tabletop",
-        pending: false,
-        modelConfigured: true,
-        onSelect: vi.fn(),
-        onCreate,
-        onEdit: vi.fn(),
-        onConfigureModel: vi.fn(),
-      }),
-    );
+    const props = {
+      client,
+      packages: [
+        {
+          localId: "package-tabletop",
+          title: "雾港来信",
+          status: "usable" as const,
+          gameplay: tabletopD20,
+        },
+      ],
+      selectedId: "package-tabletop",
+      selectedTemplateId: "",
+      pending: false,
+      modelConfigured: true,
+      onSelect: vi.fn(),
+      onTemplateSelect: vi.fn(),
+      onCreate,
+      onEdit: vi.fn(),
+      onConfigureModel: vi.fn(),
+    };
+    const rendered = render(createElement(CreateWorldScreen, props));
 
     const templates = await screen.findByRole("combobox", { name: "主角模板" });
     expect(
@@ -195,6 +198,13 @@ describe("玩法标签", () => {
     expect(within(preview).getByText("跑团 · d20")).toBeTruthy();
 
     fireEvent.change(templates, { target: { value: template.id } });
+    expect(props.onTemplateSelect).toHaveBeenCalledWith(template.id);
+    rendered.rerender(
+      createElement(CreateWorldScreen, {
+        ...props,
+        selectedTemplateId: template.id,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "从当前内容包创建" }));
     expect(onCreate).toHaveBeenCalledWith(template);
   });
