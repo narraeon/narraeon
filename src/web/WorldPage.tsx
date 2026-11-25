@@ -250,7 +250,7 @@ export function WorldPage({
   const revisionOverview =
     dialog === "revision" ? (authoring.target?.revision ?? null) : null;
   const revisionFiles = authoring.files;
-  const revisionDirty = authoring.dirty;
+  const revisionDirty = dialog === "revision" && authoring.dirty;
   const [aiReading, setAiReading] = useState<V1PlayContextReadingView | null>(
     null,
   );
@@ -1455,7 +1455,7 @@ export function WorldPage({
     onContinuePartial: () =>
       void submitPlayChain("append", "", "continue_partial"),
     playDisabled: !modelConfigured || !playIdle,
-    configureDisabled: !playIdle || navigationDirty || navigationBusy,
+    configureDisabled: !playIdle || navigationBusy,
     onRetry: () => void submitPlayChain("append", ""),
     onConfigureModel,
   };
@@ -1777,16 +1777,18 @@ export function WorldPage({
                 />
               )}
               <div ref={historyEndRef} />
-              <ArtifactDebugger
-                records={displayedDecorations?.artifactDebug ?? []}
-                extensions={displayedDecorations?.extensions ?? []}
-                playerViewPanels={
-                  displayedDecorations?.playerViewPanels ??
-                  world.playerViewPanels ??
-                  []
-                }
-                bridgeEvents={bridgeEvents}
-              />
+              {readingPreferences.showTechnicalInfo && (
+                <ArtifactDebugger
+                  records={displayedDecorations?.artifactDebug ?? []}
+                  extensions={displayedDecorations?.extensions ?? []}
+                  playerViewPanels={
+                    displayedDecorations?.playerViewPanels ??
+                    world.playerViewPanels ??
+                    []
+                  }
+                  bridgeEvents={bridgeEvents}
+                />
+              )}
             </article>
           </section>
 
@@ -2359,7 +2361,9 @@ export function WorldPage({
           {dialog === null ? feedbackNotice : null}
 
           <ArtifactExtensionMount mount="overlay" />
-          <ArtifactExtensionMount mount="debug" />
+          {readingPreferences.showTechnicalInfo && (
+            <ArtifactExtensionMount mount="debug" />
+          )}
         </div>
       </ArtifactExtensionHost>
     </main>

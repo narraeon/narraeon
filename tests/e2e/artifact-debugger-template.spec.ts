@@ -241,6 +241,32 @@ for (const locale of appLocales) {
         model,
       });
       await page.goto(`/#/world/${world.worldId}`);
+      const debuggerRegion = page.getByRole("region", {
+        name: label("产物调试器", "Artifact debugger"),
+      });
+      const technicalInfo = page.getByRole("checkbox", {
+        name: label("显示技术信息", "Show technical information"),
+      });
+      const setDetailedMode = async (show: boolean) => {
+        await page
+          .getByRole("button", {
+            name: label("阅读设置", "Reading settings"),
+            exact: true,
+          })
+          .click();
+        await technicalInfo.setChecked(show);
+        await page
+          .getByLabel(label("阅读设置", "Reading settings"))
+          .getByRole("button", {
+            name: label("关闭", "Close"),
+            exact: true,
+          })
+          .click();
+      };
+      await setDetailedMode(true);
+      await expect(page.locator(".is-detailed-mode")).toBeVisible();
+      await expect(debuggerRegion).toHaveCount(0);
+      await setDetailedMode(false);
       const action = page.getByLabel(label("你的行动", "Your action"));
       await action.fill("Light the lantern.");
       await page
@@ -254,9 +280,8 @@ for (const locale of appLocales) {
       await expect(
         page.getByText("The lantern was lit.", { exact: true }),
       ).toBeVisible();
-      const debuggerRegion = page.getByRole("region", {
-        name: label("产物调试器", "Artifact debugger"),
-      });
+      await setDetailedMode(true);
+      await expect(page.locator(".is-detailed-mode")).toBeVisible();
       await expect(
         debuggerRegion.locator('[data-extension-status="completed"]'),
       ).toContainText("emit_debug_example");
@@ -264,7 +289,6 @@ for (const locale of appLocales) {
         "debug_example · superseded · artifact-debugger.example",
         { exact: true },
       );
-      await expect(page.locator(".is-story-mode")).toBeVisible();
       await record.click();
       await expect(
         debuggerRegion.getByText(payload, { exact: true }).first(),
@@ -276,30 +300,19 @@ for (const locale of appLocales) {
             nodes.every((node) => node.closest("[data-artifact-debugger]")),
           ),
       ).toBe(true);
-      await record.click();
-      await page
-        .getByRole("button", {
-          name: label("阅读设置", "Reading settings"),
-          exact: true,
-        })
-        .click();
-      await page
-        .getByRole("checkbox", {
-          name: label("显示技术信息", "Show technical information"),
-        })
-        .check();
-      await page
-        .getByLabel(label("阅读设置", "Reading settings"))
-        .getByRole("button", {
-          name: label("关闭", "Close"),
-          exact: true,
-        })
-        .click();
+      await page.reload();
       await expect(page.locator(".is-detailed-mode")).toBeVisible();
-      await record.click();
-      await expect(
-        debuggerRegion.getByText(payload, { exact: true }).first(),
-      ).toBeVisible();
+      await expect(record).toBeVisible();
+      await setDetailedMode(false);
+      await expect(page.locator(".is-story-mode")).toBeVisible();
+      await expect(debuggerRegion).toHaveCount(0);
+      await expect(page.getByText(payload, { exact: true })).toHaveCount(0);
+      await expect(page.locator('[data-extension-mount="debug"]')).toHaveCount(
+        0,
+      );
+      await page.reload();
+      await expect(page.locator(".is-story-mode")).toBeVisible();
+      await expect(debuggerRegion).toHaveCount(0);
       expect(bodies).toHaveLength(2);
       expect(bodies[1]).toContain("debug_example");
       await test.info().attach("local-provider-requests", {
