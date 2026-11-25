@@ -16,20 +16,55 @@ function invalid(): never {
   );
 }
 
+function losesNumberOnReplay(value: unknown, source: string | undefined) {
+  return (
+    typeof value === "number" &&
+    (!Number.isFinite(value) ||
+      (Number.isInteger(value) && !Number.isSafeInteger(value)) ||
+      source !== JSON.stringify(value))
+  );
+}
+
 function parseLossless(source: string): unknown {
   return JSON.parse(
     source,
     (_key: string, value: unknown, context?: { source?: string }) => {
-      if (
-        typeof value === "number" &&
-        (!Number.isFinite(value) ||
-          (Number.isInteger(value) && !Number.isSafeInteger(value)) ||
-          context?.source !== JSON.stringify(value))
-      )
-        invalid();
+      if (losesNumberOnReplay(value, context?.source)) invalid();
       return value;
     },
   ) as unknown;
+}
+
+function parseStreamEvent(source: string) {
+  const lossyFields = new WeakMap<object, Set<string>>();
+  let event: unknown;
+  try {
+    event = JSON.parse(
+      source,
+      function (
+        this: object,
+        key: string,
+        value: unknown,
+        context?: { source?: string },
+      ) {
+        if (
+          losesNumberOnReplay(value, context?.source) ||
+          (typeof value === "object" &&
+            value !== null &&
+            lossyFields.has(value))
+        ) {
+          const fields = lossyFields.get(this) ?? new Set<string>();
+          fields.add(key);
+          lossyFields.set(this, fields);
+        }
+        return value;
+      },
+    );
+  } catch {
+    invalid();
+  }
+  if (!record(event)) invalid();
+  return { value: event, lossyFields: lossyFields.get(event) };
 }
 
 /** Assemble only documented deltas; unknown shapes fail closed rather than lose native data. */
@@ -61,13 +96,8 @@ export async function aggregateGoogleInteractions(
       continue;
     }
     if (done || terminal !== undefined) lifecycleValid = false;
-    let value: unknown;
-    try {
-      value = parseLossless(event.data);
-    } catch {
-      invalid();
-    }
-    if (!record(value) || typeof value.event_type !== "string") invalid();
+    const { value, lossyFields } = parseStreamEvent(event.data);
+    if (typeof value.event_type !== "string") invalid();
     if (!created && value.event_type !== "interaction.created")
       lifecycleValid = false;
     if (value.event_type === "interaction.created") {
@@ -97,7 +127,8 @@ export async function aggregateGoogleInteractions(
       terminal !== undefined ||
       typeof value.index !== "number" ||
       !Number.isSafeInteger(value.index) ||
-      value.index < 0
+      value.index < 0 ||
+      lossyFields?.has("index")
     )
       invalid();
     const index = value.index;
@@ -106,7 +137,8 @@ export async function aggregateGoogleInteractions(
       if (
         steps.has(index) ||
         !record(value.step) ||
-        typeof value.step.type !== "string"
+        typeof value.step.type !== "string" ||
+        lossyFields?.has("step")
       )
         invalid();
       if (value.step.type === "function_call")
