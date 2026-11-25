@@ -14,22 +14,36 @@ export const idleWorkspaceNavigation: WorkspaceNavigationProtection = {
   busy: false,
 };
 
+export interface CreationSelection {
+  packageId: string;
+  templateId: string;
+}
+
 export interface BrowserWorkspaceEntry {
   hash: string;
   key: string | undefined;
   position: number | undefined;
   historyLength: number;
+  creationSelection?: CreationSelection;
 }
 
 export function readBrowserWorkspaceEntry(): BrowserWorkspaceEntry {
   const entry = window.navigation?.currentEntry;
   const state: unknown = window.history.state;
+  const hash = window.location.hash;
+  const creationSelection =
+    hash === "#/create" &&
+    typeof state === "object" &&
+    state !== null &&
+    "narraeonCreation" in state
+      ? readCreationSelection(state.narraeonCreation)
+      : undefined;
   const position =
     typeof state === "object" && state !== null && "narraeonPosition" in state
       ? state.narraeonPosition
       : undefined;
   return {
-    hash: window.location.hash,
+    hash,
     key: entry?.key,
     historyLength: window.history.length,
     position:
@@ -38,15 +52,34 @@ export function readBrowserWorkspaceEntry(): BrowserWorkspaceEntry {
         : typeof position === "number" && Number.isSafeInteger(position)
           ? position
           : undefined,
+    ...(creationSelection === undefined ? {} : { creationSelection }),
   };
+}
+
+function readCreationSelection(value: unknown): CreationSelection | undefined {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "packageId" in value &&
+    typeof value.packageId === "string" &&
+    "templateId" in value &&
+    typeof value.templateId === "string"
+  )
+    return { packageId: value.packageId, templateId: value.templateId };
 }
 
 export function writeBrowserWorkspaceEntry(
   hash: string,
   mode: "push" | "replace",
   position: number,
+  creationSelection?: CreationSelection,
 ): BrowserWorkspaceEntry {
-  const state = { narraeonPosition: position };
+  const state = {
+    narraeonPosition: position,
+    ...(creationSelection === undefined
+      ? {}
+      : { narraeonCreation: creationSelection }),
+  };
   if (mode === "replace") window.history.replaceState(state, "", hash);
   else window.history.pushState(state, "", hash);
   return readBrowserWorkspaceEntry();
@@ -79,6 +112,7 @@ export function returnToBrowserWorkspaceEntry(
       original.hash,
       "replace",
       original.position ?? 0,
+      original.creationSelection,
     );
   }
   return true;

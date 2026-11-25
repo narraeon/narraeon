@@ -64,6 +64,7 @@ import {
   workspaceHash,
   writeBrowserWorkspaceEntry,
   type BrowserWorkspaceEntry,
+  type CreationSelection,
   type WorkspaceLocation,
   type WorkspaceNavigationProtection,
 } from "./WorkspaceLocation.ts";
@@ -93,6 +94,11 @@ type LeaveIntent =
   | { kind: "browser"; entry: BrowserWorkspaceEntry }
   | { kind: "program"; navigate: () => void };
 
+interface CreationModelVisit {
+  creation: BrowserWorkspaceEntry;
+  settings: BrowserWorkspaceEntry;
+}
+
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -109,6 +115,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [presetPageVersion, setPresetPageVersion] = useState(0);
   const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const creationModelVisit = useRef<CreationModelVisit | null>(null);
+  const [confirmedModelVisit, setConfirmedModelVisit] =
+    useState<CreationModelVisit | null>(null);
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
   const [deletingPackage, setDeletingPackage] = useState(false);
@@ -189,9 +199,21 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     busy: navigationBusy,
   };
 
-  function switchLocation(next: WorkspaceLocation, mode?: "replace"): void {
+  function switchLocation(
+    next: WorkspaceLocation,
+    mode?: "replace",
+    creation?: CreationSelection,
+  ): void {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
+    const entry = readBrowserWorkspaceEntry();
+    const modelVisit = creationModelVisit.current;
+    if (
+      modelVisit !== null &&
+      (next.screen !== "model" ||
+        !sameBrowserWorkspaceEntry(modelVisit.settings, entry))
+    )
+      creationModelVisit.current = null;
     packageOpenRequest.current += 1;
     packageReadTarget.current?.dispose();
     packageRetryEntry.current = null;
@@ -203,18 +225,24 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     locationRef.current = next;
     if (next.screen === "content") setSelected(next.packageId);
+    const creationSelection =
+      next.screen === "create"
+        ? (creation ?? { packageId: selected, templateId: "" })
+        : undefined;
+    if (creationSelection !== undefined) {
+      setSelected(creationSelection.packageId);
+      setSelectedTemplateId(creationSelection.templateId);
+    }
     if (next.screen === "world") setWorldId(next.worldId);
     if (next.screen === "plays") setSelectedPresetId(next.presetId ?? "");
     setScreen(next.screen);
     const replace = mode === "replace" || previous.screen === next.screen;
-    const position =
-      readBrowserWorkspaceEntry().position ??
-      browserEntry.current?.position ??
-      0;
+    const position = entry.position ?? browserEntry.current?.position ?? 0;
     browserEntry.current = writeBrowserWorkspaceEntry(
       hash,
       replace ? "replace" : "push",
       replace ? position : position + 1,
+      creationSelection,
     );
   }
 
@@ -301,6 +329,21 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } else if (target.screen === "preview" && !next.model.configured) {
       switchLocation({ screen: "model" }, "replace");
       setNotice(uiText("请先保存并启用一份模型配置。"));
+    } else if (target.screen === "create") {
+      const saved = (entry ?? readBrowserWorkspaceEntry()).creationSelection;
+      const packageId = saved?.packageId ?? selected;
+      const exists = next.contentPackages.some(
+        ({ localId }) => localId === packageId,
+      );
+      switchLocation(target, "replace", {
+        packageId: exists
+          ? packageId
+          : saved === undefined
+            ? (next.contentPackages[0]?.localId ?? "")
+            : "",
+        templateId: saved?.templateId ?? "",
+      });
+      if (saved?.packageId && !exists) setNotice(uiText("找不到该内容包。"));
     } else {
       if (target.screen === "preview") setPromptPreviewPlayPreset(null);
       switchLocation(target, "replace");
@@ -368,6 +411,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             entry.hash,
             "replace",
             previous.position + (event.isTrusted ? 1 : 0),
+            entry.creationSelection,
           );
       }
       lastPop = entry;
@@ -413,7 +457,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setSelected((current) => {
         const location = locationRef.current;
         if (location.screen === "content") return location.packageId;
-        if (location.screen === "create" && current !== "") return current;
+        if (location.screen === "create") return current;
         return next.contentPackages.some(({ localId }) => localId === current)
           ? current
           : (next.contentPackages[0]?.localId ?? "");
@@ -684,8 +728,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }),
       );
       acceptPackage(created);
-      setSelected(created.localId);
-      switchLocation({ screen: "create" });
+      switchLocation({ screen: "create" }, undefined, {
+        packageId: created.localId,
+        templateId: "",
+      });
     } catch (error: unknown) {
       report(error);
     } finally {
@@ -831,6 +877,62 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     switchLocation({ screen: "preview" });
   }
+
+  function changeCreationSelection(selection: CreationSelection): void {
+    const entry = readBrowserWorkspaceEntry();
+    if (locationRef.current.screen !== "create" || entry.hash !== "#/create")
+      return;
+    if (selection.packageId !== selected) worldCreation.clear();
+    setSelected(selection.packageId);
+    setSelectedTemplateId(selection.templateId);
+    browserEntry.current = writeBrowserWorkspaceEntry(
+      entry.hash,
+      "replace",
+      entry.position ?? 0,
+      selection,
+    );
+  }
+
+  function configureModelForCreation(): void {
+    const creation = readBrowserWorkspaceEntry();
+    if (
+      locationRef.current.screen !== "create" ||
+      creation.hash !== "#/create" ||
+      workspace?.model.configured !== false ||
+      navigationLocked
+    )
+      return;
+    switchLocation({ screen: "model" });
+    const settings = browserEntry.current;
+    if (settings !== null) creationModelVisit.current = { creation, settings };
+  }
+
+  useEffect(() => {
+    if (confirmedModelVisit === null) return;
+    const stillInSettings =
+      creationModelVisit.current === confirmedModelVisit &&
+      locationRef.current.screen === "model" &&
+      sameBrowserWorkspaceEntry(
+        confirmedModelVisit.settings,
+        readBrowserWorkspaceEntry(),
+      );
+    if (stillInSettings && (navigationLocked || pendingModelAction !== null))
+      return;
+    setConfirmedModelVisit(null);
+    if (!stillInSettings || workspace?.model.configured !== true) return;
+    // Traverse to the existing creation entry so browser Back and Forward
+    // keep their original destinations. The normal restore path revalidates it.
+    creationModelVisit.current = null;
+    returnToBrowserWorkspaceEntry(
+      confirmedModelVisit.creation,
+      confirmedModelVisit.settings,
+    );
+  }, [
+    confirmedModelVisit,
+    navigationLocked,
+    pendingModelAction,
+    workspace?.model.configured,
+  ]);
 
   const creationOverviewVisible = screen === "create" || screen === "content";
   const {
@@ -1072,6 +1174,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   // Async preset actions retain this instance even after a later page mounts.
   const presetPageInstance = presetPageInstanceRef.current;
+  const modelVisit = creationModelVisit.current;
   const worldContent =
     screen === "world" ? (
       <WorldPage
@@ -1390,6 +1493,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onLibraryChange={(model) =>
               updateWorkspace((current) => ({ ...current, model }))
             }
+            onConnectionActivated={() => {
+              if (
+                modelVisit !== null &&
+                creationModelVisit.current === modelVisit
+              )
+                setConfirmedModelVisit(modelVisit);
+            }}
             onNotice={setNotice}
             onDirtyChange={setModelDraftDirty}
             pendingState={[pendingModelAction, setPendingModelAction]}
@@ -1400,16 +1510,22 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             client={client}
             packages={workspace.contentPackages}
             selectedId={selected}
+            selectedTemplateId={selectedTemplateId}
             pending={creatingWorld}
             modelConfigured={workspace.model.configured}
-            onSelect={(id) => {
-              worldCreation.clear();
-              setSelected(id);
-            }}
+            onSelect={(packageId) =>
+              changeCreationSelection({
+                packageId,
+                templateId: selectedTemplateId,
+              })
+            }
+            onTemplateSelect={(templateId) =>
+              changeCreationSelection({ packageId: selected, templateId })
+            }
             onCreate={(template) => void createWorld(template)}
             onNavigationProtectionChange={setChildNavigation}
             onEdit={() => navigate("content")}
-            onConfigureModel={() => navigate("model")}
+            onConfigureModel={configureModelForCreation}
           />
         )}
         {screen === "preview" && (

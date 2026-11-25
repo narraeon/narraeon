@@ -650,6 +650,7 @@ const englishMessages: Record<string, string> = {
   手动编辑: "Edit manually",
   "AI 完善": "Setting improvement",
   新建世界: "Create world",
+  请选择内容包: "Choose a content package",
   从当前内容包创建: "Create from current content package",
   界面语言: "Interface language",
   "界面语言已保存。": "Interface language saved.",
