@@ -80,6 +80,91 @@ test.each([
   );
 });
 
+test.each([
+  {
+    baseUrl: "https://api.openai.com/v1",
+    modelId: "o3",
+    dialect: "standard",
+    outputLimitField: "max_completion_tokens",
+  },
+  {
+    baseUrl: "https://api.openai.com/v1/chat/completions/",
+    modelId: "o4-mini-2025-04-16",
+    dialect: "standard",
+    outputLimitField: "max_completion_tokens",
+  },
+  {
+    baseUrl: "https://api.openai.com/v1",
+    modelId: "gpt-4o-mini",
+    dialect: "standard",
+    outputLimitField: "max_tokens",
+  },
+  {
+    baseUrl: "https://api.openai.com.proxy.invalid/v1",
+    modelId: "o3",
+    dialect: "standard",
+    outputLimitField: "max_tokens",
+  },
+  {
+    baseUrl: "https://provider.invalid/v1",
+    modelId: "o3",
+    dialect: "cliproxyapi",
+    outputLimitField: "max_tokens",
+  },
+] as const)(
+  "Chat Completions 输出上限：$baseUrl $modelId ($dialect) 使用 $outputLimitField",
+  async ({ baseUrl, modelId, dialect, outputLimitField }) => {
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            message: { role: "assistant", content: "Hello" },
+            finish_reason: "stop",
+          },
+        ],
+      }),
+    );
+    const maxOutputTokens = 2_048;
+    const host = new FileNativeModelHost(
+      {
+        provider: "chat_completions",
+        baseUrl,
+        apiKey: "synthetic-key",
+        modelId,
+        dialect,
+        contextWindowTokens: 64_000,
+        maxOutputTokens,
+      },
+      fetch_,
+    );
+    const request = exchangeFor(
+      "chat_completions",
+      modelId,
+      host.binding().cacheStrategy,
+    );
+
+    await host.exchange(request);
+
+    expect(fetch_).toHaveBeenCalledTimes(1);
+    const [url, init] = fetch_.mock.calls[0]!;
+    if (!(url instanceof URL) || typeof init?.body !== "string")
+      throw new Error("Expected a URL and a JSON request body");
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    expect(body).toHaveProperty(outputLimitField, maxOutputTokens);
+    expect(
+      Object.keys(body).filter(
+        (field) => field === "max_tokens" || field === "max_completion_tokens",
+      ),
+    ).toHaveLength(1);
+    const preview = host.previewRequest(request);
+    expect(preview).toMatchObject({
+      endpointPath: url.pathname,
+      method: init.method,
+    });
+    expect(preview.body).toEqual(body);
+  },
+);
+
 test("Google 诊断接受根端点并遮蔽 URL 路径中的凭据", () => {
   const request = exchangeFor(
     "google_interactions",
