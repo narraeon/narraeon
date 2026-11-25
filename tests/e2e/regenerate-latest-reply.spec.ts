@@ -27,6 +27,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     "原来的第二段回复",
     "重新生成的第二段回复",
     "空输入续写回复",
+    "只重写后的续写正文",
   ];
   let finishRegeneration: (() => void) | undefined;
   const provider = createServer((request, response) => {
@@ -136,6 +137,32 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(
       firstReply.getByRole("button", { name: "重新生成", exact: true }),
     ).toHaveCount(0);
+    const desktop = page.viewportSize()!;
+    await page.setViewportSize({ width: 375, height: 760 });
+    await regenerate.focus();
+    await regenerate.press("Enter");
+    const menu = page.getByRole("group", { name: "重新生成", exact: true });
+    const rewrite = menu.getByRole("button", { name: "只重写这段正文" });
+    const redo = menu.getByRole("button", { name: "整轮重来" });
+    await expect(rewrite).toHaveAccessibleDescription(
+      "保留本轮已生效的结果和状态变化。",
+    );
+    await expect(redo).toHaveAccessibleDescription(
+      "撤回本轮进展，从你的行动重新推演。",
+    );
+    await rewrite.click({ trial: true });
+    await redo.click({ trial: true });
+    await page.keyboard.press("Tab");
+    await expect(rewrite).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(redo).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(regenerate).toBeFocused();
+    await regenerate.click();
+    await page.getByLabel("你的行动").click();
+    await expect(menu).toBeHidden();
+    expect(providerRequests).toHaveLength(2);
     let dialogs = 0;
     page.on("dialog", async (dialog) => {
       dialogs += 1;
@@ -143,6 +170,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     });
     await page.getByLabel("你的行动").fill("仍未发送的行动草稿");
     await regenerate.click();
+    await redo.click();
     await expect(
       page.getByText("正在重新生成…", { exact: true }),
     ).toBeVisible();
@@ -159,6 +187,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(timeline).not.toContainText("原来的第二段回复");
     await expect(page.locator(".call-chain-player")).toHaveCount(2);
     await expect(page.getByLabel("你的行动")).toHaveValue("仍未发送的行动草稿");
+    await page.setViewportSize(desktop);
     expect(dialogs).toBe(0);
     expect(providerRequests).toHaveLength(3);
     expect(providerRequests[2]).toContain("第一段回复");
@@ -212,7 +241,14 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(
       page.getByText("空输入续写回复", { exact: true }),
     ).toBeVisible();
-    await expect(regenerate).toHaveCount(0);
+    await regenerate.click();
+    await expect(rewrite).toBeVisible();
+    await expect(redo).toHaveCount(0);
+    await rewrite.click();
+    await expect(timeline).toContainText("只重写后的续写正文");
+    await expect(timeline).not.toContainText("空输入续写回复");
+    await expect(page.locator(".call-chain-player")).toHaveCount(2);
+    expect(providerRequests).toHaveLength(5);
   } finally {
     finishRegeneration?.();
     await servers.stopAll();
@@ -289,6 +325,7 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
     });
     await expect(regenerate).toBeEnabled();
     await regenerate.click();
+    await page.getByRole("button", { name: "整轮重来", exact: true }).click();
     const fallback = page.getByRole("button", {
       name: "用全新上下文重新生成",
       exact: true,

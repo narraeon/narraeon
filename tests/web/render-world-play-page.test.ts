@@ -33,12 +33,16 @@ import type {
   V1WorldRevisionSealedEpochView,
 } from "../../src/protocol/v1.ts";
 import { projectUncoveredPlayerViews } from "../../src/web/PlayerViewFallback.ts";
-import type { FrontendArtifactProjection } from "../../src/web/ArtifactExtensionHost.tsx";
+import {
+  ArtifactExtensionHost,
+  type FrontendArtifactProjection,
+} from "../../src/web/ArtifactExtensionHost.tsx";
 import {
   defaultAppReadingPreferences,
   type AppReadingPreferences,
 } from "../../src/protocol/appPreferences.ts";
 import { WorldPage } from "../../src/web/WorldPage.tsx";
+import { PlayTimeline } from "../../src/web/PlayTimeline.tsx";
 import { App } from "../../src/web/App.tsx";
 import { setWebLocale } from "../../src/web/i18n.ts";
 import {
@@ -3426,6 +3430,13 @@ describe("世界游玩页面", () => {
     );
     expect(card.closest(".world-timeline-trace")).toBeNull();
     expect(card.closest(".call-chain-resolution")).not.toBeNull();
+    fireEvent.click(within(timeline).getByRole("button", { name: "重新生成" }));
+    expect(
+      within(timeline).getByRole("button", { name: "只重写这段正文" }),
+    ).toBeTruthy();
+    expect(
+      within(timeline).queryByRole("button", { name: "整轮重来" }),
+    ).toBeNull();
 
     const trace = timeline.querySelector(".model-call-list");
     expect(trace).not.toBeNull();
@@ -4244,6 +4255,13 @@ describe("世界游玩页面", () => {
     expect(
       within(latest).getByRole("button", { name: "创建分叉" }),
     ).toBeTruthy();
+    fireEvent.click(within(latest).getByRole("button", { name: "重新生成" }));
+    expect(
+      within(latest).getByRole("button", { name: "只重写这段正文" }),
+    ).toBeTruthy();
+    expect(
+      within(latest).getByRole("button", { name: "整轮重来" }),
+    ).toBeTruthy();
     expect(
       within(
         screen
@@ -4251,6 +4269,89 @@ describe("世界游玩页面", () => {
           .closest("article")!,
       ).queryByRole("button", { name: "重新生成" }),
     ).toBeNull();
+  });
+
+  test("已展开的重新生成菜单会随忙碌状态禁用，仍可关闭并返回原焦点", () => {
+    const chain = playChainView("latest-chain", "first-send", "推开石门");
+    const onRegenerateNarrative = vi.fn();
+    const onRegeneratePlayer = vi.fn();
+    const timeline = (
+      restartDisabled: boolean,
+      freshContextDisabled: boolean,
+    ) =>
+      createElement(PlayTimeline, {
+        client: {
+          request: () => Promise.reject(new Error("Unexpected request")),
+        },
+        worldId: chain.worldId,
+        items: lightweightPlayTimeline(chain).items,
+        liveChain: null,
+        restartDisabled,
+        freshContextDisabled,
+        showTechnicalInfo: false,
+        onRestartFrom: vi.fn(),
+        onEditPlayer: vi.fn(),
+        onRegenerateNarrative,
+        onRegeneratePlayer,
+      });
+    const { rerender } = render(timeline(false, false), {
+      wrapper: ({ children }) =>
+        createElement(
+          ArtifactExtensionHost,
+          {
+            worldId: chain.worldId,
+            artifacts: [],
+            playerViews: { views: [] },
+            onSetComposerDraft: () => undefined,
+            onRefresh: () => undefined,
+          },
+          children,
+        ),
+    });
+    const trigger = screen.getByRole("button", { name: "重新生成" });
+    fireEvent.click(trigger);
+    const rewrite = screen.getByRole("button", { name: "只重写这段正文" });
+    const redo = screen.getByRole("button", { name: "整轮重来" });
+    expect(rewrite.getAttribute("aria-disabled")).toBe("false");
+    expect(redo.getAttribute("aria-disabled")).toBe("false");
+    rewrite.focus();
+    rerender(timeline(true, false));
+    expect(rewrite.getAttribute("aria-disabled")).toBe("true");
+    expect(redo.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(rewrite);
+    fireEvent.click(redo);
+    fireEvent.keyDown(rewrite, { key: "Escape" });
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("group", { name: "重新生成" })).toBeNull();
+    expect(onRegenerateNarrative).not.toHaveBeenCalled();
+    expect(onRegeneratePlayer).not.toHaveBeenCalled();
+
+    rerender(timeline(false, true));
+    fireEvent.click(trigger);
+    const noModelRewrite = screen.getByRole("button", {
+      name: "只重写这段正文",
+    });
+    expect(noModelRewrite.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(noModelRewrite);
+    fireEvent.click(screen.getByRole("button", { name: "整轮重来" }));
+    expect(onRegenerateNarrative).not.toHaveBeenCalled();
+    expect(onRegeneratePlayer).toHaveBeenCalledExactlyOnceWith(
+      chain.chainId,
+      1,
+      "推开石门",
+      false,
+    );
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("group", { name: "重新生成" })).toBeNull();
+
+    rerender(timeline(false, false));
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "只重写这段正文" }));
+    expect(onRegenerateNarrative).toHaveBeenCalledExactlyOnceWith(
+      chain.chainId,
+      4,
+    );
+    expect(onRegeneratePlayer).toHaveBeenCalledTimes(1);
   });
 
   test.each([
@@ -4340,8 +4441,19 @@ describe("世界游玩页面", () => {
     const button = screen.queryByRole<HTMLButtonElement>("button", {
       name: "重新生成",
     });
-    if (disabled) expect(button?.disabled).toBe(true);
-    else expect(button).toBeNull();
+    if (disabled) {
+      expect(button?.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(button!);
+      expect(screen.queryByRole("group", { name: "重新生成" })).toBeNull();
+    } else if (scenario === "未提交主持正文" || scenario === "工具步骤") {
+      expect(button).toBeNull();
+    } else {
+      fireEvent.click(button!);
+      expect(
+        screen.getByRole("button", { name: "只重写这段正文" }),
+      ).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "整轮重来" })).toBeNull();
+    }
   });
 
   test.each(["refresh", "rejected", "partial"] as const)(
@@ -4396,7 +4508,7 @@ describe("世界游玩页面", () => {
         }),
       };
       renderWorld(client);
-      fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+      await redoLatestTurn();
       if (scenario === "refresh") {
         await screen.findByText(/操作已完成，但页面刷新失败/u);
         expect(screen.getByText("Revised once.")).toBeTruthy();
@@ -4462,7 +4574,7 @@ describe("世界游玩页面", () => {
     await screen.findByText("Alex opens the door and lets you go first.");
     act(() => onConnection?.("reconnecting"));
     await waitFor(() => expect(reads).toBe(2));
-    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await redoLatestTurn();
     await screen.findByText("Confirmed replacement narrative.");
     await act(async () => {
       oldRead.resolve(oldWorld);
@@ -4539,7 +4651,7 @@ describe("世界游玩页面", () => {
         "世界已在当前上下文之外更新；下一次行动会从新上下文开始。",
       ),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await redoLatestTurn();
     await screen.findByText("沿原上下文重新生成的回复");
     expect(client.request).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4635,11 +4747,7 @@ describe("世界游玩页面", () => {
       };
       renderWorld(client, undefined, { simulateCombinedRevision: true });
       await screen.findByText("Alex opens the door and lets you go first.");
-      const regenerate = screen.getByRole<HTMLButtonElement>("button", {
-        name: "重新生成",
-      });
-      expect(regenerate.disabled).toBe(false);
-      fireEvent.click(regenerate);
+      await redoLatestTurn();
       const fallback = await screen.findByRole("button", {
         name: "用全新上下文重新生成",
       });
@@ -4759,7 +4867,7 @@ describe("世界游玩页面", () => {
       fireEvent.change(await screen.findByLabelText("你的行动"), {
         target: { value: "尚未发送的草稿" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+      await redoLatestTurn();
       const feedbackNode = await screen.findByText(feedback);
       if (status === "interrupted" && canRetry)
         expect(feedbackNode.closest('[role="status"]')).not.toBeNull();
@@ -5029,6 +5137,11 @@ describe("世界游玩页面", () => {
     );
   });
 });
+
+async function redoLatestTurn(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+  fireEvent.click(screen.getByRole("button", { name: "整轮重来" }));
+}
 
 function renderWorld(
   client: {

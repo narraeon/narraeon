@@ -1,5 +1,12 @@
 import styles from "./PlayTimeline.module.css";
-import { Fragment, useCallback, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainView,
@@ -16,6 +23,7 @@ import {
 import { PlayTurnCallDetails } from "./PlayTurnCallDetails.tsx";
 import { ResolutionCard } from "./ResolutionCard.tsx";
 import { SyncNotice } from "./SyncNotice.tsx";
+import { useAndroidBack } from "./androidBridge.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import {
   assistantResponseKind,
@@ -355,6 +363,126 @@ function timelineEventBelongsInStory(
   );
 }
 
+function RegenerationMenu({
+  restartDisabled,
+  freshContextDisabled,
+  onRegenerate,
+  onRegenerateNarrative,
+}: {
+  restartDisabled: boolean;
+  freshContextDisabled: boolean;
+  onRegenerate: (() => void) | undefined;
+  onRegenerateNarrative: (() => void) | undefined;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLSpanElement>(null);
+  const optionsId = useId();
+  const options = [
+    {
+      key: "rewrite",
+      label: uiText("只重写这段正文"),
+      description: uiText("保留本轮已生效的结果和状态变化。"),
+      disabled: restartDisabled || freshContextDisabled,
+      run: onRegenerateNarrative,
+    },
+    {
+      key: "redo",
+      label: uiText("整轮重来"),
+      description: uiText("撤回本轮进展，从你的行动重新推演。"),
+      disabled: restartDisabled,
+      run: onRegenerate,
+    },
+  ].filter(({ run }) => run !== undefined);
+  const cannotOpen = options.every(({ disabled }) => disabled);
+
+  function closeAndFocus(): void {
+    setOpen(false);
+    trigger.current?.focus();
+  }
+
+  useAndroidBack(open, closeAndFocus);
+  useEffect(() => {
+    if (!open) return;
+    // The story scrolls behind the fixed composer.
+    panel.current?.scrollIntoView?.({ block: "nearest" });
+    function dismiss(event: PointerEvent): void {
+      if (event.target instanceof Node && !root.current?.contains(event.target))
+        setOpen(false);
+    }
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  return (
+    <span
+      className={styles.regenerationControl}
+      ref={root}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (!open || event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeAndFocus();
+      }}
+    >
+      <button
+        type="button"
+        className={`history-restart-button ${styles.regenerationTrigger}`}
+        ref={trigger}
+        id={`${optionsId}-trigger`}
+        aria-expanded={open}
+        aria-controls={open ? optionsId : undefined}
+        aria-disabled={!open && cannotOpen}
+        onClick={(event) => {
+          if (open) closeAndFocus();
+          else if (!cannotOpen) {
+            event.currentTarget.focus();
+            setOpen(true);
+          }
+        }}
+      >
+        {uiText("重新生成")}
+      </button>
+      {open ? (
+        <span
+          className={styles.regenerationOptions}
+          id={optionsId}
+          ref={panel}
+          role="group"
+          aria-labelledby={`${optionsId}-trigger`}
+        >
+          {options.map(({ key, label, description, disabled, run }) => (
+            <button
+              key={key}
+              type="button"
+              aria-disabled={disabled}
+              aria-labelledby={`${optionsId}-${key}-label`}
+              aria-describedby={`${optionsId}-${key}-description`}
+              onClick={() => {
+                if (disabled) return;
+                closeAndFocus();
+                run?.();
+              }}
+            >
+              <strong id={`${optionsId}-${key}-label`}>{label}</strong>
+              <span
+                className={styles.regenerationDescription}
+                id={`${optionsId}-${key}-description`}
+              >
+                {description}
+              </span>
+            </button>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function TimelineEvent({
   failureRecovery,
   client,
@@ -612,26 +740,15 @@ function TimelineEvent({
             ) : null}
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
-                {onRegenerateNarrative === undefined ? null : (
-                  <button
-                    type="button"
-                    className="history-restart-button"
-                    disabled={restartDisabled || freshContextDisabled}
-                    onClick={onRegenerateNarrative}
-                  >
-                    {uiText("只重新生成叙事")}
-                  </button>
-                )}
-                {onRegenerate === undefined ? null : (
-                  <button
-                    type="button"
-                    className="history-restart-button"
-                    disabled={restartDisabled}
-                    onClick={onRegenerate}
-                  >
-                    {uiText("重新生成")}
-                  </button>
-                )}
+                {onRegenerateNarrative !== undefined ||
+                onRegenerate !== undefined ? (
+                  <RegenerationMenu
+                    restartDisabled={restartDisabled}
+                    freshContextDisabled={freshContextDisabled}
+                    onRegenerate={onRegenerate}
+                    onRegenerateNarrative={onRegenerateNarrative}
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="history-restart-button"

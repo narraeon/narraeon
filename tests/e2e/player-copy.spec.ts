@@ -529,12 +529,39 @@ for (const locale of ["zh-CN", "en"] as const) {
         await page.reload();
         await expect(action).toBeDisabled();
         if (index === 0) {
-          await story
-            .getByRole("button", {
-              name: t("重新生成", "Regenerate"),
-              exact: true,
-            })
-            .click();
+          const regenerate = t("重新生成", "Regenerate");
+          const menuButton = story.getByRole("button", {
+            name: regenerate,
+            exact: true,
+          });
+          await menuButton.click();
+          const options = story.getByRole("group", { name: regenerate });
+          const rewrite = options.getByRole("button", {
+            name: t("只重写这段正文", "Rewrite just this reply"),
+          });
+          await expect(rewrite).toBeDisabled();
+          await expect(rewrite).toHaveAccessibleDescription(
+            t(
+              "保留本轮已生效的结果和状态变化。",
+              "Keep the results and world changes already made this turn.",
+            ),
+          );
+          const redo = options.getByRole("button", {
+            name: t("整轮重来", "Redo the turn"),
+          });
+          await expect(redo).toHaveAccessibleDescription(
+            t(
+              "撤回本轮进展，从你的行动重新推演。",
+              "Undo this turn’s progress and play it again from your action.",
+            ),
+          );
+          await redo.click({ trial: true });
+          await page.keyboard.press("Escape");
+          const desktop = page.viewportSize()!;
+          await page.setViewportSize({ width: 375, height: 760 });
+          await menuButton.click();
+          await redo.click();
+          await page.setViewportSize(desktop);
         } else {
           const player = story.locator(".call-chain-player").filter({
             hasText: "Fixture new-chat action",
