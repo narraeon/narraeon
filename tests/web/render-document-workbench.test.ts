@@ -11,6 +11,7 @@ import { setWebLocale } from "../../src/web/i18n.ts";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   setWebLocale("zh-CN");
 });
 
@@ -21,47 +22,114 @@ const files: ContentTreeFile[] = [
 ];
 
 test.each([
-  [
-    "world/people/example.yaml",
-    "character.example",
-    "Example character",
-    "示例人物",
-  ],
-  ["world/rules/example.md", "rule.example", "Example rule", "示例规则"],
-])(
-  "localizes the sample document placeholder for %s",
-  (path, id, english, chinese) => {
-    const workbench = () =>
+  {
+    locale: "en",
+    path: "world/rules/１２ Harbor.md",
+    existingPath: "world/places/old.yaml",
+    existingContents: "weather: [unfinished",
+    ref: "doc-12-harbor",
+    newPathLabel: "New file path",
+    createLabel: "Create file",
+    addLabel: "Add to draft",
+    summary: "Summarize this document in one sentence.",
+    title: "１２ Harbor",
+  },
+  {
+    locale: "zh-CN",
+    path: "state/places/港口.yml",
+    existingPath: "state/rules/old.md",
+    existingContents: "A draft with no heading.",
+    ref: "document",
+    newPathLabel: "新文件路径",
+    createLabel: "新建文件",
+    addLabel: "加入草稿",
+    summary: "用一句话概括这份文档。",
+    title: "港口",
+  },
+] as const)(
+  "seeds $path with localized editable metadata and reserves identifiers from an unfinished file",
+  ({
+    locale,
+    path,
+    existingPath,
+    existingContents,
+    ref,
+    newPathLabel,
+    createLabel,
+    addLabel,
+    summary,
+    title,
+  }) => {
+    setWebLocale(locale);
+    const duplicateId = "doc.11111111111141118111111111111111";
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
+    const header = `$document: { id: ${duplicateId}, ref: ${ref}, title: Old }\n`;
+    const existing = {
+      path: existingPath,
+      contents: existingPath.endsWith(".md")
+        ? `---\n${header}---\n\n${existingContents}`
+        : header + existingContents,
+    };
+    const onFilesChange = vi.fn<(files: ContentTreeFile[]) => void>();
+    render(
       createElement(DocumentWorkbench, {
         workspace: {
-          kind: "content-package",
-          files: [{ path, contents: "" }],
+          kind: path.startsWith("state/")
+            ? "world-revision"
+            : "content-package",
+          files: [existing],
           dirty: false,
+          pending: false,
           issues: [],
-          onFilesChange: vi.fn(),
+          onFilesChange,
           onSave: vi.fn(),
         },
-        selectedPath: path,
-      });
+      }),
+    );
+    fireEvent.click(screen.getByText(createLabel));
+    fireEvent.change(screen.getByLabelText(newPathLabel), {
+      target: { value: path },
+    });
+    fireEvent.click(screen.getByRole("button", { name: addLabel }));
 
-    setWebLocale("en");
-    const { rerender } = render(workbench());
-    const placeholder = screen
-      .getByRole("textbox", { name: `Edit ${path}` })
-      .getAttribute("placeholder");
-    expect(placeholder).toContain(`id: ${id}`);
-    expect(placeholder).toContain(`title: ${english}`);
-    expect(screen.getByText("0 characters")).toBeTruthy();
-
-    setWebLocale("zh-CN");
-    rerender(workbench());
-    expect(
-      screen
-        .getByRole("textbox", { name: `编辑 ${path}` })
-        .getAttribute("placeholder"),
-    ).toContain(`title: ${chinese}`);
+    expect(onFilesChange).toHaveBeenCalledTimes(1);
+    const [original, added] = onFilesChange.mock.calls[0]![0];
+    expect(original).toEqual(existing);
+    const metadata = `$document:\n  id: doc.22222222222242228222222222222222\n  ref: ${ref}-2\n  title: ${title}\n  summary: ${summary}\n  aliases: []\n`;
+    expect(added).toEqual({
+      path,
+      contents: path.endsWith(".md")
+        ? `---\n${metadata}---\n\n# ${title}\n\n`
+        : `${metadata}\n`,
+    });
   },
 );
+
+test("opening an existing empty world document leaves it empty", () => {
+  const path = "world/rules/empty.md";
+  const onFilesChange = vi.fn();
+  render(
+    createElement(DocumentWorkbench, {
+      workspace: {
+        kind: "content-package",
+        files: [{ path, contents: "" }],
+        dirty: false,
+        issues: [],
+        onFilesChange,
+        onSave: vi.fn(),
+      },
+    }),
+  );
+
+  const source = screen.getByRole<HTMLTextAreaElement>("textbox", {
+    name: `编辑 ${path}`,
+  });
+  expect(source.value).toBe("");
+  expect(source.placeholder).toBe("输入 UTF-8 文本内容……");
+  expect(onFilesChange).not.toHaveBeenCalled();
+});
 
 describe("文档工作区与编排方案文件", () => {
   test("内容包中的 control/gameplay.json 可以打开和编辑，不显示 JSON 不支持的提示", () => {

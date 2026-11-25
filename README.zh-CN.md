@@ -142,6 +142,8 @@ Narraeon 不依赖一段无限增长的聊天。全新上下文会从当前世�
 
 文件面板收起时，如果未保存的文件修改暂停了对话，可以在消息输入框旁选择 **整批保存** 或 **放弃未保存修改**。在世界修订中，**保存到修订** 会更新修订工作树。**放弃未保存修改** 只清除本地文件改动，已保存的修订和修订锁仍会保留。
 
+在内容包和世界修订的文件编辑器里新建 YAML 或 Markdown 世界文档时，草稿会带上可编辑的 `$document` 文件头和不重复的短引用。YAML 正文写在文件头下方，Markdown 正文写在标题下方。[文件编辑器规格](docs/specs/web-workspace-and-observation.md#12-手动新建文件)
+
 更详细的创作方法见 [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md)。
 
 ## 语言行为

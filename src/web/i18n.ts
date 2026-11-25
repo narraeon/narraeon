@@ -802,10 +802,10 @@ const englishMessages: Record<string, string> = {
   内容包文本资源: "Content-package text resource",
   "写下玩家首次行动前立即看到的局面……":
     "Describe the situation visible immediately before the player's first action…",
-  "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n":
-    "$document:\n  id: character.example\n  ref: example\n  title: Example character\n  summary: A one-sentence stable summary.\n  aliases: []\n",
-  "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n":
-    "---\n$document:\n  id: rule.example\n  ref: example\n  title: Example rule\n  summary: A one-sentence stable summary.\n  aliases: []\n---\n\n# Example rule\n",
+  新文档: "New document",
+  "用一句话概括这份文档。": "Summarize this document in one sentence.",
+  "修改 Markdown 文档标题时，文件头的 title 和正文的一级标题须一致。":
+    "When editing a Markdown document title, keep the title in the file header and the level-one heading in the body the same.",
   "输入 UTF-8 文本内容……": "Enter UTF-8 text…",
   修正后: "After correction",
   父端点: "Parent endpoint",

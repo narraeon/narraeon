@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { type Document, isMap, isSeq, parseDocument, stringify } from "yaml";
+import {
+  documentCodec,
+  nextAvailableShortRef,
+} from "../../../shared/world-document-format.ts";
 import type { WorldDocumentStore } from "../WorldDocumentStore.ts";
 import {
   type InternalDocumentEntry,
@@ -10,7 +14,6 @@ import { WorldDocumentIndex } from "./WorldDocumentIndex.ts";
 import {
   copyLocator,
   diagnostic,
-  documentCodec,
   documentIdPattern,
   freeze,
   hasOnlyKeys,
@@ -1915,18 +1918,6 @@ function validRevisionLogicalPath(
     validRelativePath(logicalPath.slice(prefix.length)) &&
     documentCodec(logicalPath) === codec
   );
-}
-
-function nextAvailableShortRef(
-  hint: string,
-  occupied: ReadonlySet<string>,
-): string {
-  if (!occupied.has(hint)) return hint;
-  for (let suffix = 2; ; suffix += 1) {
-    const suffixText = `-${suffix}`;
-    const candidate = `${hint.slice(0, 32 - suffixText.length)}${suffixText}`;
-    if (!occupied.has(candidate)) return candidate;
-  }
 }
 
 function validMarkdownHeadingTitle(value: unknown): value is string {

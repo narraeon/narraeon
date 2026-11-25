@@ -157,6 +157,8 @@ In setting improvement, ask the model to discuss a plan or to edit the package d
 
 If unsaved file edits pause the conversation while the file panel is closed, use **Save all changes** or **Discard unsaved changes** beside the message box. World revision offers **Save to revision** for the revision worktree. **Discard unsaved changes** clears only local file edits and keeps the saved revision and its lock.
 
+When you create a YAML or Markdown world document in the file editor, the draft starts with an editable `$document` header and a short reference that is unique within the draft. Add your text below the header in YAML or below the heading in Markdown. The same editor is available in content packages and world revision. [File editor specification](docs/specs/web-workspace-and-observation.md#12-手动新建文件)
+
 For a detailed Chinese authoring guide, see [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md).
 
 ## Language behavior
