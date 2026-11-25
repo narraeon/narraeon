@@ -68,6 +68,17 @@ export function exportAndroidLogs(): void {
   androidBridge()?.postMessage("export-logs");
 }
 
+export function openAndroidStoryLink(url: string): boolean {
+  const bridge = androidBridge();
+  if (bridge === undefined) return false;
+  try {
+    bridge.postMessage(`open-story-link:${url}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Back handlers of the overlays that are open now, oldest first. A handler
  * returns false when it had nothing to close; any other result counts as handled.

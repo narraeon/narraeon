@@ -195,6 +195,8 @@ class MainActivity : AppCompatActivity() {
                     data == CheckpointPreferences.READ -> reply.postMessage(checkpointPreferences.snapshotMessage())
                     data.startsWith(CheckpointPreferences.REMEMBER) ->
                         checkpointPreferences.remember(data.removePrefix(CheckpointPreferences.REMEMBER))
+                    data.startsWith(OPEN_STORY_LINK_MESSAGE_PREFIX) ->
+                        openStoryLink(Uri.parse(data.removePrefix(OPEN_STORY_LINK_MESSAGE_PREFIX)))
                     else -> fileSaver.handle(data, reply, endpoint)
                 }
             }
@@ -202,6 +204,15 @@ class MainActivity : AppCompatActivity() {
         container.removeAllViews()
         container.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         webView = view
+    }
+
+    private fun openStoryLink(uri: Uri) {
+        if ((uri.scheme != "https" && uri.scheme != "http") || uri.host.isNullOrEmpty()) return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (error: ActivityNotFoundException) {
+            DiagnosticLog.append(this, "webview.log", "no browser for story link: $error")
+        }
     }
 
     private fun verifiedResource(connection: HttpURLConnection): WebResourceResponse {
@@ -406,6 +417,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val BRIDGE_NAME = "NarraeonAndroid"
         private const val EXPORT_LOGS_MESSAGE = "export-logs"
+        private const val OPEN_STORY_LINK_MESSAGE_PREFIX = "open-story-link:"
         private const val PAGE_BACK_SCRIPT = "window.narraeonAndroidBack?.() === true"
         private const val POLL_INTERVAL_MS = 300L
         private const val STARTUP_TIMEOUT_MS = 60_000L

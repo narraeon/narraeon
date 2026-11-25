@@ -64,6 +64,9 @@ const englishMessages: Record<string, string> = {
   "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。":
     "The selected model protocol differs from this context. Switch back to the original protocol to continue, or start a fresh context with the new protocol.",
   复制: "Copy",
+  复制原文: "Copy original",
+  已复制原文: "Original copied",
+  "复制失败，重试": "Copy failed, retry",
   主角模板: "Protagonist template",
   不使用: "None",
   管理主角模板: "Manage protagonist templates",

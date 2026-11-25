@@ -29,7 +29,7 @@
   list-style: none;
 }
 
-.transcript li {
+.transcript > li {
   display: flex;
 }
 
@@ -78,7 +78,7 @@
   opacity: 0.78;
 }
 
-.transcript article p {
+.transcript article > p {
   margin: 0;
   font-family: Georgia, "Noto Serif SC", serif;
   font-size: clamp(1.1rem, 0.35vw + 1rem, 1.22rem);
@@ -86,7 +86,7 @@
   white-space: pre-wrap;
 }
 
-.transcript :global(.player-message) article p {
+.transcript :global(.player-message) article > p {
   font-family: inherit;
   font-size: 0.98rem;
   line-height: 1.65;
@@ -108,6 +108,7 @@
 
 :where(.column) :global(.history-message-actions) {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
 }
@@ -193,7 +194,7 @@
 .events :global(.history-message-actions):has(.regenerationOptions) {
   display: grid;
   flex: 1 1 100%;
-  grid-template-columns: max-content max-content minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, max-content)) minmax(0, 1fr);
 }
 
 .regenerationControl {
@@ -264,7 +265,7 @@
   cursor: not-allowed;
 }
 
-.events article p,
+.events article > p,
 :where(.column) :global(.call-chain-failure) p,
 :where(.column) :global(.call-chain-cancellation) p {
   margin: 0.45rem 0 0;
@@ -494,7 +495,7 @@
   cursor: pointer;
 }
 
-.events pre {
+:where(.events) pre {
   max-height: 24rem;
   margin: 0;
   padding: 0.85rem;
@@ -579,8 +580,7 @@
 }
 
 .column :global(.call-chain-assistant) article > p,
-.column :global(.narrator-message) article > p,
-.column .transcript :global(.narrator-message) p {
+.column :global(.narrator-message) article > p {
   margin: 0;
   color: var(--text);
   font-family: Georgia, "Noto Serif SC", "Songti SC", serif;
