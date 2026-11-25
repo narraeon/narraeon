@@ -610,7 +610,7 @@ describe("世界游玩页面", () => {
     expect(button.disabled).toBe(false);
   });
   test.each(["provider_error", "output_limit", "retryable"] as const)(
-    "没有模型连接时 %s 的配置恢复可导航，重发仍禁用且保留草稿导航锁",
+    "没有模型连接时 %s 的配置入口确认放弃草稿，重发仍禁用",
     async (failureKind) => {
       const chain = interruptedChainView();
       chain.lastFailureKind = failureKind;
@@ -685,20 +685,31 @@ describe("世界游玩页面", () => {
         { target: { value: "[]" } },
       );
       fireEvent.click(within(management).getByRole("button", { name: "关闭" }));
-      expect(configure.disabled).toBe(true);
+      expect(configure.disabled).toBe(false);
       fireEvent.click(configure);
+      const leaveDialog = () =>
+        screen.getByRole("dialog", {
+          name: "此页有未保存的修改。要放弃修改并离开吗？",
+        });
+      fireEvent.click(
+        within(leaveDialog()).getByRole("button", { name: "取消" }),
+      );
       expect(
         document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
       ).toBe("world");
-      const resetManagement = openManagement();
+      const retainedManagement = openManagement();
+      expect(
+        within(retainedManagement).getByRole<HTMLTextAreaElement>("textbox", {
+          name: "世界控制文件（JSON）",
+        }).value,
+      ).toBe("[]");
       fireEvent.click(
-        within(resetManagement).getByRole("button", { name: "放弃控制修改" }),
+        within(retainedManagement).getByRole("button", { name: "关闭" }),
       );
-      fireEvent.click(
-        within(resetManagement).getByRole("button", { name: "关闭" }),
-      );
-      expect(configure.disabled).toBe(false);
       fireEvent.click(configure);
+      fireEvent.click(
+        within(leaveDialog()).getByRole("button", { name: "放弃并离开" }),
+      );
       await screen.findByRole("heading", { name: "模型连接" });
       expect(
         document.querySelector(".workspace-shell")?.getAttribute("data-screen"),
