@@ -148,7 +148,6 @@ const requiredFields = {
   "world.create": {
     operationId: text,
     packageId: text,
-    model: object,
   },
   "world.archive.export": { worldId: text, operationId: text },
   "world.archive.import": { operationId: text, uploadId: text },
@@ -579,6 +578,7 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
 };
 
 const worldChecks: Partial<Record<Command, readonly Check[]>> = {
+  "world.create": [field("model", object)],
   "world.story.export": [
     field(
       "format",

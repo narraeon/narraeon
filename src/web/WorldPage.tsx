@@ -126,6 +126,13 @@ interface Feedback {
   submission?: string;
 }
 
+export interface WorldComposerDraft {
+  worldId: string;
+  playerText: string;
+  turnNote: string;
+  turnNoteOpen: boolean;
+}
+
 export function WorldPage({
   client,
   worldId,
@@ -134,6 +141,8 @@ export function WorldPage({
   onBack,
   showWorkspaceBack = true,
   onConfigureModel,
+  initialComposerDraft,
+  onComposerDraftChange,
   onRenameWorld,
   onOpenWorld,
   onRecoverWorkspace,
@@ -151,6 +160,8 @@ export function WorldPage({
   onBack: () => void;
   showWorkspaceBack?: boolean;
   onConfigureModel: () => void;
+  initialComposerDraft?: WorldComposerDraft | null;
+  onComposerDraftChange?: (draft: WorldComposerDraft) => void;
   onRenameWorld: (name: string) => Promise<void>;
   onOpenWorld: (worldId: string) => Promise<void>;
   onRecoverWorkspace?: () => Promise<unknown>;
@@ -192,9 +203,13 @@ export function WorldPage({
   );
   const [readingPreferencesSaving, setReadingPreferencesSaving] =
     useState(false);
-  const [playerText, setPlayerText] = useState("");
+  const [playerText, setPlayerText] = useState(
+    initialComposerDraft?.playerText ?? "",
+  );
   // One-turn request: cleared once a dispatch settles ready, kept on interrupt or cancel.
-  const [turnNote, setTurnNote] = useState("");
+  const [turnNote, setTurnNote] = useState(
+    initialComposerDraft?.turnNote ?? "",
+  );
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [supersededFailure, setSupersededFailure] = useState<{
@@ -263,7 +278,12 @@ export function WorldPage({
   const { ref: composerTextareaAttach, textareaRef: composerTextareaRef } =
     useAutosizeTextarea(playerText);
   const turnNoteInputRef = useRef<HTMLInputElement>(null);
-  const [turnNoteOpen, setTurnNoteOpen] = useState(false);
+  const [turnNoteOpen, setTurnNoteOpen] = useState(
+    initialComposerDraft?.turnNoteOpen ?? false,
+  );
+  useLayoutEffect(() => {
+    onComposerDraftChange?.({ worldId, playerText, turnNote, turnNoteOpen });
+  }, [onComposerDraftChange, worldId, playerText, turnNote, turnNoteOpen]);
   const [composerHeight, setComposerHeight] = useState(72);
   useEffect(() => {
     if (turnNoteOpen) turnNoteInputRef.current?.focus();
@@ -1831,7 +1851,7 @@ export function WorldPage({
               submitting: pending === "play-fresh" || pending === "play-append",
               onSubmitAlternate: submitPlayChain,
             }}
-            disabled={!playIdle || !modelConfigured}
+            disabled={!playIdle}
             showTechnicalInfo={readingPreferences.showTechnicalInfo}
           >
             <SyncNotice
@@ -1884,7 +1904,9 @@ export function WorldPage({
             ) : null}
             {!modelConfigured ? (
               <div className="model-required-callout">
-                <p>{uiText("需要先配置模型连接才能游玩。")}</p>
+                <p>
+                  {uiText("你可以先写下行动。配置模型连接后，再由你发送。")}
+                </p>
                 <button type="button" onClick={onConfigureModel}>
                   {uiText("配置模型")}
                 </button>

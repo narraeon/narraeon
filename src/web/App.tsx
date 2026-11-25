@@ -54,7 +54,7 @@ import {
   authoringConversationActions,
   useAuthoringWorkspace,
 } from "./useAuthoringWorkspace.ts";
-import { WorldPage } from "./WorldPage.tsx";
+import { WorldPage, type WorldComposerDraft } from "./WorldPage.tsx";
 import {
   idleWorkspaceNavigation,
   parseWorkspaceHash,
@@ -94,9 +94,10 @@ type LeaveIntent =
   | { kind: "browser"; entry: BrowserWorkspaceEntry }
   | { kind: "program"; navigate: () => void };
 
-interface CreationModelVisit {
-  creation: BrowserWorkspaceEntry;
+interface ModelSettingsVisit {
+  origin: BrowserWorkspaceEntry;
   settings: BrowserWorkspaceEntry;
+  worldDraft?: WorldComposerDraft;
 }
 
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
@@ -116,9 +117,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const creationModelVisit = useRef<CreationModelVisit | null>(null);
+  const modelSettingsVisit = useRef<ModelSettingsVisit | null>(null);
   const [confirmedModelVisit, setConfirmedModelVisit] =
-    useState<CreationModelVisit | null>(null);
+    useState<ModelSettingsVisit | null>(null);
+  const worldComposerDraft = useRef<WorldComposerDraft | null>(null);
+  const [restoredWorldDraft, setRestoredWorldDraft] =
+    useState<WorldComposerDraft | null>(null);
+  const rememberWorldDraft = useCallback((draft: WorldComposerDraft) => {
+    worldComposerDraft.current = draft;
+  }, []);
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
   const [deletingPackage, setDeletingPackage] = useState(false);
@@ -207,19 +214,26 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
     const entry = readBrowserWorkspaceEntry();
-    const modelVisit = creationModelVisit.current;
+    const modelVisit = modelSettingsVisit.current;
     if (
       modelVisit !== null &&
       (next.screen !== "model" ||
         !sameBrowserWorkspaceEntry(modelVisit.settings, entry))
     )
-      creationModelVisit.current = null;
+      modelSettingsVisit.current = null;
     packageOpenRequest.current += 1;
     packageReadTarget.current?.dispose();
     packageRetryEntry.current = null;
     setPackageSyncFailed(false);
     if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
     if (workspaceHash(previous) !== hash) {
+      setRestoredWorldDraft(
+        next.screen === "world" &&
+          modelVisit?.worldDraft?.worldId === next.worldId &&
+          sameBrowserWorkspaceEntry(modelVisit.origin, entry)
+          ? modelVisit.worldDraft
+          : null,
+      );
       worldCreation.clear();
       authoringWorkspace.close();
     }
@@ -900,23 +914,36 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   }
 
   function configureModelForCreation(): void {
-    const creation = readBrowserWorkspaceEntry();
     if (
       locationRef.current.screen !== "create" ||
-      creation.hash !== "#/create" ||
       workspace?.model.configured !== false ||
       navigationLocked
     )
       return;
+    openModelSetup();
+  }
+
+  function openModelSetup(): void {
+    const origin = readBrowserWorkspaceEntry();
+    const current = locationRef.current;
+    if (origin.hash !== workspaceHash(current)) return;
+    const draft = worldComposerDraft.current;
     switchLocation({ screen: "model" });
     const settings = browserEntry.current;
-    if (settings !== null) creationModelVisit.current = { creation, settings };
+    if (settings !== null)
+      modelSettingsVisit.current = {
+        origin,
+        settings,
+        ...(current.screen === "world" && draft?.worldId === current.worldId
+          ? { worldDraft: draft }
+          : {}),
+      };
   }
 
   useEffect(() => {
     if (confirmedModelVisit === null) return;
     const stillInSettings =
-      creationModelVisit.current === confirmedModelVisit &&
+      modelSettingsVisit.current === confirmedModelVisit &&
       locationRef.current.screen === "model" &&
       sameBrowserWorkspaceEntry(
         confirmedModelVisit.settings,
@@ -926,11 +953,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       return;
     setConfirmedModelVisit(null);
     if (!stillInSettings || workspace?.model.configured !== true) return;
-    // Traverse to the existing creation entry so browser Back and Forward
+    // Traverse to the originating entry so browser Back and Forward
     // keep their original destinations. The normal restore path revalidates it.
-    creationModelVisit.current = null;
     returnToBrowserWorkspaceEntry(
-      confirmedModelVisit.creation,
+      confirmedModelVisit.origin,
       confirmedModelVisit.settings,
     );
   }, [
@@ -977,16 +1003,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       (screen === "content" && authoring.loading)
     )
       return;
-    if (workspace?.model.configured !== true) {
-      switchLocation({ screen: "model" });
-      setNotice(uiText("请先保存并启用一份模型配置。"));
-      return;
-    }
     creatingWorldRef.current = true;
     setCreatingWorld(true);
     const packageId = selected;
     creationTemplate.current = template;
-    const model = modelBinding();
     try {
       const authoring = await creationOverviewTarget.read();
       if (authoring === null) return;
@@ -999,7 +1019,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       }
       const created = await worldCreation.create(
         client,
-        { packageId, model },
+        { packageId },
         packageDetail?.localId === packageId
           ? packageDetail.treeRevision
           : undefined,
@@ -1032,25 +1052,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function rereadCreation(): Promise<void> {
     const created = await worldCreation.recover();
     if (created !== null) acceptCreatedWorld(created);
-  }
-
-  function modelBinding() {
-    const connection = workspace?.model.connections.find(
-      ({ id }) => id === workspace.model.activeConnectionId,
-    );
-    if (connection === undefined)
-      return {
-        provider: "chat_completions" as const,
-        modelId: "",
-        contextWindowTokens: 0,
-        maxOutputTokens: 0,
-      };
-    return {
-      provider: connection.provider,
-      modelId: connection.modelId,
-      contextWindowTokens: connection.contextWindowTokens,
-      maxOutputTokens: connection.maxOutputTokens,
-    };
   }
 
   function openWorld(id: string): void {
@@ -1152,6 +1153,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           : {}),
       });
     else if (next === "world") openWorld(worldId);
+    else if (
+      next === "model" &&
+      screen === "world" &&
+      !workspace?.model.configured
+    )
+      openModelSetup();
     else {
       switchLocation({ screen: next });
       if (next === "home" || next === "library") void refresh().catch(report);
@@ -1180,7 +1187,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   // Async preset actions retain this instance even after a later page mounts.
   const presetPageInstance = presetPageInstanceRef.current;
-  const modelVisit = creationModelVisit.current;
+  const modelVisit = modelSettingsVisit.current;
   const worldContent =
     screen === "world" ? (
       <WorldPage
@@ -1202,6 +1209,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         modelConfigured={workspace.model.configured}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
+        initialComposerDraft={
+          restoredWorldDraft?.worldId === worldId ? restoredWorldDraft : null
+        }
+        onComposerDraftChange={rememberWorldDraft}
         onNavigationProtectionChange={setChildNavigation}
         onRenameWorld={(name) => renameWorld(worldId, name)}
         onRecoverWorkspace={() => workspaceTarget.recover()}
@@ -1496,13 +1507,22 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           <ModelConnectionScreen
             client={client}
             library={workspace.model}
+            {...(modelVisit?.worldDraft === undefined
+              ? {}
+              : {
+                  onReturnToWorld: () =>
+                    returnToBrowserWorkspaceEntry(
+                      modelVisit.origin,
+                      modelVisit.settings,
+                    ),
+                })}
             onLibraryChange={(model) =>
               updateWorkspace((current) => ({ ...current, model }))
             }
             onConnectionActivated={() => {
               if (
                 modelVisit !== null &&
-                creationModelVisit.current === modelVisit
+                modelSettingsVisit.current === modelVisit
               )
                 setConfirmedModelVisit(modelVisit);
             }}

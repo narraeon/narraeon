@@ -157,16 +157,21 @@ export class FileNativeWorldNotFoundError extends RuntimeDomainError {
   }
 }
 
+type CreationPreviewInput = Pick<
+  FileNativePromptInput,
+  "hostBinding" | "modelBinding"
+> & { playerInput?: string };
+
 export interface FileNativeWorldCreationInput {
   packageScriptGrants?: string[];
   operationId: string;
   sourcePackageId: string;
   sourcePackageTitle: string;
   packageFiles: readonly ContentTreeFile[];
-  prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
-    playerInput?: string;
-  };
+  prompt?: CreationPreviewInput;
 }
+
+type CreatedWorld = { outcome: "created"; world: FileNativeWorldSummary };
 
 export interface FileNativeWorldSummary extends WorldActivitySummary {
   worldId: string;
@@ -684,11 +689,15 @@ export class FileNativeWorldStore {
     );
   }
 
-  async createFromContentPackage(input: FileNativeWorldCreationInput): Promise<{
-    outcome: "created";
-    world: FileNativeWorldSummary;
-    preview: PromptPreview;
-  }> {
+  async createFromContentPackage(
+    input: FileNativeWorldCreationInput & { prompt: CreationPreviewInput },
+  ): Promise<CreatedWorld & { preview: PromptPreview }>;
+  async createFromContentPackage(
+    input: FileNativeWorldCreationInput,
+  ): Promise<CreatedWorld & { preview?: PromptPreview }>;
+  async createFromContentPackage(
+    input: FileNativeWorldCreationInput,
+  ): Promise<CreatedWorld & { preview?: PromptPreview }> {
     assertIdentity(input.operationId, "operation ID");
     assertIdentity(input.sourcePackageId, "Content-package local identity");
     if (
@@ -728,10 +737,6 @@ export class FileNativeWorldStore {
     assertEquivalentWorldDocumentSnapshots(inspection.documents, stateSnapshot);
     const state = selectSurface(stateSnapshot.files, "state/");
     const control = selectSurface(packageFiles, "control/");
-    const boundInput: FileNativeWorldCreationInput = {
-      ...input,
-      packageFiles,
-    };
 
     const legacySourceFingerprint = fingerprint(packageFiles);
     const sourceFingerprint = contentPackageCreationFingerprint(
@@ -749,18 +754,17 @@ export class FileNativeWorldStore {
           "The same operation ID is bound to a different creation payload",
         );
       }
-      const preview = this.#preview(boundInput, previous.worldId);
       return {
         outcome: "created",
         world: await this.#currentSummary(previous),
-        preview,
+        ...this.#creationPreview(input.prompt, packageFiles, previous.worldId),
       };
     }
 
     // Preview happens before any staging write, so a slot/overlap/budget failure
     // cannot leave a partially published world.
     const worldId = `world-${operationDigest(input.operationId).slice(0, 24)}`;
-    const preview = this.#preview(boundInput, worldId);
+    const preview = this.#creationPreview(input.prompt, packageFiles, worldId);
     const finalRoot = join(this.#worldsRoot, worldId);
     const stagingRoot = join(
       this.#worldsRoot,
@@ -846,7 +850,7 @@ export class FileNativeWorldStore {
       return {
         outcome: "created",
         world: await this.#currentSummary(publication),
-        preview,
+        ...preview,
       };
     } catch (error: unknown) {
       await rm(stagingRoot, { recursive: true, force: true }).catch(
@@ -861,7 +865,7 @@ export class FileNativeWorldStore {
           return {
             outcome: "created",
             world: await this.#currentSummary(recovered),
-            preview,
+            ...preview,
           };
         }
         throw new FileNativeWorldCreationError(
@@ -2175,23 +2179,23 @@ export class FileNativeWorldStore {
     );
   }
 
-  #preview(
-    input: FileNativeWorldCreationInput,
+  #creationPreview(
+    prompt: CreationPreviewInput | undefined,
+    packageFiles: readonly ContentTreeFile[],
     worldId: string,
-  ): PromptPreview {
-    const openingMessage = genesisOpeningMessage(
-      openingText(input.packageFiles),
-    );
-    return this.#promptCompiler.preview({
+  ): { preview?: PromptPreview } {
+    if (prompt === undefined) return {};
+    const openingMessage = genesisOpeningMessage(openingText(packageFiles));
+    const preview = this.#promptCompiler.preview({
       endpoint: { id: `${worldId}:genesis`, commit: "genesis" },
-      hostBinding: input.prompt.hostBinding,
+      hostBinding: prompt.hostBinding,
       world: {
         controlFingerprint: fingerprint(
-          input.packageFiles.filter(({ path }) => path.startsWith("control/")),
+          packageFiles.filter(({ path }) => path.startsWith("control/")),
         ),
         documentSnapshot: WorldDocumentStore.open({
           layout: "content_package",
-          files: input.packageFiles,
+          files: packageFiles,
         }),
         history: { [openingMessage.messageId]: openingMessage.exactText },
         additionalMaterials: [
@@ -2200,10 +2204,11 @@ export class FileNativeWorldStore {
       },
       playerInputPlacement: "bootstrap",
       playerInput:
-        input.prompt.playerInput ??
+        prompt.playerInput ??
         "(Preview placeholder: the player's first real action after creating the world)",
-      modelBinding: input.prompt.modelBinding,
+      modelBinding: prompt.modelBinding,
     });
+    return { preview };
   }
 }
 

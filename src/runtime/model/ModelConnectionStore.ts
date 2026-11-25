@@ -77,7 +77,10 @@ interface ModelConnectionDocument {
 export class ModelConnectionUnavailableError extends RuntimeDomainError {
   constructor() {
     super("No V1 model connection is enabled", {
-      receipt: { code: "invalid_request", commands: ["world.create"] },
+      receipt: {
+        code: "invalid_request",
+        commands: ["play.chain.start", "play.chain.append"],
+      },
     });
     this.name = "ModelConnectionUnavailableError";
   }
@@ -198,13 +201,18 @@ export class ModelConnectionStore {
   }
 
   async bind(): Promise<FileNativeModelConnection> {
+    const connection = await this.bindActiveIfPresent();
+    if (connection === null) throw new ModelConnectionUnavailableError();
+    return connection;
+  }
+
+  async bindActiveIfPresent(): Promise<FileNativeModelConnection | null> {
     await this.#mutationTail;
     const document = await this.#readDocument();
     const connection = document.connections.find(
       ({ id }) => id === document.activeConnectionId,
     );
-    if (connection === undefined) throw new ModelConnectionUnavailableError();
-    return toBinding(connection);
+    return connection === undefined ? null : toBinding(connection);
   }
 
   /** Resolve a frozen logical operation without changing the active model. */

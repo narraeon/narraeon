@@ -687,7 +687,7 @@ describe("世界游玩页面", () => {
       fireEvent.click(
         await screen.findByRole("button", { name: "打开世界：宿舍世界" }),
       );
-      await screen.findByText("需要先配置模型连接才能游玩。");
+      await screen.findByText("你可以先写下行动。配置模型连接后，再由你发送。");
       expect(screen.queryByRole("button", { name: "用新上下文" })).toBeNull();
       if (failureKind === "retryable") {
         const retry = screen.getByRole<HTMLButtonElement>("button", {
@@ -3944,7 +3944,7 @@ describe("世界游玩页面", () => {
   });
 
   test.each(["model", "running", "revision"] as const)(
-    "在此收尾与输入区一同禁用：%s",
+    "配置模型前可以准备草稿，生成或修订期间锁定输入：%s",
     async (blockedBy) => {
       const chain = playChainView("existing", "first", "I wait.");
       const client = {
@@ -3965,18 +3965,19 @@ describe("世界游玩页面", () => {
       await screen.findByRole("heading", { name: "宿舍世界" });
       fireEvent.click(screen.getByLabelText("更多"));
       await waitFor(() => {
+        const draftLocked = blockedBy !== "model";
         expect(
           screen.getByRole<HTMLButtonElement>("button", { name: "在此收尾" })
             .disabled,
-        ).toBe(true);
+        ).toBe(draftLocked);
         expect(
           screen.getByRole<HTMLButtonElement>("button", {
             name: "本轮临时要求",
           }).disabled,
-        ).toBe(true);
+        ).toBe(draftLocked);
         expect(
           screen.getByLabelText<HTMLTextAreaElement>("你的行动").disabled,
-        ).toBe(true);
+        ).toBe(draftLocked);
       });
     },
   );

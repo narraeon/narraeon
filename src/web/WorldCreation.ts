@@ -44,7 +44,7 @@ export class WorldCreation {
     input: CreateWorld,
     treeRevision?: string,
   ): Promise<HomeWorld> {
-    const key = JSON.stringify([input.packageId, input.model, treeRevision]);
+    const key = JSON.stringify([input.packageId, treeRevision]);
     if (this.attempt?.key !== key) {
       this.clear();
       this.attempt = { key, operationId: createClientId("create") };

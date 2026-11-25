@@ -234,9 +234,9 @@ function playPreset(): PlayPresetBinding {
   };
 }
 
-function hostBinding(): Parameters<
-  FileNativeWorldStore["createFromContentPackage"]
->[0]["prompt"]["hostBinding"] {
+function hostBinding(): NonNullable<
+  Parameters<FileNativeWorldStore["createFromContentPackage"]>[0]["prompt"]
+>["hostBinding"] {
   return {
     hostPresetId: "play-advance-layout-host",
     files: {

@@ -152,14 +152,31 @@ test("写入前拒绝返回协议错误，存储故障仍返回服务错误", as
       packageId,
       model,
     };
-    const missingModel = await send(create);
-    expect(missingModel.statusCode).toBe(400);
-    expect(missingModel.json()).toMatchObject({
+    const created = await send(create);
+    expect(created.statusCode).toBe(200);
+    const {
+      result: {
+        world: { worldId },
+      },
+    } = created.json<{ result: { world: { worldId: string } } }>();
+    expect(created.json().result).not.toHaveProperty("preview");
+    const startWithoutModel = await send({
+      type: "play.chain.start",
+      worldId,
+      chainId: "no-connection",
+      exchangeId: "first-draft",
+      playerText: "Read the opening and look around.",
+    });
+    expect(startWithoutModel.statusCode).toBe(400);
+    expect(startWithoutModel.json()).toMatchObject({
       protocol: v1Protocol,
       error: {
         code: "invalid_request",
         message: "No V1 model connection is enabled",
       },
+    });
+    expect((await send({ type: "world.read", worldId })).json()).toMatchObject({
+      result: { head: "genesis", playTimeline: { activeChainId: null } },
     });
     expect(
       (
@@ -169,13 +186,10 @@ test("写入前拒绝返回协议错误，存储故障仍返回服务错误", as
         })
       ).statusCode,
     ).toBe(200);
-    const created = await send(create);
-    expect(created.statusCode).toBe(200);
-    const {
-      result: {
-        world: { worldId },
-      },
-    } = created.json<{ result: { world: { worldId: string } } }>();
+    const repeated = await send(create);
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json()).toMatchObject({ result: { world: { worldId } } });
+    expect(repeated.json().result).toHaveProperty("preview");
     expect(
       (await send({ type: "world.revision.open", worldId })).statusCode,
     ).toBe(200);
