@@ -1,7 +1,7 @@
 const add = (values) => values.reduce((sum, value) => sum + value, 0);
 const cpuMs = ({ user, system }) => (user + system) / 1000;
 
-function stats(values) {
+export function stats(values) {
   if (values.length === 0) return null;
   const sorted = values.toSorted((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
@@ -19,7 +19,7 @@ function stats(values) {
   };
 }
 
-function quantities(rows) {
+export function quantities(rows) {
   const keys = Object.keys(rows[0]);
   return Object.fromEntries(
     keys.map((key) => [

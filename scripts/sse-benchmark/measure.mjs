@@ -25,22 +25,42 @@ import { chromium } from "@playwright/test";
 
 import { applyConversationUpdate } from "../../src/protocol/conversationObservation.ts";
 import { preparePage, submitFromPage, viewport } from "./browser.mjs";
+import {
+  prepareReadingPage,
+  readingPageOptions,
+  submitReading,
+  verifyReading,
+} from "./reading-browser.mjs";
+import { longResponse, readingArms } from "./reading-fixture.mjs";
+import { summarizeReading } from "./reading-summary.mjs";
 import { summarize } from "./summary.mjs";
 
 const { values } = parseArgs({
   options: {
     out: { type: "string" },
     turns: { type: "string", default: "240" },
-    repeats: { type: "string", default: "8" },
-    diagnostics: { type: "string", default: "4" },
+    repeats: { type: "string" },
+    diagnostics: { type: "string" },
     "chunk-ms": { type: "string", default: "20" },
     fixture: { type: "string" },
+    "play-reading": { type: "boolean" },
+    "expect-markdown": { type: "boolean" },
+    headed: { type: "boolean" },
+    mobile: { type: "boolean" },
+    "provider-port": { type: "string" },
   },
 });
 assert(values.out, "Pass --out <new directory>");
 const out = resolve(values.out);
-const number = (key) => {
-  const value = Number(values[key]);
+const playReading = Boolean(values["play-reading"]);
+const expectMarkdown = Boolean(values["expect-markdown"]);
+const mobile = Boolean(values.mobile);
+assert(
+  playReading || (!mobile && !expectMarkdown),
+  "--mobile and --expect-markdown require --play-reading",
+);
+const number = (key, fallback) => {
+  const value = Number(values[key] ?? fallback);
   assert(
     Number.isSafeInteger(value) && value > 0,
     `Expected positive --${key}`,
@@ -49,16 +69,18 @@ const number = (key) => {
 };
 const options = {
   turns: number("turns"),
-  repeats: number("repeats"),
-  diagnostics: number("diagnostics"),
+  repeats: number("repeats", playReading ? 4 : 8),
+  diagnostics: number("diagnostics", playReading ? 2 : 4),
   chunkMs: number("chunk-ms"),
 };
 const saved = values.fixture && resolve(values.fixture);
+const providerPort = values["provider-port"] && number("provider-port");
 const playerText = "I ask the harbor keeper to read the final entry aloud.";
 const chainId = "sse-benchmark-context";
 const responseText =
   "The keeper opens the ledger beneath the lamp. She reads the last entry slowly, pausing where the ink has run. The harbor bell sounded twice before dawn. A boat reached the north pier with neither cargo nor passengers. The keeper turns the page towards you. A thin seam of salt runs along the fold, and beneath it there is a date in smaller handwriting. She waits while you copy it, then shuts the ledger and sets the lamp back in its niche.";
 const chunks = responseText.match(/.{1,4}/g);
+const longChunks = longResponse.match(/[\s\S]{1,48}/g);
 const firstWaitMs = 250;
 const finishWaitMs = 100;
 const protocol = "narraeon.runtime/v1";
@@ -112,6 +134,7 @@ function startWorker(diagnostic) {
 
 let seedIndex = 0;
 let providerRuns = null;
+let trialChunks;
 const provider = createServer(async (request, response) => {
   try {
     const startedAt = now();
@@ -144,7 +167,7 @@ const provider = createServer(async (request, response) => {
     };
     providerRuns.push(trace);
     let chars = 0;
-    for (const [index, content] of chunks.entries()) {
+    for (const [index, content] of trialChunks.entries()) {
       const dueAt = receivedAt + firstWaitMs + index * options.chunkMs;
       await delay(Math.max(0, dueAt - now()));
       chars += content.length;
@@ -156,7 +179,7 @@ const provider = createServer(async (request, response) => {
         0,
         receivedAt +
           firstWaitMs +
-          (chunks.length - 1) * options.chunkMs +
+          (trialChunks.length - 1) * options.chunkMs +
           finishWaitMs -
           now(),
       ),
@@ -254,7 +277,7 @@ async function openObserver(url, worldId) {
   }
 }
 
-function arrivals(observations) {
+function arrivals(observations, expected = responseText) {
   let state = null;
   const samples = [];
   let chars = 0;
@@ -265,7 +288,7 @@ function arrivals(observations) {
     );
     if (
       pending?.text &&
-      responseText.startsWith(pending.text) &&
+      expected.startsWith(pending.text) &&
       pending.text.length > chars
     ) {
       chars = pending.text.length;
@@ -277,8 +300,12 @@ function arrivals(observations) {
 
 async function measure(worker, sample, fixture, worldId, browser, root) {
   let ui;
+  const readingPages = [];
   let closeObserver;
   let observedBytes;
+  const short = !playReading || sample.arm === "short";
+  const expected = short ? responseText : longResponse;
+  trialChunks = short ? chunks : longChunks;
   const trial = await mkdtemp(join(root, "trial-"));
   const url = await worker.ask("open", await copyFixture(fixture, trial));
   try {
@@ -288,22 +315,34 @@ async function measure(worker, sample, fixture, worldId, browser, root) {
     if (sample.arm === "wire") closeObserver = await openObserver(url, worldId);
     if (sample.arm === "page")
       ui = await preparePage(browser, url, worldId, playerText);
+    if (playReading) {
+      readingPages.push(
+        await prepareReadingPage(browser, url, worldId, playerText, mobile),
+      );
+      if (sample.arm === "dual") {
+        readingPages.push(
+          await prepareReadingPage(browser, url, worldId, undefined, mobile),
+        );
+      }
+    }
     // Let setup requests and the initial observation settle outside the window.
     await delay(150);
     await worker.ask("arm");
     providerRuns = [];
     const clientStartedAt = now();
-    const submission = ui
-      ? await submitFromPage(ui, responseText)
-      : {
-          result: await rpc(url, {
-            type: "play.chain.append",
-            worldId,
-            chainId,
-            exchangeId: "measured-exchange",
-            playerText,
-          }),
-        };
+    const submission = playReading
+      ? await submitReading(readingPages, expected, sample.arm)
+      : ui
+        ? await submitFromPage(ui, expected)
+        : {
+            result: await rpc(url, {
+              type: "play.chain.append",
+              worldId,
+              chainId,
+              exchangeId: "measured-exchange",
+              playerText,
+            }),
+          };
     const clientFinishedAt = now();
     const runtime = await worker.ask("result");
     if (closeObserver) {
@@ -312,26 +351,47 @@ async function measure(worker, sample, fixture, worldId, browser, root) {
       assert(observedBytes > 0);
     }
     assert.equal(runtime.httpStatus, 200);
-    assert.equal(runtime.subscribers, sample.arm === "none" ? 0 : 1);
+    assert.equal(
+      runtime.subscribers,
+      sample.arm === "none" ? 0 : sample.arm === "dual" ? 2 : 1,
+    );
     assert.equal(runtime.endSubscribers, runtime.subscribers);
     assert.equal(runtime.requests["play.chain.append"], 1);
     assert.equal(providerRuns.length, 1);
     const [provider] = providerRuns;
-    assert.equal(provider.sends.length, chunks.length);
+    assert.equal(provider.sends.length, trialChunks.length);
     assert.equal(submission.result.status, "ready");
     const final = submission.result.events.findLast(
       (event) => event.kind === "assistant",
     );
     assert.equal(final.status, "completed");
-    assert.equal(final.text, responseText);
+    assert.equal(final.text, expected);
     const history = historyPath(trial, worldId);
-    const committedPath = (await readdir(history))
+    const historyFiles = (await readdir(history)).sort();
+    const committedPath = historyFiles
       .filter((name) => name.includes("-narrator-"))
-      .sort()
       .at(-1);
     const committed = await readFile(join(history, committedPath), "utf8");
-    assert.equal(committed, responseText);
-    if (runtime.frames) {
+    assert.equal(committed, expected);
+    let committedPlayer;
+    if (playReading) {
+      const playerPath = historyFiles.findLast((name) =>
+        name.includes("-player-"),
+      );
+      const text = await readFile(join(history, playerPath), "utf8");
+      assert.equal(text, playerText);
+      committedPlayer = { path: playerPath, text, sha256: hash(text) };
+      assert.equal(
+        historyFiles.filter((name) => name.endsWith(".md")).length,
+        2 * options.turns + 3,
+      );
+      for (const trace of submission.browsers) {
+        verifyReading(trace, expected, expectMarkdown, runtime.repliedAt);
+        trace.arrivals = arrivals([...trace.setup, ...trace.events], expected);
+        assert(trace.arrivals.length > 1);
+      }
+    }
+    if (runtime.frames && !playReading) {
       const sent = [...runtime.setupFrames, ...runtime.frames].flatMap(
         ({ at, text }) =>
           text.includes("\nevent: observation\n")
@@ -371,9 +431,11 @@ async function measure(worker, sample, fixture, worldId, browser, root) {
       provider,
       runtime,
       browser: submission.browser,
+      browsers: submission.browsers,
       clientStartedAt,
       clientFinishedAt,
       observedBytes,
+      committedPlayer,
       final: {
         text: committed,
         bytes: Buffer.byteLength(committed),
@@ -385,8 +447,9 @@ async function measure(worker, sample, fixture, worldId, browser, root) {
   } finally {
     await closeObserver?.();
     await ui?.page.close();
+    await Promise.all(readingPages.map(({ page }) => page.close()));
     await worker.ask("close");
-    await rm(trial, { recursive: true, force: true });
+    await rm(trial, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -415,6 +478,10 @@ await mkdir(out);
 const fixture = saved ?? join(out, "fixture");
 const stored =
   saved && JSON.parse(await readFile(join(saved, "fixture.json"), "utf8"));
+assert(
+  !providerPort || !stored || providerPort === stored.providerPort,
+  "Saved fixture is bound to a different Provider port",
+);
 const root = await mkdtemp(join(tmpdir(), "narraeon-sse-benchmark-"));
 const samples = [];
 const orders = [
@@ -427,10 +494,10 @@ const orders = [
 ];
 let browser;
 try {
-  provider.listen(stored?.providerPort ?? 0, "127.0.0.1");
+  provider.listen(stored?.providerPort ?? providerPort ?? 0, "127.0.0.1");
   await once(provider, "listening");
   const port = provider.address().port;
-  browser = await chromium.launch();
+  browser = await chromium.launch({ headless: !values.headed });
   let worldId = stored?.worldId;
   if (!stored) {
     await mkdir(fixture);
@@ -489,7 +556,18 @@ try {
     memoryBytes: totalmem(),
     chromium: browser.version(),
     playwright: playwrightVersion,
-    viewport,
+    viewport: playReading ? readingPageOptions(mobile).viewport : viewport,
+    headed: Boolean(values.headed),
+    ...(playReading
+      ? {
+          benchmark: "play-reading",
+          mobile: mobile ? "Playwright Pixel 7 on the host Chromium" : null,
+          expectMarkdown,
+          providerPort: port,
+          longResponse,
+          longChunks,
+        }
+      : {}),
   });
 
   let requestHash;
@@ -500,7 +578,15 @@ try {
     const worker = startWorker(mode === "diagnostic");
     try {
       for (let round = -1; round < count; round++) {
-        const order = orders[(round + 1) % orders.length];
+        const rotation = round % readingArms.length;
+        const order = playReading
+          ? round === -1
+            ? ["short"]
+            : [
+                ...readingArms.slice(rotation),
+                ...readingArms.slice(0, rotation),
+              ]
+          : orders[(round + 1) % orders.length];
         for (const [position, arm] of order.entries()) {
           const sample = await measure(
             worker,
@@ -530,12 +616,12 @@ try {
       await worker.stop();
     }
   }
-  const summary = summarize(samples);
+  const summary = playReading ? summarizeReading(samples) : summarize(samples);
   await persist("summary.json", summary);
   console.log(`Evidence written to ${out}`);
 } finally {
   await browser?.close();
   provider.closeAllConnections();
   await new Promise((done) => provider.close(done));
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 3 });
 }
