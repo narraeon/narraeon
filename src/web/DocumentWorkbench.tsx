@@ -7,7 +7,9 @@ import type {
   V1SettingAuthoringDiff,
 } from "../protocol/v1.ts";
 import { documentCodec } from "../shared/world-document-format.ts";
+import { PlayerViewEditor } from "./PlayerViewEditor.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
+import { playerViewControlPath } from "./player-view-control-draft.ts";
 import {
   newFileContents,
   revisionBaseDocumentIds,
@@ -134,7 +136,7 @@ export function DocumentWorkbench({
     if (selectedFile === undefined) return;
     workspace.onFilesChange(
       files.map((file) =>
-        file.path === selectedFile.path ? { ...file, contents } : { ...file },
+        file.path === selectedFile.path ? { ...file, contents } : file,
       ),
     );
   }
@@ -434,6 +436,18 @@ export function DocumentWorkbench({
                   )}
                 </span>
               </div>
+            ) : selectedFile.path === playerViewControlPath ? (
+              <PlayerViewEditor
+                contents={selectedFile.contents}
+                files={files}
+                layout={
+                  workspace.kind === "content-package"
+                    ? "content_package"
+                    : "world_revision"
+                }
+                onChange={replaceSelected}
+                onSave={saveShortcut}
+              />
             ) : selectedFile.path === "control/frame.yaml" ? (
               <WorldFrameEditor
                 contents={selectedFile.contents}
