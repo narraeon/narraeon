@@ -410,6 +410,9 @@ const contentSillyTavernSelection = [
   field("selection", contentSelection, "Invalid SillyTavern content selection"),
 ];
 
+const invalidContentArchive =
+  "content.import.archiveBase64 is not a supported content-package ZIP";
+
 const contentChecks: Partial<Record<Command, readonly Check[]>> = {
   "content.create-sample": [
     check(
@@ -448,10 +451,15 @@ const contentChecks: Partial<Record<Command, readonly Check[]>> = {
       {
         type: "string",
         maxLength: maxPortableContentArchiveBase64Characters,
-        pattern:
-          "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+        // Check groups of four by length so the regex can scan long archives.
+        pattern: "^[A-Za-z0-9+/]*={0,2}$",
       },
-      "content.import.archiveBase64 is not a supported content-package ZIP",
+      invalidContentArchive,
+    ),
+    dependency(
+      ({ archiveBase64 }) =>
+        typeof archiveBase64 === "string" && archiveBase64.length % 4 !== 0,
+      invalidContentArchive,
     ),
     field("title", string),
     dependency(

@@ -51,29 +51,23 @@ async function runWorker({
         })
           .then(({ bytes, elapsedMs, status }) => {
             const receipt = JSON.parse(bytes);
-            let failure = null;
-            if (status === 200) {
-              assert.equal(receipt.result.status, "usable");
-              if (measured)
-                assert.equal(
-                  contentTreeFingerprint(receipt.result.files),
-                  treeFingerprint,
-                );
-            } else {
-              assert.equal(status, 500);
-              assert.match(
-                receipt.message,
-                /maximum call stack size exceeded/iu,
+            assert.equal(
+              status,
+              200,
+              `${size} content.import: ${receipt.error?.message ?? receipt.message}`,
+            );
+            assert.equal(receipt.result.status, "usable");
+            if (measured) {
+              assert.equal(
+                contentTreeFingerprint(receipt.result.files),
+                treeFingerprint,
               );
-              failure = receipt.message;
-            }
-            if (measured)
               rpcResult = {
                 elapsedMs,
                 responseBytes: bytes.byteLength,
                 httpStatus: status,
-                failure,
               };
+            }
             child.send({ consumed: true });
           })
           .catch(reject);
@@ -127,7 +121,7 @@ export async function measureImports(root, repeats) {
           idle[idleSize] ??= await run("idle");
           const work = await run("import");
           assert.equal(idle[idleSize].publishedPackages, 0);
-          assert.equal(work.publishedPackages, work.failure ? 0 : 1);
+          assert.equal(work.publishedPackages, 1);
           samples.push({
             layer,
             temperature,
@@ -136,7 +130,7 @@ export async function measureImports(root, repeats) {
             elapsedMs: work.elapsedMs,
             responseBytes: work.responseBytes ?? null,
             httpStatus: work.httpStatus ?? null,
-            failure: work.failure ?? null,
+            failure: null,
             publishedPackages: work.publishedPackages,
             baseline: idle[idleSize],
             workload: { before: work.before, after: work.after },
