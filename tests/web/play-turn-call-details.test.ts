@@ -117,3 +117,46 @@ test("a failure before dispatch stays in the technical history without creating 
   ).toBeTruthy();
   expect(within(trace).queryByRole("heading", { name: /次调用/u })).toBeNull();
 });
+
+test("legacy completions and interrupted attempts omit the provider stop reason", () => {
+  const call = {
+    kind: "assistant",
+    text: "",
+    attempt: 1,
+    hasReasoning: false,
+    hasToolFragment: false,
+    hasUsage: false,
+    detailsAvailable: false,
+  } as const;
+  const items = [
+    {
+      kind: "event",
+      chainId: "context",
+      current: true,
+      event: { ...call, id: 1, exchange: 1, status: "completed" },
+    },
+    {
+      kind: "event",
+      chainId: "context",
+      current: true,
+      event: {
+        ...call,
+        id: 2,
+        exchange: 2,
+        status: "interrupted",
+        stopReason: "Runtime rejected an invalid response",
+      },
+    },
+  ] satisfies V1PlayTimelineItem[];
+  render(
+    createElement(PlayTurnCallDetails, {
+      items,
+      worldId: "world",
+      liveChain: null,
+      request: vi.fn(),
+    }),
+  );
+  expect(screen.getAllByText("游玩主链")).toHaveLength(2);
+  expect(screen.queryByText(/停止原因/u)).toBeNull();
+  expect(screen.queryByText(/Runtime rejected/u)).toBeNull();
+});

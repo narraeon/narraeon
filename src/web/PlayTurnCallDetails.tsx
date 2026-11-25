@@ -299,6 +299,9 @@ export function PlayTurnCallDetails({
                   key={`${chainId}:${event.id}`}
                   retries={event.retries}
                   label={uiText("游玩主链")}
+                  stopReason={
+                    event.status === "completed" ? event.stopReason : undefined
+                  }
                   status={
                     ending?.kind === "cancellation"
                       ? "cancelled"

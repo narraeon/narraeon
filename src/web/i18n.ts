@@ -2212,6 +2212,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "{count} 次模型调用": "{count} model calls",
   "{count} 次": "{count}",
   "第 {number} 次调用": "Call {number}",
+  "停止原因：{reason}": "Stop reason: {reason}",
   本次上下文: "Context for this call",
   本次上下文不可用: "Context for this call is unavailable",
   仅保留部分调用记录: "Only partial call records were retained",

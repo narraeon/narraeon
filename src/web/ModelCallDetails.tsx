@@ -40,6 +40,7 @@ const statusLabel: Record<CallStatus, string> = {
 export function ModelCallDetails({
   label,
   status = "completed",
+  stopReason,
   retries,
   failure,
   context,
@@ -49,6 +50,7 @@ export function ModelCallDetails({
 }: {
   label?: string;
   status?: CallStatus | undefined;
+  stopReason?: string | undefined;
   retries?: ModelRetryEvidence[] | undefined;
   failure?: ReactNode;
   context: ReactNode;
@@ -60,7 +62,12 @@ export function ModelCallDetails({
     <section className="model-call">
       <header>
         {label ? <h4>{label}</h4> : null}
-        <small>{uiText(statusLabel[status])}</small>
+        <small>
+          {uiText(statusLabel[status])}
+          {stopReason && (
+            <> · {uiText("停止原因：{reason}", { reason: stopReason })}</>
+          )}
+        </small>
       </header>
       <ModelRetryStatus retries={retries} active={status === "streaming"} />
       {failure ? <div className="model-call-failure">{failure}</div> : null}

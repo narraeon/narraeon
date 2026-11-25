@@ -3318,6 +3318,7 @@ describe("世界游玩页面", () => {
         text: intermediate,
         status: "completed",
         responseKind: "tool_step",
+        stopReason: "tool_use",
         exchange: 1,
         attempt: 1,
         committedHead: "commit:3",
@@ -3345,6 +3346,7 @@ describe("世界游玩页面", () => {
         text: "Alex checks the latch and pulls the door shut.",
         status: "completed",
         responseKind: "narrative",
+        stopReason: "end_turn",
         exchange: 2,
         attempt: 1,
         committedHead: "commit:4",
@@ -3376,6 +3378,14 @@ describe("世界游玩页面", () => {
     ).toBeTruthy();
     expect(within(timeline).getAllByText(intermediate)).toHaveLength(1);
     const summary = within(timeline).getByText("工具调用 · 1 次");
+    const calls = within(timeline)
+      .getByText("本段调用详情")
+      .closest("details")!;
+    expect(calls.open).toBe(false);
+    expect(
+      summary.closest("section")?.querySelector("header")?.textContent,
+    ).toContain("停止原因：tool_use");
+    expect(within(calls).getByText(/停止原因：end_turn/u)).toBeTruthy();
     const details = summary.closest("details");
     expect(details?.open).toBe(false);
     fireEvent.click(summary);
