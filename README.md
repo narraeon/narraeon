@@ -23,8 +23,11 @@ The model handles the meaning of the story: it portrays characters, responds to 
   - OpenAI Responses API
   - OpenAI-compatible Chat Completions
   - Anthropic Messages
+  - Google Interactions
 
 Narraeon includes connection presets for several providers and also accepts a custom endpoint. A model with reliable tool-calling support is recommended.
+
+The Google Interactions adapter supports standard and CLIProxyAPI connections, model listing or manual model IDs, and configurable reasoning effort and summaries. The CLIProxyAPI dialect also supports compatibility budgets. End-to-end testing against a live service across play, setting improvement, world revision, and follow-up requests is still pending for specific models and protocol versions. [Model provider specification](docs/specs/model-providers-and-resilience.md#14-google-interactions)
 
 ## Quick start
 
@@ -138,13 +141,13 @@ Narraeon does not depend on one indefinitely growing chat. A new context is comp
 
 The call-chain panel keeps the actual request history for inspection: player messages, model prose, Runtime tool calls and results, usage, failures, and only the reasoning content the provider really returned. Internal processing is not presented as story text.
 
-### Edit, correct, or fork
+### Edit messages, create forks, or revise the world
 
 | Action                              | Result                                                                                                                                                                                 |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Edit a committed player message** | Rewinds the current world to just before the original message and continues from the replacement text. The earlier history is kept. The original message and all later story, model conversation, and artifacts are permanently deleted from this world. |
 | **Create a fork**                   | Copies the selected Authority prefix into a new independent world. The source world is unchanged, and both worlds can continue separately.                                             |
-| **Continuity correction**           | Applies an explicit out-of-story correction to current documents as a new commit without pretending the correction happened inside the narrative.                                      |
+| **World revision**                  | Open **World revision** on the world page to edit world state and controls outside the story, by hand or with AI. Review the changes, then apply them in one commit or discard the draft. [World revision specification](docs/specs/authoring-and-world-revision.md#4-世界修订工作区与跨-epoch-会话) |
 
 ## Content packages and setting improvement
 
