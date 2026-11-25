@@ -2095,6 +2095,7 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   从这里开新分支: "Branch from here",
   "用新对话继续（保留故事进度）":
     "Continue in a new chat (keep story progress)",
+  "选择新对话（保留故事进度）": "Choose a new chat (keep story progress)",
   "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。":
     "Based on the frozen bootstrap and committed tool-read records. A document existing in the world is never presented as proof that the model read it.",
   保留这条调用链已经看到的内容: "Keep what this call chain has already seen",

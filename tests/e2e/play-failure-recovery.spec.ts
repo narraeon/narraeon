@@ -26,6 +26,15 @@ test.beforeAll(async () => {
       const step = steps.shift();
       if (step?.kind === "disconnect") {
         response.destroy();
+      } else if (step?.kind === "text" && request.url === "/v1/messages") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            role: "assistant",
+            content: [{ type: "text", text: step.text }],
+            stop_reason: "end_turn",
+          }),
+        );
       } else if (step?.kind === "text" || step?.kind === "output_limit") {
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.end(
@@ -508,132 +517,246 @@ for (const locale of ["zh-CN", "en"] as const)
     ).toMatchObject({ chainId: freshChain.chainId, status: "ready" });
   });
 
-test("protocol switch is temporary and restored protocol accepts changed model settings", async ({
-  page,
-}) => {
-  steps.length = 0;
-  providerRequests.length = 0;
-  await page.goto("/");
-  await page.locator(".workspace-locale-picker select").selectOption("en");
-  const configure = (
-    provider: "chat_completions" | "anthropic_messages",
-    modelId: string,
-  ) =>
-    runtime(page, {
-      type: "model.save",
-      connection: {
-        name: "Protocol switch fixture",
-        presetId: "custom",
-        provider,
-        baseUrl: providerUrl,
-        apiKey: "fixture-secret",
-        modelId,
-        reasoningEffort: "low",
+for (const locale of ["zh-CN", "en"] as const)
+  test(`${locale}: protocol switch warns before sending and lets the player choose a new chat`, async ({
+    page,
+  }) => {
+    steps.length = 0;
+    providerRequests.length = 0;
+    const english = locale === "en";
+    const t = (chinese: string, englishText: string) =>
+      english ? englishText : chinese;
+    const button = (chinese: string, englishText: string) =>
+      page.getByRole("button", { name: t(chinese, englishText), exact: true });
+    const story = (text: string) => page.getByText(text, { exact: true });
+    const playCommands: string[] = [];
+    page.on("request", (request) => {
+      if (
+        !request.url().endsWith("/api/runtime/v1") ||
+        request.method() !== "POST"
+      )
+        return;
+      const { type } = (request.postDataJSON() as { request: V1Request })
+        .request;
+      if (type === "play.chain.start" || type === "play.chain.append")
+        playCommands.push(type);
+    });
+    await page.goto("/");
+    await page.locator(".workspace-locale-picker select").selectOption(locale);
+    const configure = (
+      provider: "chat_completions" | "anthropic_messages",
+      name: string,
+    ) =>
+      runtime(page, {
+        type: "model.save",
+        connection: {
+          name: `${locale} ${name}`,
+          presetId: "custom",
+          provider,
+          baseUrl: providerUrl,
+          apiKey: "fixture-secret",
+          modelId: name,
+          reasoningEffort: "low",
+          contextWindowTokens: 64000,
+          maxOutputTokens: 8192,
+        },
+      });
+    await configure("chat_completions", "original-model");
+    await configure("chat_completions", "replacement-model");
+    await configure("anthropic_messages", "different-protocol-model");
+    const package_ = await runtime<{ localId: string }>(page, {
+      type: "content.create",
+    });
+    const title = `Protocol switch ${locale}`;
+    await runtime(page, {
+      type: "content.rename",
+      packageId: package_.localId,
+      name: title,
+    });
+    await runtime(page, {
+      type: "content.replace",
+      packageId: package_.localId,
+      baseTreeRevision: (
+        await runtime<{ treeRevision: string }>(page, {
+          type: "content.read",
+          packageId: package_.localId,
+        })
+      ).treeRevision,
+      files: contentFiles(),
+    });
+    const created = await runtime<{ world: { worldId: string } }>(page, {
+      type: "world.create",
+      operationId: `create-protocol-switch-${locale}`,
+      packageId: package_.localId,
+      model: {
+        provider: "anthropic_messages",
+        modelId: "different-protocol-model",
         contextWindowTokens: 64000,
         maxOutputTokens: 8192,
       },
     });
-  await configure("chat_completions", "original-model");
-  const package_ = await runtime<{ localId: string }>(page, {
-    type: "content.create",
-  });
-  await runtime(page, {
-    type: "content.rename",
-    packageId: package_.localId,
-    name: "Protocol restoration",
-  });
-  await runtime(page, {
-    type: "content.replace",
-    packageId: package_.localId,
-    baseTreeRevision: (
-      await runtime<{ treeRevision: string }>(page, {
-        type: "content.read",
-        packageId: package_.localId,
-      })
-    ).treeRevision,
-    files: contentFiles(),
-  });
-  const created = await runtime<{ world: { worldId: string } }>(page, {
-    type: "world.create",
-    operationId: "create-protocol-restoration",
-    packageId: package_.localId,
-    model: {
-      provider: "chat_completions",
-      modelId: "original-model",
-      contextWindowTokens: 64000,
-      maxOutputTokens: 8192,
-    },
-  });
-  steps.push({
-    kind: "text",
-    text: "The original response remains in context.",
-  });
-  const initial = await runtime<V1PlayCallChainView>(page, {
-    type: "play.chain.start",
-    worldId: created.world.worldId,
-    chainId: "protocol-restoration",
-    exchangeId: "initial",
-    playerText: "Begin.",
-  });
-  await configure("anthropic_messages", "different-protocol-model");
-  await page.reload();
-  await page
-    .getByRole("button", {
-      name: "Open world: Protocol restoration",
-      exact: true,
-    })
-    .click();
-  const input = page.getByLabel("Your action", { exact: true });
-  await input.fill("Continue with the original protocol.");
-  const append = page.getByRole("button", {
-    name: "Append action",
-    exact: true,
-  });
-  await append.click();
-  await recoveryExpect(
-    page.getByText(
-      "The selected model protocol differs from this context. Switch back to the original protocol to continue, or start a fresh context with the new protocol.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await recoveryExpect(input).toHaveValue(
-    "Continue with the original protocol.",
-  );
-  expect(providerRequests).toHaveLength(1);
-  expect(
-    await runtime(page, {
-      type: "play.chain.inspect",
-      worldId: created.world.worldId,
-    }),
-  ).toMatchObject({
-    status: "ready",
-    chainId: initial.chainId,
-    lastFailure: null,
-  });
-  await configure("chat_completions", "replacement-model");
-  steps.push({ kind: "text", text: "Continued after restoring the protocol." });
-  await append.click();
-  await recoveryExpect(
-    page.getByText("Continued after restoring the protocol.", { exact: true }),
-  ).toBeVisible();
-  expect(providerRequests).toHaveLength(2);
-  const body = JSON.parse(providerRequests[1]!) as {
-    model: string;
-    messages: unknown[];
-  };
-  expect(body.model).toBe("replacement-model");
-  expect(JSON.stringify(body.messages)).toContain(
-    "The original response remains in context.",
-  );
-  await recoveryExpect
-    .poll(() =>
-      runtime(page, {
+    const { worldId } = created.world;
+    const inspect = () =>
+      runtime<V1PlayCallChainView>(page, {
         type: "play.chain.inspect",
-        worldId: created.world.worldId,
-      }),
-    )
-    .toMatchObject({ status: "ready", chainId: initial.chainId });
-});
+        worldId,
+      });
+    await page.reload();
+    await button(`打开世界：${title}`, `Open world: ${title}`).click();
+
+    const switchTo = async (name: string) => {
+      const switcher = button(
+        "快速切换模型连接",
+        "Quick switch model connection",
+      );
+      await switcher.click();
+      await page
+        .getByRole("menuitemradio", {
+          name: `${locale} ${name} ${name}`,
+          exact: true,
+        })
+        .click();
+      await expect(switcher).toHaveAttribute("aria-expanded", "false");
+    };
+    const input = page.getByLabel(t("你的行动", "Your action"), {
+      exact: true,
+    });
+    const warning = page.getByText(
+      t(
+        "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
+        "The selected model protocol differs from this context. Switch back to the original protocol to continue, or start a fresh context with the new protocol.",
+      ),
+      { exact: true },
+    );
+    const append = button("追加行动", "Append action");
+    const sendFresh = button(
+      "从全新上下文发送行动",
+      "Send action from a fresh context",
+    );
+    const continueStory = button("继续故事", "Continue story");
+    const chooseFresh = button(
+      "选择新对话（保留故事进度）",
+      "Choose a new chat (keep story progress)",
+    );
+    const cancelFresh = button("取消全新上下文", "Cancel fresh context");
+    await expect(sendFresh).toBeDisabled();
+    await expect(warning).toHaveCount(0);
+    await switchTo("original-model");
+    await expect(warning).toHaveCount(0);
+
+    const originalResponse = "The original response remains in context.";
+    steps.push({ kind: "text", text: originalResponse });
+    await input.fill("Begin.");
+    await sendFresh.click();
+    await expect(story(originalResponse)).toBeVisible();
+    await expect(continueStory).toBeEnabled();
+    const initial = await inspect();
+
+    await switchTo("different-protocol-model");
+    await expect(warning).toBeVisible();
+    await expect(continueStory).toBeDisabled();
+    await page.reload();
+    await expect(warning).toBeVisible();
+    await chooseFresh.click();
+    await expect(input).toBeFocused();
+    await expect(sendFresh).toBeDisabled();
+    await expect(input).toHaveValue("");
+    await cancelFresh.click();
+    await expect(continueStory).toBeDisabled();
+    expect(providerRequests).toHaveLength(1);
+    expect(await inspect()).toMatchObject({
+      status: "ready",
+      chainId: initial.chainId,
+      lastFailure: null,
+    });
+
+    const draft = "Continue with the original protocol.";
+    await input.fill(draft);
+    await expect(append).toBeDisabled();
+    await input.press("Control+Enter");
+    expect(playCommands).toEqual(["play.chain.start"]);
+    await switchTo("replacement-model");
+    await expect(warning).toHaveCount(0);
+    await expect(input).toHaveValue(draft);
+    await expect(append).toBeEnabled();
+
+    const restoredResponse = "Continued after restoring the protocol.";
+    steps.push({ kind: "text", text: restoredResponse });
+    await append.click();
+    await expect(story(restoredResponse)).toBeVisible();
+    await expect(continueStory).toBeEnabled();
+    expect(providerRequests).toHaveLength(2);
+    const body = JSON.parse(providerRequests[1]!) as {
+      model: string;
+      messages: unknown[];
+    };
+    expect(body.model).toBe("replacement-model");
+    expect(JSON.stringify(body.messages)).toContain(originalResponse);
+    expect(await inspect()).toMatchObject({
+      status: "ready",
+      chainId: initial.chainId,
+    });
+
+    const interrupted = "This turn loses the provider response.";
+    steps.push({ kind: "disconnect" });
+    await input.fill(interrupted);
+    await append.click();
+    const retry = button("重试本轮", "Retry this turn");
+    const resend = button("重新发送", "Resend request");
+    await expect(retry).toBeEnabled();
+    await expect(resend).toBeEnabled();
+    expect(await inspect()).toMatchObject({
+      status: "interrupted",
+      canRetry: true,
+    });
+
+    await switchTo("different-protocol-model");
+    await expect(warning).toBeVisible();
+    await expect(retry).toBeDisabled();
+    await expect(resend).toBeDisabled();
+    expect(providerRequests).toHaveLength(3);
+    await switchTo("replacement-model");
+    await expect(warning).toHaveCount(0);
+    await expect(retry).toBeEnabled();
+    const retriedResponse = "The saved request completes.";
+    steps.push({ kind: "text", text: retriedResponse });
+    await retry.click();
+    await expect(story(retriedResponse)).toBeVisible();
+    expect(providerRequests[3]).toBe(providerRequests[2]);
+    await expect(story(interrupted)).toHaveCount(1);
+    await expect(continueStory).toBeEnabled();
+
+    const newDraft = "Walk through the open door.";
+    const noteText = "Describe the doorway briefly.";
+    await input.fill(newDraft);
+    await page.getByLabel(t("更多", "More"), { exact: true }).click();
+    await button("本轮临时要求", "One-turn request").click();
+    const note = page.getByLabel(
+      t("本轮临时要求内容", "One-turn request text"),
+      { exact: true },
+    );
+    await note.fill(noteText);
+    await switchTo("different-protocol-model");
+    await expect(warning).toBeVisible();
+    await chooseFresh.click();
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue(newDraft);
+    await expect(note).toHaveValue(noteText);
+    expect(playCommands).toHaveLength(4);
+    expect(providerRequests).toHaveLength(4);
+    expect(await inspect()).toMatchObject({ chainId: initial.chainId });
+    const freshResponse = "The story continues in a new chat.";
+    steps.push({ kind: "text", text: freshResponse });
+    await sendFresh.click();
+    await expect(story(freshResponse)).toBeVisible();
+    await expect(warning).toHaveCount(0);
+    await expect(story(originalResponse)).toBeVisible();
+    await expect(story(newDraft)).toHaveCount(1);
+    expect(providerRequests).toHaveLength(5);
+    expect(providerRequests[4]).toContain(newDraft);
+    expect(providerRequests[4]).toContain(noteText);
+    expect((await inspect()).chainId).not.toBe(initial.chainId);
+  });
 
 test("model settings on the failure card confirms leaving a control draft", async ({
   page,

@@ -101,12 +101,20 @@ test("released v0.7.1 layout migrates in place: requests move into their context
 
   const sent: ModelHostExchange[] = [];
   const recorded = await readJson(join(context, "base.json"));
+  const binding = recorded.modelBinding as ModelHostBinding;
+  expect(state).not.toHaveProperty("modelProtocol");
+  expect(
+    await worlds.playTimeline.readPage(released.worldId, 40),
+  ).toMatchObject({
+    activeModelProtocol: binding.provider,
+    activeParentHead: released.golden.head,
+  });
   await chains.append({
     worldId: released.worldId,
     chainId: released.golden.chainId,
     exchangeId: "resend-after-migration",
     playerText: "",
-    modelHost: scriptedHost(sent, recorded.modelBinding as ModelHostBinding),
+    modelHost: scriptedHost(sent, binding),
   });
   expect(sent).toHaveLength(1);
   expect(sent[0]).toEqual(JSON.parse(legacyRequest.toString("utf8")));

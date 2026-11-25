@@ -4076,6 +4076,9 @@ function projectView(session: PersistedPlayCallChain): V1PlayCallChainView {
   return {
     ...projectContext(session),
     worldId: session.worldId,
+    ...(session.modelBinding === undefined
+      ? {}
+      : { modelProtocol: session.modelBinding.provider }),
     previousContexts: (session.previousContexts ?? []).map((context) =>
       projectContext(context),
     ),
