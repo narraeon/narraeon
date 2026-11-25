@@ -1366,6 +1366,10 @@ test("Google 后续 hop 明确拒绝也不能重放原始请求", async () => {
 });
 
 test("Google 流完整聚合工具参数与签名并在下次请求重放原生 steps", async () => {
+  const nativeArguments = {
+    ref: "@scene",
+    exact: [Number.MAX_SAFE_INTEGER, 0.125],
+  };
   const events = [
     {
       event_type: "step.start",
@@ -1402,7 +1406,10 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
     {
       event_type: "step.delta",
       index: 1,
-      delta: { type: "arguments_delta", arguments: '"@scene"}' },
+      delta: {
+        type: "arguments_delta",
+        arguments: '"@scene","exact":[9007199254740991,0.125]}',
+      },
     },
     { event_type: "step.stop", index: 1 },
     {
@@ -1443,7 +1450,7 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
   );
   const response = await host.exchange(request);
   expect(response.toolCalls).toEqual([
-    { id: "c1", name: "read_document", arguments: { ref: "@scene" } },
+    { id: "c1", name: "read_document", arguments: nativeArguments },
   ]);
   expect(response.providerState).toEqual({
     protocol: "google_interactions",
@@ -1458,7 +1465,7 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
         type: "function_call",
         id: "c1",
         name: "read_document",
-        arguments: { ref: "@scene" },
+        arguments: nativeArguments,
         extra: "opaque",
       },
     ],
@@ -1486,6 +1493,13 @@ test("Google 流完整聚合工具参数与签名并在下次请求重放原生 
         signature: "synthetic-signature",
         summary: [{ type: "text", text: "initial" }],
         extension: "opaque",
+      },
+      {
+        type: "function_call",
+        id: "c1",
+        name: "read_document",
+        arguments: nativeArguments,
+        extra: "opaque",
       },
       {
         type: "function_result",
