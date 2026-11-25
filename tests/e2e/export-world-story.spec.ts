@@ -7,9 +7,9 @@ import { test } from "../support/isolatedRuntimeTest.ts";
 let provider: Server;
 let providerUrl: string;
 let exchange = 0;
-const opening = "门外传来脚步。\n\n窗户仍敞着。\n";
+const opening = "门外传来**脚步**。\n\n窗户仍敞着。\n";
 const player = "我推开门。\n\n再停下来。";
-const narrator = "门外没有人。\n\n你听见一声鸟鸣。";
+const narrator = "门外没有人。\n\n你听见一声*鸟鸣*。";
 
 test.use({ runtimeScope: "story-export" });
 
@@ -178,7 +178,7 @@ for (const locale of ["zh-CN", "en"] as const) {
         exact: true,
       })
       .click();
-    await expect(page.getByText(narrator, { exact: true })).toBeVisible();
+    await expect(page.locator(".call-chain-assistant em")).toHaveText("鸟鸣");
     await page
       .getByRole("button", {
         name: locale === "zh-CN" ? "世界管理" : "World management",

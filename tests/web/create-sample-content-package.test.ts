@@ -109,14 +109,14 @@ test.each(appLocales)(
     );
     expect(select.value).toBe("sample-new");
     expect(window.location.hash).toBe("#/create");
+    const opening = sample.files.find(({ path }) => path === "opening.md")!;
     await waitFor(() =>
       expect(
-        screen.getByLabelText(
-          locale === "zh-CN" ? "开场白预览" : "Opening preview",
-        ).textContent,
-      ).toContain(
-        sample.files.find(({ path }) => path === "opening.md")!.contents.trim(),
-      ),
+        Array.from(
+          container.querySelectorAll(".create-world-opening > p"),
+          (paragraph) => paragraph.textContent,
+        ),
+      ).toEqual(opening.contents.trim().split("\n\n")),
     );
   },
 );

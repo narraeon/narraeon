@@ -67,6 +67,33 @@ afterEach(() => {
 });
 
 describe("世界游玩页面", () => {
+  test("renders old transcript narration and leaves the original player action readable", async () => {
+    const request = (input: V1Request): Promise<unknown> => {
+      if (input.type === "world.read")
+        return Promise.resolve({
+          ...worldView(null),
+          committedMessages: [
+            {
+              role: "narrator",
+              exactText: "# 旧开场\n\n灯亮了。\nThe door opens.",
+            },
+            { role: "player", exactText: "**我停下。**" },
+            { role: "narrator", exactText: "她说：*等一下*。" },
+          ],
+        });
+      return Promise.resolve([]);
+    };
+    renderWorld({ request });
+    const heading = await screen.findByRole("heading", { name: "旧开场" });
+    const opening = heading.closest("article")!;
+    expect(opening.querySelector("p br")).toBeTruthy();
+    expect(opening.querySelector("p")?.textContent).toBe(
+      "灯亮了。\nThe door opens.",
+    );
+    expect(screen.getByText("**我停下。**").closest("p")).toBeTruthy();
+    expect(screen.getByText("等一下").tagName).toBe("EM");
+  });
+
   test.each([
     {
       locale: "zh-CN" as const,
@@ -1583,7 +1610,7 @@ describe("世界游玩页面", () => {
           event: {
             id: 4,
             kind: "assistant",
-            text: "早期 AI 原文",
+            text: `## 早期 AI 原文\n\n${"久远的雪夜。\n\n".repeat(300)}**结尾还在。**`,
             status: "completed",
             responseKind: "narrative",
             exchange: 2,
@@ -1626,14 +1653,18 @@ describe("世界游玩页面", () => {
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
     expect(screen.queryByTitle("panel")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "早期 AI 原文" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "加载更早的故事" }));
     await screen.findByText("暂时无法同步");
     expect(pageReads).toBe(2);
     fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
-    await screen.findByText("早期 AI 原文");
+    const heading = await screen.findByRole("heading", {
+      name: "早期 AI 原文",
+    });
     expect(pageReads).toBe(3);
     await waitFor(() => expect(screen.getAllByTitle("panel")).toHaveLength(1));
-    const reply = screen.getByText("早期 AI 原文").closest("article")!;
+    const reply = heading.closest("article")!;
+    expect(within(reply).getByText("结尾还在。").tagName).toBe("STRONG");
     expect(within(reply).getByTitle("panel").getAttribute("srcdoc")).toContain(
       "属于早期回复",
     );

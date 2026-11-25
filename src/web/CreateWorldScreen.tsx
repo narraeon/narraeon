@@ -11,6 +11,8 @@ import type { RuntimeClient } from "./runtimeClient.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
+import { StoryMarkdown } from "./StoryMarkdown.tsx";
+import { StorySourceCopy } from "./StorySourceCopy.tsx";
 
 export function CreateWorldScreen({
   client,
@@ -199,7 +201,16 @@ export function CreateWorldScreen({
         <small>{uiText("新世界独立保存，之后的游玩不会修改源内容包。")}</small>
       </aside>
       <article aria-label={uiText("开场白预览")}>
-        <span>{uiText("开场白")}</span>
+        <header>
+          <span>{uiText("开场白")}</span>
+          {preview?.packageId === selectedId && preview.opening ? (
+            <StorySourceCopy
+              key={preview.packageId}
+              className="create-world-opening-copy"
+              text={preview.opening}
+            />
+          ) : null}
+        </header>
         <h2>{selected?.title}</h2>
         {selected === undefined ? null : (
           <p className="create-world-gameplay">
@@ -212,9 +223,16 @@ export function CreateWorldScreen({
           onRead={() => void openingTarget.recover()}
         />
         {preview?.packageId === selectedId ? (
-          <p className="create-world-opening">
-            {preview.opening || uiText("这份内容包还没有开场白。")}
-          </p>
+          preview.opening ? (
+            <StoryMarkdown
+              className="create-world-opening"
+              text={preview.opening}
+            />
+          ) : (
+            <p className="create-world-opening">
+              {uiText("这份内容包还没有开场白。")}
+            </p>
+          )
         ) : selected !== undefined ? (
           <p role="status">{uiText("正在读取开场白…")}</p>
         ) : null}

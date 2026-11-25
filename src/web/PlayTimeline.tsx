@@ -22,6 +22,8 @@ import {
 } from "./PlayFailureNotice.tsx";
 import { PlayTurnCallDetails } from "./PlayTurnCallDetails.tsx";
 import { ResolutionCard } from "./ResolutionCard.tsx";
+import { StoryMarkdown } from "./StoryMarkdown.tsx";
+import { StorySourceCopy } from "./StorySourceCopy.tsx";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { useAndroidBack } from "./androidBridge.ts";
 import { useReadTarget } from "./useReadTarget.ts";
@@ -267,8 +269,18 @@ export function PlayTimeline({
                   <strong>
                     {item.role === "player" ? uiText("你") : uiText("主持")}
                   </strong>
+                  {item.role === "narrator" ? (
+                    <StorySourceCopy
+                      text={item.exactText}
+                      className="history-restart-button"
+                    />
+                  ) : null}
                 </header>
-                <p>{item.exactText}</p>
+                {item.role === "narrator" ? (
+                  <StoryMarkdown text={item.exactText} />
+                ) : (
+                  <p>{item.exactText}</p>
+                )}
               </article>
             </li>
           );
@@ -740,6 +752,12 @@ function TimelineEvent({
             ) : null}
             {event.committedHead === undefined ? null : (
               <span className="history-message-actions">
+                {responseKind === "narrative" && event.text.length > 0 ? (
+                  <StorySourceCopy
+                    text={event.text}
+                    className="history-restart-button"
+                  />
+                ) : null}
                 {onRegenerateNarrative !== undefined ||
                 onRegenerate !== undefined ? (
                   <RegenerationMenu
@@ -765,15 +783,18 @@ function TimelineEvent({
               <summary>{uiText("查看工具步骤文本（未进入故事）")}</summary>
               <p>{event.text}</p>
             </details>
+          ) : event.text.length > 0 ? (
+            <StoryMarkdown
+              text={event.text}
+              streaming={event.status === "streaming"}
+            />
           ) : (
             <p>
-              {event.text.length > 0
-                ? event.text
-                : event.status === "streaming"
-                  ? uiText("正在接收模型输出…")
-                  : responseKind === "tool_step"
-                    ? uiText("（本次响应只调用了工具）")
-                    : uiText("（本次响应没有文本）")}
+              {event.status === "streaming"
+                ? uiText("正在接收模型输出…")
+                : responseKind === "tool_step"
+                  ? uiText("（本次响应只调用了工具）")
+                  : uiText("（本次响应没有文本）")}
             </p>
           )}
           {event.committedHead !== undefined ? (
@@ -886,6 +907,12 @@ export function Transcript({
                 {message.role === "player" ? uiText("你") : uiText("主持")}
               </strong>
               {message.pending ? <span>{uiText("未结算")}</span> : null}
+              {message.role === "narrator" && !message.pending ? (
+                <StorySourceCopy
+                  text={message.exactText}
+                  className="history-restart-button"
+                />
+              ) : null}
               {message.head === undefined ||
               onRestartFrom === undefined ? null : (
                 <button
@@ -898,7 +925,11 @@ export function Transcript({
                 </button>
               )}
             </header>
-            <p>{message.exactText}</p>
+            {message.role === "narrator" ? (
+              <StoryMarkdown text={message.exactText} />
+            ) : (
+              <p>{message.exactText}</p>
+            )}
           </article>
         </li>
       ))}

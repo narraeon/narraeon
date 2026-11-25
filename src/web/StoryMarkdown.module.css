@@ -1,0 +1,75 @@
+.body {
+  min-width: 0;
+  color: var(--text);
+  font-family: Georgia, "Noto Serif SC", "Songti SC", serif;
+  overflow-wrap: anywhere;
+}
+
+.body :where(p, ol, ul, blockquote, pre, hr, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+}
+
+.body > * + *,
+.body :where(li, blockquote) > * + * {
+  margin-block-start: 0.75em;
+}
+
+.body :where(h1, h2, h3, h4, h5, h6) {
+  font-size: 1.06em;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.body h1 {
+  font-size: 1.4em;
+}
+
+.body h2 {
+  font-size: 1.25em;
+}
+
+.body :where(ol, ul) {
+  padding-inline-start: 1.5em;
+}
+
+.body li + li {
+  margin-block-start: 0.2em;
+}
+
+.body blockquote {
+  padding-inline-start: 0.75em;
+  border-inline-start: 2px solid var(--border);
+  color: var(--muted);
+}
+
+.body hr {
+  border: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+.body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.body code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.body :not(pre) > code {
+  padding: 0.1em 0.25em;
+  border-radius: 0.2em;
+  background: var(--surface-inset);
+}
+
+.body pre {
+  padding: 0.65em 0.85em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-inset);
+  font-size: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
