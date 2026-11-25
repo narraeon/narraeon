@@ -1,5 +1,10 @@
 import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  rawControlFile,
+  selectControlFile,
+  worldRulesPath,
+} from "../support/worldControlEditor.ts";
 import type {
   V1Request,
   V1WorldRevisionOverview,
@@ -321,9 +326,13 @@ for (const draft of [
         await page
           .getByRole("button", { name: "世界管理", exact: true })
           .click();
-        await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
+        const management = page.getByRole("dialog", { name: "世界管理" });
+        await management
+          .getByText("世界控制 · 高级编辑", { exact: true })
+          .click();
+        await selectControlFile(management, worldRulesPath);
         await fillWithUnloadProtection(
-          page.getByLabel("世界控制文件（JSON）"),
+          rawControlFile(management, worldRulesPath),
           "地址测试未保存控制",
         );
       } else {
@@ -374,7 +383,7 @@ for (const draft of [
       content: "编辑 opening.md",
       preset: "编排方案名称",
       model: "配置名称",
-      world: "世界控制文件（JSON）",
+      world: `编辑 ${worldRulesPath}`,
       revision: "编辑 state/current-situation.yaml",
     };
     const values = {

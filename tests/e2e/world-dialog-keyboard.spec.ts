@@ -1,6 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import {
+  rawControlFile,
+  selectControlFile,
+  worldRulesPath,
+} from "../support/worldControlEditor.ts";
 
 test.use({ runtimeScope: "world-dialog-keyboard" });
 
@@ -102,7 +107,8 @@ test("世界管理键盘焦点循环，Escape 保留未保存编辑并回到顶�
   await expect(rawRuntime).toBeFocused();
 
   await activate(dialog.getByText("世界控制 · 高级编辑"));
-  const editor = dialog.getByRole("textbox", { name: "世界控制文件（JSON）" });
+  await selectControlFile(dialog, worldRulesPath);
+  const editor = rawControlFile(dialog, worldRulesPath);
   await editor.fill("未保存的控制草稿");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -110,6 +116,7 @@ test("世界管理键盘焦点循环，Escape 保留未保存编辑并回到顶�
 
   await page.keyboard.press("Enter");
   await activate(dialog.getByText("世界控制 · 高级编辑"));
+  await selectControlFile(dialog, worldRulesPath);
   await expect(editor).toHaveValue("未保存的控制草稿");
 });
 

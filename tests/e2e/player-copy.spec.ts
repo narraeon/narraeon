@@ -3,6 +3,7 @@ import { expect, type Page } from "@playwright/test";
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 import { createZip } from "../support/createZip.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import { openFrameSource } from "../support/worldControlEditor.ts";
 
 test.use({ runtimeScope: "player-copy" });
 
@@ -630,6 +631,10 @@ for (const locale of ["zh-CN", "en"] as const) {
           : file,
       );
       expect(changedControl).not.toEqual(control);
+      const frame = control.find(({ path }) => path === "frame.yaml")!;
+      const changedFrame = changedControl.find(
+        ({ path }) => path === "frame.yaml",
+      )!;
       await page
         .getByRole("button", {
           name: t("世界管理", "World management"),
@@ -658,11 +663,9 @@ for (const locale of ["zh-CN", "en"] as const) {
           { exact: true },
         ),
       ).toBeVisible();
-      const controlInput = management.getByLabel(
-        t("世界控制文件（JSON）", "World-control files (JSON)"),
-      );
-      await expect(controlInput).toHaveValue(JSON.stringify(control, null, 2));
-      await controlInput.fill(JSON.stringify(changedControl, null, 2));
+      const controlInput = await openFrameSource(management, locale);
+      await expect(controlInput).toHaveValue(frame.contents);
+      await controlInput.fill(changedFrame.contents);
       const apply = management.getByRole("button", {
         name: t("整批应用世界控制", "Apply all world-control changes"),
       });
