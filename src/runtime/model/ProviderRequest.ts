@@ -1,4 +1,5 @@
 import {
+  initialWorldPreloadNotice,
   renderPromptDeltaMessage,
   type PromptCompilation,
 } from "../prompt/FileNativePromptCompiler.ts";
@@ -105,7 +106,8 @@ export function initialWorldContext(request: ModelHostExchange) {
     notice: {
       role: "user",
       content:
-        "Runtime preload: supply the initial world materials selected by the frame. This bootstrap-only read is not a player action or a callable tool. Later successful tool results update these initial values.",
+        preload.notice ??
+        initialWorldPreloadNotice("en", request.bootstrap.provider.protocol),
     },
   };
 }
@@ -119,7 +121,13 @@ export function continuationInput(
   if (!Number.isSafeInteger(length) || length <= 0 || length > item.text.length)
     throw continuationError("Invalid saved partial response");
   return [
-    { role: "user", content: continuationPrompt(item.text.slice(0, length)) },
+    {
+      role: "user",
+      content: continuationPrompt(
+        item.text.slice(0, length),
+        item.providerState?.continuedPrefixInstruction,
+      ),
+    },
   ];
 }
 

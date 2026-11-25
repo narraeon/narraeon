@@ -274,7 +274,7 @@ test("Anthropic 仅已知旧模型且显式关闭 Thinking 可继续，尾随空
     mode: "assistant",
     text: "正文",
   });
-  expect(prefillFor(request, "正文\n")).toEqual({
+  expect(prefillFor(request, "正文\n")).toMatchObject({
     mode: "prompt",
     text: "正文\n",
   });

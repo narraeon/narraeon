@@ -405,7 +405,7 @@ export class ModelToolConversation<
           }
           if (correcting) throw error;
           correcting = true;
-          session.modelItems.push(error.notice());
+          session.modelItems.push(error.notice(request.bootstrap.locale));
           delete session.partialResponse;
           checkpointNextAuthoringDispatch(session, "dispatching");
           continue;
@@ -636,6 +636,7 @@ function assertCompleteResponse(response: ModelHostResponse): void {
   if (response.providerState === undefined)
     throw new ModelResponseFormatError(
       "The previous response was incomplete. Return a complete response to the current request.",
+      "上一条响应不完整。请针对当前请求返回完整响应。",
     );
 }
 

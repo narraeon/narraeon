@@ -46,6 +46,7 @@ import {
   continuationError,
   continuationInput,
   hasFrozenToolPolicy,
+  initialWorldContext,
   isProperToolSubset,
   providerAllowedTools,
   providerToolDefinitions,
@@ -197,26 +198,24 @@ function googleRequestBody(
       "Google Interactions cannot encode non-text bootstrap content",
     );
   };
-  const preload = request.bootstrap.provider.preload;
+  const preload = initialWorldContext(request);
   const appendPreload = () => {
     if (preload !== undefined)
       input.push(
         {
           type: "user_input",
-          content: text(
-            "Runtime preload: initial world materials, not a player action or model response.",
-          ),
+          content: text(preload.notice.content),
         },
         {
           type: "function_call",
           id: preload.callId,
-          name: "runtime_load_context",
+          name: preload.name,
           arguments: {},
         },
         {
           type: "function_result",
           call_id: preload.callId,
-          name: "runtime_load_context",
+          name: preload.name,
           result: text(preload.markdown),
         },
       );
@@ -320,7 +319,12 @@ function googleRequestBody(
   if (request.assistantPrefill?.mode === "prompt")
     input.push({
       type: "user_input",
-      content: text(continuationPrompt(request.assistantPrefill.text)),
+      content: text(
+        continuationPrompt(
+          request.assistantPrefill.text,
+          request.assistantPrefill.instruction,
+        ),
+      ),
     });
   const tools = providerToolDefinitions(request);
   const allowedTools = providerAllowedTools(request);

@@ -1,3 +1,4 @@
+import { isAppLocale } from "../../protocol/appPreferences.ts";
 import { isPromptMessageRole } from "../../shared/ordered-play-prompts.ts";
 import { isWorldExtensionControl } from "../../protocol/worldExtensions.ts";
 import type { PromptCompilation } from "./FileNativePromptCompiler.ts";
@@ -202,8 +203,9 @@ export function validPromptCompilation(
         "budget",
         "cache",
       ],
-      ["maintenance", "turnGuide"],
+      ["locale", "maintenance", "turnGuide"],
     ) &&
+    (value.locale === undefined || isAppLocale(value.locale)) &&
     (value.maintenance === undefined ||
       isWorldPromptMaintenance(value.maintenance)) &&
     (value.turnGuide === undefined || validTurnGuide(value.turnGuide)) &&
@@ -261,7 +263,9 @@ function validPromptProvider(value: unknown): boolean {
     hasExactKeys(value, ["protocol", "messages"], ["system", "preload"]) &&
     (value.preload === undefined ||
       (isRecord(value.preload) &&
-        hasExactKeys(value.preload, ["callId", "markdown"]) &&
+        hasExactKeys(value.preload, ["callId", "markdown"], ["notice"]) &&
+        (value.preload.notice === undefined ||
+          typeof value.preload.notice === "string") &&
         value.preload.callId === "runtime_initial_world_context" &&
         typeof value.preload.markdown === "string")) &&
     validProviderKind(value.protocol) &&

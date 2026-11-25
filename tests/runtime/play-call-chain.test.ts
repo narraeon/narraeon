@@ -2501,137 +2501,161 @@ test("Google 已提交正文在后续结算故障后仍是完成状态", async (
   ).toHaveLength(1);
 });
 
-test("Google 同一发送重复工具响应不会再次修改世界", async () => {
-  let dispatches = 0;
-  const host = new FileNativeModelHost(
-    {
-      provider: "google_interactions",
-      baseUrl: "https://provider.invalid/v1beta",
-      apiKey: "synthetic-secret",
-      modelId: "manual-model",
-      contextWindowTokens: 64_000,
-      maxOutputTokens: 2_000,
-    },
-    () => {
-      dispatches++;
-      const events =
-        dispatches < 3
-          ? [
-              ...(dispatches === 2
-                ? [
-                    {
-                      event_type: "step.start",
-                      index: 0,
-                      step: { type: "model_output" },
-                    },
-                    {
-                      event_type: "step.delta",
-                      index: 0,
-                      delta: { type: "text", text: "重复响应片段" },
-                    },
-                    { event_type: "step.stop", index: 0 },
-                  ]
-                : []),
-              {
-                event_type: "step.start",
-                index: dispatches === 2 ? 1 : 0,
-                step: {
-                  type: "function_call",
-                  id: "append-once",
-                  name: "world_patch",
-                  arguments: {
-                    target: "@current-situation",
-                    edits: [
+test.each(["en", "zh-CN"] as const)(
+  "Google 同一发送重复工具响应不会再次修改世界（%s）",
+  async (locale) => {
+    const wireBodies: string[] = [];
+    let dispatches = 0;
+    const host = new FileNativeModelHost(
+      {
+        provider: "google_interactions",
+        baseUrl: "https://provider.invalid/v1beta",
+        apiKey: "synthetic-secret",
+        modelId: "manual-model",
+        contextWindowTokens: 64_000,
+        maxOutputTokens: 2_000,
+      },
+      (_url, init) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected JSON request body");
+        wireBodies.push(init.body);
+        dispatches++;
+        const events =
+          dispatches < 3
+            ? [
+                ...(dispatches === 2
+                  ? [
                       {
-                        op: "append",
-                        locator: { yaml: ["markers"] },
-                        value: "only-once",
+                        event_type: "step.start",
+                        index: 0,
+                        step: { type: "model_output" },
                       },
-                    ],
+                      {
+                        event_type: "step.delta",
+                        index: 0,
+                        delta: { type: "text", text: "重复响应片段" },
+                      },
+                      { event_type: "step.stop", index: 0 },
+                    ]
+                  : []),
+                {
+                  event_type: "step.start",
+                  index: dispatches === 2 ? 1 : 0,
+                  step: {
+                    type: "function_call",
+                    id: "append-once",
+                    name: "world_patch",
+                    arguments: {
+                      target: "@current-situation",
+                      edits: [
+                        {
+                          op: "append",
+                          locator: { yaml: ["markers"] },
+                          value: "only-once",
+                        },
+                      ],
+                    },
                   },
                 },
-              },
-              { event_type: "step.stop", index: dispatches === 2 ? 1 : 0 },
-              {
-                event_type: "interaction.completed",
-                interaction: { status: "requires_action" },
-              },
-            ]
-          : [
-              {
-                event_type: "step.start",
-                index: 0,
-                step: { type: "model_output" },
-              },
-              {
-                event_type: "step.delta",
-                index: 0,
-                delta: { type: "text", text: "纠正后的正文" },
-              },
-              { event_type: "step.stop", index: 0 },
-              {
-                event_type: "interaction.completed",
-                interaction: { status: "completed" },
-              },
-            ];
-      return Promise.resolve(
-        new Response(
-          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
-          { headers: { "content-type": "text/event-stream" } },
-        ),
-      );
-    },
-  );
-  const files = worldFiles().map((file) =>
-    file.path === "world/current-situation.yaml"
-      ? { ...file, contents: `${file.contents}markers: []\n` }
-      : file,
-  );
-  const { worlds, worldId, root } = await createWorld(
-    "google-duplicate-tool",
-    files,
-    host.binding(),
-  );
-  const result = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "google-duplicate-tool",
-    exchangeId: "first",
-    playerText: "继续。",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: host.binding(),
-    modelHost: host,
-  });
-  expect(result).toMatchObject({
-    status: "ready",
-    canRetry: false,
-  });
-  expect(
-    result.events.filter(
-      (event) => event.kind === "tool_result" && event.callId === "append-once",
-    ),
-  ).toHaveLength(1);
-  expect(
-    result.events.find(
-      (event) => event.kind === "assistant" && event.status === "interrupted",
-    ),
-  ).toBeUndefined();
-  const cold = await new PlayCallChain(
-    new FileNativeWorldStore(root),
-  ).inspectWorld(worldId);
-  expect(
-    cold?.events.find(
-      (event) => event.kind === "assistant" && event.status === "interrupted",
-    ),
-  ).toBeUndefined();
-  const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
-    worldId,
-  );
-  expect(JSON.stringify(endpoint.state).match(/only-once/g)).toHaveLength(1);
-  expect(JSON.stringify(endpoint.history)).toContain("纠正后的正文");
-  expect(JSON.stringify(endpoint.history)).not.toContain("重复响应片段");
-  expect(dispatches).toBe(3);
-});
+                { event_type: "step.stop", index: dispatches === 2 ? 1 : 0 },
+                {
+                  event_type: "interaction.completed",
+                  interaction: { status: "requires_action" },
+                },
+              ]
+            : [
+                {
+                  event_type: "step.start",
+                  index: 0,
+                  step: { type: "model_output" },
+                },
+                {
+                  event_type: "step.delta",
+                  index: 0,
+                  delta: { type: "text", text: "纠正后的正文" },
+                },
+                { event_type: "step.stop", index: 0 },
+                {
+                  event_type: "interaction.completed",
+                  interaction: { status: "completed" },
+                },
+              ];
+        return Promise.resolve(
+          new Response(
+            events
+              .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+              .join(""),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    );
+    const files = worldFiles().map((file) =>
+      file.path === "world/current-situation.yaml"
+        ? { ...file, contents: `${file.contents}markers: []\n` }
+        : file,
+    );
+    const { worlds, worldId, root } = await createWorld(
+      "google-duplicate-tool",
+      files,
+      host.binding(),
+    );
+    const result = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId: "google-duplicate-tool",
+      exchangeId: "first",
+      playerText: "继续。",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(result).toMatchObject({
+      status: "ready",
+      canRetry: false,
+    });
+    expect(
+      result.events.filter(
+        (event) =>
+          event.kind === "tool_result" && event.callId === "append-once",
+      ),
+    ).toHaveLength(1);
+    expect(
+      result.events.find(
+        (event) => event.kind === "assistant" && event.status === "interrupted",
+      ),
+    ).toBeUndefined();
+    const cold = await new PlayCallChain(
+      new FileNativeWorldStore(root),
+    ).inspectWorld(worldId);
+    expect(
+      cold?.events.find(
+        (event) => event.kind === "assistant" && event.status === "interrupted",
+      ),
+    ).toBeUndefined();
+    const endpoint = await new FileNativeWorldStore(root).recoverEndpoint(
+      worldId,
+    );
+    expect(JSON.stringify(endpoint.state).match(/only-once/g)).toHaveLength(1);
+    expect(JSON.stringify(endpoint.history)).toContain("纠正后的正文");
+    expect(JSON.stringify(endpoint.history)).not.toContain("重复响应片段");
+    expect(dispatches).toBe(3);
+    const receipt =
+      locale === "zh-CN"
+        ? "@current-situation 写入成功"
+        : "@current-situation write succeeded";
+    expect(wireBodies[1]).toContain(receipt);
+    expect(wireBodies[2]).toContain(receipt);
+    expect(wireBodies[2]).toContain(
+      locale === "zh-CN"
+        ? "本轮已有同一工具调用 ID 的结算结果"
+        : "A tool-call ID already has a settled result",
+    );
+  },
+);
 
 test("Google 工具顺序结算后遇到未完成续接不重放或提交半响应", async () => {
   const calls = [
@@ -4593,10 +4617,16 @@ test.each(["live", "restart", "revision"] as const)(
   },
 );
 
-test.each(["live", "restart", "rewind", "fresh"] as const)(
-  "创建文档后在 %s 只保留同段对话中已提交的写入资格",
-  async (mode) => {
-    const chainId = `retained-created-document-${mode}`;
+test.each([
+  ["live", "en"],
+  ["restart", "en"],
+  ["restart", "zh-CN"],
+  ["rewind", "en"],
+  ["fresh", "en"],
+] as const)(
+  "创建文档后在 %s 只保留同段对话中已提交的写入资格（%s）",
+  async (mode, locale) => {
+    const chainId = `retained-created-document-${mode}-${locale}`;
     const { worlds, worldId, root } = await createWorld(chainId, [
       ...worldFiles(),
       {
@@ -4634,7 +4664,10 @@ test.each(["live", "restart", "rewind", "fresh"] as const)(
       playPreset: playPreset(),
       modelBinding: modelBinding(),
     };
-    const live = new PlayCallChain(worlds);
+    const live = new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    );
     const rejected = await live.start({
       ...bindings,
       chainId,
@@ -4668,7 +4701,9 @@ test.each(["live", "restart", "rewind", "fresh"] as const)(
     const creationReceipt = sent(createHost.requests[1]!)
       .filter((item) => item.kind === "tool")
       .find(({ toolCallId }) => toolCallId === "create-lantern");
-    expect(creationReceipt?.markdown).toMatch(/^@lantern-2 write succeeded\n/u);
+    expect(creationReceipt?.markdown.split("\n")[0]).toBe(
+      locale === "zh-CN" ? "@lantern-2 写入成功" : "@lantern-2 write succeeded",
+    );
     const coldWorlds = new FileNativeWorldStore(root);
     const cold = new PlayCallChain(coldWorlds);
     let continuedChainId = chainId;
@@ -4723,7 +4758,11 @@ test.each(["live", "restart", "rewind", "fresh"] as const)(
     const rejectedWrite = sent(editHost.requests[1]!)
       .filter((item) => item.kind === "tool")
       .find(({ toolCallId }) => toolCallId === "edit-lantern");
-    expect(rejectedWrite?.markdown).toContain("Read @lantern exactly");
+    expect(rejectedWrite?.markdown).toContain(
+      locale === "zh-CN"
+        ? "写入前请精确读取 @lantern"
+        : "Read @lantern exactly",
+    );
     const files = await coldWorlds.readSurface(worldId, "state");
     expect(
       files.find(({ path }) => path === "lantern.yaml")?.contents,
@@ -4732,12 +4771,14 @@ test.each(["live", "restart", "rewind", "fresh"] as const)(
     if (mode === "rewind") expect(second).toBeUndefined();
     else
       expect(second?.contents).toContain(`owner: ${mayEdit ? "Alex" : "Qin"}`);
-    if (mode === "restart") {
+    if (mode === "restart" && locale === "en") {
       const binding = await coldWorlds.bindPlayCallChain(worldId);
       const { value } = (await coldWorlds.playTimeline.readCurrent(worldId))!;
-      const creation = value.completedTools.find(
+      const creationIndex = value.completedTools.findIndex(
         ({ name, result }) => name === "world_create" && result.ok,
-      )!.result;
+      );
+      const record = value.completedTools[creationIndex]!;
+      const creation = record.result;
       expect(creation.createdDocumentId).toEqual(expect.any(String));
       delete creation.createdDocumentId;
       const legacy = restorePlayDocuments(binding.files, value, value.events);
@@ -4750,6 +4791,51 @@ test.each(["live", "restart", "rewind", "fresh"] as const)(
         value.events,
       );
       expect(unsettled.execute(edit("lantern-2"), []).ok).toBe(false);
+      creation.markdown = "@lantern-2 write succeeded";
+      // Build a legacy fixture by removing the structured identity from the
+      // saved completion record before starting another Runtime instance.
+      await writeFile(
+        join(
+          root,
+          "worlds-file-native",
+          worldId,
+          "runtime",
+          "play-contexts",
+          createHash("sha256").update(chainId).digest("hex"),
+          "completed-tools",
+          `${String(creationIndex + 1).padStart(10, "0")}.json`,
+        ),
+        JSON.stringify(record),
+      );
+      const legacyProcess = new PlayCallChain(
+        new FileNativeWorldStore(root),
+        new FileNativePromptCompiler({ locale: "zh-CN" }),
+      );
+      const patched = await legacyProcess.append({
+        worldId,
+        chainId,
+        exchangeId: "edit-legacy",
+        playerText: "Pass it back to Qin.",
+        modelHost: model([
+          {
+            ...edit("lantern-2"),
+            id: "legacy-edit",
+            arguments: {
+              target: "@lantern-2",
+              edits: [
+                { op: "replace", locator: { yaml: ["owner"] }, value: "Qin" },
+              ],
+            },
+          },
+        ]),
+      });
+      expect(patched.events).toContainEqual(
+        expect.objectContaining({
+          kind: "tool_result",
+          callId: "legacy-edit",
+          ok: true,
+        }),
+      );
     }
   },
 );
@@ -7607,7 +7693,9 @@ An old clue.
     const receipt = sent(host.requests[1]!).at(-1);
     if (receipt?.kind !== "tool") throw new Error("Missing write receipt");
     expect(receipt.toolCallId).toBe("patch");
-    expect(receipt.markdown).toMatch(/^@lore write succeeded\n/u);
+    expect(receipt.markdown.split("\n")[0]).toBe(
+      locale === "zh-CN" ? "@lore 写入成功" : "@lore write succeeded",
+    );
     const localizedNote =
       locale === "zh-CN" ? "本次已解析后执行：" : "parsed for this call: ";
     expect(receipt.markdown).toContain(
@@ -8191,78 +8279,87 @@ test("AI 读取证据返回冻结 bootstrap、已结算全文读取与下一次�
   }
 });
 
-test("world_patch no-op 保留匹配的紧凑工具结果且不推进世界", async () => {
-  const { worlds, worldId } = await createWorld("play-chain-patch-no-op");
-  const modelHost = new ScriptedModelHost({
-    binding: modelBinding(),
-    steps: [
-      {
-        outcome: "response",
-        toolCalls: [
-          {
-            id: "patch-same-situation",
-            name: "world_patch",
-            arguments: {
-              target: "@current-situation",
-              edits: [
-                {
-                  op: "replace",
-                  locator: { yaml: ["情况"] },
-                  value: "Alex守在宿舍门边。",
-                },
-              ],
+test.each(["en", "zh-CN"] as const)(
+  "world_patch no-op 保留匹配的紧凑工具结果且不推进世界（%s）",
+  async (locale) => {
+    const { worlds, worldId } = await createWorld("play-chain-patch-no-op");
+    const modelHost = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            {
+              id: "patch-same-situation",
+              name: "world_patch",
+              arguments: {
+                target: "@current-situation",
+                edits: [
+                  {
+                    op: "replace",
+                    locator: { yaml: ["情况"] },
+                    value: "Alex守在宿舍门边。",
+                  },
+                ],
+              },
             },
-          },
-        ],
-      },
-      { outcome: "response", text: "Alex remains by the door." },
-    ],
-  });
+          ],
+        },
+        { outcome: "response", text: "Alex remains by the door." },
+      ],
+    });
 
-  const view = await new PlayCallChain(worlds).start({
-    worldId,
-    chainId: "play-chain-patch-no-op-contract",
-    exchangeId: "play-chain-patch-no-op-exchange",
-    playerText: "I look at Alex.",
-    hostBinding: hostBinding(),
-    playPreset: playPreset(),
-    modelBinding: modelBinding(),
-    modelHost,
-  });
+    const view = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId: "play-chain-patch-no-op-contract",
+      exchangeId: "play-chain-patch-no-op-exchange",
+      playerText: "I look at Alex.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost,
+    });
 
-  expect(view.parentHead).toBe("commit:2");
-  expect(
-    view.events.find(
-      (event) => event.kind === "assistant" && event.exchange === 1,
-    ),
-  ).not.toHaveProperty("committedHead");
-  const patchResult = view.events.find(
-    (
-      event,
-    ): event is Extract<
-      V1PlayCallChainView["events"][number],
-      { kind: "tool_result" }
-    > =>
-      event.kind === "tool_result" && event.callId === "patch-same-situation",
-  );
-  expect(patchResult?.markdown).toBe("");
-  const patchDetail = await worlds.playTimeline.readDetail(
-    worldId,
-    view.chainId,
-    patchResult!.id,
-  );
-  expect(patchDetail).toMatchObject({
-    kind: "tool_result",
-    markdown: "@current-situation unchanged",
-  });
-  if (patchDetail.kind !== "tool_result")
-    throw new Error("Expected a tool-result timeline detail");
-  expect(sent(modelHost.requests[1]!).at(-1)).toEqual({
-    kind: "tool",
-    toolCallId: "patch-same-situation",
-    markdown: patchDetail.markdown,
-  });
-});
+    expect(view.parentHead).toBe("commit:2");
+    expect(
+      view.events.find(
+        (event) => event.kind === "assistant" && event.exchange === 1,
+      ),
+    ).not.toHaveProperty("committedHead");
+    const patchResult = view.events.find(
+      (
+        event,
+      ): event is Extract<
+        V1PlayCallChainView["events"][number],
+        { kind: "tool_result" }
+      > =>
+        event.kind === "tool_result" && event.callId === "patch-same-situation",
+    );
+    expect(patchResult?.markdown).toBe("");
+    const patchDetail = await worlds.playTimeline.readDetail(
+      worldId,
+      view.chainId,
+      patchResult!.id,
+    );
+    expect(patchDetail).toMatchObject({
+      kind: "tool_result",
+      markdown:
+        locale === "zh-CN"
+          ? "@current-situation 无变化"
+          : "@current-situation unchanged",
+    });
+    if (patchDetail.kind !== "tool_result")
+      throw new Error("Expected a tool-result timeline detail");
+    expect(sent(modelHost.requests[1]!).at(-1)).toEqual({
+      kind: "tool",
+      toolCallId: "patch-same-situation",
+      markdown: patchDetail.markdown,
+    });
+  },
+);
 
 test("world_retire 的退役和恢复回执对应已提交状态", async () => {
   const packageFiles = [
@@ -15597,15 +15694,25 @@ test("151 play cold resumes after settled Google tools", async () => {
   );
 });
 
-test.each(["retry", "continue", "prompt"])(
-  "继续发送逐字保留正文并在重启和再次中断后累计；%s恢复",
-  async (recovery) => {
+test.each([
+  ["retry", "en"],
+  ["continue", "en"],
+  ["prompt", "en"],
+  ["prompt", "zh-CN"],
+] as const)(
+  "继续发送逐字保留正文并在重启和再次中断后累计；%s恢复（%s）",
+  async (recovery, locale) => {
+    const renderPrompt = (prefix: string) =>
+      locale === "zh-CN"
+        ? `Runtime：上一条响应已中断。请从下方正文中断的位置接着写，只返回后续正文，不要重复已写部分或添加开场说明。\n\n${prefix}`
+        : continuationPrompt(prefix);
     const { prefillHost } = await import("./support/prefill-host.ts");
     const { host, sent } = prefillHost(
       [
         { text: " \n半🙂", extra: { reasoning_content: "私有推理" } },
         { text: "\n续 " },
         { text: "重写。", finish: "stop" },
+        { text: "下一幕。", finish: "stop" },
       ],
       recovery === "prompt" ? "disabled" : "assistant",
     );
@@ -15614,7 +15721,10 @@ test.each(["retry", "continue", "prompt"])(
       undefined,
       host.binding(),
     );
-    let chains = new PlayCallChain(worlds);
+    let chains = new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    );
     const first = await chains.start({
       worldId,
       chainId: "prefill",
@@ -15631,7 +15741,12 @@ test.each(["retry", "continue", "prompt"])(
     });
     const frozen = (await worlds.playTimeline.readContext(worldId, "prefill"))
       ?.value.lastRequest;
-    chains = new PlayCallChain(new FileNativeWorldStore(root));
+    chains = new PlayCallChain(
+      new FileNativeWorldStore(root),
+      new FileNativePromptCompiler({
+        locale: locale === "zh-CN" ? "en" : "zh-CN",
+      }),
+    );
     const cold = await chains.inspectWorld(worldId);
     expect(cold).toMatchObject({ canContinuePartial: true });
     const second = await chains.append({
@@ -15651,8 +15766,7 @@ test.each(["retry", "continue", "prompt"])(
     ).toMatchObject({ text: " \n半🙂\n续 " });
     expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
       role: recovery === "prompt" ? "user" : "assistant",
-      content:
-        recovery === "prompt" ? continuationPrompt(" \n半🙂") : " \n半🙂",
+      content: recovery === "prompt" ? renderPrompt(" \n半🙂") : " \n半🙂",
     });
     expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
       sent[0]?.messages,
@@ -15678,9 +15792,7 @@ test.each(["retry", "continue", "prompt"])(
       expect((sent[2]?.messages as unknown[]).at(-1)).toEqual({
         role: recovery === "prompt" ? "user" : "assistant",
         content:
-          recovery === "prompt"
-            ? continuationPrompt(" \n半🙂\n续 ")
-            : " \n半🙂\n续 ",
+          recovery === "prompt" ? renderPrompt(" \n半🙂\n续 ") : " \n半🙂\n续 ",
       });
     const history = (await worlds.recoverEndpoint(worldId)).history.map(
       ({ exactText }) => exactText,
@@ -15704,6 +15816,22 @@ test.each(["retry", "continue", "prompt"])(
       },
     });
     expect(history).not.toContain(" \n半🙂\n续 ");
+    if (recovery === "prompt") {
+      const restarted = new PlayCallChain(new FileNativeWorldStore(root));
+      await restarted.append({
+        worldId,
+        chainId: "prefill",
+        exchangeId: "next",
+        playerText: "接下来？",
+        modelHost: host,
+      });
+      expect(sent[3]?.messages).toEqual(
+        expect.arrayContaining([
+          { role: "user", content: renderPrompt(" \n半🙂\n续 ") },
+          { role: "assistant", content: "重写。" },
+        ]),
+      );
+    }
   },
 );
 
@@ -15720,7 +15848,10 @@ test("续写响应格式无效时，纠错派发从原请求开始并移除旧�
     undefined,
     host.binding(),
   );
-  const chain = new PlayCallChain(worlds);
+  const chain = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler({ locale: "zh-CN" }),
+  );
   const first = await chain.start({
     worldId,
     chainId: "prefill-correction",
@@ -15748,7 +15879,7 @@ test("续写响应格式无效时，纠错派发从原请求开始并移除旧�
   expect(dispatch.mock.calls[2]?.[0]).not.toHaveProperty("assistantPrefill");
   expect(JSON.stringify(sent[2]?.messages)).not.toContain("尚未提交的旧前缀");
   expect(JSON.stringify(sent[2]?.messages)).toContain(
-    "Return a corrected response",
+    "请针对原请求返回格式正确的响应",
   );
   expect(done.status).toBe("ready");
   const history = (await worlds.recoverEndpoint(worldId)).history.map(

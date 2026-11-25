@@ -139,6 +139,8 @@ export interface ModelHostExchange {
   /** Explicit incomplete text input, separate from completed native transcript. */
   assistantPrefill?: {
     text: string;
+    /** Frozen Runtime instruction for prompt-based continuation. */
+    instruction?: string;
     mode: Exclude<ModelAssistantPrefillMode, "disabled"> | "prompt";
   };
   modelConfig?: ModelHostRequestConfig;

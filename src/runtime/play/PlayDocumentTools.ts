@@ -77,6 +77,25 @@ export interface PlayDocumentToolResult extends ContextToolResult {
   };
 }
 
+const writeReceiptStatus = {
+  en: {
+    unchanged: "unchanged",
+    written: "write succeeded",
+    retired: "retired",
+    restored: "restored",
+    retirementSuperseded: "retirement superseded",
+    restorationSuperseded: "restoration superseded",
+  },
+  "zh-CN": {
+    unchanged: "无变化",
+    written: "写入成功",
+    retired: "已退役",
+    restored: "已恢复",
+    retirementSuperseded: "退役已被后续操作覆盖",
+    restorationSuperseded: "恢复已被后续操作覆盖",
+  },
+} as const;
+
 export function appendPlayToolNote(
   result: PlayDocumentToolResult,
   note: string,
@@ -137,11 +156,12 @@ export class FileNativePlayDocuments {
   settledWriteReceipt(
     write: NonNullable<PlayDocumentToolResult["candidateWrite"]>,
     committed: boolean,
+    locale: AppLocale = "en",
   ): string {
-    let status = "unchanged";
+    let status: keyof typeof writeReceiptStatus.en = "unchanged";
     if (write.changed && committed) {
       if (write.retired === undefined) {
-        status = "write succeeded";
+        status = "written";
       } else {
         // A later tool in the same response can reverse a candidate retirement.
         const before =
@@ -154,13 +174,13 @@ export class FileNativePlayDocuments {
           if (write.retired === after) status = after ? "retired" : "restored";
           else
             status = write.retired
-              ? "retirement superseded"
-              : "restoration superseded";
+              ? "retirementSuperseded"
+              : "restorationSuperseded";
         }
       }
     }
     const summary = [
-      `@${write.shortRef} ${status}`,
+      `@${write.shortRef} ${writeReceiptStatus[locale][status]}`,
       write.editDetails,
       write.sizeAdvice,
     ]
@@ -196,6 +216,7 @@ export class FileNativePlayDocuments {
   }
 
   replayCreation(result: PlayDocumentToolResult): void {
+    if (!result.ok) return;
     if (result.createdDocumentId !== undefined) {
       const snapshot = this.#candidate.snapshot;
       const created = documentById(snapshot, result.createdDocumentId);
@@ -358,6 +379,7 @@ export class FileNativePlayDocuments {
         this.#candidate,
         this.#reads,
         call.arguments,
+        options.locale ?? "en",
       );
     if (call.name === "world_create")
       return applyPlayCandidateCreate(
@@ -365,12 +387,14 @@ export class FileNativePlayDocuments {
         this.#reads,
         call.arguments,
         this.#declaredDirectories,
+        options.locale ?? "en",
       );
     if (call.name === "world_retire")
       return applyPlayCandidateRetirement(
         this.#candidate,
         this.#reads,
         call.arguments,
+        options.locale ?? "en",
       );
     return toolFailure(
       `The current document context does not accept ${call.name}`,
@@ -600,10 +624,15 @@ function applyPlayCandidatePatch(
   candidate: PlayCandidate,
   reads: WriteAuthorizations,
   args: unknown,
+  locale: AppLocale,
 ): PlayDocumentToolResult {
   if (record(args) && typeof args.edits === "string")
     return toolFailure(
-      "world_patch.edits must be a JSON array of 1 to 32 edits, not a string.",
+      locale === "zh-CN"
+        ? "world_patch.edits 必须是包含 1 到 32 条编辑的 JSON 数组，不能传字符串。"
+        : "world_patch.edits must be a JSON array of 1 to 32 edits, not a string.",
+      "protocol",
+      locale,
     );
   if (
     !record(args) ||
@@ -612,21 +641,31 @@ function applyPlayCandidatePatch(
     args.edits.length < 1 ||
     args.edits.length > 32
   )
-    return toolFailure("world_patch requires a target and 1 to 32 edits.");
+    return toolFailure(
+      locale === "zh-CN"
+        ? "world_patch 需要目标和 1 到 32 条编辑。"
+        : "world_patch requires a target and 1 to 32 edits.",
+      "protocol",
+      locale,
+    );
   const edits: unknown[] = args.edits;
   const ref = args.target.replace(/^@/u, "");
   const target = documentDescriptorByRef(candidate.snapshot, ref);
-  if (target === null) return toolFailure(`Target @${ref} does not exist.`);
+  if (target === null) return missingWriteTarget(ref, locale);
   const authorization = reads.documents.get(ref);
   if (
     reads.snapshotId !== candidate.snapshot.id ||
     !permitsPatch(authorization, edits)
   )
     return toolFailure(
-      `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
+      locale === "zh-CN"
+        ? `写入前请精确读取 @${ref}，或在初始化材料中获取该文档全文。`
+        : `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
+      "protocol",
+      locale,
     );
   try {
-    assertToolReferenceHandles(edits);
+    assertToolReferenceHandles(edits, locale);
     const revised = candidate.snapshot.revise({
       commands: [
         {
@@ -638,12 +677,14 @@ function applyPlayCandidatePatch(
     });
     if (!revised.ok && revised.editOutcomes.length > 0)
       throw new PlayDocumentToolFailure(
-        `world_patch applied none of its edits to @${ref}. ${formatEditNotes(revised.editOutcomes)}`,
+        locale === "zh-CN"
+          ? `world_patch 对 @${ref} 的编辑均未生效。${formatEditNotes(revised.editOutcomes, locale)}`
+          : `world_patch applied none of its edits to @${ref}. ${formatEditNotes(revised.editOutcomes, locale)}`,
         "candidate",
       );
     if (!revised.ok || revised.snapshotStatus !== "usable")
       throw new PlayDocumentToolFailure(
-        worldDocumentRevisionFailureMessage(revised.diagnostics),
+        writeRevisionFailure(revised.diagnostics, locale),
         "candidate",
       );
     const changed = revised.changes.length > 0;
@@ -651,8 +692,8 @@ function applyPlayCandidatePatch(
       throw new Error(
         "A world_patch revision must affect only its target document",
       );
-    const editDetails = formatToolEditDetails(revised.editOutcomes);
-    const status = `@${target.shortRef} ${changed ? "pending write" : "unchanged"}`;
+    const editDetails = formatToolEditDetails(revised.editOutcomes, locale);
+    const status = `@${target.shortRef} ${changed ? (locale === "zh-CN" ? "待写入" : "pending write") : writeReceiptStatus[locale].unchanged}`;
     const scopeEdits = revised.editOutcomes.flatMap(({ editIndex, status }) => {
       const edit =
         status === "applied" ? patchScopeEdit(edits[editIndex]) : null;
@@ -685,7 +726,7 @@ function applyPlayCandidatePatch(
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
-      return toolFailure(error.message, error.failureKind);
+      return toolFailure(error.message, error.failureKind, locale);
     throw error;
   }
 }
@@ -787,14 +828,19 @@ function legacyPatchAuthorization(
 
 function formatToolEditDetails(
   outcomes: readonly WorldDocumentEditOutcome[],
+  locale: AppLocale,
 ): string {
   const applied = outcomes.filter(({ status }) => status === "applied").length;
   if (applied === outcomes.length) return "";
   return [
-    `${applied}/${outcomes.length} edits applied`,
-    formatEditNotes(outcomes),
+    locale === "zh-CN"
+      ? `已应用 ${applied}/${outcomes.length} 条编辑`
+      : `${applied}/${outcomes.length} edits applied`,
+    formatEditNotes(outcomes, locale),
     outcomes.some(({ status }) => status === "failed")
-      ? "Resend only rejected edits if needed"
+      ? locale === "zh-CN"
+        ? "如需重试，请仅重发被拒绝的编辑"
+        : "Resend only rejected edits if needed"
       : "",
   ]
     .filter(Boolean)
@@ -804,16 +850,29 @@ function formatToolEditDetails(
 /** Lists only the edits that did not apply cleanly: failed ones and no-ops. */
 function formatEditNotes(
   outcomes: readonly WorldDocumentEditOutcome[],
+  locale: AppLocale,
 ): string {
   return outcomes
     .flatMap(({ editIndex, status, diagnostic }) => {
       if (status === "applied" || diagnostic === undefined) return [];
-      const label = `edit #${editIndex + 1}`;
-      if (status === "no_op") return [`${label} no-op: ${diagnostic.message}`];
+      const label =
+        locale === "zh-CN"
+          ? `第 ${editIndex + 1} 条编辑`
+          : `edit #${editIndex + 1}`;
+      if (status === "no_op")
+        return [
+          locale === "zh-CN"
+            ? `${label}无变化：目标不存在`
+            : `${label} no-op: ${diagnostic.message}`,
+        ];
       const location = diagnostic.locator
         ? ` (${formatWorldDocumentLocator(diagnostic.locator)})`
         : "";
-      return [`${label}${location}: ${diagnostic.message}`];
+      return [
+        locale === "zh-CN"
+          ? `${label}${location}失败：${diagnostic.message}`
+          : `${label}${location}: ${diagnostic.message}`,
+      ];
     })
     .join(" · ");
 }
@@ -822,6 +881,7 @@ function applyPlayCandidateRetirement(
   candidate: PlayCandidate,
   reads: WriteAuthorizations,
   args: unknown,
+  locale: AppLocale,
 ): PlayDocumentToolResult {
   if (
     !record(args) ||
@@ -830,17 +890,25 @@ function applyPlayCandidateRetirement(
     typeof args.retired !== "boolean"
   )
     return toolFailure(
-      "world_retire requires exactly a target and boolean retired value.",
+      locale === "zh-CN"
+        ? "world_retire 只接受目标和布尔值 retired。"
+        : "world_retire requires exactly a target and boolean retired value.",
+      "protocol",
+      locale,
     );
   const ref = args.target.replace(/^@/u, "");
   const target = documentDescriptorByRef(candidate.snapshot, ref);
-  if (target === null) return toolFailure(`Target @${ref} does not exist.`);
+  if (target === null) return missingWriteTarget(ref, locale);
   if (
     reads.snapshotId !== candidate.snapshot.id ||
     reads.documents.get(ref) !== null
   )
     return toolFailure(
-      `Read @${ref} exactly, or receive the complete document in bootstrap, before retiring or restoring it.`,
+      locale === "zh-CN"
+        ? `退役或恢复前请精确读取 @${ref}，或在初始化材料中获取该文档全文。`
+        : `Read @${ref} exactly, or receive the complete document in bootstrap, before retiring or restoring it.`,
+      "protocol",
+      locale,
     );
 
   const revised = candidate.snapshot.revise({
@@ -854,8 +922,9 @@ function applyPlayCandidateRetirement(
   });
   if (!revised.ok || revised.snapshotStatus !== "usable")
     return toolFailure(
-      worldDocumentRevisionFailureMessage(revised.diagnostics),
+      writeRevisionFailure(revised.diagnostics, locale),
       "candidate",
+      locale,
     );
   const changed = revised.changes.length > 0;
   const previousSnapshot = candidate.snapshot;
@@ -865,8 +934,10 @@ function applyPlayCandidateRetirement(
   return {
     ok: true,
     markdown: changed
-      ? `@${target.shortRef} pending ${args.retired ? "retirement" : "restoration"}`
-      : `@${target.shortRef} unchanged`,
+      ? locale === "zh-CN"
+        ? `@${target.shortRef} ${args.retired ? "待退役" : "待恢复"}`
+        : `@${target.shortRef} pending ${args.retired ? "retirement" : "restoration"}`
+      : `@${target.shortRef} ${writeReceiptStatus[locale].unchanged}`,
     candidateWrite: {
       shortRef: target.shortRef,
       changed,
@@ -893,22 +964,27 @@ function nextAvailableStatePath(
 
 function assertToolReferenceHandles(
   value: unknown,
+  locale: AppLocale,
   seen = new WeakSet<object>(),
 ): void {
   if (value === null || typeof value !== "object") return;
   if (seen.has(value))
     throw new PlayDocumentToolFailure(
-      "Tool arguments must not contain circular references",
+      locale === "zh-CN"
+        ? "工具参数不能包含循环引用"
+        : "Tool arguments must not contain circular references",
     );
   seen.add(value);
   if (Array.isArray(value)) {
-    for (const item of value) assertToolReferenceHandles(item, seen);
+    for (const item of value) assertToolReferenceHandles(item, locale, seen);
     seen.delete(value);
     return;
   }
   if (!record(value))
     throw new PlayDocumentToolFailure(
-      "Tool arguments may contain only plain objects",
+      locale === "zh-CN"
+        ? "工具参数中的对象必须是普通对象"
+        : "Tool arguments may contain only plain objects",
     );
   if (
     Object.hasOwn(value, "$ref") &&
@@ -917,10 +993,12 @@ function assertToolReferenceHandles(
       !value.$ref.startsWith("@"))
   )
     throw new PlayDocumentToolFailure(
-      "$ref must use an @short-ref returned by the Runtime, and a reference object cannot contain other fields",
+      locale === "zh-CN"
+        ? "$ref 必须使用 Runtime 返回的 @短引用，且引用对象不能包含其他字段"
+        : "$ref must use an @short-ref returned by the Runtime, and a reference object cannot contain other fields",
     );
   for (const item of Object.values(value))
-    assertToolReferenceHandles(item, seen);
+    assertToolReferenceHandles(item, locale, seen);
   seen.delete(value);
 }
 
@@ -929,6 +1007,7 @@ function applyPlayCandidateCreate(
   authorizations: WriteAuthorizations,
   args: unknown,
   declaredDirectories: readonly string[],
+  locale: AppLocale,
 ): PlayDocumentToolResult {
   try {
     const parentDirectory =
@@ -937,7 +1016,9 @@ function applyPlayCandidateCreate(
         : null;
     if (record(args) && typeof args.aliases === "string")
       throw new PlayDocumentToolFailure(
-        "world_create.aliases must be a JSON array of strings, not a string",
+        locale === "zh-CN"
+          ? "world_create.aliases 必须是由字符串组成的 JSON 数组，不能传字符串"
+          : "world_create.aliases must be a JSON array of strings, not a string",
       );
     if (
       !record(args) ||
@@ -952,7 +1033,11 @@ function applyPlayCandidateCreate(
       !args.aliases.every((alias) => typeof alias === "string") ||
       typeof args.body !== "string"
     )
-      throw new PlayDocumentToolFailure("world_create arguments are invalid");
+      throw new PlayDocumentToolFailure(
+        locale === "zh-CN"
+          ? "world_create 参数无效"
+          : "world_create arguments are invalid",
+      );
     if (
       !knownStateDirectory(
         candidate.snapshot,
@@ -961,7 +1046,9 @@ function applyPlayCandidateCreate(
       )
     )
       throw new PlayDocumentToolFailure(
-        "world_create parent is not a Runtime-known state directory; call state_list and use one of its directory handles",
+        locale === "zh-CN"
+          ? "world_create 的 parent 必须是 Runtime 已知的状态目录，请调用 state_list 并使用返回的目录句柄"
+          : "world_create parent is not a Runtime-known state directory; call state_list and use one of its directory handles",
       );
     const path = nextAvailableStatePath(
       candidate,
@@ -993,13 +1080,14 @@ function applyPlayCandidateCreate(
             aliases: args.aliases,
             body: args.body,
           } as const);
-    if (command.codec === "yaml") assertToolReferenceHandles(command.body);
+    if (command.codec === "yaml")
+      assertToolReferenceHandles(command.body, locale);
     const revised = candidate.snapshot.revise({
       commands: [command],
     });
     if (!revised.ok || revised.snapshotStatus !== "usable")
       throw new PlayDocumentToolFailure(
-        worldDocumentRevisionFailureMessage(revised.diagnostics),
+        writeRevisionFailure(revised.diagnostics, locale),
         "candidate",
       );
     const created = revised.changes.find(({ before }) => before === null);
@@ -1023,12 +1111,12 @@ function applyPlayCandidateCreate(
     );
     return {
       ok: true,
-      markdown: `@${created.shortRef} pending write`,
+      markdown: `@${created.shortRef} ${locale === "zh-CN" ? "待写入" : "pending write"}`,
       candidateWrite: { shortRef: created.shortRef, changed: true },
     };
   } catch (error: unknown) {
     if (error instanceof PlayDocumentToolFailure)
-      return toolFailure(error.message, error.failureKind);
+      return toolFailure(error.message, error.failureKind, locale);
     throw error;
   }
 }
@@ -1072,13 +1160,33 @@ function documentById(
   return result.kind === "read_document" && result.ok ? result.document : null;
 }
 
+function missingWriteTarget(ref: string, locale: AppLocale) {
+  return toolFailure(
+    locale === "zh-CN"
+      ? `目标 @${ref} 不存在。`
+      : `Target @${ref} does not exist.`,
+    "protocol",
+    locale,
+  );
+}
+
+function writeRevisionFailure(
+  diagnostics: Parameters<typeof worldDocumentRevisionFailureMessage>[0],
+  locale: AppLocale,
+): string {
+  if (locale === "en") return worldDocumentRevisionFailureMessage(diagnostics);
+  if (diagnostics.length === 0) return "文档修订无效。";
+  return `文档修订无效。详细原因：${worldDocumentRevisionFailureMessage(diagnostics)}`;
+}
+
 function toolFailure(
   message: string,
   failureKind: "protocol" | "candidate" = "protocol",
+  locale: AppLocale = "en",
 ): PlayDocumentToolResult {
   return {
     ok: false,
-    markdown: `# Runtime tool rejected\n\n${message}`,
+    markdown: `# ${locale === "zh-CN" ? "Runtime 拒绝了工具调用" : "Runtime tool rejected"}\n\n${message}`,
     failureKind,
   };
 }

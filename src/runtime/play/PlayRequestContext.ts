@@ -23,7 +23,10 @@ export function continuationMessage(
 ): ContinuationMessage | undefined {
   if (!partial) return undefined;
   return partial.mode === "prompt"
-    ? { role: "user · continuation", text: continuationPrompt(partial.text) }
+    ? {
+        role: "user · continuation",
+        text: continuationPrompt(partial.text, partial.instruction),
+      }
     : { role: "assistant · prefill", text: partial.text };
 }
 
@@ -220,7 +223,10 @@ export function projectRequestContext(
         if (prefix > 0)
           messages.push({
             role: "user · continuation",
-            text: continuationPrompt(item.text.slice(0, prefix)),
+            text: continuationPrompt(
+              item.text.slice(0, prefix),
+              item.providerState?.continuedPrefixInstruction,
+            ),
           });
         messages.push({ role: "assistant", text: item.text.slice(prefix) });
         for (const call of item.toolCalls)

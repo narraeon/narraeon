@@ -273,6 +273,7 @@ export function projectGoogleInteractions(payload: {
   if (!validGoogleInteractionsSteps(payload.steps))
     throw new ModelResponseFormatError(
       "Return complete, well-formed model output or function calls.",
+      "请返回完整、格式正确的模型输出或函数调用。",
     );
   const calls: NonNullable<ModelHostResponse["toolCalls"]> = [];
   let text = "";
@@ -289,6 +290,7 @@ export function projectGoogleInteractions(payload: {
       )
         throw new ModelResponseFormatError(
           "Each function call needs a unique ID, a name and an object containing its arguments.",
+          "每个函数调用都需要唯一 ID、名称和包含参数的对象。",
         );
       calls.push({
         id: step.id,
@@ -317,6 +319,7 @@ export function projectGoogleInteractions(payload: {
   if ((payload.status === "requires_action") !== calls.length > 0)
     throw new ModelResponseFormatError(
       "Return complete function calls when requesting action, or return completed prose.",
+      "如果请求执行操作，请返回完整的函数调用；否则请返回完整正文。",
     );
   return {
     ...(text === "" ? {} : { text }),

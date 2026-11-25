@@ -1,3 +1,4 @@
+import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { canRetryAuthoringDispatch } from "../../src/runtime/authoring/AuthoringRetry.ts";
 import { authoringTargetContract } from "./support/authoring-target-contract.ts";
@@ -5072,13 +5073,14 @@ function serviceFor(
   playPreset: PlayPresetBinding = builtinDefaultPlayPresetBinding("en"),
   store?: FileNativeSettingImprovementStore,
   bindExisting?: (binding: ModelHostBinding) => Promise<ModelHost>,
+  locale: AppLocale = "en",
 ): SettingImprovementSession {
-  const compiler = new FileNativePromptCompiler({ locale: "en" });
+  const compiler = new FileNativePromptCompiler({ locale });
   return new SettingImprovementSession({
     store: store ?? new FileNativeSettingImprovementStore(root),
     content,
     compiler,
-    locale: () => "en",
+    locale: () => locale,
     bindModelHost: () =>
       bindExisting ? bindExisting(host.binding()) : Promise.resolve(host),
     bindExistingModelHost:
@@ -5815,74 +5817,95 @@ test("compact text references never reinterpret opaque Provider content or liter
   );
 });
 
-test("Google 设定完善将中断正文和内部指令发送给模型并原样重放后缀签名", async () => {
-  const root = await temporaryRoot("google-setting-continuation-");
-  const content = new ContentWorkspace(root, { locale: () => "en" });
-  const { localId } = await content.createCurrentTreeContentPackage();
-  const prefix = "前半🙂\n ";
-  const suffix = "后半";
-  const before = googleAuthoringHost([googleText(prefix).slice(0, 2)]);
-  const interrupted = await sendFresh(
-    serviceFor(root, content, before.host),
-    localId,
-    "first",
-    "Explain.",
-  );
-  expect(interrupted.canContinuePartial).toBe(true);
-  const after = googleAuthoringHost(
-    [googleSignedText(suffix), googleText("Next.")],
-    undefined,
-    { modelId: "second-model" },
-  );
-  const resume = await serviceFor(root, content, after.host).resume({
-    sessionId: interrupted.sessionId,
-    packageId: localId,
-    requestId: "resume",
-    recovery: "continue_partial",
-  });
-  expect(resume.messages.map((message) => message.text)).toEqual([
-    "Explain.",
-    prefix + suffix,
-  ]);
-  const wire = after.sent[0]!.input as unknown[];
-  const instruction = {
-    type: "user_input",
-    content: [{ type: "text", text: continuationPrompt(prefix) }],
-  };
-  expect(wire.at(-1)).toMatchObject(instruction);
-  expect(wire.slice(0, -1)).toEqual(before.sent[0]!.input);
-  const previews = await serviceFor(
-    root,
-    content,
-    after.host,
-  ).readRequestPreviews(localId, resume.sessionId);
-  expect(previews.at(-1)?.wireRequest?.body).toMatchObject({
-    input: wire,
-  });
-  const next = await serviceFor(root, content, after.host).send({
-    packageId: localId,
-    requestId: "next",
-    message: "Next?",
-    continuation: {
-      kind: "continue_context",
+test.each(["en", "zh-CN"] as const)(
+  "Google 设定完善将中断正文和 %s 内部指令发送给模型并原样重放后缀签名",
+  async (locale) => {
+    const root = await temporaryRoot("google-setting-continuation-");
+    const content = new ContentWorkspace(root, { locale: () => "en" });
+    const { localId } = await content.createCurrentTreeContentPackage();
+    const localized = (host: ModelHost, locale: AppLocale) =>
+      serviceFor(
+        root,
+        content,
+        host,
+        builtinDefaultPlayPresetBinding(locale),
+        undefined,
+        undefined,
+        locale,
+      );
+    const prefix = "前半🙂\n ";
+    const suffix = "后半";
+    const before = googleAuthoringHost([googleText(prefix).slice(0, 2)]);
+    const interrupted = await sendFresh(
+      localized(before.host, locale),
+      localId,
+      "first",
+      "Explain.",
+    );
+    expect(interrupted.canContinuePartial).toBe(true);
+    const after = googleAuthoringHost(
+      [googleSignedText(suffix), googleText("Next.")],
+      undefined,
+      { modelId: "second-model" },
+    );
+    const otherLocale = locale === "zh-CN" ? "en" : "zh-CN";
+    const resume = await localized(after.host, otherLocale).resume({
       sessionId: interrupted.sessionId,
-    },
-  });
-  expect(next.runStatus).toBe("ready");
-  expect(after.sent[1]!.input).toEqual(
-    expect.arrayContaining([
-      instruction,
-      {
-        type: "model_output",
-        content: [{ type: "text", text: suffix }],
+      packageId: localId,
+      requestId: "resume",
+      recovery: "continue_partial",
+    });
+    expect(resume.messages.map((message) => message.text)).toEqual([
+      "Explain.",
+      prefix + suffix,
+    ]);
+    const wire = after.sent[0]!.input as unknown[];
+    const instruction = {
+      type: "user_input",
+      content: [
+        {
+          type: "text",
+          text:
+            locale === "zh-CN"
+              ? `Runtime：上一条响应已中断。请从下方正文中断的位置接着写，只返回后续正文，不要重复已写部分或添加开场说明。\n\n${prefix}`
+              : continuationPrompt(prefix),
+        },
+      ],
+    };
+    expect(wire.at(-1)).toMatchObject(instruction);
+    expect(wire.slice(0, -1)).toEqual(before.sent[0]!.input);
+    const previews = await localized(
+      after.host,
+      otherLocale,
+    ).readRequestPreviews(localId, resume.sessionId);
+    expect(previews.at(-1)?.wireRequest?.body).toMatchObject({
+      input: wire,
+    });
+    const next = await localized(after.host, otherLocale).send({
+      packageId: localId,
+      requestId: "next",
+      message: "Next?",
+      continuation: {
+        kind: "continue_context",
+        sessionId: interrupted.sessionId,
       },
-      expect.objectContaining({
-        type: "thought",
-        signature: "synthetic-signature-secret",
-      }),
-    ]),
-  );
-});
+    });
+    expect(next.runStatus).toBe("ready");
+    expect(after.sent[1]!.input).toEqual(
+      expect.arrayContaining([
+        instruction,
+        {
+          type: "model_output",
+          content: [{ type: "text", text: suffix }],
+        },
+        expect.objectContaining({
+          type: "thought",
+          signature: "synthetic-signature-secret",
+        }),
+      ]),
+    );
+  },
+);
 
 test("setting authoring retries a frozen step without duplicating the author turn and preserves receipts on reopen", async () => {
   const { retryChat } = await import("./support/retry-chat.ts");

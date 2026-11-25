@@ -95,4 +95,6 @@ export type ProviderExchangeState = (
 ) & {
   /** Runtime-owned prefix supplied before this unmodified native response. */
   continuedPrefixLength?: number;
+  /** Exact Runtime instruction that preceded the untouched native response. */
+  continuedPrefixInstruction?: string;
 };

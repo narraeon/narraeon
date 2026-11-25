@@ -315,6 +315,14 @@ for (const locale of ["zh-CN", "en"] as const)
         .map(({ content }) => content)
         .join("\n\n");
     expect(systemText(preview.wireRequest.body)).toBe(systemText(wire));
+    const preloadNotice = ({ messages }: ChatRequest) =>
+      messages.find(
+        ({ role, content }) =>
+          role === "user" &&
+          content?.startsWith(english ? "Runtime preload:" : "Runtime 预载："),
+      )?.content;
+    expect(preloadNotice(wire)).toEqual(expect.any(String));
+    expect(preloadNotice(preview.wireRequest.body)).toBe(preloadNotice(wire));
     const systemLines = systemText(wire).split("\n");
     expect(systemLines).toContain(
       english ? "# Runtime mechanics" : "# Runtime 机制",

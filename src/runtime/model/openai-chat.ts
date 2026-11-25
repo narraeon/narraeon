@@ -425,6 +425,7 @@ export async function exchangeChat(
     if (!validChatAssistantMessage(message))
       throw new ModelResponseFormatError(
         "Return an assistant message with string or null content and reasoning_content. Each tool call needs an ID, a function name and JSON arguments encoded as a string.",
+        "请返回一条 assistant 消息，content 和 reasoning_content 应为字符串或 null。每个工具调用都需要 ID、函数名和编码为字符串的 JSON 参数。",
       );
     capture?.setReasoning(message.reasoning_content ?? undefined);
     return {

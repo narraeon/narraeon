@@ -156,6 +156,8 @@ export interface FileNativePromptInput {
 }
 
 export interface PromptCompilation {
+  /** Locale of Runtime text in this compilation. Absent in older snapshots. */
+  locale?: AppLocale;
   maintenance?: WorldPromptMaintenance;
   /**
    * The per-send suffix derived from the enabled ordered entries' turn-guide
@@ -173,7 +175,7 @@ export interface PromptCompilation {
   provider: {
     protocol: ProviderKind;
     /** Runtime-generated initial read, distinct from provider-native conversation. */
-    preload?: { callId: string; markdown: string };
+    preload?: { callId: string; markdown: string; notice?: string };
     system?: {
       type: "text";
       text: string;
@@ -624,6 +626,7 @@ export class FileNativePromptCompiler {
     const stableText = cacheStableText(logicalMessages, provider);
     const cache = stableCacheBoundary(stableText, tools, toolStrategy);
     return {
+      locale: this.#locale,
       logicalMessages,
       provider,
       tools: structuredClone(tools),
@@ -784,6 +787,7 @@ export class FileNativePromptCompiler {
     const stableText = cacheStableText(logicalMessages);
     const cache = stableCacheBoundary(stableText, tools, toolStrategy);
     const compilation: PromptCompilation = {
+      locale: this.#locale,
       logicalMessages,
       provider,
       tools,
@@ -916,12 +920,19 @@ export class FileNativePromptCompiler {
           return { ...message, blocks, markdown: joinBlocks(blocks) };
         })
       : historyAdaptedMessages;
-    // Instructions keep author order; initial reads follow as protocol tool results.
+    // Refresh the instructions without rewriting the synthetic read already sent.
+    const frozenContext = input.frozenWorldContext;
+    const frozenPreload = frozenContext?.provider.preload;
+    const worldMessages = (
+      frozenContext?.provider.preload === undefined
+        ? selectedMessages
+        : cloneLogicalMessages(frozenContext.logicalMessages)
+    ).filter(({ role }) => role === "world_context");
     const logicalMessages = [
       ...selectedMessages.filter(
         ({ role }) => role !== "world_context" && role !== "player_input",
       ),
-      ...selectedMessages.filter(({ role }) => role === "world_context"),
+      ...worldMessages,
       ...selectedMessages.filter(({ role }) => role === "player_input"),
     ];
     const provider = mapProvider(
@@ -936,13 +947,19 @@ export class FileNativePromptCompiler {
               binding.definition.mergeConsecutiveMessages ?? true,
           },
     );
-    provider.preload = {
-      callId: "runtime_initial_world_context",
-      markdown: logicalMessages
-        .filter(({ role }) => role === "world_context")
-        .map(({ markdown }) => markdown)
-        .join("\n\n"),
-    };
+    provider.preload =
+      frozenPreload === undefined
+        ? {
+            callId: "runtime_initial_world_context",
+            markdown: worldMessages
+              .map(({ markdown }) => markdown)
+              .join("\n\n"),
+            notice: initialWorldPreloadNotice(
+              this.#locale,
+              input.modelBinding.provider,
+            ),
+          }
+        : structuredClone(frozenPreload);
     const lastInstructionRole = logicalMessages
       .filter(
         ({ role }) =>
@@ -1171,6 +1188,7 @@ export class FileNativePromptCompiler {
       },
     );
     return {
+      locale: this.#locale,
       logicalMessages,
       provider,
       tools,
@@ -3640,6 +3658,19 @@ export function retargetFrozenCompilation(
     breakpoints,
   };
   return result;
+}
+
+export function initialWorldPreloadNotice(
+  locale: AppLocale,
+  provider: ProviderKind,
+): string {
+  if (provider === "google_interactions")
+    return locale === "zh-CN"
+      ? "Runtime 预载：以下是初始世界材料，不是玩家行动或模型响应。"
+      : "Runtime preload: initial world materials, not a player action or model response.";
+  return locale === "zh-CN"
+    ? "Runtime 预载：提供由世界提示框架选定的初始世界材料。此读取只用于会话初始化，不是玩家行动，也不是可调用的工具。后续成功的工具结果会更新这些初始值。"
+    : "Runtime preload: supply the initial world materials selected by the frame. This bootstrap-only read is not a player action or a callable tool. Later successful tool results update these initial values.";
 }
 
 /** Configured User prompts belong to the prefix; player input does not. */
