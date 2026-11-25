@@ -1928,6 +1928,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "The model continued from the existing context without appending a player instruction.",
   "调用链已返回；模型完成的叙事和世界变化已经分别提交。":
     "The call chain returned. Completed narrative and world changes were committed separately.",
+  "这份控制草稿已被其他操作替换或移除。你的修改仍在，请重新预览。":
+    "The control draft was replaced or removed. Your edits are still here. Preview them again.",
   "世界控制修改已预览，可以一次性应用。":
     "World-control changes have been previewed and can now be applied together.",
   "世界控制已整批应用。": "World control was applied as a whole.",

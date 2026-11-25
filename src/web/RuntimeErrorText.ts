@@ -56,6 +56,10 @@ const runtimeErrorTexts: readonly [RegExp, string][] = [
     "玩家输入不能为空。",
   ],
   [
+    /^World-control draft was replaced or removed$/u,
+    "这份控制草稿已被其他操作替换或移除。你的修改仍在，请重新预览。",
+  ],
+  [
     /^The world-revision worktree changed; refresh it before writing/u,
     "修订内容已在别处更新，请刷新后再保存。",
   ],

@@ -22,7 +22,11 @@ import {
   idleWorkspaceNavigation,
   type WorkspaceNavigationProtection,
 } from "./WorkspaceLocation.ts";
-import { RuntimeRequestError, isResponseRecord } from "./RuntimeResponse.ts";
+import {
+  RuntimeRequestError,
+  isResponseRecord,
+  unreadableResponse,
+} from "./RuntimeResponse.ts";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
@@ -158,6 +162,11 @@ export interface WorldComposerDraft {
   turnNoteOpen: boolean;
 }
 
+interface ControlPreviewAttempt {
+  source: string;
+  fingerprint?: string;
+}
+
 export function WorldPage({
   client,
   worldId,
@@ -289,7 +298,13 @@ export function WorldPage({
   useLayoutEffect(() => {
     controlDirtyRef.current = controlDirty;
   }, [controlDirty]);
-  const [controlPreview, setControlPreview] = useState<unknown>(null);
+  const controlPreviewAttempt = useRef<ControlPreviewAttempt | null>(null);
+  const [previewedControl, setPreviewedControl] = useState<{
+    attempt: ControlPreviewAttempt;
+    payload: Record<string, unknown>;
+  } | null>(null);
+  const controlPreview =
+    previewedControl?.attempt.source === controlFiles ? previewedControl : null;
   const {
     workspace: revisionWorkspace,
     state: authoring,
@@ -392,7 +407,8 @@ export function WorldPage({
       if (!preserveControlDraft && next.control.length > 0) {
         setControlFiles(JSON.stringify(next.control, null, 2));
         setControlDirty(false);
-        setControlPreview(null);
+        controlPreviewAttempt.current = null;
+        setPreviewedControl(null);
       }
       if (next.state.length > 0)
         setSelectedDocument((current) =>
@@ -1175,18 +1191,78 @@ export function WorldPage({
     syncFailed: controlPreviewFailed,
     syncError: controlPreviewError,
   } = useReadTarget(
+    useCallback(async () => {
+      const attempt = controlPreviewAttempt.current;
+      const expectedFingerprint = attempt?.fingerprint;
+      if (
+        !managementVisible ||
+        attempt === null ||
+        expectedFingerprint === undefined
+      )
+        return null;
+      try {
+        const preview = await client.request({
+          type: "world.control-draft.preview",
+          worldId,
+          expectedFingerprint,
+        });
+        return {
+          attempt,
+          preview:
+            isResponseRecord(preview) &&
+            isResponseRecord(preview.diagnosticBinding) &&
+            preview.diagnosticBinding.controlFingerprint === expectedFingerprint
+              ? preview
+              : null,
+        };
+      } catch (reason: unknown) {
+        if (isControlDraftConflict(reason)) return { attempt, preview: null };
+        throw reason;
+      }
+    }, [client, worldId, managementVisible]),
     useCallback(
-      () =>
-        managementVisible
-          ? client.request({ type: "world.control-draft.preview", worldId })
-          : Promise.resolve(null),
-      [client, worldId, managementVisible],
+      (
+        result: {
+          attempt: ControlPreviewAttempt;
+          preview: Record<string, unknown> | null;
+        } | null,
+      ) => {
+        if (result?.attempt !== controlPreviewAttempt.current) return;
+        if (result.preview === null) {
+          controlPreviewAttempt.current = null;
+          setPreviewedControl(null);
+          setFeedback({
+            kind: "error",
+            text: uiText(
+              "这份控制草稿已被其他操作替换或移除。你的修改仍在，请重新预览。",
+            ),
+          });
+          return;
+        }
+        setPreviewedControl({
+          attempt: result.attempt,
+          payload: result.preview,
+        });
+        setFeedback({
+          kind: "status",
+          text: uiText("世界控制修改已预览，可以一次性应用。"),
+        });
+      },
+      [],
     ),
-    useCallback((preview: unknown) => setControlPreview(preview), []),
   );
   useEffect(() => {
-    controlPreviewTarget.accept();
+    if (controlPreviewAttempt.current?.source !== controlFiles) {
+      controlPreviewAttempt.current = null;
+      controlPreviewTarget.accept();
+    }
   }, [controlPreviewTarget, controlFiles]);
+
+  function invalidateControlPreview(): void {
+    controlPreviewAttempt.current = null;
+    setPreviewedControl(null);
+    controlPreviewTarget.accept();
+  }
 
   function acceptWorldChange(): void {
     worldTarget.accept({ complete: false });
@@ -1201,40 +1277,67 @@ export function WorldPage({
   }
 
   async function previewControl(): Promise<void> {
+    invalidateControlPreview();
+    const attempt: ControlPreviewAttempt = { source: controlFiles };
+    controlPreviewAttempt.current = attempt;
+    setFeedback(null);
     setPending("control-preview");
     try {
-      const files = JSON.parse(controlFiles) as ContentTreeFile[];
-      await worldTarget.command(() =>
-        client.request({ type: "world.control-draft.save", worldId, files }),
+      const files = JSON.parse(attempt.source) as ContentTreeFile[];
+      const receipt = await worldTarget.command(() =>
+        client.request({
+          type: "world.control-draft.save",
+          worldId,
+          files,
+        }),
       );
+      if (controlPreviewAttempt.current !== attempt) return;
+      if (!isResponseRecord(receipt) || typeof receipt.fingerprint !== "string")
+        throw unreadableResponse(200);
+      attempt.fingerprint = receipt.fingerprint;
       controlPreviewTarget.accept({ complete: false });
-      const preview = await controlPreviewTarget.read();
-      if (preview === null) return;
-      setFeedback({
-        kind: "status",
-        text: uiText("世界控制修改已预览，可以一次性应用。"),
-      });
+      await controlPreviewTarget.read();
     } catch (reason: unknown) {
-      setControlPreview(null);
-      setFeedback({ kind: "error", text: errorMessage(reason) });
+      if (controlPreviewAttempt.current === attempt) {
+        invalidateControlPreview();
+        setFeedback({ kind: "error", text: errorMessage(reason) });
+      }
     } finally {
       setPending(null);
     }
   }
 
   async function applyControl(): Promise<void> {
-    if (controlPreview === null || activeStatus === "running") return;
+    const attempt = controlPreview?.attempt;
+    const expectedFingerprint = attempt?.fingerprint;
+    if (
+      expectedFingerprint === undefined ||
+      controlPreviewAttempt.current !== attempt ||
+      activeStatus === "running"
+    )
+      return;
     setPending("control-apply");
     try {
       await worldTarget.command(() =>
-        client.request({ type: "world.control-draft.apply", worldId }),
+        client.request({
+          type: "world.control-draft.apply",
+          worldId,
+          expectedFingerprint,
+        }),
       );
       acceptWorldChange();
-      setControlPreview(null);
-      setControlDirty(false);
-      await readAfterCommit(() => refreshWorld(false));
+      if (controlPreviewAttempt.current === attempt) {
+        invalidateControlPreview();
+        setControlDirty(false);
+      }
+      await readAfterCommit(() => refreshWorld());
       setFeedback({ kind: "status", text: uiText("世界控制已整批应用。") });
     } catch (reason: unknown) {
+      if (
+        isControlDraftConflict(reason) &&
+        controlPreviewAttempt.current === attempt
+      )
+        invalidateControlPreview();
       setFeedback({ kind: "error", text: errorMessage(reason) });
     } finally {
       setPending(null);
@@ -2553,16 +2656,16 @@ export function WorldPage({
               activeStatus={activeStatus}
               controlFiles={controlFiles}
               controlDirty={controlDirty}
-              controlPreview={controlPreview}
+              controlPreview={controlPreview?.payload ?? null}
               onControlFiles={(value) => {
                 setControlFiles(value);
                 setControlDirty(true);
-                setControlPreview(null);
+                invalidateControlPreview();
               }}
               onResetControl={() => {
                 setControlFiles(JSON.stringify(world.control, null, 2));
                 setControlDirty(false);
-                setControlPreview(null);
+                invalidateControlPreview();
               }}
               onRename={() => void renameCurrentWorld()}
               onExportStory={(format) => void downloadStory(format)}
@@ -2637,6 +2740,15 @@ function selectedStateDocument(
 function turnNoteField(turnNote: string): { turnNote?: string } {
   const trimmed = turnNote.trim();
   return trimmed === "" ? {} : { turnNote: trimmed };
+}
+
+function isControlDraftConflict(reason: unknown): boolean {
+  return (
+    reason instanceof RuntimeRequestError &&
+    reason.protocolCode === "operation_conflict" &&
+    isResponseRecord(reason.details) &&
+    reason.details.reason === "control_draft_changed"
+  );
 }
 
 function errorMessage(reason: unknown): string {

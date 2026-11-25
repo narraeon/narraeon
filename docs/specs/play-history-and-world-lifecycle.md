@@ -175,6 +175,8 @@ Runtime 从受限 YAML 当前情境选择精确顶层的历史背景，随每条
 | **当前 Web 可达入口** | 世界页「世界修订」工作区 | 世界页「世界控制 · 高级编辑」折叠面板 |
 | **可达能力** | 手动编辑与 AI 对话共享 `state/*` + `control/*` 工作树，支持逐文件回滚、历史只读导航与预览后原子应用（不可改 `control/gameplay.json` 与已提交 `opening.md`） | 手动整批编辑 `control/*`、预览后原子应用为 `control_apply` 轮（不可改 `control/gameplay.json`） |
 
+高级控制编辑保存后返回草稿指纹。Web 预览携带该指纹，确认应用时携带预览中的同一指纹。若草稿已被替换或移除，操作以 `operation_conflict` 拒绝，端点和轮账本保持原样，当前浏览器保留编辑文字供重新预览。应用在原有的单次按世界串行窗口内，使用读到的同一份草稿和最新世界状态再次校验。已发布 v1 客户端可继续省略 `expectedFingerprint`，沿用按当前保存草稿预览或应用的行为。
+
 > 世界名称重命名仅原子替换世界本地外壳，不改写创建记录或 Authority，与上述两种语义写入正交。
 
 旧 `correction.*` 写入协议由世界修订取代。向 `/api/runtime/v1` 发送这些命令返回 HTTP 400，错误码为 `invalid_request`。已发布归档或本地世界中的 `correction` 轮、前像和冻结请求继续通过历史路径读取。旧格式迁移按 [#244](https://github.com/narraeon/narraeon/issues/244) 的发布边界处理。

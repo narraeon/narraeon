@@ -1044,13 +1044,21 @@ export class FileNativeWorldStore {
             await readTree(join(root, "control")),
             files,
           );
+          if (files.length === 0) throw unsavedControlDraft();
           const staging = join(root, `runtime/.control-draft-${randomUUID()}`);
-          await writeSurface(staging, "control", files);
-          const final = join(root, "runtime/control-draft");
-          await rm(final, { recursive: true, force: true });
-          await rename(join(staging, "control"), final);
-          await rm(staging, { recursive: true, force: true });
-          return { fingerprint: fingerprint(files) };
+          const staged = join(staging, "control");
+          try {
+            await writeSurface(staging, "control", files);
+            const written = exactControlDraftWrite(files)
+              ? files
+              : await readTree(staged);
+            const final = join(root, "runtime/control-draft");
+            await rm(final, { recursive: true, force: true });
+            await rename(staged, final);
+            return { fingerprint: controlDraftFingerprint(written) };
+          } finally {
+            await rm(staging, { recursive: true, force: true });
+          }
         },
       );
     } catch (error: unknown) {
@@ -1109,11 +1117,30 @@ export class FileNativeWorldStore {
 
   async previewControlDraft(
     worldId: string,
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
-      playerInput?: string;
-    },
+    prompt: CreationPreviewInput,
+    expectedFingerprint?: string,
   ): Promise<PromptPreview> {
-    const { state, draft } = await this.#readControlDraft(worldId);
+    const { root, draft, fingerprint } = await this.#readControlDraft(
+      worldId,
+      expectedFingerprint,
+    );
+    const state = await new WorldLedgerAuthority(root).recoverState();
+    return this.#compileControlDraft(
+      worldId,
+      prompt,
+      state,
+      draft,
+      fingerprint,
+    );
+  }
+
+  #compileControlDraft(
+    worldId: string,
+    prompt: CreationPreviewInput,
+    state: readonly ContentTreeFile[],
+    draft: readonly ContentTreeFile[],
+    fingerprint: string,
+  ): PromptPreview {
     const rendered = new PlayerViewRenderer().render({
       snapshot: openWorldDocumentSnapshot(state),
       control:
@@ -1128,7 +1155,7 @@ export class FileNativeWorldStore {
       endpoint: { id: `${worldId}:current`, commit: "current" },
       hostBinding: prompt.hostBinding,
       world: {
-        controlFingerprint: fingerprint(draft),
+        controlFingerprint: fingerprint,
         documentSnapshot: WorldDocumentStore.open({
           layout: "world_state",
           files: [
@@ -1152,9 +1179,8 @@ export class FileNativeWorldStore {
 
   async applyControlDraft(
     worldId: string,
-    prompt: Pick<FileNativePromptInput, "hostBinding" | "modelBinding"> & {
-      playerInput?: string;
-    },
+    prompt: CreationPreviewInput,
+    expectedFingerprint?: string,
   ): Promise<{ controlFingerprint: string; preview: PromptPreview }> {
     try {
       return await this.operations.withExclusiveWorldStateMutation(
@@ -1165,11 +1191,19 @@ export class FileNativeWorldStore {
               "operation_conflict",
               "World control is frozen by a running attempt",
             );
-          const preview = await this.previewControlDraft(worldId, prompt);
-          const root = join(this.#worldsRoot, worldId);
-          const draft = await readTree(join(root, "runtime/control-draft"));
+          const { root, draft, fingerprint } = await this.#readControlDraft(
+            worldId,
+            expectedFingerprint,
+          );
           const authority = new WorldLedgerAuthority(root);
           const endpoint = await authority.recover();
+          const preview = this.#compileControlDraft(
+            worldId,
+            prompt,
+            endpoint.state,
+            draft,
+            fingerprint,
+          );
           assertControlGameplayUnchanged(
             await authority.recoverControl(endpoint.head),
             draft,
@@ -1234,21 +1268,32 @@ export class FileNativeWorldStore {
 
   async #readControlDraft(
     worldId: string,
-  ): Promise<{ state: ContentTreeFile[]; draft: ContentTreeFile[] }> {
+    expectedFingerprint: string | undefined,
+  ): Promise<{ root: string; draft: ContentTreeFile[]; fingerprint: string }> {
     assertIdentity(worldId, "World ID");
-    await this.ensureCurrentStorage(worldId);
     const root = join(this.#worldsRoot, worldId);
-    await readPublicationAt(root);
-    const [state, draft] = await Promise.all([
-      new WorldLedgerAuthority(root).recoverState(),
-      readTree(join(root, "runtime/control-draft")),
-    ]);
-    if (draft.length === 0)
-      throw new FileNativeWorldCreationError(
-        "content_package_needs_repair",
-        "World-control draft has not been saved",
-      );
-    return { state, draft };
+    let draft: ContentTreeFile[];
+    try {
+      await this.ensureCurrentStorage(worldId);
+      await readPublicationAt(root);
+      draft = await readTree(join(root, "runtime/control-draft"));
+    } catch (error: unknown) {
+      if (
+        expectedFingerprint !== undefined &&
+        (error instanceof FileNativeWorldNotFoundError ||
+          (isNodeError(error) && error.code === "ENOENT"))
+      )
+        throw controlDraftChanged(error);
+      throw error;
+    }
+    const fingerprint = controlDraftFingerprint(draft);
+    if (
+      expectedFingerprint !== undefined &&
+      (draft.length === 0 || fingerprint !== expectedFingerprint)
+    )
+      throw controlDraftChanged();
+    if (draft.length === 0) throw unsavedControlDraft();
+    return { root, draft, fingerprint };
   }
 
   /** Bind the current Authority endpoint for a model-directed play call chain. */
@@ -2349,6 +2394,64 @@ function fingerprint(files: readonly ContentTreeFile[]): string {
     hash.update(file.path).update("\0").update(file.contents).update("\0");
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+// Portable, uniquely spelled text files round-trip as supplied. Encoded
+// contents and names that a filesystem may alias use the staged readback.
+function exactControlDraftWrite(files: readonly ContentTreeFile[]): boolean {
+  const spellings = new Map<string, string>();
+  for (const { path, contents, encoding } of files) {
+    if (
+      encoding !== undefined ||
+      !contents.isWellFormed() ||
+      !/^[A-Za-z0-9_./-]+$/u.test(path) ||
+      /\.(?:\/|$)/u.test(path)
+    )
+      return false;
+    const segments = path.split("/");
+    let prefix = "";
+    for (const [index, segment] of segments.entries()) {
+      prefix += index === 0 ? segment : `/${segment}`;
+      const key = prefix.toLowerCase();
+      const previous = spellings.get(key);
+      if (
+        previous !== undefined &&
+        (previous !== prefix || index === segments.length - 1)
+      )
+        return false;
+      spellings.set(key, prefix);
+    }
+  }
+  return true;
+}
+
+function controlDraftFingerprint(files: readonly ContentTreeFile[]): string {
+  // Retain the published digest for ordinary text. Hash contents separately
+  // when a source includes the separator used by the legacy serialization.
+  if (!files.some(({ contents }) => contents.includes("\0")))
+    return fingerprint(files);
+  const digests = files.map(({ path, contents }) => ({
+    path,
+    contents: sha256(contents),
+  }));
+  return sha256(`\0narraeon.control-draft/v1\0${fingerprint(digests)}`);
+}
+
+function unsavedControlDraft(): FileNativeWorldCreationError {
+  return new FileNativeWorldCreationError(
+    "content_package_needs_repair",
+    "World-control draft has not been saved",
+  );
+}
+
+function controlDraftChanged(cause?: unknown): RuntimeDomainError {
+  return new RuntimeDomainError("World-control draft was replaced or removed", {
+    cause,
+    receipt: {
+      code: "operation_conflict",
+      details: { reason: "control_draft_changed" },
+    },
+  });
 }
 
 function contentPackageCreationFingerprint(
