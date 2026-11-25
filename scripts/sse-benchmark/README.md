@@ -52,12 +52,12 @@ mkdir -p .scratch
 node scripts/sse-benchmark/measure.mjs --out .scratch/328-after-markdown --play-reading --expect-markdown --headed --turns 60 --repeats 1 --diagnostics 1
 ```
 
-如需按原存档规模比较合入前后，用 `--fixture .scratch/328-desktop/fixture` 替换 `--turns 60`，保留相同复跑数与 `--chunk-ms`，合入后加 `--expect-markdown`。`--mobile` 另跑 Chromium 的 Pixel 7 视口和触控手势模拟，CPU 和图形仍来自运行脚本的电脑。它没有模拟真机处理器、WebView 或网络。在有界面的环境中，`--headed` 为双窗口打开同一浏览器进程里的两个独立窗口。省略 `--headed` 可在无显示环境运行两独立浏览器上下文。
+如需按原存档规模比较合入前后，用 `--fixture .scratch/328-desktop/fixture` 替换 `--turns 60`，保留相同复跑数与 `--chunk-ms`，合入后加 `--expect-markdown`。`--mobile` 另跑 Chromium 的 Pixel 7 视口和触控手势模拟，它仍使用运行脚本的电脑 CPU、图形与回环网络。真机 Android WebView 另测。`--headed` 打开同一 Chromium 进程里的两个独立窗口。省略它可在无显示环境运行两个独立浏览器上下文。双窗口的可见性按各自视口计算，Playwright 保持被遮挡窗口的浏览器渲染调度。
 
 - `short` 沿用 #262 的短正文和分块。`long`、`history` 和 `dual` 用同一份中英文长回复，每段含标题、强调、正文和列表。长短组采用相同的首块等待、分块时间间隔及结束等待。每轮轮换组顺序，并核对四组的 Provider 请求散列一致。
 - 普通阅读组在第一段待定文字出现时移动一次到底部，之后保持手动阅读位置。`history` 此后在生成中用真实浏览器滚轮或模拟触控上翻，逐个更新帧及提交时检查同一历史字形仍在无遮挡视口内，位置容差为 2 CSS 像素。各组记录最新字形是否在视口内，提交后再滚到底部确认尾字可达。
 - `dual` 由一个窗口提交，另一个窗口只观察同一世界。两个窗口各使用原生观察连接，各自确认待定和已提交的正文。Runtime 同时核对只收到一次派发和一个 Provider 请求。每次从同一存档的独立副本开始，验证历史只多出一条玩家原文和一条主持原文。
-- 每个窗口记录点击至首个可见文字、Provider 发出分块至对应的 SSE 投递及 DOM 帧、连续 `requestAnimationFrame` 间隔、Chromium Long Tasks 和渲染主线程 `TaskDuration`。待定和已提交正文的 DOM 探针可跨嵌套元素读取。位置和分块匹配使用这份固定实测文本中的内容字符，排除它使用的 Markdown 标记和空白。原文另由 Runtime 回执和磁盘历史全文校验。可见性判断排除页头和底部输入区，通过字形命中测试。头部跟随和字形查询带来的额外布局开销属于探针开销，样本另列探针耗时。帧数据代表绘制机会，长任务代表浏览器报告的约 50 ms 及以上主线程占用。
+- 每个窗口记录点击至首个可见文字、Provider 发出分块至对应的 SSE 投递及 DOM 帧、连续 `requestAnimationFrame` 间隔、Chromium Long Tasks 和渲染主线程 `TaskDuration`。待定和已提交正文的 DOM 探针可跨嵌套元素读取。位置和分块匹配使用这份固定实测文本中的内容字符，排除它使用的 Markdown 标记和空白。原文另由 Runtime 回执和磁盘历史全文校验。可见性判断排除页头和底部输入区，通过字形命中测试。第一次模拟滚到底部和字形查询也会产生布局开销，样本另列探针耗时。帧数据代表绘制机会，长任务代表浏览器报告的约 50 ms 及以上主线程占用。
 - Runtime 普通组保留 CPU 和命令墙钟。诊断组另存投影读取和扩展控制版本读取次数、累计墙钟、SSE 帧数及字节。双窗口的计数为服务端合计。读取计数反映调用路径，累计墙钟可包含等待或并发重叠。
 
 原始证据位于输出目录的 `samples.jsonl`，`environment.json` 保存版本、视口、固定样稿及每组节拍，`summary.json` 按窗口及分组汇总，并报告匹配到更新帧的块数。分块 p95 同时给出合并统计和逐轮 p95 的最小／最大值，便于看波动。常规复跑应在机器空闲时进行。真实模型、远程网络、工具步骤、真机与超长回复需要独立采样。
