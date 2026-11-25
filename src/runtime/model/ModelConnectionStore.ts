@@ -511,16 +511,19 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     }
   }
   validateTokenLimits(value.contextWindowTokens, value.maxOutputTokens);
-  validateReasoningPolicy({
-    provider,
-    dialect,
-    modelId,
-    effort: reasoningEffort,
-    summary: reasoningSummary,
-    thinking: thinkingMode,
-    thinkingBudgetTokens,
-    maxOutputTokens: value.maxOutputTokens as number,
-  });
+  validateReasoningPolicy(
+    {
+      provider,
+      dialect,
+      modelId,
+      effort: reasoningEffort,
+      summary: reasoningSummary,
+      thinking: thinkingMode,
+      thinkingBudgetTokens,
+      maxOutputTokens: value.maxOutputTokens as number,
+    },
+    { allowLegacyGoogleSettings: true },
+  );
   validatePresetBinding(presetId, provider, baseUrl);
   return {
     id,
@@ -736,8 +739,9 @@ function validateThinkingBudgetTokens(value: unknown): number | null {
 
 function validateReasoningPolicy(
   input: Parameters<typeof modelReasoningPolicyIssue>[0],
+  options?: Parameters<typeof modelReasoningPolicyIssue>[1],
 ): void {
-  const issue = modelReasoningPolicyIssue(input);
+  const issue = modelReasoningPolicyIssue(input, options);
   if (issue !== null) throw new Error(issue);
 }
 

@@ -467,6 +467,133 @@ test("Google 手工选择方言、推理等级或兼容预算，均保留独立�
   );
 });
 
+test("Google 标准配置显示旧预算并要求明确选择可发送的设置", async () => {
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    name: "Legacy Gemini",
+    provider: "google_interactions",
+    dialect: "standard",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    modelId: "gemini-4-neon",
+    reasoningSummary: "auto",
+    thinkingMode: "enabled",
+    thinkingBudgetTokens: 128,
+  };
+  const request = vi
+    .fn<(value: V1Request) => Promise<unknown>>()
+    .mockResolvedValue(library);
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  const save = screen.getByRole("button", { name: "保存模型连接并启用" });
+  const advanced = screen.getByText("高级协议选项");
+  expect(screen.getByRole("alert").textContent).toContain("旧的思考预算");
+  fireEvent.click(save);
+  expect(advanced.parentElement).toHaveProperty("open", true);
+  expect(request).not.toHaveBeenCalled();
+  const budget = screen.getByLabelText<HTMLInputElement>(
+    "Thinking budget tokens",
+  );
+  expect(budget.value).toBe("128");
+  expect(budget.readOnly).toBe(true);
+  const dialect = screen.getByLabelText("端点方言");
+  fireEvent.change(dialect, { target: { value: "cliproxyapi" } });
+  expect(budget.readOnly).toBe(false);
+  expect(budget.value).toBe("128");
+  fireEvent.change(dialect, { target: { value: "standard" } });
+  const effort = screen.getByLabelText<HTMLSelectElement>("Effort（推理强度）");
+  expect(Array.from(effort.options, ({ value }) => value)).toEqual([
+    "provider_default",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  expect(
+    effort.querySelector<HTMLOptionElement>('option[value="xhigh"]')?.disabled,
+  ).toBe(false);
+  fireEvent.change(effort, { target: { value: "xhigh" } });
+  expect(screen.queryByLabelText("Thinking budget tokens")).toBeNull();
+  expect(screen.queryByLabelText("Thinking（兼容预算模式）")).toBeNull();
+  const model = screen.getByLabelText("模型 ID");
+  fireEvent.change(model, { target: { value: "gemini-4-carbon" } });
+  expect(effort.value).toBe("xhigh");
+  expect(
+    effort.querySelector<HTMLOptionElement>('option[value="xhigh"]')?.disabled,
+  ).toBe(true);
+  expect(screen.getByRole("alert").textContent).toContain("xhigh");
+  fireEvent.click(save);
+  expect(request).not.toHaveBeenCalled();
+  fireEvent.change(model, { target: { value: "gemini-4-hydrogen" } });
+  fireEvent.click(save);
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "model.save",
+        connection: expect.objectContaining({
+          dialect: "standard",
+          modelId: "gemini-4-hydrogen",
+          reasoningEffort: "xhigh",
+          reasoningSummary: "auto",
+          thinkingMode: "provider_default",
+          thinkingBudgetTokens: null,
+        }) as unknown,
+      }),
+    ),
+  );
+});
+
+test("Google Gemini 4 Hydrogen 的旧 minimal 可查看并改为支持的等级", async () => {
+  const library = modelLibrary();
+  library.connections[0] = {
+    ...library.connections[0]!,
+    provider: "google_interactions",
+    dialect: "standard",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    modelId: "gemini-4-hydrogen",
+    reasoningEffort: "minimal",
+  };
+  const request = vi
+    .fn<(value: V1Request) => Promise<unknown>>()
+    .mockResolvedValue(library);
+  render(
+    createElement(ModelConnectionScreen, {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange: vi.fn(),
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    }),
+  );
+  const save = screen.getByRole("button", { name: "保存模型连接并启用" });
+  fireEvent.click(save);
+  expect(request).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toContain("请重新选择推理强度");
+  const effort = screen.getByLabelText<HTMLSelectElement>("Effort（推理强度）");
+  expect(effort.value).toBe("minimal");
+  expect(
+    effort.querySelector<HTMLOptionElement>('option[value="minimal"]')
+      ?.disabled,
+  ).toBe(true);
+  fireEvent.change(effort, { target: { value: "medium" } });
+  expect(effort.querySelector('option[value="minimal"]')).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(save);
+  await waitFor(() =>
+    expect(request.mock.lastCall?.[0]).toMatchObject({
+      type: "model.save",
+      connection: { reasoningEffort: "medium" },
+    }),
+  );
+});
+
 test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返回内容", async () => {
   const library = modelLibrary();
   const requests: V1Request[] = [];

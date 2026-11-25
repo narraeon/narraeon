@@ -1,7 +1,9 @@
+import { modelReasoningPolicyIssue } from "../../protocol/modelConnections.ts";
 import {
   bootstrapPrefixEnd,
   renderPromptDeltaMessage,
 } from "../prompt/FileNativePromptCompiler.ts";
+import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import type { AiExchangeCapture } from "./AiFailureLog.ts";
 import { continuationPrompt } from "./AssistantPrefill.ts";
 import type {
@@ -143,20 +145,28 @@ function googleRequestHeaders(
 function googleThinkingConfig(
   connection: ResolvedFileNativeModelConnection,
 ): Record<string, unknown> {
+  const issue = modelReasoningPolicyIssue({
+    provider: connection.provider,
+    dialect: connection.dialect,
+    modelId: connection.modelId,
+    effort: connection.reasoningEffort,
+    summary: connection.reasoningSummary,
+    thinking: connection.thinkingMode,
+    thinkingBudgetTokens: connection.thinkingBudgetTokens,
+  });
+  if (issue !== null) throw new RuntimeRequestRejection(issue);
   const config: Record<string, unknown> = {};
   if (connection.reasoningEffort !== "provider_default")
     config.thinking_level = connection.reasoningEffort;
   if (connection.reasoningSummary !== "provider_default")
     config.thinking_summaries = connection.reasoningSummary;
   if (connection.thinkingMode !== "provider_default") {
-    const budget =
+    config.thinking_budget =
       connection.thinkingMode === "adaptive"
         ? -1
         : connection.thinkingMode === "disabled"
           ? 0
           : connection.thinkingBudgetTokens;
-    if (connection.dialect === "cliproxyapi") config.thinking_budget = budget;
-    else config.thinking = { thinking_budget: budget };
   }
   return config;
 }

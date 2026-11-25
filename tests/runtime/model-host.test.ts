@@ -220,13 +220,23 @@ test.each([
   },
   {
     dialect: "standard",
-    settings: { thinkingMode: "enabled", thinkingBudgetTokens: 32 },
-    expected: { thinking: { thinking_budget: 32 } },
+    settings: { modelId: "gemini-4-neon", reasoningEffort: "xhigh" },
+    expected: { thinking_level: "xhigh" },
   },
   {
     dialect: "standard",
+    settings: { modelId: "models/gemini-4-hydrogen", reasoningEffort: "xhigh" },
+    expected: { thinking_level: "xhigh" },
+  },
+  {
+    dialect: "cliproxyapi",
+    settings: { modelId: "gemini-4-neon", reasoningEffort: "minimal" },
+    expected: { thinking_level: "minimal" },
+  },
+  {
+    dialect: "cliproxyapi",
     settings: { thinkingMode: "adaptive" },
-    expected: { thinking: { thinking_budget: -1 } },
+    expected: { thinking_budget: -1 },
   },
   {
     dialect: "cliproxyapi",
@@ -243,11 +253,12 @@ test.each([
   async ({ dialect, settings, expected }) => {
     const dispatched: Headers[] = [];
     const bodies: unknown[] = [];
+    const modelId = "modelId" in settings ? settings.modelId : "unknown-model";
     const host = new FileNativeModelHost(
       {
         provider: "google_interactions",
         dialect,
-        modelId: "unknown-model",
+        modelId,
         baseUrl: "https://provider.invalid/v1beta",
         apiKey: "credential",
         contextWindowTokens: 64000,
@@ -276,7 +287,7 @@ test.each([
     expect(host.binding().cacheStrategy).toBe("provider_managed");
     const request = exchangeFor(
       "google_interactions",
-      "unknown-model",
+      modelId,
       "provider_managed",
     );
     request.operationId = "play";
@@ -304,6 +315,108 @@ test.each([
     }
   },
 );
+
+test.each([
+  { thinkingMode: "enabled", thinkingBudgetTokens: 32 },
+  { thinkingMode: "adaptive" },
+  { thinkingMode: "disabled" },
+] as const)(
+  "Google 标准端点在预览和派发前拒绝旧预算 $thinkingMode",
+  async (settings) => {
+    const fetch_ = vi.fn<typeof fetch>();
+    const connection = {
+      provider: "google_interactions",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "fixture",
+      modelId: "gemini-4-hydrogen",
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    } as const;
+    const legacy = new FileNativeModelHost(
+      { ...connection, ...settings },
+      fetch_,
+    );
+    const request = exchangeFor(
+      connection.provider,
+      connection.modelId,
+      "provider_managed",
+    );
+    const reason =
+      /does not support thinking budgets.*Provider default.*CLIProxyAPI/u;
+    expect(() => legacy.previewRequest(request)).toThrow(reason);
+    await expect(legacy.exchange(request)).rejects.toThrow(reason);
+    const current = new FileNativeModelHost(connection, fetch_);
+    const frozen = legacy.freezeRequest(request);
+    expect(() => current.previewRequest(frozen)).toThrow(reason);
+    await expect(current.exchange(frozen)).rejects.toThrow(reason);
+    expect(fetch_).not.toHaveBeenCalled();
+
+    const historicalPreview = current.previewRequest(request);
+    expect(
+      isSafeGoogleWireRequest({
+        ...historicalPreview,
+        body: {
+          ...(historicalPreview.body as Record<string, unknown>),
+          generation_config: {
+            max_output_tokens: 2_048,
+            thinking: { thinking_budget: 32 },
+          },
+        },
+      }),
+    ).toBe(true);
+  },
+);
+
+test.each(["gemini-4-carbon", "gemini-3.8-flash", "custom-model"])(
+  "Google 标准端点只允许已知支持的模型使用 xhigh（%s）",
+  (modelId) => {
+    expect(
+      () =>
+        new FileNativeModelHost({
+          provider: "google_interactions",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+          apiKey: "fixture",
+          modelId,
+          reasoningEffort: "xhigh",
+          contextWindowTokens: 64_000,
+          maxOutputTokens: 2_048,
+        }),
+    ).toThrow(/xhigh is available for Gemini 4 Neon and Gemini 4 Hydrogen/u);
+  },
+);
+
+test.each(["gemini-4-neon", "gemini-4-hydrogen"])(
+  "Google 标准端点在预览和派发前拒绝旧 minimal（%s）",
+  async (modelId) => {
+    const fetch_ = vi.fn<typeof fetch>();
+    const connection = {
+      provider: "google_interactions",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "fixture",
+      modelId,
+      contextWindowTokens: 64_000,
+      maxOutputTokens: 2_048,
+    } as const;
+    const legacy = new FileNativeModelHost(
+      { ...connection, reasoningEffort: "minimal" },
+      fetch_,
+    );
+    const request = exchangeFor(
+      connection.provider,
+      modelId,
+      "provider_managed",
+    );
+    const current = new FileNativeModelHost(connection, fetch_);
+    const frozen = legacy.freezeRequest(request);
+    const reason = /minimal is unavailable.*choose Provider default/u;
+    expect(() => legacy.previewRequest(request)).toThrow(reason);
+    await expect(legacy.exchange(request)).rejects.toThrow(reason);
+    expect(() => current.previewRequest(frozen)).toThrow(reason);
+    await expect(current.exchange(frozen)).rejects.toThrow(reason);
+    expect(fetch_).not.toHaveBeenCalled();
+  },
+);
+
 test("Google 无状态续接保留各跳正文和原生步骤", async () => {
   const bodies: Record<string, unknown>[] = [];
   const hops: GoogleHopEvidence[] = [];

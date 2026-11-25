@@ -37,7 +37,9 @@
 
 ### 1.4 Google Interactions
 
-- 支持从端点拉取模型列表或手工输入模型 ID，可选标准或 CLIProxyAPI 方言，支持显式推理强度、摘要与兼容预算。目前尚无具体模型或协议版本通过真实四入口验收。
+- 支持从端点拉取模型列表或手工输入模型 ID，可选标准或 CLIProxyAPI 方言。目前尚无具体模型或协议版本通过真实四入口验收。
+- [标准 Interactions 请求](https://aistudio.google.com/api-reference/interactions-api)用 `generation_config.thinking_level` 设置推理强度，用 `generation_config.thinking_summaries` 设置摘要。[Google 的模型支持表](https://aistudio.google.com/docs/thinking#thinking-levels)列出 Gemini 4 Neon 与 Gemini 4 Hydrogen 的等级为 `low`、`medium`、`high` 和 `xhigh`。这两个模型已保存的 `minimal` 可在编辑时查看，须改为支持的等级或 Provider 默认才能保存、预览或派发。其他模型支持的等级请查 Google 的模型支持表。
+- CLIProxyAPI 方言保留 `generation_config.thinking_budget`，其中 `adaptive` 发送 `-1`，`disabled` 发送 `0`，手动预算发送已保存的非负整数。旧标准连接的预算仍可查看，保存、预览或派发前须明确选择 Provider 默认或模型支持的等级。实际使用兼容代理时，可以切换至 CLIProxyAPI 方言保留预算。已记录的旧请求预览仍可读取。
 - 文本 bootstrap 的前置 System 合并为单个 `system_instruction`；普通编排在 User／Assistant 之后出现 System 明确拒绝。
 - 世界修订的唯一例外：经同一世界持久 epoch 与来源校验的可信当前 epoch 边界可提升进入 `system_instruction`，历史原位置保留明确标注 Runtime 来源的通知（[ADR-0038](../adr/0038-world-revision-uses-one-locked-worktree.md)）；旧边界不提升，用户内容和其他中途 System 均不提升。
 - 后置请求提示作为带来源标记的追加用户输入编码，使用冻结主链与声明工具。
