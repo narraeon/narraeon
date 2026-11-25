@@ -26,10 +26,12 @@ for (const locale of appLocales) {
         await runtime(page, { type: "preferences.save", locale });
         const empty = await runtime<{
           contentPackages: unknown[];
+          model: { configured: boolean };
           worlds: unknown[];
         }>(page, { type: "workspace.read" });
         expect(empty.contentPackages).toEqual([]);
         expect(empty.worlds).toEqual([]);
+        expect(empty.model.configured).toBe(false);
         await page.reload();
         if (chinese) await page.setViewportSize({ width: 390, height: 844 });
         await expect(
@@ -75,14 +77,13 @@ for (const locale of appLocales) {
             .find(({ path }) => path === "opening.md")!
             .contents.trim(),
         );
-        await expect(
-          page.getByRole("button", {
-            name: chinese
-              ? "从当前内容包创建"
-              : "Create from current content package",
-            exact: true,
-          }),
-        ).toBeDisabled();
+        const createWorld = page.getByRole("button", {
+          name: chinese
+            ? "从当前内容包创建"
+            : "Create from current content package",
+          exact: true,
+        });
+        await expect(createWorld).toBeEnabled();
         await expect(
           page.getByRole("button", {
             name: chinese ? "编辑这份内容包" : "Refine this content package",
@@ -90,8 +91,8 @@ for (const locale of appLocales) {
           }),
         ).toBeVisible();
 
-        // The configured endpoint is deliberately unreachable. Creation and the
-        // authored opening require no Provider exchange; this does not test AI play.
+        // Exercise the optional settings detour using an unreachable endpoint.
+        // Creating the world and reading its opening work without a live Provider.
         const packagePicker = page.getByLabel(
           chinese ? "创建世界的内容包" : "Content package for the new world",
           { exact: true },
@@ -133,14 +134,7 @@ for (const locale of appLocales) {
         await page.reload();
         await expect(start).toHaveCount(0);
         await expect(page).toHaveURL(/#\/create$/u);
-        await page
-          .getByRole("button", {
-            name: chinese
-              ? "从当前内容包创建"
-              : "Create from current content package",
-            exact: true,
-          })
-          .click();
+        await createWorld.click();
         await expect(page.locator(".world-floating-title")).toHaveText(
           sample.title,
           { timeout: 15_000 },
