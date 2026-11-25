@@ -930,6 +930,9 @@ export interface V1PlayTimelinePage {
   generation: string;
   activeChainId: string | null;
   activeStatus: V1PlayCallChainStatus | null;
+  activeParentHead?: string | undefined;
+  /** Provider protocol from the active context's persisted model binding. */
+  activeModelProtocol?: ModelProviderKind | undefined;
   /** Live invocation identity; null when this Runtime owns none. Absent in legacy views. */
   activeInvocationExchangeId?: string | null;
   activeCanRetry: boolean;
@@ -978,6 +981,8 @@ export interface V1PlayCallChainContextView {
  */
 export interface V1PlayCallChainView extends V1PlayCallChainContextView {
   worldId: string;
+  /** Provider protocol from this context's persisted model binding. */
+  modelProtocol?: ModelProviderKind;
   previousContexts: V1PlayCallChainContextView[];
   /**
    * Present when the chain's last ending was the player's cancellation

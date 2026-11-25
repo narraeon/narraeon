@@ -136,6 +136,7 @@ describe("世界游玩页面", () => {
     const chain = {
       ...interruptedChainView(),
       freshContextReason: "snapshot_missing" as const,
+      modelProtocol: "chat_completions" as const,
       canRetry: false,
     };
     const request = vi.fn((input: V1Request): Promise<unknown> => {
@@ -143,8 +144,11 @@ describe("世界游玩页面", () => {
       if (input.type === "artifacts.debug") return Promise.resolve([]);
       return Promise.reject(new Error(input.type));
     });
-    renderWorld({ request });
+    renderWorld({ request }, undefined, {
+      activeModelProtocol: "anthropic_messages",
+    });
     const button = await screen.findByRole("button", { name: "用新上下文" });
+    expect(screen.queryByText(/当前模型协议与此上下文不同/u)).toBeNull();
     expect(
       screen.getByText("缺少这次请求的历史记录，无法还原原请求。"),
     ).toBeTruthy();
@@ -3724,8 +3728,11 @@ describe("世界游玩页面", () => {
     }
   });
 
-  test("协议不匹配保留玩家输入和追加入口，切回后可再次发送", async () => {
-    const chain = playChainView("existing", "first", "Begin.");
+  test("并发协议切换被 Runtime 拒绝时保留玩家输入和追加入口", async () => {
+    const chain = {
+      ...playChainView("existing", "first", "Begin."),
+      modelProtocol: "chat_completions" as const,
+    };
     let incompatible = true;
     const client = {
       request: vi.fn(<T>(request: V1Request): Promise<T> => {
@@ -3746,8 +3753,9 @@ describe("世界游玩页面", () => {
         return Promise.reject(new Error(`Unexpected request: ${request.type}`));
       }),
     };
-    renderWorld(client);
+    renderWorld(client, undefined, { activeModelProtocol: "chat_completions" });
     await screen.findByText("Alex opens the door and lets you go first.");
+    expect(screen.queryByText(/当前模型协议与此上下文不同/u)).toBeNull();
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "Continue after switching back." },
     });
@@ -5194,6 +5202,7 @@ function renderWorld(
     onRenameWorld?: (name: string) => Promise<void>;
     initialReadingPreferences?: AppReadingPreferences;
     modelConfigured?: boolean;
+    activeModelProtocol?: V1PlayCallChainView["modelProtocol"];
     simulateCombinedRevision?: boolean;
   } = {},
 ) {
@@ -5296,6 +5305,7 @@ function renderWorld(
         ? {}
         : { initialReadingPreferences: options.initialReadingPreferences }),
       modelConfigured: options.modelConfigured ?? true,
+      activeModelProtocol: options.activeModelProtocol,
     }),
   );
 }

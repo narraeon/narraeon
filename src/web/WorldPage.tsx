@@ -83,6 +83,7 @@ import {
   type AppPreferences,
   type AppReadingPreferences,
 } from "../protocol/appPreferences.ts";
+import type { ModelProviderKind } from "../protocol/modelConnections.ts";
 import type { RenderedPlayerView } from "../protocol/playerViews.ts";
 import { createClientId } from "./ClientId.ts";
 import {
@@ -138,6 +139,7 @@ export function WorldPage({
   worldId,
   worldTitle,
   modelConfigured,
+  activeModelProtocol,
   onBack,
   showWorkspaceBack = true,
   onConfigureModel,
@@ -157,6 +159,7 @@ export function WorldPage({
   worldId: string;
   worldTitle: string;
   modelConfigured: boolean;
+  activeModelProtocol?: ModelProviderKind | undefined;
   onBack: () => void;
   showWorkspaceBack?: boolean;
   onConfigureModel: () => void;
@@ -708,13 +711,15 @@ export function WorldPage({
     playCallChain !== null
       ? playCallChain.freshContextReason
       : playTimeline?.activeFreshContextReason;
+  const activeParentHead =
+    playCallChain?.parentHead ?? playTimeline?.activeParentHead;
   const activeChainStale =
     reportedFreshContextReason === "world_changed" ||
     forceFreshContext ||
     world?.archiveNeedsFreshContext === true ||
     (world !== null &&
-      playCallChain !== null &&
-      playCallChain.parentHead !== world.head);
+      activeParentHead !== undefined &&
+      activeParentHead !== world.head);
   const freshContextReason = activeChainStale
     ? world?.archiveNeedsFreshContext
       ? "imported_world"
@@ -726,6 +731,17 @@ export function WorldPage({
       playTimeline?.activeCanContinuePartial ??
       false);
   const activeCanRetry = freshContextReason === undefined && reportedCanRetry;
+  const contextModelProtocol =
+    playCallChain === null
+      ? playTimeline?.activeModelProtocol
+      : playCallChain.modelProtocol;
+  const modelProtocolMismatch =
+    modelConfigured &&
+    freshContextReason === undefined &&
+    activeModelProtocol !== undefined &&
+    contextModelProtocol !== undefined &&
+    activeModelProtocol !== contextModelProtocol &&
+    (activeStatus === "ready" || activeCanRetry || activeCanContinuePartial);
   const playProgressActive = playProgress !== null;
   const hasPlayerText = playerText.trim().length > 0;
   const playIdle =
@@ -739,6 +755,7 @@ export function WorldPage({
       : null;
   const canAppend =
     playIdle &&
+    !modelProtocolMismatch &&
     freshContextReason === undefined &&
     (activeChainId === null
       ? hasPlayerText
@@ -776,7 +793,8 @@ export function WorldPage({
     if (
       fresh
         ? !hasSubmittedText
-        : freshContextReason !== undefined ||
+        : modelProtocolMismatch ||
+          freshContextReason !== undefined ||
           (activeStatus !== "ready" &&
             (hasSubmittedText ||
               !(recovery === "continue_partial"
@@ -1488,7 +1506,7 @@ export function WorldPage({
     canContinuePartial: activeCanContinuePartial,
     onContinuePartial: () =>
       void submitPlayChain("append", "", "continue_partial"),
-    playDisabled: !modelConfigured || !playIdle,
+    playDisabled: !modelConfigured || !playIdle || modelProtocolMismatch,
     configureDisabled: !playIdle || navigationBusy,
     onRetry: () => void submitPlayChain("append", ""),
     onConfigureModel,
@@ -1984,6 +2002,22 @@ export function WorldPage({
                 />
               </div>
             )}
+            {modelProtocolMismatch && playIdle ? (
+              <div className="play-call-failure" role="status">
+                <p>
+                  {uiText(
+                    "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
+                  )}
+                </p>
+                {!preferFreshContext && (
+                  <div>
+                    <button type="button" onClick={openFreshComposer}>
+                      {uiText("选择新对话（保留故事进度）")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
             {preferFreshContext && !activeChainStale && playIdle ? (
               <div className="world-fresh-context-note" role="note">
                 <span>{uiText("下一条消息将开启全新上下文")}</span>

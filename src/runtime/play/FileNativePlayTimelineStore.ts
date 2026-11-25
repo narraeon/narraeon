@@ -16,6 +16,7 @@ import {
 } from "./PlayRequestContext.ts";
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
+import { validProviderKind } from "../prompt/PromptCompilationCodec.ts";
 import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
 import {
@@ -71,6 +72,7 @@ import type {
   V1PlayTimelineItem,
   V1PlayTimelinePage,
 } from "../../protocol/v1.ts";
+import type { ModelProviderKind } from "../../protocol/modelConnections.ts";
 import type { ModelUsage, ModelUsageField } from "../../protocol/modelUsage.ts";
 import type {
   ModelHostAppendItem,
@@ -176,6 +178,8 @@ interface PersistedContextBase {
 }
 
 interface PersistedContextState {
+  /** Absent in old state records. Null when the frozen base has no binding. */
+  modelProtocol?: ModelProviderKind | null;
   supersededEventIds?: number[];
   canContinuePartial?: boolean;
   freshContextReason?: FreshContextReason;
@@ -494,6 +498,7 @@ export class FileNativePlayTimelineStore {
       chainId: value.chainId,
       parentHead: value.parentHead,
       status: value.status,
+      modelProtocol: value.modelBinding?.provider ?? null,
       canRetry: value.canRetry && !freshContextReason,
       canContinuePartial:
         freshContextReason === undefined &&
@@ -1234,7 +1239,17 @@ export class FileNativePlayTimelineStore {
     const active =
       head === null
         ? null
-        : await this.#readContextMetadata(worldId, head.chainId);
+        : (metadata.get(head.chainId) ??
+          (await this.#readContextMetadata(worldId, head.chainId)));
+    let activeModelProtocol = active?.state.modelProtocol;
+    if (active !== null && activeModelProtocol === undefined) {
+      // Released contexts only recorded the binding in their frozen base.
+      const base = await readOptionalJson<unknown>(
+        join(active.root, "base.json"),
+      ).catch(() => null);
+      if (isRecord(base) && validModelHostBinding(base.modelBinding))
+        activeModelProtocol = base.modelBinding.provider;
+    }
     let activeFreshContextReason = active?.state.freshContextReason;
     if (
       active?.state.status === "interrupted" &&
@@ -1247,6 +1262,8 @@ export class FileNativePlayTimelineStore {
       generation,
       activeChainId: head?.chainId ?? null,
       activeStatus: active?.state.status ?? null,
+      ...(active === null ? {} : { activeParentHead: active.state.parentHead }),
+      ...(activeModelProtocol == null ? {} : { activeModelProtocol }),
       activeCanRetry:
         !activeFreshContextReason && (active?.state.canRetry ?? false),
       activeCanContinuePartial:
@@ -2021,6 +2038,7 @@ function assertContextState(
       value.status !== "running" &&
       value.status !== "interrupted") ||
     typeof value.canRetry !== "boolean" ||
+    (value.modelProtocol != null && !validProviderKind(value.modelProtocol)) ||
     (value.canContinuePartial !== undefined &&
       typeof value.canContinuePartial !== "boolean") ||
     (value.supersededEventIds !== undefined &&
@@ -2085,10 +2103,7 @@ function assertTimelineHead(
 function validModelHostBinding(value: unknown): value is ModelHostBinding {
   return (
     isRecord(value) &&
-    (value.provider === "chat_completions" ||
-      value.provider === "openai_responses" ||
-      value.provider === "anthropic_messages" ||
-      value.provider === "google_interactions") &&
+    validProviderKind(value.provider) &&
     typeof value.endpointFingerprint === "string" &&
     value.endpointFingerprint.length > 0 &&
     typeof value.modelId === "string" &&

@@ -1207,6 +1207,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         worldId={worldId}
         worldTitle={selectedWorld?.title ?? uiText("未命名世界")}
         modelConfigured={workspace.model.configured}
+        activeModelProtocol={activeModel?.provider}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
         initialComposerDraft={

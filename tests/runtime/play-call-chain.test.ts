@@ -6363,7 +6363,7 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
     binding: modelBinding(),
     steps: [{ outcome: "response", text: "Only the tail advances." }],
   });
-  await chains.append({
+  const continued = await chains.append({
     worldId,
     chainId: completed.chainId,
     exchangeId: "play-chain-long-timeline-continuation",
@@ -6371,9 +6371,13 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
     modelHost: continuation,
   });
   expect(await readFile(oldEventPath, "utf8")).toBe(oldEvent);
+  const earlierWithCurrentHead = {
+    ...earlier,
+    activeParentHead: continued.parentHead,
+  };
   await expect(
     worlds.playTimeline.readPage(worldId, 10, tail.nextCursor!),
-  ).resolves.toEqual(earlier);
+  ).resolves.toEqual(earlierWithCurrentHead);
 
   const contextRoot = join(
     root,
@@ -6412,6 +6416,10 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
     committedMessages: [],
     playCallChain: null,
   });
+  expect(opened.playTimeline).toMatchObject({
+    activeModelProtocol: "chat_completions",
+    activeParentHead: continued.parentHead,
+  });
   expect(opened.playTimeline.items.length).toBeLessThanOrEqual(40);
   expect(JSON.stringify(opened)).not.toContain(detailMarker);
   await expect(readdir(join(root, "artifact-store"))).rejects.toMatchObject({
@@ -6426,7 +6434,10 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
       cursor: tail.nextCursor!,
     })
   ).result;
-  expect(runtimePage).toEqual({ ...earlier, activeInvocationExchangeId: null });
+  expect(runtimePage).toEqual({
+    ...earlierWithCurrentHead,
+    activeInvocationExchangeId: null,
+  });
   const runtimeDetail = (
     await runtime.handle({
       type: "play.timeline.detail",
@@ -10214,7 +10225,7 @@ test("切换协议只临时拒绝，切回原协议后允许继续", async () =>
       playerText: "Next.",
       modelHost: switched,
     }),
-  ).rejects.toThrow(/protocol/i);
+  ).rejects.toMatchObject({ code: "model_protocol_mismatch" });
   expect(switched.requests).toHaveLength(0);
   expect(await new PlayCallChain(worlds).inspectWorld(worldId)).toMatchObject({
     status: "ready",
