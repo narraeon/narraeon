@@ -18,10 +18,12 @@ import {
   modelReasoningPolicyIssue,
   modelProviderPresets,
   responsesConnectionCapabilities,
+  supportsUnauthenticatedModelConnection,
   type ResponsesConnectionCapabilities,
   type CopyModelConnectionResult,
   type ListProviderModelsInput,
   type ModelConnectionLibraryView,
+  type ModelConnectionAuthMode,
   type ModelConnectionView,
   type ModelAssistantPrefillMode,
   type ModelProviderDialect,
@@ -53,8 +55,10 @@ const maxStoredConnections = 64;
 
 interface StoredModelConnection
   extends
-    Omit<FileNativeModelConnection, "modelPrompt">,
+    Omit<FileNativeModelConnection, "modelPrompt" | "apiKey" | "authMode">,
     ResponsesConnectionCapabilities {
+  authMode: ModelConnectionAuthMode;
+  apiKey?: string;
   modelPrompt: string;
   id: string;
   name: string;
@@ -239,8 +243,13 @@ export class ModelConnectionStore {
     const baseUrl = normalizeBaseUrl(
       requiredTrimmed(input.baseUrl, "Base URL", 4096),
     );
-    let apiKey = normalizeOptionalApiKey(input.apiKey);
-    if (apiKey === undefined && input.connectionId !== undefined) {
+    const authMode = validateAuthMode(input.authMode, provider, baseUrl);
+    let apiKey = normalizeApiKey(input.apiKey, authMode);
+    if (
+      authMode === "api_key" &&
+      apiKey === undefined &&
+      input.connectionId !== undefined
+    ) {
       const stored = (await this.#readDocument()).connections.find(
         ({ id }) => id === input.connectionId,
       );
@@ -248,18 +257,21 @@ export class ModelConnectionStore {
         throw new Error("Model configuration not found");
       apiKey = savedApiKeyForOrigin(stored, baseUrl);
     }
-    if (apiKey === undefined)
+    if (authMode === "api_key" && apiKey === undefined)
       throw new Error("Fetching the model list requires an API key");
 
     const url = providerUrl(baseUrl, "models");
     if (provider === "anthropic_messages")
       url.searchParams.set("limit", "1000");
     const google = provider === "google_interactions";
-    const headers: Record<string, string> = google
-      ? { "x-goog-api-key": apiKey }
-      : provider === "anthropic_messages"
-        ? { "anthropic-version": "2023-06-01", "x-api-key": apiKey }
-        : { Authorization: `Bearer ${apiKey}` };
+    const headers: Record<string, string> =
+      apiKey === undefined
+        ? {}
+        : google
+          ? { "x-goog-api-key": apiKey }
+          : provider === "anthropic_messages"
+            ? { "anthropic-version": "2023-06-01", "x-api-key": apiKey }
+            : { Authorization: `Bearer ${apiKey}` };
     if (google) url.searchParams.set("pageSize", "100");
     const signal = AbortSignal.timeout(15_000);
     const ids = new Set<string>();
@@ -269,7 +281,7 @@ export class ModelConnectionStore {
       const response = await (google
         ? this.#fetch(new URL(url), { ...options, redirect: "error" })
         : fetchModelService(this.#fetch, new URL(url), options));
-      const payload = await readModelListPage(response, apiKey);
+      const payload = await readModelListPage(response, apiKey ?? "");
       const field = google ? "models" : "data";
       const entries =
         google && payload.models === undefined ? [] : payload[field];
@@ -419,14 +431,16 @@ function normalizeSaveInput(
     thinkingBudgetTokens,
     maxOutputTokens: input.maxOutputTokens,
   });
-  const explicitApiKey = normalizeOptionalApiKey(input.apiKey);
-  const apiKey =
-    explicitApiKey ??
-    (existing === undefined
-      ? undefined
-      : savedApiKeyForOrigin(existing, baseUrl));
-  if (apiKey === undefined)
-    throw new Error("A new model configuration requires an API key");
+  const authMode = validateAuthMode(input.authMode, provider, baseUrl);
+  let apiKey = normalizeApiKey(input.apiKey, authMode);
+  if (authMode === "api_key" && apiKey === undefined && existing !== undefined)
+    apiKey = savedApiKeyForOrigin(existing, baseUrl);
+  if (authMode === "api_key" && apiKey === undefined)
+    throw new Error(
+      existing === undefined
+        ? "A new model configuration requires an API key"
+        : "Switching authentication requires an API key",
+    );
   validatePresetBinding(presetId, provider, baseUrl);
   return {
     name,
@@ -434,7 +448,8 @@ function normalizeSaveInput(
     provider,
     dialect,
     baseUrl,
-    apiKey,
+    authMode,
+    ...(apiKey === undefined ? {} : { apiKey }),
     modelId,
     modelPrompt: validateModelPrompt(input.modelPrompt, existing?.modelPrompt),
     reasoningEffort,
@@ -496,7 +511,11 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
   const provider = validateProvider(value.provider);
   const dialect = validateDialect(value.dialect);
   const baseUrl = normalizeBaseUrl(requiredTrimmed(value.baseUrl, "Base URL"));
-  const apiKey = requiredTrimmed(value.apiKey, "API Key", 16_384);
+  const authMode = validateAuthMode(value.authMode, provider, baseUrl);
+  const apiKey =
+    authMode === "api_key"
+      ? requiredTrimmed(value.apiKey, "API Key", 16_384)
+      : normalizeApiKey(value.apiKey, authMode);
   const modelId = requiredTrimmed(value.modelId, "Model ID", 512);
   let reasoningEffort = validateReasoningEffort(value.reasoningEffort);
   const reasoningSummary = validateReasoningSummary(value.reasoningSummary);
@@ -540,7 +559,8 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     provider,
     dialect,
     baseUrl,
-    apiKey,
+    authMode,
+    ...(apiKey === undefined ? {} : { apiKey }),
     modelId,
     modelPrompt: validateModelPrompt(value.modelPrompt),
     reasoningEffort,
@@ -591,7 +611,7 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     assistantPrefillMode: connection.assistantPrefillMode,
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
-    hasApiKey: true,
+    hasApiKey: connection.authMode === "api_key",
   });
 }
 
@@ -602,7 +622,10 @@ function toBinding(
     provider: connection.provider,
     dialect: connection.dialect,
     baseUrl: connection.baseUrl,
-    apiKey: connection.apiKey,
+    apiKey: connection.apiKey ?? "",
+    ...(connection.authMode === "none"
+      ? { authMode: connection.authMode }
+      : {}),
     modelId: connection.modelId,
     ...(connection.modelPrompt.trim() === ""
       ? {}
@@ -802,14 +825,34 @@ function normalizeBaseUrl(value: string): string {
 function savedApiKeyForOrigin(
   connection: StoredModelConnection,
   baseUrl: string,
-): string {
+): string | undefined {
+  if (connection.authMode !== "api_key") return undefined;
   if (!isSameModelServiceOrigin(connection.baseUrl, baseUrl))
     throw new Error("Changing the model service origin requires an API key");
   return connection.apiKey;
 }
 
-function normalizeOptionalApiKey(value: unknown): string | undefined {
+function validateAuthMode(
+  value: unknown,
+  provider: ModelProviderKind,
+  baseUrl: string,
+): ModelConnectionAuthMode {
+  if (value === undefined || value === "api_key") return "api_key";
+  if (value !== "none") throw new Error("Model authentication mode is invalid");
+  if (!supportsUnauthenticatedModelConnection(provider, baseUrl))
+    throw new Error(
+      "Using no API key requires a loopback Chat Completions endpoint",
+    );
+  return value;
+}
+
+function normalizeApiKey(
+  value: unknown,
+  authMode: ModelConnectionAuthMode,
+): string | undefined {
   if (value === undefined || value === "") return undefined;
+  if (authMode === "none")
+    throw new Error("Do not enter an API key when authentication is disabled");
   return requiredTrimmed(value, "API Key", 16_384);
 }
 

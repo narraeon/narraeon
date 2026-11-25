@@ -2,6 +2,7 @@ import {
   anthropicConnectionCacheSettings,
   modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
+  supportsUnauthenticatedModelConnection,
   type AnthropicConnectionCacheSettings,
   type ModelAssistantPrefillMode,
   type ModelProviderDialect,
@@ -21,6 +22,7 @@ export interface FileNativeModelConnection
   provider: FileNativePromptInput["modelBinding"]["provider"];
   dialect?: ModelProviderDialect;
   baseUrl: string;
+  authMode?: "none";
   apiKey: string;
   modelId: string;
   modelPrompt?: ModelConnectionPrompt;
@@ -68,6 +70,17 @@ export function resolveConnection(
   }: Omit<FileNativeModelConnection, "modelPrompt">,
   legacyResponses = false,
 ): ResolvedFileNativeModelConnection {
+  if (
+    connection.authMode === "none" &&
+    (connection.apiKey !== "" ||
+      !supportsUnauthenticatedModelConnection(
+        connection.provider,
+        connection.baseUrl,
+      ))
+  )
+    throw new Error(
+      "Using no API key requires a loopback Chat Completions endpoint without an API key",
+    );
   const resolved = structuredClone({
     ...connection,
     ...anthropicConnectionCacheSettings(

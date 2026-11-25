@@ -207,10 +207,10 @@ export interface ProviderDispatch {
   failureLog: AiFailureRecorder | undefined;
 }
 
-export function bearerProviderHeaders(apiKey: string) {
+export function bearerProviderHeaders(apiKey: string | undefined) {
   return {
     Accept: "text/event-stream",
-    Authorization: `Bearer ${apiKey}`,
+    ...(apiKey === undefined ? {} : { Authorization: `Bearer ${apiKey}` }),
     "Content-Type": "application/json",
   };
 }

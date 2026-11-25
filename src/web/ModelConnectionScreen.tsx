@@ -21,8 +21,10 @@ import {
   isSameModelServiceOrigin,
   modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
+  supportsUnauthenticatedModelConnection,
   type AnthropicPromptCacheTtl,
   type CopyModelConnectionResult,
+  type ModelConnectionAuthMode,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
   type ModelAssistantPrefillMode,
@@ -42,7 +44,9 @@ interface ConnectionForm {
   provider: ModelProviderKind;
   dialect: ModelProviderDialect;
   baseUrl: string;
+  authMode: ModelConnectionAuthMode;
   apiKey: string;
+  reuseSavedApiKey: boolean;
   modelId: string;
   modelPrompt: string;
   reasoningEffort: ModelReasoningEffort;
@@ -66,7 +70,9 @@ function emptyConnectionForm(): ConnectionForm {
     provider: "chat_completions",
     dialect: "standard",
     baseUrl: "",
+    authMode: "api_key",
     apiKey: "",
+    reuseSavedApiKey: false,
     modelId: "",
     modelPrompt: "",
     reasoningEffort: "provider_default",
@@ -131,7 +137,8 @@ export function ModelConnectionScreen({
     if (selected !== undefined) {
       if (
         selected.baseUrl !== current.form.baseUrl ||
-        selected.provider !== current.form.provider
+        selected.provider !== current.form.provider ||
+        selected.hasApiKey !== (current.form.authMode === "api_key")
       )
         setModels([]);
       setForm(formFor(selected));
@@ -188,9 +195,16 @@ export function ModelConnectionScreen({
   const savedConnection = library.connections.find(
     ({ id }) => id === form.connectionId,
   );
-  const credentialsMustBeEntered =
-    savedConnection === undefined ||
+  const noKeyAvailable = supportsUnauthenticatedModelConnection(
+    form.provider,
+    form.baseUrl,
+  );
+  const changingOrigin =
+    savedConnection !== undefined &&
     !isSameModelServiceOrigin(savedConnection.baseUrl, form.baseUrl);
+  const credentialsMustBeEntered =
+    form.authMode === "api_key" &&
+    (!form.reuseSavedApiKey || !savedConnection?.hasApiKey || changingOrigin);
 
   useLayoutEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useLayoutEffect(
@@ -216,6 +230,17 @@ export function ModelConnectionScreen({
         !isSameModelServiceOrigin(current.baseUrl, updated.baseUrl)
       )
         updated.apiKey = "";
+      if (updated.authMode === "none") {
+        updated.apiKey = "";
+        updated.reuseSavedApiKey = false;
+        if (
+          !supportsUnauthenticatedModelConnection(
+            updated.provider,
+            updated.baseUrl,
+          )
+        )
+          updated.authMode = "api_key";
+      }
       if (updated.provider !== "openai_responses")
         updated.responsesTurnInstructions = false;
       if (
@@ -307,6 +332,7 @@ export function ModelConnectionScreen({
             provider: form.provider,
             dialect: form.dialect,
             baseUrl: form.baseUrl,
+            ...(form.authMode === "none" ? { authMode: form.authMode } : {}),
             ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
             modelId: form.modelId,
             modelPrompt: form.modelPrompt,
@@ -407,9 +433,12 @@ export function ModelConnectionScreen({
       acceptLibrary(result.library);
       edit(copied);
       onNotice(
-        uiText("已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。", {
-          name: copied.name,
-        }),
+        uiText(
+          copied.hasApiKey
+            ? "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。"
+            : "已克隆为「{name}」。副本无需 API Key，当前配置保持不变。",
+          { name: copied.name },
+        ),
       );
     } catch (error: unknown) {
       onNotice(errorMessage(error));
@@ -481,11 +510,12 @@ export function ModelConnectionScreen({
       const result = await target.command(() =>
         client.request<{ models: string[] }>({
           type: "model.models",
-          ...(form.connectionId === null
+          ...(form.connectionId === null || !form.reuseSavedApiKey
             ? {}
             : { connectionId: form.connectionId }),
           provider: form.provider,
           baseUrl: form.baseUrl,
+          ...(form.authMode === "none" ? { authMode: form.authMode } : {}),
           ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
         }),
       );
@@ -599,28 +629,74 @@ export function ModelConnectionScreen({
             </p>
           )}
 
-          <label htmlFor="model-api-key">API Key</label>
-          <input
-            autoComplete="off"
-            id="model-api-key"
-            aria-label="API Key"
-            required={credentialsMustBeEntered}
-            type="password"
-            value={form.apiKey}
-            placeholder={
-              form.connectionId === null
-                ? uiText("新配置必填")
-                : credentialsMustBeEntered
-                  ? uiText("更换服务来源时必填")
-                  : uiText("留空以沿用本机保存的现有凭据")
-            }
-            onChange={(event) => change({ apiKey: event.target.value }, true)}
-          />
-          <p className="field-note">
-            {uiText(
-              "地址的协议方案、主机和端口相同时，可留空沿用本机凭据。更换服务来源须填写对应的 API Key。",
-            )}
-          </p>
+          {form.provider === "chat_completions" && (
+            <>
+              <label htmlFor="model-auth-mode">{uiText("鉴权方式")}</label>
+              <select
+                id="model-auth-mode"
+                value={form.authMode}
+                aria-describedby={
+                  noKeyAvailable ? undefined : "model-auth-note"
+                }
+                onChange={(event) =>
+                  change(
+                    { authMode: event.target.value as ModelConnectionAuthMode },
+                    true,
+                  )
+                }
+              >
+                <option value="api_key">API Key</option>
+                <option value="none" disabled={!noKeyAvailable}>
+                  {uiText("无需 API Key")}
+                </option>
+              </select>
+              {!noKeyAvailable && (
+                <p className="field-note" id="model-auth-note">
+                  {uiText(
+                    "无需 API Key 仅适用于本机回环地址，例如 http://localhost:11434/v1。",
+                  )}
+                </p>
+              )}
+            </>
+          )}
+          {form.authMode === "api_key" ? (
+            <>
+              <label htmlFor="model-api-key">API Key</label>
+              <input
+                autoComplete="off"
+                id="model-api-key"
+                aria-label="API Key"
+                required={credentialsMustBeEntered}
+                type="password"
+                value={form.apiKey}
+                placeholder={
+                  form.connectionId === null
+                    ? uiText("新配置必填")
+                    : !credentialsMustBeEntered
+                      ? uiText("留空以沿用本机保存的现有凭据")
+                      : changingOrigin
+                        ? uiText("更换服务来源时必填")
+                        : uiText("请输入 API Key")
+                }
+                onChange={(event) =>
+                  change({ apiKey: event.target.value }, true)
+                }
+              />
+              {form.reuseSavedApiKey && (
+                <p className="field-note">
+                  {uiText(
+                    "地址的协议方案、主机和端口相同时，可留空沿用本机凭据。更换服务来源须填写对应的 API Key。",
+                  )}
+                </p>
+              )}
+            </>
+          ) : (
+            savedConnection?.hasApiKey && (
+              <p className="field-note">
+                {uiText("保存后会移除这份配置原有的 API Key。")}
+              </p>
+            )
+          )}
 
           <div className="model-picker-row">
             <div>
@@ -1248,7 +1324,7 @@ export function ModelConnectionScreen({
                       <dd>
                         {connection.hasApiKey
                           ? uiText("已保存在本机")
-                          : uiText("未配置")}
+                          : uiText("无需 API Key")}
                       </dd>
                     </div>
                   </dl>
@@ -1340,7 +1416,9 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     provider: connection.provider,
     dialect: connection.dialect,
     baseUrl: connection.baseUrl,
+    authMode: connection.hasApiKey ? "api_key" : "none",
     apiKey: "",
+    reuseSavedApiKey: connection.hasApiKey,
     modelId: connection.modelId,
     modelPrompt: connection.modelPrompt ?? "",
     reasoningEffort: connection.reasoningEffort,

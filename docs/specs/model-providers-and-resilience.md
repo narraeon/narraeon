@@ -15,6 +15,7 @@
 
 - 保留有序前部编码为 system 前缀；工具结果编码为逐项 `tool` message。
 - 支持标准端点与 CLIProxyAPI 方言。
+- 模型列表与生成请求默认使用 API Key，旧连接缺少鉴权字段时沿用此默认值。只有 HTTP(S) 回环端点（`localhost`、IPv4 `127.0.0.0/8` 或 IPv6 `[::1]`）可显式选择「无需 API Key」。保存时记录鉴权方式并移除该连接原有的 Key；克隆和重新打开保持已保存的选择。免 Key 的模型列表、流式生成和工具续传均省略鉴权头，并继续限制重定向只能留在同源。切回 Key 模式时须提供新凭据。局域网端点和其他协议仍须配置 API Key。
 - 发往 `https://api.openai.com/v1/chat/completions` 的 o 系列请求将 `maxOutputTokens` 编码为 `max_completion_tokens`。其余 Chat 请求（包括兼容代理）继续使用 `max_tokens`。每次请求只发送一个输出上限字段。[OpenAI Chat Completions 参考](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 - 通过 Chat Completions 代理调用 Claude 时通常只能获得 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证无损续传时必须使用 Anthropic Messages 或支持 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，不得切割正文猜测 thinking。
 
