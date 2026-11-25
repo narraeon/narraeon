@@ -155,6 +155,8 @@ A content package is editable before play. You can keep several packages, copy t
 
 In setting improvement, ask the model to discuss a plan or to edit the package directly. The Runtime executes calls from each complete tool response in order and publishes all successful changes together to the current package. The conversation shows the file diffs and the results of checks such as reference validation and Prompt Preview. Creating a world gives it its own copy of the package files.
 
+When you create a YAML or Markdown world document in the file editor, the draft starts with an editable `$document` header and a short reference that is unique within the draft. Add your text below the header in YAML or below the heading in Markdown. The same editor is available in content packages and world revision. [File editor specification](docs/specs/web-workspace-and-observation.md#12-手动新建文件)
+
 For a detailed Chinese authoring guide, see [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md).
 
 ## Language behavior

@@ -3,7 +3,9 @@ import { useMemo, useState } from "react";
 
 import { gameplayPath } from "../protocol/gameplay.ts";
 import type { ContentTreeFile } from "../protocol/v1.ts";
+import { documentCodec } from "../shared/world-document-format.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
+import { newFileContents } from "./world-document-draft.ts";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
 
 export interface DocumentWorkbenchIssue {
@@ -87,6 +89,8 @@ export function DocumentWorkbench({
     selectedFile !== undefined
       ? validateDraftPath(pathDraft, selectedFile.path, files, workspace.kind)
       : "";
+  const documentRoot =
+    workspace.kind === "content-package" ? "world/" : "state/";
   const newPathError = validateDraftPath(
     newPath,
     undefined,
@@ -129,7 +133,7 @@ export function DocumentWorkbench({
     const path = newPath.trim();
     workspace.onFilesChange([
       ...files.map((file) => ({ ...file })),
-      { path, contents: "" },
+      { path, contents: newFileContents(path, documentRoot, files) },
     ]);
     select(path);
     setNewPath("");
@@ -291,6 +295,15 @@ export function DocumentWorkbench({
                 "新文件先加入本地草稿；Runtime 会在整批保存时检查路径与内容。",
               )}
             </p>
+            {newPathError.length === 0 &&
+              newPath.trim().startsWith(documentRoot) &&
+              documentCodec(newPath.trim()) === "markdown" && (
+                <p>
+                  {uiText(
+                    "修改 Markdown 文档标题时，文件头的 title 和正文的一级标题须一致。",
+                  )}
+                </p>
+              )}
             <button
               type="button"
               disabled={newPathError.length > 0}
@@ -626,20 +639,6 @@ function describeFile(
 function editorPlaceholder(path: string): string {
   if (path === "opening.md")
     return uiText("写下玩家首次行动前立即看到的局面……");
-  if (
-    (path.startsWith("world/") || path.startsWith("state/")) &&
-    /\.ya?ml$/iu.test(path)
-  )
-    return uiText(
-      "$document:\n  id: character.example\n  ref: example\n  title: 示例人物\n  summary: 一句话稳定简介。\n  aliases: []\n",
-    );
-  if (
-    (path.startsWith("world/") || path.startsWith("state/")) &&
-    /\.md$/iu.test(path)
-  )
-    return uiText(
-      "---\n$document:\n  id: rule.example\n  ref: example\n  title: 示例规则\n  summary: 一句话稳定简介。\n  aliases: []\n---\n\n# 示例规则\n",
-    );
   return uiText("输入 UTF-8 文本内容……");
 }
 

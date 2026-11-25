@@ -1,5 +1,9 @@
 import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
-import { expect as playwrightExpect, type Locator } from "@playwright/test";
+import {
+  expect as playwrightExpect,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { test } from "../support/isolatedRuntimeTest.ts";
 import { createServer, type Server } from "node:http";
 
@@ -1299,6 +1303,187 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     pollingRequests.filter((type) => type === "play.chain.inspect").length,
   ).toBeLessThanOrEqual(1);
 });
+
+test("新建世界文档时文件头是可编辑的草稿内容", async ({ page }) => {
+  test.setTimeout(35_000);
+  const packageEditor = page.getByRole("complementary", {
+    name: "内容包文件编辑",
+  });
+  const revisionEditor = page.getByRole("complementary", {
+    name: "世界修订文件编辑",
+  });
+  const openEditor = (kind: "设定完善" | "世界修订") =>
+    page
+      .getByRole("navigation", { name: `${kind}工具` })
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+  async function reopenFile(editor: Locator, path: string): Promise<Locator> {
+    await editor
+      .getByRole("button", { name: `打开 ${path}`, exact: true })
+      .click();
+    return editor.getByLabel(`编辑 ${path}`);
+  }
+
+  const ids = new Set(["situation.current"]);
+  async function createWorldDocuments(
+    editor: Locator,
+    folder: string,
+    firstRefSuffix: number,
+  ): Promise<Map<string, string>> {
+    const documents = [
+      { extension: "yml", prefix: /^\$document:/u, body: "weather: clear\n" },
+      {
+        extension: "md",
+        prefix: /^---\n\$document:/u,
+        body: "A new paragraph.\n",
+      },
+    ];
+    const saved = new Map<string, string>();
+    for (const [index, { extension, prefix, body }] of documents.entries()) {
+      const path = `${folder}/current-situation.${extension}`;
+      const source = await addWorkbenchFile(editor, path);
+      await expect(source).toHaveValue(prefix, { timeout: 3000 });
+      const header = await source.inputValue();
+      expect(header).toContain(
+        `  ref: current-situation-${firstRefSuffix + index}\n`,
+      );
+      expect(header).toContain("  summary: 用一句话概括这份文档。\n");
+      if (extension === "md")
+        expect(header).toContain("\n---\n\n# current-situation\n");
+      const id = /^ {2}id: (doc\.[0-9a-f]{32})$/mu.exec(header)?.[1] ?? "";
+      expect(id).not.toBe("");
+      expect(ids.has(id)).toBe(false);
+      ids.add(id);
+
+      const editedHeader = header.replace(
+        "用一句话概括这份文档。",
+        "作者写的简介。",
+      );
+      await source.fill(editedHeader);
+      await appendWorkbenchText(source, body, page);
+      const contents = editedHeader + body;
+      await expect(source).toHaveValue(contents);
+      saved.set(path, contents);
+    }
+    return saved;
+  }
+
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
+  await page.getByRole("button", { name: "模型设置", exact: true }).click();
+  if ((await page.getByLabel("Base URL").inputValue()).length === 0) {
+    await page.getByLabel("Base URL").fill(providerUrl);
+    await page.getByLabel("API Key").fill("world-document-header-fixture");
+    await page.getByLabel("模型 ID").fill("trace-model");
+    await page.getByRole("button", { name: "保存模型连接" }).click();
+    await expect(page.getByRole("status")).toContainText("模型连接已保存");
+  }
+  await page.getByRole("button", { name: "返回工作区" }).click();
+  await page.getByRole("button", { name: "新建内容包" }).click();
+  await page
+    .getByRole("dialog", { name: "新建内容包" })
+    .getByRole("button", { name: "创建", exact: true })
+    .click();
+  await openEditor("设定完善");
+
+  const originalSituation = await (
+    await reopenFile(packageEditor, "world/current-situation.yaml")
+  ).inputValue();
+  const packageFiles = await createWorldDocuments(
+    packageEditor,
+    "world/locations",
+    2,
+  );
+  const opening = await reopenFile(packageEditor, "opening.md");
+  const originalOpening = await opening.inputValue();
+  await packageEditor.getByRole("button", { name: "删除文件" }).click();
+  const newOpening = await addWorkbenchFile(packageEditor, "opening.md");
+  await expect(newOpening).toHaveValue("");
+  await newOpening.fill(originalOpening);
+  for (const [path, text] of [
+    ["control/blocks/extra.md", "# Extra control notes\n"],
+    ["notes.md", "# Package notes\n"],
+  ] as const) {
+    const editor = await addWorkbenchFile(packageEditor, path);
+    await expect(editor).toHaveValue("");
+    await editor.fill(text);
+    packageFiles.set(path, text);
+  }
+  packageFiles.set("opening.md", originalOpening);
+  packageFiles.set("world/current-situation.yaml", originalSituation);
+
+  await packageEditor.getByRole("button", { name: "整批保存" }).click();
+  await expect(packageEditor.getByText("当前树已保存")).toBeVisible();
+  await page.reload();
+  await openEditor("设定完善");
+  for (const [path, contents] of packageFiles)
+    await expect(await reopenFile(packageEditor, path)).toHaveValue(contents);
+  await packageEditor.getByRole("button", { name: "收起文件面板" }).click();
+  await page
+    .getByRole("navigation", { name: "设定完善工具" })
+    .getByRole("button", { name: "创建世界", exact: true })
+    .click();
+
+  async function openRevision(): Promise<void> {
+    await expect(page.getByLabel("你的行动")).toBeVisible();
+    await page.getByRole("button", { name: "世界", exact: true }).click();
+    await page.getByRole("button", { name: "修订当前世界" }).click();
+    await openEditor("世界修订");
+  }
+  await openRevision();
+  const revisionFiles = await createWorldDocuments(
+    revisionEditor,
+    "state/landmarks",
+    4,
+  );
+  const revisionControlPath = "control/blocks/revision-extra.md";
+  const revisionControl = await addWorkbenchFile(
+    revisionEditor,
+    revisionControlPath,
+  );
+  await expect(revisionControl).toHaveValue("");
+  const controlContents = "# Revision control notes\n";
+  await revisionControl.fill(controlContents);
+  revisionFiles.set(revisionControlPath, controlContents);
+  revisionFiles.set("state/current-situation.yaml", originalSituation);
+
+  await revisionEditor.getByRole("button", { name: "保存到修订" }).click();
+  await expect(revisionEditor.getByText("修订工作树已保存")).toBeVisible();
+  await page.reload();
+  await openRevision();
+  for (const [path, contents] of revisionFiles)
+    await expect(await reopenFile(revisionEditor, path)).toHaveValue(contents);
+  await revisionEditor.getByRole("button", { name: "收起文件面板" }).click();
+  await page.getByRole("button", { name: "应用并解锁" }).click();
+  await expect(page.locator(".world-feedback.status")).toContainText(
+    "世界修订已应用并解锁",
+  );
+});
+
+async function addWorkbenchFile(
+  editor: Locator,
+  path: string,
+): Promise<Locator> {
+  const newPath = editor.getByLabel("新文件路径");
+  if (!(await newPath.isVisible()))
+    await editor.getByText("新建文件", { exact: true }).click();
+  await newPath.fill(path);
+  await editor.getByRole("button", { name: "加入草稿" }).click();
+  return editor.getByLabel(`编辑 ${path}`);
+}
+
+async function appendWorkbenchText(
+  source: Locator,
+  text: string,
+  page: Page,
+): Promise<void> {
+  await source.focus();
+  await source.evaluate((input) => {
+    if (input instanceof HTMLTextAreaElement)
+      input.setSelectionRange(input.value.length, input.value.length);
+  });
+  await page.keyboard.insertText(text);
+}
 
 test("世界修订复用统一编辑工作区且世界管理可以纵向滚动", async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 500 });

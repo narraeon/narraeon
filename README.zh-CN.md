@@ -140,6 +140,8 @@ Narraeon 不依赖一段无限增长的聊天。全新上下文会从当前世�
 
 在设定完善对话中，你可以请模型讨论计划，也可以请它直接编辑内容包。Runtime 按顺序执行每份完整工具响应里的调用，再把所有成功改动一起发布到内容包当前树。对话中可查看逐调用的文件差异、引用检查和真实 Prompt Preview 等检查结果。创建世界时，Runtime 会为该世界独立复制内容包文件。
 
+在内容包和世界修订的文件编辑器里新建 YAML 或 Markdown 世界文档时，草稿会带上可编辑的 `$document` 文件头和不重复的短引用。YAML 正文写在文件头下方，Markdown 正文写在标题下方。[文件编辑器规格](docs/specs/web-workspace-and-observation.md#12-手动新建文件)
+
 更详细的创作方法见 [docs/content-package-setting-authoring.md](docs/content-package-setting-authoring.md)。
 
 ## 语言行为

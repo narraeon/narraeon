@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import { parse, stringify } from "yaml";
 
 import type { ContentTreeFile } from "../protocol/v1.ts";
+import {
+  documentCodec,
+  markdownFrontMatter,
+} from "../shared/world-document-format.ts";
 
 const worldFrameFormat = "narraeon.world-frame/v1";
 
@@ -1343,11 +1347,7 @@ function contentDocumentOptions(
   for (const file of files) {
     if (file.encoding !== undefined || !file.path.startsWith("world/"))
       continue;
-    const codec = /\.md$/iu.test(file.path)
-      ? "markdown"
-      : /\.ya?ml$/iu.test(file.path)
-        ? "yaml"
-        : null;
+    const codec = documentCodec(file.path);
     if (codec === null) continue;
     try {
       const source =
@@ -1482,12 +1482,6 @@ function countExplicitReferences(
       0,
     )
   );
-}
-
-function markdownFrontMatter(source: string): string {
-  if (!source.startsWith("---\n")) return "";
-  const end = source.indexOf("\n---\n", 4);
-  return end < 0 ? "" : source.slice(4, end);
 }
 
 function defaultSlot(

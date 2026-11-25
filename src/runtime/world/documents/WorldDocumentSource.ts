@@ -1,6 +1,5 @@
 import { isMap, isScalar, isSeq, type Node } from "yaml";
 import type {
-  WorldDocumentCodec,
   WorldDocumentDiagnostic,
   WorldDocumentLocator,
   WorldDocumentSourcePoint,
@@ -100,12 +99,6 @@ export function formatWorldDocumentLocator(
       "",
     ) || "whole body"
   );
-}
-
-export function documentCodec(path: string): WorldDocumentCodec | null {
-  if (/\.ya?ml$/iu.test(path)) return "yaml";
-  if (/\.md$/iu.test(path)) return "markdown";
-  return null;
 }
 
 export function validRelativePath(path: string): boolean {

@@ -1,9 +1,9 @@
 import { isMap, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
+import { documentCodec } from "../../../shared/world-document-format.ts";
 import { parseRestrictedYamlDocument } from "../../RestrictedYaml.ts";
 import { inspectYamlReferences } from "./WorldDocumentReferences.ts";
 import {
   diagnostic,
-  documentCodec,
   documentIdPattern,
   freeze,
   isRangedNode,
