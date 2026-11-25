@@ -64,3 +64,18 @@ export function parseRestrictedYamlDocument(
   if (problems.length > 0) return { problems };
   return { document };
 }
+
+/** Checks the value after restricted YAML parsing and before interpretation. */
+export function exceedsRestrictedYamlShape(value: unknown): boolean {
+  let nodes = 0;
+  const visit = (candidate: unknown, depth: number): boolean => {
+    nodes += 1;
+    if (depth > 64 || nodes > 100_000) return true;
+    if (Array.isArray(candidate))
+      return candidate.some((item) => visit(item, depth + 1));
+    if (typeof candidate === "object" && candidate !== null)
+      return Object.values(candidate).some((item) => visit(item, depth + 1));
+    return typeof candidate === "number" && !Number.isFinite(candidate);
+  };
+  return visit(value, 0);
+}

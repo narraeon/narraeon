@@ -3,7 +3,6 @@ import type {
   WorldDocumentCodec,
   WorldDocumentDiagnostic,
   WorldDocumentFile,
-  WorldDocumentLocator,
   WorldDocumentSelector,
   WorldDocumentSnapshotStatus,
 } from "../../../shared/world-documents/WorldDocumentTypes.ts";

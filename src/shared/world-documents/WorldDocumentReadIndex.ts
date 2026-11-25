@@ -463,7 +463,7 @@ export function yamlReferenceProblems(
 
 const unresolved = Symbol("world-document-node-unresolved");
 
-function locateYamlValue(
+export function locateYamlValue(
   body: Record<string, unknown>,
   locator: readonly (string | number)[],
 ): unknown {
