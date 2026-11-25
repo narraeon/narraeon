@@ -1,5 +1,10 @@
 import { expect, type Page } from "@playwright/test";
-import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
+import type {
+  V1PlayCallChainView,
+  V1PlayTimelinePage,
+  V1Request,
+} from "../../src/protocol/v1.ts";
+import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
 import { rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -178,28 +183,18 @@ test("导入备份后，自动修改使用本机新对话，缺模型时保持�
   }
 });
 for (const locale of ["zh-CN", "en"] as const) {
-  test(`世界备份浏览器下载、上传、恢复提示及世界管理导出 ${locale}`, async ({
+  test(`无模型时的世界备份下载、上传、恢复提示及世界管理导出 ${locale}`, async ({
     page,
   }, testInfo) => {
     await runtime(page, { type: "preferences.save", locale });
-    await runtime(page, {
-      type: "model.save",
-      connection: {
-        name: "Archive test connection",
-        presetId: "custom",
-        provider: "chat_completions",
-        dialect: "standard",
-        baseUrl: "http://127.0.0.1:1/v1",
-        apiKey: "archive-test-only",
-        modelId: "archive-e2e-unused",
-        contextWindowTokens: 128000,
-        maxOutputTokens: 8192,
-        reasoningEffort: "provider_default",
-        reasoningSummary: "provider_default",
-        thinkingMode: "provider_default",
-        thinkingBudgetTokens: null,
-      },
+    const model = await runtime<ModelConnectionLibraryView>(page, {
+      type: "model.read",
     });
+    if (model.activeConnectionId !== null)
+      await runtime(page, {
+        type: "model.delete",
+        connectionId: model.activeConnectionId,
+      });
     const title = `Archive旅店-${crypto.randomUUID().slice(0, 8)}`;
     const content = await runtime<{ localId: string }>(page, {
       type: "content.create",
@@ -213,13 +208,14 @@ for (const locale of ["zh-CN", "en"] as const) {
       type: "world.create",
       operationId: `archive-world-${crypto.randomUUID()}`,
       packageId: content.localId,
-      model: {
-        provider: "chat_completions",
-        modelId: "archive-e2e-unused",
-        contextWindowTokens: 128000,
-        maxOutputTokens: 8192,
-      },
     });
+    const sourceTimeline = await runtime<V1PlayTimelinePage>(page, {
+      type: "play.timeline.page",
+      worldId: created.world.worldId,
+      limit: 5,
+    });
+    expect(sourceTimeline.activeChainId).toBeNull();
+    expect(sourceTimeline.items).toMatchObject([{ kind: "genesis" }]);
     const before = await runtime<{
       worlds: { worldId: string; title: string }[];
     }>(page, { type: "workspace.read" });
@@ -278,6 +274,13 @@ for (const locale of ["zh-CN", "en"] as const) {
     );
     expect(imported?.title).toBe(title);
     expect(imported?.worldId).not.toBe(created.world.worldId);
+    expect(
+      await runtime<V1PlayTimelinePage>(page, {
+        type: "play.timeline.page",
+        worldId: imported!.worldId,
+        limit: 5,
+      }),
+    ).toMatchObject({ activeChainId: null, items: sourceTimeline.items });
     // Remove the source, then open the one independent imported world bearing this name.
     await runtime(page, {
       type: "world.delete",

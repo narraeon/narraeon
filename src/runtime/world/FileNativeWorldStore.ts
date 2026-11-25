@@ -171,7 +171,10 @@ export interface FileNativeWorldCreationInput {
   prompt?: CreationPreviewInput;
 }
 
-type CreatedWorld = { outcome: "created"; world: FileNativeWorldSummary };
+interface CreatedWorld {
+  outcome: "created";
+  world: FileNativeWorldSummary;
+}
 
 export interface FileNativeWorldSummary extends WorldActivitySummary {
   worldId: string;
