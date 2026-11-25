@@ -339,6 +339,118 @@ test("a value that looks like JSON inside an edit stays a string", () => {
   expect(storedQin(documents).relationship).toBe("[1,2]");
 });
 
+test.each([
+  {
+    edits: [
+      { op: "replace", locator: '{"yaml":["relationship"]}', value: "[1,2]" },
+    ],
+    paths: '"edits[0].locator"',
+  },
+  {
+    edits: [
+      { op: "replace", locator: { yaml: '["relationship"]' }, value: "[1,2]" },
+    ],
+    paths: '"edits[0].locator.yaml"',
+  },
+  {
+    edits: JSON.stringify([
+      JSON.stringify({
+        op: "replace",
+        locator: JSON.stringify({ yaml: '["relationship"]' }),
+        value: "[1,2]",
+      }),
+    ]),
+    paths: '"edits", "edits[0]", "edits[0].locator", "edits[0].locator.yaml"',
+  },
+])(
+  "world_patch repairs $paths and preserves literal content and the original call",
+  ({ edits, paths }) => {
+    const documents = new FileNativePlayDocuments(files());
+    documents.bindBootstrap(compile(documents));
+    expect(
+      documents.execute(
+        {
+          id: "read",
+          name: "context_read",
+          arguments: { ref: "@qin#/relationship" },
+        },
+        [],
+      ).ok,
+    ).toBe(true);
+    const call = patchCall(edits);
+    const original = structuredClone(call);
+    const result = documents.execute(call, []);
+    expect(result.ok).toBe(true);
+    expect(result.markdown).toContain(`parsed for this call: ${paths}.`);
+    expect(call).toEqual(original);
+    expect(storedQin(documents)).toMatchObject({
+      relationship: "[1,2]",
+      knowledge: "A private suspicion",
+    });
+
+    const denied = documents.execute(
+      patchCall([
+        { op: "replace", locator: '{"yaml":["knowledge"]}', value: "Forged" },
+      ]),
+      [],
+    );
+    expect(denied.ok).toBe(false);
+    expect(denied.markdown).toContain("before writing it");
+    expect(storedQin(documents).knowledge).toBe("A private suspicion");
+  },
+);
+
+test.each([
+  ["replace", '["relationship"]'],
+  ["replace", '{"yaml":["relationship"],"markdown":["Qin"]}'],
+  ["replace", '{"yaml":["knowledge"],"yaml":["relationship"]}'],
+  ["replace", { yaml: '["relationship",-1]' }],
+  ["replace", { yaml: '["relationship",9007199254740992]' }],
+  ["replace", { yaml: '["$document","title"]' }],
+  ["replace", { markdown: '["Qin"]' }],
+  ["remove", { yaml: "[]" }],
+  ["unknown", { yaml: '["relationship"]' }],
+])(
+  "world_patch leaves invalid %s locators to ordinary validation (%j)",
+  (op, locator) => {
+    const documents = new FileNativePlayDocuments(files());
+    documents.bindBootstrap(compile(documents));
+    expect(
+      documents.execute(
+        { id: "read", name: "context_read", arguments: { ref: "@qin" } },
+        [],
+      ).ok,
+    ).toBe(true);
+    const result = documents.execute(
+      patchCall([
+        { op, locator, ...(op === "remove" ? {} : { value: "Forged" }) },
+      ]),
+      [],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.markdown).toContain("requires an exact locator");
+    expect(result.markdown).not.toContain("Runtime note");
+    expect(storedQin(documents)).toMatchObject({
+      relationship: "Just met",
+      knowledge: "A private suspicion",
+    });
+  },
+);
+
+test("legacy patch receipts do not revoke read scope for an unrepaired locator", () => {
+  const documents = new FileNativePlayDocuments(files());
+  documents.bindBootstrap(compile(documents));
+  expect(documents.replayRead("qin", { yaml: ["relationship"] })).toBe(true);
+  documents.replayPatch(
+    { ok: true, markdown: "@qin write succeeded · 1/2 edits applied" },
+    patchCall([
+      { op: "replace", locator: { yaml: ["location"] }, value: "Clinic" },
+      { op: "remove", locator: '{"yaml":["relationship"]}' },
+    ]).arguments,
+  );
+  expect(patch(documents, "relationship", "Still authorized").ok).toBe(true);
+});
+
 test("world_patch names the JSON-array requirement when edits cannot be parsed", () => {
   const documents = new FileNativePlayDocuments(files());
   documents.bindBootstrap(compile(documents));

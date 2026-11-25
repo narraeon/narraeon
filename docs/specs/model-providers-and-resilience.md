@@ -83,6 +83,7 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立配置意图：
 当模型把 schema 要求为 `array` 或 `object` 的工具参数以 JSON 字符串发出时，Runtime 在工具参数边界按原始 schema 执行一次浅层解析：
 
 - 仅处理唯一类型为 `array` 或 `object` 的位置；不解析空对象 schema `{}` 与包含 `string` 的联合类型；最多解析两层。
+- 游玩 `world_patch` 还会按编辑操作解析单独字符串化的 `edits[i].locator` 对象及其 `yaml` 或 `markdown` 路径数组。只有定位器与路径均明确且合法时才采用解析结果，之后照常检查精读资格与写入规则。`value`、Markdown 正文及其他内容字段保持原值。
 - 解析失败或类型不符时按原值失败，并在错误信息中说明该字段必须是 JSON 数组或对象。
 - 解析后的值按正常 schema 与业务规则校验，工具结果末尾附一行 Runtime 说明。
 - transcript、冻结请求与页面时间线中保留的仍是模型原文。

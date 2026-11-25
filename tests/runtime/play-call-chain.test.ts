@@ -7528,6 +7528,102 @@ test("部分成功的批量 patch 在下一次请求中保留失败原因、纠�
   expect(situation?.contents).not.toContain("黎明");
 });
 
+test.each(["en", "zh-CN"] as const)(
+  "world_patch repairs Markdown locators and preserves the %s note in the committed receipt",
+  async (locale) => {
+    const chainId = `repair-markdown-locator-${locale}`;
+    const { worlds, worldId, root } = await createWorld(chainId, [
+      ...worldFiles(),
+      {
+        path: "world/rules/lore.md",
+        contents: `---
+$document:
+  id: rule.lore
+  ref: lore
+  title: Lore
+  summary: A record of the world.
+  aliases: []
+---
+# Lore
+
+## Clues
+
+An old clue.
+`,
+      },
+    ]);
+    const args = {
+      target: "@lore",
+      edits: [
+        {
+          op: "replace_section",
+          locator: '{"markdown":["Clues"]}',
+          markdown: '## Clues\n\n{"hint":"new"}',
+        },
+        {
+          op: "add_section",
+          locator: { markdown: "[]" },
+          markdown: "## History\n\nA new entry.",
+        },
+      ],
+    };
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            { id: "read", name: "context_read", arguments: { ref: "@lore" } },
+            { id: "patch", name: "world_patch", arguments: args },
+          ],
+        },
+        { outcome: "response", text: "The lore is updated." },
+      ],
+    });
+    const view = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId,
+      exchangeId: "first",
+      playerText: "Update the lore.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+    const receipt = sent(host.requests[1]!).at(-1);
+    if (receipt?.kind !== "tool") throw new Error("Missing write receipt");
+    expect(receipt.toolCallId).toBe("patch");
+    expect(receipt.markdown).toMatch(/^@lore write succeeded\n/u);
+    const localizedNote =
+      locale === "zh-CN" ? "本次已解析后执行：" : "parsed for this call: ";
+    expect(receipt.markdown).toContain(
+      `${localizedNote}"edits[0].locator", "edits[1].locator.markdown"`,
+    );
+    const call = view.events.find(
+      (item) => item.kind === "tool_call" && item.callId === "patch",
+    );
+    const result = view.events.find(
+      (item) => item.kind === "tool_result" && item.callId === "patch",
+    );
+    const reopened = new FileNativeWorldStore(root);
+    expect(
+      await reopened.playTimeline.readDetail(worldId, chainId, call!.id),
+    ).toMatchObject({ arguments: args });
+    expect(
+      await reopened.playTimeline.readDetail(worldId, chainId, result!.id),
+    ).toMatchObject({ markdown: receipt.markdown });
+    const contents = (await reopened.bindPlayCallChain(worldId)).files[
+      "state/rules/lore.md"
+    ];
+    expect(contents).toContain('## Clues\n\n{"hint":"new"}');
+    expect(contents).toContain("## History\n\nA new entry.");
+    expect(contents).not.toContain("An old clue.");
+  },
+);
+
 test("维护诊断失败不阻断已提交写入、终态叙事或冷恢复", async () => {
   const { worlds, worldId } = await createWorld("maintenance-failure");
   const original = worlds.readDocumentMaintenance.bind(worlds);

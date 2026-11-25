@@ -16,12 +16,14 @@ import {
   parseStateDirectoryHandle,
 } from "../world/StateDirectoryHandles.ts";
 
-import { stringify } from "yaml";
+import { parseDocument, stringify } from "yaml";
 import { renderPlayerViewBindings } from "../world/PlayerViewBindings.ts";
 import {
   coerceToolArguments,
   renderCoercionNote,
+  type CoercedToolArguments,
 } from "../model/ToolArgumentCoercion.ts";
+import { parseArguments } from "../model/ProviderValues.ts";
 import { runtimeToolInputSchema } from "../prompt/FileNativeToolRegistry.ts";
 
 import type { ModelHostToolCall } from "../model/ModelHost.ts";
@@ -240,6 +242,7 @@ export class FileNativePlayDocuments {
     const schema = runtimeToolInputSchema(call.name);
     if (schema === null) return this.#dispatch(call, history, options);
     const repaired = coerceToolArguments(schema, call.arguments);
+    if (call.name === "world_patch") repairWorldPatchLocators(repaired);
     const result = this.#dispatch(
       { ...call, arguments: repaired.arguments },
       history,
@@ -529,6 +532,70 @@ function documentDescriptorByRef(
   return result.kind === "read_document" && result.ok ? result.document : null;
 }
 
+function patchLocatorField(op: unknown): "yaml" | "markdown" | undefined {
+  switch (op) {
+    case "add":
+    case "replace":
+    case "append":
+    case "remove":
+      return "yaml";
+    case "add_section":
+    case "replace_section":
+    case "rename_section":
+    case "remove_section":
+      return "markdown";
+  }
+}
+
+/** The shallow schema pass has already handled the edits array and its items. */
+function repairWorldPatchLocators(repaired: CoercedToolArguments): void {
+  const args = repaired.arguments;
+  if (!record(args) || !Array.isArray(args.edits) || args.edits.length > 32)
+    return;
+  const edits: unknown[] = args.edits;
+  let next = edits;
+  for (const [index, edit] of edits.entries()) {
+    if (!record(edit)) continue;
+    const { op, locator: rawLocator } = edit;
+    const field = patchLocatorField(op);
+    if (field === undefined) continue;
+    const locator =
+      typeof rawLocator === "string" ? parseArguments(rawLocator) : rawLocator;
+    if (
+      !record(locator) ||
+      Object.keys(locator).length !== 1 ||
+      !Object.hasOwn(locator, field)
+    )
+      continue;
+    const rawPath = locator[field];
+    if (typeof rawLocator !== "string" && typeof rawPath !== "string") continue;
+    const path =
+      typeof rawPath === "string" ? parseArguments(rawPath) : rawPath;
+    const candidate = { [field]: path };
+    const valid =
+      field === "yaml"
+        ? validYamlLocator(candidate) &&
+          candidate.yaml[0] !== "$document" &&
+          (candidate.yaml.length > 0 || op === "add" || op === "replace")
+        : validMarkdownLocator(candidate, op === "add_section");
+    if (!valid) continue;
+    // JSON.parse keeps the last duplicate property, which could name a
+    // different write target. Check serialized locators before using them.
+    if (
+      typeof rawLocator === "string" &&
+      parseDocument(rawLocator, { schema: "json" }).errors.length > 0
+    )
+      continue;
+    if (next === edits) next = [...edits];
+    next[index] = { ...edit, locator: candidate };
+    const position = `edits[${index}].locator`;
+    if (typeof rawLocator === "string") repaired.coerced.push(position);
+    if (typeof rawPath === "string")
+      repaired.coerced.push(`${position}.${field}`);
+  }
+  if (next !== edits) repaired.arguments = { ...args, edits: next };
+}
+
 function applyPlayCandidatePatch(
   candidate: PlayCandidate,
   reads: WriteAuthorizations,
@@ -704,6 +771,8 @@ function legacyPatchAuthorization(
 ): PlayDocumentToolResult["patchAuthorization"] {
   if (!record(args) || typeof args.target !== "string") return undefined;
   const schema = runtimeToolInputSchema("world_patch");
+  // Old receipts predate locator repair. Keep their original interpretation
+  // so an edit that used to fail cannot revoke a restored read scope.
   const repaired =
     schema === null ? args : coerceToolArguments(schema, args).arguments;
   if (!record(repaired) || !Array.isArray(repaired.edits)) return undefined;
