@@ -170,7 +170,7 @@ long: "${"十".repeat(80)}"
         "点号是另一条路径",
         { $ref: "test.keeper", title: "草稿里的守门人", ref: "keeper" },
         expect.stringMatching(/^# 笔记.+## 窗/su),
-        "## 门\n门关着。\n\n### 钥匙\n还在桌上。\n\n\`\`\`\n### 围栏中的字样\n\`\`\`",
+        "## 门\n门关着。\n\n### 钥匙\n还在桌上。\n\n```\n### 围栏中的字样\n```",
       ]);
       expect(JSON.stringify(rendered)).not.toContain("不展开引用正文");
       expect(JSON.stringify(rendered)).not.toContain("$document");
