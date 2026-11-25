@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 
 import {
+  anthropicConnectionCacheSettings,
   hasCLIProxyThinkingSuffix,
   isSameModelServiceOrigin,
   modelReasoningPolicyIssue,
@@ -433,6 +434,13 @@ function normalizeSaveInput(
     thinkingMode,
     thinkingBudgetTokens,
     ...responsesConnectionCapabilities(provider, dialect, input, existing),
+    ...anthropicConnectionCacheSettings(
+      provider,
+      input.anthropicPromptCacheTtl === undefined &&
+        provider === existing?.provider
+        ? existing.anthropicPromptCacheTtl
+        : input.anthropicPromptCacheTtl,
+    ),
     supportsAllowedTools: validateSupportsAllowedTools(
       input.supportsAllowedTools ?? existing?.supportsAllowedTools,
     ),
@@ -529,6 +537,10 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     thinkingMode,
     thinkingBudgetTokens,
     ...responsesConnectionCapabilities(provider, dialect, value),
+    ...anthropicConnectionCacheSettings(
+      provider,
+      value.anthropicPromptCacheTtl,
+    ),
     supportsAllowedTools: validateSupportsAllowedTools(
       value.supportsAllowedTools,
     ),
@@ -559,6 +571,10 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
       connection.provider,
       connection.dialect,
       connection,
+    ),
+    ...anthropicConnectionCacheSettings(
+      connection.provider,
+      connection.anthropicPromptCacheTtl,
     ),
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,
@@ -593,6 +609,10 @@ function toBinding(
       connection.provider,
       connection.dialect,
       connection,
+    ),
+    ...anthropicConnectionCacheSettings(
+      connection.provider,
+      connection.anthropicPromptCacheTtl,
     ),
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,

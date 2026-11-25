@@ -52,20 +52,66 @@ import {
   usageRecord,
 } from "./ProviderValues.ts";
 
+interface AnthropicCacheControl {
+  type: "ephemeral";
+  ttl?: "1h";
+}
+
+function isAnthropicCacheBreakpoint(
+  block: unknown,
+): block is Record<string, unknown> {
+  return (
+    isRecord(block) &&
+    isRecord(block.cache_control) &&
+    block.cache_control.type === "ephemeral"
+  );
+}
+
+function applyBootstrapCacheControl(
+  block: unknown,
+  cacheControl: AnthropicCacheControl,
+): unknown {
+  return isAnthropicCacheBreakpoint(block)
+    ? { ...block, cache_control: cacheControl }
+    : block;
+}
+
 function anthropicRequestBody(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): Record<string, unknown> {
+  const cacheControl: AnthropicCacheControl = {
+    type: "ephemeral",
+    ...(connection.anthropicPromptCacheTtl === "1h" ? { ttl: "1h" } : {}),
+  };
+  const system = request.bootstrap.provider.system?.map((block) =>
+    applyBootstrapCacheControl(block, cacheControl),
+  );
+  const messages = [
+    ...anthropicBootstrapMessages(request, cacheControl),
+    ...appendWithSuffixBreakpoint(
+      connection,
+      request,
+      anthropicItems,
+      (items) => markLastAnthropicBlock(items, cacheControl),
+    ),
+    ...prefillMessage(request, true),
+  ];
+  // Tool arguments and provider extensions can also contain a cache_control key.
+  const cacheBreakpoints = [
+    ...(system ?? []),
+    ...messages.flatMap((message) =>
+      isRecord(message) && Array.isArray(message.content)
+        ? (message.content as unknown[])
+        : [],
+    ),
+  ].filter(isAnthropicCacheBreakpoint).length;
   const tools = providerToolDefinitions(request);
-  return checkedCacheBreakpoints({
+  const body = {
     model: connection.modelId,
     ...anthropicReasoningRequest(connection),
-    system: request.bootstrap.provider.system,
-    messages: [
-      ...anthropicBootstrapMessages(request),
-      ...anthropicAppend(connection, request),
-      ...prefillMessage(request, true),
-    ],
+    system,
+    messages,
     ...(tools.length === 0
       ? {}
       : {
@@ -81,10 +127,14 @@ function anthropicRequestBody(
       : {}),
     max_tokens: request.maxOutputTokens,
     stream: true,
-  });
+  };
+  return checkedCacheBreakpoints(body, cacheBreakpoints);
 }
 
-function encodeInitialWorldContext(request: ModelHostExchange): unknown[] {
+function encodeInitialWorldContext(
+  request: ModelHostExchange,
+  cacheControl: AnthropicCacheControl,
+): unknown[] {
   const preload = initialWorldContext(request);
   if (preload === undefined) return [];
   const { callId, markdown, name, notice } = preload;
@@ -102,7 +152,7 @@ function encodeInitialWorldContext(request: ModelHostExchange): unknown[] {
           tool_use_id: callId,
           content: markdown,
           ...(request.bootstrap.cache.strategy === "explicit_anthropic_blocks"
-            ? { cache_control: { type: "ephemeral" } }
+            ? { cache_control: cacheControl }
             : {}),
         },
       ],
@@ -110,14 +160,24 @@ function encodeInitialWorldContext(request: ModelHostExchange): unknown[] {
   ];
 }
 
-function anthropicBootstrapMessages(request: ModelHostExchange): unknown[] {
+function anthropicBootstrapMessages(
+  request: ModelHostExchange,
+  cacheControl: AnthropicCacheControl,
+): unknown[] {
   const messages: unknown[] = request.bootstrap.provider.messages.map(
-    (message) => cloneProviderValue(message),
+    (message) => ({
+      ...message,
+      content: Array.isArray(message.content)
+        ? (message.content as unknown[]).map((block) =>
+            applyBootstrapCacheControl(block, cacheControl),
+          )
+        : message.content,
+    }),
   );
   messages.splice(
     bootstrapPrefixEnd(request.bootstrap),
     0,
-    ...encodeInitialWorldContext(request),
+    ...encodeInitialWorldContext(request, cacheControl),
   );
   return messages.filter(
     (message) => !isRecord(message) || message.role !== "system",
@@ -125,7 +185,10 @@ function anthropicBootstrapMessages(request: ModelHostExchange): unknown[] {
 }
 
 /** Thinking blocks reject cache_control, so the breakpoint lands on the last block that accepts it. */
-function markLastAnthropicBlock(messages: unknown[]): unknown[] {
+function markLastAnthropicBlock(
+  messages: unknown[],
+  cacheControl: AnthropicCacheControl,
+): unknown[] {
   const last = messages.at(-1);
   if (!isRecord(last))
     throw new Error("The transcript tail cannot carry a cache breakpoint.");
@@ -153,24 +216,12 @@ function markLastAnthropicBlock(messages: unknown[]): unknown[] {
         position === index
           ? {
               ...(block as Record<string, unknown>),
-              cache_control: { type: "ephemeral" },
+              cache_control: cacheControl,
             }
           : block,
       ),
     },
   ];
-}
-
-function anthropicAppend(
-  connection: ResolvedFileNativeModelConnection,
-  request: ModelHostExchange,
-): unknown[] {
-  return appendWithSuffixBreakpoint(
-    connection,
-    request,
-    anthropicItems,
-    markLastAnthropicBlock,
-  );
 }
 
 function anthropicItems(items: readonly ModelHostAppendItem[]): unknown[] {

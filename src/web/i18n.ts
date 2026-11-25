@@ -173,6 +173,11 @@ const englishMessages: Record<string, string> = {
   "世界控制 · 高级编辑": "World control \u00b7 Advanced editor",
   当前配置与编译边界: "Current configuration and compilation boundaries",
   高级协议选项: "Advanced protocol options",
+  提示词缓存时长: "Prompt cache duration",
+  "5 分钟（默认）": "5 minutes (default)",
+  "1 小时": "1 hour",
+  "命中缓存会续期。1 小时缓存的写入费用更高。":
+    "A cache hit refreshes its lifetime. Writing to the 1-hour cache costs more.",
   "GPT-6.2 本轮提示": "GPT-6.2 turn guidance",
   "玩家本轮临时要求放在 input 末尾（默认）":
     "Append player guidance to input (default)",

@@ -111,6 +111,7 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立配置意图：
 
 - 提示词编译把稳定机械块、编排方案作者块和世界控制块放在稳定前缀，稳定前缀指纹不包含内部 ID、时间戳和 operation 数据。
 - **显式缓存断点**：Anthropic Messages 及 CLIProxyAPI 的 Chat Completions 方言在稳定部分编码显式 `cache_control` 标记；Responses 经 CLIProxyAPI 转 Claude 时可在连接高级选项中单独开启 `cache_control`（默认关闭，Codex 路由保持关闭）。带临时尾部提示时，显式断点路径还可在其前方标记最近的 transcript 内容；显式断点总数超过 **4 个**时报错。
+- **Anthropic Messages 的提示词缓存时长**按连接保存。原生和自定义端点均可在高级选项选择 **5 分钟（默认）**或 **1 小时**。旧连接和旧快照缺少该字段时按 5 分钟编码。每次主动发送或手动重发使用当前兼容连接，同一次工具循环固定使用发送时选定的时长。稳定前缀、初始世界材料工具结果及临时提示前的对话尾部沿用既有断点位置及数量。Narraeon 写入的内容块级 `cache_control` 默认省略 `ttl`，选 1 小时则统一写入 `ttl: "1h"`。提示词预览和实际派发共用该编码。切换协议后清除该选项。缓存命中会续期，1 小时写入费用更高。[Anthropic 提示词缓存说明](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration)
 - **`prompt_cache_key`**：标准 Responses 按稳定前缀分组；CLIProxyAPI 按冻结模型会话生成稳定散列（同一调用链各轮不变，不同调用链隔离，后置操作同样按操作隔离）。两条路径均不将原始内部身份写入 wire。
 - 改变 Thinking 或 Effort 会改变 Provider prompt／cache key 语义并使旧缓存边界失效；缓存 miss 只影响成本与延迟，不得改变请求语义或恢复能力。
 

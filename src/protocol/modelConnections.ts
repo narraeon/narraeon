@@ -55,6 +55,35 @@ export type ModelPromptCacheStrategy =
   | "explicit_cliproxyapi_message"
   | "provider_managed";
 
+export type AnthropicPromptCacheTtl = "5m" | "1h";
+
+export interface AnthropicConnectionCacheSettings {
+  anthropicPromptCacheTtl?: AnthropicPromptCacheTtl;
+}
+
+export function isAnthropicPromptCacheTtl(
+  value: unknown,
+): value is AnthropicPromptCacheTtl {
+  return value === "5m" || value === "1h";
+}
+
+export function anthropicConnectionCacheSettings(
+  provider: ModelProviderKind,
+  value: unknown,
+): AnthropicConnectionCacheSettings {
+  if (provider !== "anthropic_messages") {
+    if (value !== undefined)
+      throw new Error(
+        "Prompt cache duration requires the Anthropic Messages protocol",
+      );
+    return {};
+  }
+  const ttl = value === undefined ? "5m" : value;
+  if (!isAnthropicPromptCacheTtl(ttl))
+    throw new Error("Anthropic prompt cache duration must be 5m or 1h");
+  return { anthropicPromptCacheTtl: ttl };
+}
+
 /** CLIProxyAPI gives these model-name suffixes priority over body effort. */
 export function hasCLIProxyThinkingSuffix(modelId: string): boolean {
   return /\((?:-1|none|auto|minimal|low|medium|high|xhigh|max|\d+)\)$/iu.test(
@@ -337,7 +366,8 @@ export function responsesConnectionCapabilities(
   };
 }
 
-export interface ModelConnectionView extends ResponsesConnectionCapabilities {
+export interface ModelConnectionView
+  extends ResponsesConnectionCapabilities, AnthropicConnectionCacheSettings {
   id: string;
   name: string;
   presetId: ModelProviderPresetId;
@@ -369,7 +399,8 @@ export interface CopyModelConnectionResult {
   copiedConnectionId: string;
 }
 
-export interface SaveModelConnectionInput extends ResponsesConnectionCapabilities {
+export interface SaveModelConnectionInput
+  extends ResponsesConnectionCapabilities, AnthropicConnectionCacheSettings {
   connectionId?: string;
   name: string;
   presetId: ModelProviderPresetId;

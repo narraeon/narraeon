@@ -2785,6 +2785,7 @@ test.each([
 test.each([
   { provider: "chat_completions" as const, dialect: "standard" as const },
   { provider: "openai_responses" as const, dialect: "standard" as const },
+  { provider: "google_interactions" as const, dialect: "standard" as const },
 ])(
   "$provider 标准方言的编码不因请求级后缀增加 cache_control",
   ({ provider, dialect }) => {
@@ -2800,14 +2801,18 @@ test.each([
       contextWindowTokens: 64_000,
       maxOutputTokens: 2_048,
     });
-    const body = host.previewRequest(
+    const request = host.freezeRequest(
       transcriptWithTurnGuide(
         provider,
         "standard-tail",
         host.binding().cacheStrategy,
       ),
-    ).body;
-    expect(JSON.stringify(body)).not.toContain("cache_control");
+    );
+    expect(request.modelConfig).not.toHaveProperty("anthropicPromptCacheTtl");
+    const body = host.previewRequest(request).body;
+    expect(JSON.stringify(body)).not.toMatch(
+      /"cache_control"|"anthropicPromptCacheTtl"|"ttl"/u,
+    );
   },
 );
 

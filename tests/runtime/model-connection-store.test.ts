@@ -182,6 +182,84 @@ test("Responses 两种能力独立保存，复制和绑定保留选择，旧连�
   expect(await new ModelConnectionStore(root).bind()).toMatchObject(defaults);
 });
 
+test("Anthropic 缓存时长按连接持久化，旧连接默认 5 分钟，切换协议后清除", async () => {
+  const root = await temporaryRoot();
+  const store = new ModelConnectionStore(root);
+  const input = {
+    name: "Anthropic",
+    presetId: "custom" as const,
+    provider: "anthropic_messages" as const,
+    baseUrl: "https://proxy.invalid/v1",
+    apiKey: "secret",
+    modelId: "alias",
+    contextWindowTokens: 32_000,
+    maxOutputTokens: 2_000,
+  };
+  const first = await store.save(input);
+  const connectionId = first.activeConnectionId!;
+  expect(first.connections[0]?.anthropicPromptCacheTtl).toBe("5m");
+  await store.save({ ...input, connectionId, anthropicPromptCacheTtl: "1h" });
+  await store.save({ ...input, connectionId });
+  const second = await store.save({ ...input, name: "Other Anthropic" });
+  const otherId = second.activeConnectionId!;
+  expect(second.connections[1]?.anthropicPromptCacheTtl).toBe("5m");
+  const path = join(root, "model-connections-v1.json");
+  const document = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { anthropicPromptCacheTtl?: string }[];
+  };
+  expect(document.connections[0]?.anthropicPromptCacheTtl).toBe("1h");
+  delete document.connections[1]!.anthropicPromptCacheTtl;
+  await writeFile(path, JSON.stringify(document));
+
+  const reopened = new ModelConnectionStore(root);
+  expect(
+    (await reopened.view()).connections.map(
+      (item) => item.anthropicPromptCacheTtl,
+    ),
+  ).toEqual(["1h", "5m"]);
+  expect((await reopened.bind()).anthropicPromptCacheTtl).toBe("5m");
+  await reopened.select(connectionId);
+  expect((await reopened.bind()).anthropicPromptCacheTtl).toBe("1h");
+  const copy = await reopened.copy(connectionId, "Copy");
+  expect(
+    copy.library.connections.find(({ id }) => id === copy.copiedConnectionId)
+      ?.anthropicPromptCacheTtl,
+  ).toBe("1h");
+
+  for (const provider of [
+    "chat_completions",
+    "openai_responses",
+    "google_interactions",
+  ] as const) {
+    await expect(
+      reopened.save({
+        ...input,
+        connectionId,
+        provider,
+        anthropicPromptCacheTtl: "1h",
+      }),
+    ).rejects.toThrow("requires the Anthropic Messages protocol");
+    const switched = await reopened.save({ ...input, connectionId, provider });
+    expect(switched.connections[0]).not.toHaveProperty(
+      "anthropicPromptCacheTtl",
+    );
+    expect(await reopened.bind()).not.toHaveProperty("anthropicPromptCacheTtl");
+    expect(
+      switched.connections.find(({ id }) => id === otherId)
+        ?.anthropicPromptCacheTtl,
+    ).toBe("5m");
+  }
+  const restored = await reopened.save({ ...input, connectionId });
+  expect(restored.connections[0]?.anthropicPromptCacheTtl).toBe("5m");
+  await expect(
+    reopened.save({
+      ...input,
+      connectionId,
+      anthropicPromptCacheTtl: "24h" as "1h",
+    }),
+  ).rejects.toThrow("must be 5m or 1h");
+});
+
 test("Responses 拒绝与协议或方言不匹配的能力及损坏的能力配置", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

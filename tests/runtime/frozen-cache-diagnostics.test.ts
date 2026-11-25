@@ -19,20 +19,21 @@ import {
 interface WireItem {
   text?: string;
   content?: string | WireItem[];
-  cache_control?: { type: "ephemeral" };
+  cache_control?: { type: "ephemeral"; ttl?: "1h" };
 }
 
 interface WireRequest {
   system?: WireItem[];
   messages?: WireItem[];
   input?: WireItem[];
+  tools?: { input_schema: object }[];
 }
 
 function captureHost(
   provider: FileNativeModelConnection["provider"],
   options: Pick<
     FileNativeModelConnection,
-    "dialect" | "responsesCacheControl"
+    "dialect" | "responsesCacheControl" | "anthropicPromptCacheTtl"
   > = {},
 ) {
   // A local test transport records the actual encoded body before rejecting it.
@@ -224,6 +225,108 @@ test("Anthropic retry counts a stable world preload encoded as a tool result", a
   ]);
 });
 
+test("Anthropic applies the saved TTL only at its existing content block breakpoints", async () => {
+  const standard = captureHost("anthropic_messages");
+  const extended = captureHost("anthropic_messages", {
+    anthropicPromptCacheTtl: "1h",
+  });
+  const bootstrap = new FileNativePromptCompiler({
+    locale: "en",
+  }).compilePlayCallChain(
+    createMinimalFileNativePreviewInput({
+      ...standard.host.binding(),
+      playerInput: "Look around",
+      playerInputPlacement: "append",
+    }),
+    builtinDefaultPlayPresetBinding("en"),
+  ).bootstrap;
+  const request = requestFor(bootstrap);
+  const schema = {
+    type: "object",
+    properties: { cache_control: { type: "string" } },
+  };
+  request.tools = [
+    {
+      name: "lookup",
+      description: "Looks up information",
+      inputSchema: schema,
+    },
+  ];
+  const nativeTool = {
+    type: "tool_use",
+    name: "lookup",
+    id: "lookup-1",
+    input: { cache_control: { type: "ephemeral", ttl: "5m" } },
+    vendor_extension: { cache_control: { type: "ephemeral", ttl: "5m" } },
+  };
+  const signedThinking = {
+    type: "thinking",
+    thinking: "Inspect the scene",
+    signature: "provider-signature",
+  };
+  const turnGuide = "[Runtime turn guide]\n- Synthetic request-only suffix.";
+  request.appended.push(
+    {
+      kind: "assistant",
+      text: "",
+      toolCalls: [],
+      providerState: {
+        protocol: "anthropic_messages",
+        content: [signedThinking, nativeTool],
+      },
+    },
+    {
+      kind: "runtime_notice",
+      notice: "turn_guide",
+      text: turnGuide,
+    },
+  );
+  const saved = structuredClone(request);
+
+  const defaultBody = await standard.send(request);
+  const extendedBody = await extended.send(request);
+  expect(standard.host.previewRequest(request).body).toEqual(defaultBody);
+  expect(extended.host.previewRequest(request).body).toEqual(extendedBody);
+  expect(JSON.stringify(extended.host.previewRequest(request))).not.toContain(
+    "synthetic-key",
+  );
+  expect(defaultBody.system?.at(-1)?.cache_control).toEqual({
+    type: "ephemeral",
+  });
+  expect(defaultBody.messages?.[2]?.content).toEqual([
+    expect.objectContaining({
+      type: "tool_result",
+      content: bootstrap.provider.preload!.markdown,
+      cache_control: { type: "ephemeral" },
+    }),
+  ]);
+  expect(defaultBody.messages?.at(-2)?.content).toEqual([
+    signedThinking,
+    { ...nativeTool, cache_control: { type: "ephemeral" } },
+  ]);
+  expect(defaultBody.messages?.at(-1)?.content).toBe(turnGuide);
+  expect(defaultBody.tools?.[0]?.input_schema).toEqual(schema);
+
+  const expected = structuredClone(defaultBody);
+  const markedBlocks = [
+    ...(expected.system ?? []),
+    ...(expected.messages ?? []).flatMap(({ content }) =>
+      Array.isArray(content) ? content : [],
+    ),
+  ].filter((block) => block.cache_control !== undefined);
+  expect(markedBlocks).toHaveLength(3);
+  for (const block of markedBlocks) block.cache_control!.ttl = "1h";
+  expect(extendedBody).toEqual(expected);
+  expect(request).toEqual(saved);
+
+  const legacy = standard.host.freezeRequest(request);
+  delete legacy.modelConfig!.anthropicPromptCacheTtl;
+  expect(extended.host.previewRequest(legacy).body).toEqual(defaultBody);
+  expect(
+    await extended.send(retargetRequestForRetry(legacy, extended.host)),
+  ).toEqual(extendedBody);
+});
+
 test("Anthropic retry keeps the stable boundary before player text in a legacy User message", async () => {
   const { host, send } = captureHost("anthropic_messages");
   const original = new FileNativePromptCompiler({
@@ -278,6 +381,10 @@ test.each(["chat_completions", "openai_responses"] as const)(
       cache_control: { type: "ephemeral" },
     });
     expect(cacheMarkerCount(body)).toBe(1);
+    expect(retried.modelConfig).not.toHaveProperty("anthropicPromptCacheTtl");
+    expect(JSON.stringify(body)).not.toMatch(
+      /"anthropicPromptCacheTtl"|"ttl"/u,
+    );
     expect(retried.bootstrap.cache.breakpoints).toEqual([
       provider === "chat_completions" ? "runtime_system" : "author_instruction",
     ]);

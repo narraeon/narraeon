@@ -296,6 +296,91 @@ test("GPT-6.2 本轮提示和转 Claude 缓存各自显式启用，随连接限�
   );
 });
 
+test.each(["zh-CN", "en"] as const)(
+  "%s Anthropic 自定义端点显示并保存独立缓存时长",
+  async (locale) => {
+    setWebLocale(locale);
+    const localize = (zh: string, en: string) => (locale === "en" ? en : zh);
+    const library = modelLibrary();
+    const legacy = {
+      ...library.connections[0]!,
+      provider: "anthropic_messages" as const,
+    };
+    const other = {
+      ...legacy,
+      id: "other",
+      name: "Other Anthropic",
+      anthropicPromptCacheTtl: "5m" as const,
+    };
+    library.connections = [legacy, other];
+    const onLibraryChange =
+      vi.fn<(value: ModelConnectionLibraryView) => void>();
+    const request = vi.fn((input: V1Request) => {
+      if (input.type !== "model.save") return Promise.resolve(library);
+      return Promise.resolve({
+        ...library,
+        connections: [{ ...legacy, ...input.connection }, other],
+      });
+    });
+    const props = {
+      client: { request } as unknown as RuntimeClient,
+      library,
+      onLibraryChange,
+      onNotice: vi.fn(),
+      onDirtyChange: vi.fn(),
+    };
+    const label = localize("提示词缓存时长", "Prompt cache duration");
+    const advanced = localize("高级协议选项", "Advanced protocol options");
+    const save = localize(
+      "保存模型连接并启用",
+      "Save and enable model connection",
+    );
+    const view = render(createElement(ModelConnectionScreen, props));
+    fireEvent.click(screen.getByText(advanced));
+    const select = screen.getByLabelText<HTMLSelectElement>(label);
+    expect(select.value).toBe("5m");
+    expect(Array.from(select.options, (item) => item.text)).toEqual([
+      localize("5 分钟（默认）", "5 minutes (default)"),
+      localize("1 小时", "1 hour"),
+    ]);
+    expect(
+      screen.getByText(
+        localize(
+          "命中缓存会续期。1 小时缓存的写入费用更高。",
+          "A cache hit refreshes its lifetime. Writing to the 1-hour cache costs more.",
+        ),
+      ),
+    ).toBeTruthy();
+    fireEvent.change(select, { target: { value: "1h" } });
+    fireEvent.click(screen.getByRole("button", { name: save }));
+    await waitFor(() => expect(onLibraryChange).toHaveBeenCalledTimes(1));
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      type: "model.save",
+      connection: { anthropicPromptCacheTtl: "1h" },
+    });
+    const saved = onLibraryChange.mock.calls[0]![0];
+    expect(saved.connections[1]?.anthropicPromptCacheTtl).toBe("5m");
+    view.unmount();
+
+    render(createElement(ModelConnectionScreen, { ...props, library: saved }));
+    fireEvent.click(screen.getByText(advanced));
+    expect(screen.getByLabelText<HTMLSelectElement>(label).value).toBe("1h");
+    const protocol = screen.getByLabelText(
+      localize("协议适配器", "Protocol adapter"),
+    );
+    for (const provider of [
+      "chat_completions",
+      "openai_responses",
+      "google_interactions",
+    ]) {
+      fireEvent.change(protocol, { target: { value: provider } });
+      expect(screen.queryByLabelText(label)).toBeNull();
+    }
+    fireEvent.change(protocol, { target: { value: "anthropic_messages" } });
+    expect(screen.getByLabelText<HTMLSelectElement>(label).value).toBe("5m");
+  },
+);
+
 test("Google 连接允许使用已保存凭据拉取模型并保留手填输入", () => {
   setWebLocale("en");
   const library = modelLibrary();
@@ -454,6 +539,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
         reasoningSummary: "none",
         thinkingMode: "enabled",
         thinkingBudgetTokens: 4_096,
+        anthropicPromptCacheTtl: "5m",
         supportsAllowedTools: true,
         assistantPrefillMode: "disabled",
         contextWindowTokens: 128_000,

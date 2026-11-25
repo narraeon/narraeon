@@ -17,6 +17,7 @@ import {
   modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
   googleThinkingLevels,
+  type AnthropicPromptCacheTtl,
   type CopyModelConnectionResult,
   type ModelConnectionLibraryView,
   type ModelConnectionView,
@@ -46,6 +47,7 @@ interface ConnectionForm {
   thinkingBudgetTokens: string;
   responsesTurnInstructions: boolean;
   responsesCacheControl: boolean;
+  anthropicPromptCacheTtl: AnthropicPromptCacheTtl;
   supportsAllowedTools: boolean;
   assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: string;
@@ -69,6 +71,7 @@ function emptyConnectionForm(): ConnectionForm {
     thinkingBudgetTokens: "",
     responsesTurnInstructions: false,
     responsesCacheControl: false,
+    anthropicPromptCacheTtl: "5m",
     supportsAllowedTools: true,
     assistantPrefillMode: "disabled",
     contextWindowTokens: "128000",
@@ -190,6 +193,8 @@ export function ModelConnectionScreen({
         updated.dialect !== "cliproxyapi"
       )
         updated.responsesCacheControl = false;
+      if (updated.provider !== "anthropic_messages")
+        updated.anthropicPromptCacheTtl = "5m";
       return updated;
     });
     setDirty(true);
@@ -276,6 +281,9 @@ export function ModelConnectionScreen({
               form.dialect,
               form,
             ),
+            ...(form.provider === "anthropic_messages"
+              ? { anthropicPromptCacheTtl: form.anthropicPromptCacheTtl }
+              : {}),
             supportsAllowedTools: form.supportsAllowedTools,
             assistantPrefillMode: form.assistantPrefillMode,
             thinkingBudgetTokens,
@@ -690,6 +698,31 @@ export function ModelConnectionScreen({
                   "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。",
                 )}
               </p>
+
+              {form.provider === "anthropic_messages" && (
+                <>
+                  <label htmlFor="model-anthropic-cache-ttl">
+                    {uiText("提示词缓存时长")}
+                  </label>
+                  <select
+                    id="model-anthropic-cache-ttl"
+                    aria-describedby="model-anthropic-cache-ttl-note"
+                    value={form.anthropicPromptCacheTtl}
+                    onChange={(event) =>
+                      change({
+                        anthropicPromptCacheTtl: event.target
+                          .value as AnthropicPromptCacheTtl,
+                      })
+                    }
+                  >
+                    <option value="5m">{uiText("5 分钟（默认）")}</option>
+                    <option value="1h">{uiText("1 小时")}</option>
+                  </select>
+                  <p className="field-note" id="model-anthropic-cache-ttl-note">
+                    {uiText("命中缓存会续期。1 小时缓存的写入费用更高。")}
+                  </p>
+                </>
+              )}
 
               <div className="model-reasoning-fields">
                 <label htmlFor="model-reasoning-effort">
@@ -1190,6 +1223,7 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     thinkingMode: connection.thinkingMode,
     responsesTurnInstructions: connection.responsesTurnInstructions ?? false,
     responsesCacheControl: connection.responsesCacheControl ?? false,
+    anthropicPromptCacheTtl: connection.anthropicPromptCacheTtl ?? "5m",
     supportsAllowedTools: connection.supportsAllowedTools,
     assistantPrefillMode: connection.assistantPrefillMode,
     thinkingBudgetTokens:

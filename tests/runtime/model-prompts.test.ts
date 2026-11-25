@@ -55,6 +55,134 @@ afterEach(async () => {
   );
 });
 
+test("Anthropic Prompt Preview and play use the saved cache duration at each send boundary", async () => {
+  const { request, reconnect } = await setup();
+  const profile = {
+    ...connection,
+    name: "Anthropic cache duration",
+    provider: "anthropic_messages" as const,
+    modelPrompt: "",
+  };
+  const saved = await request<ModelConnectionLibraryView>({
+    type: "model.save",
+    connection: profile,
+  });
+  const connectionId = saved.activeConnectionId!;
+  const { packageId, worldId } = await createWorld(request);
+  const playerText = "I look around.";
+  const turnNote = "Keep this scene brief.";
+  interface WireBlock {
+    cache_control?: { type: string; ttl?: string };
+  }
+  interface WireBody {
+    messages: { content: string | WireBlock[] }[];
+    system: WireBlock[];
+  }
+  const markers = (body: WireBody) => [
+    body.system.map(({ cache_control }) => cache_control),
+    ...body.messages.map(({ content }) =>
+      Array.isArray(content)
+        ? content.map(({ cache_control }) => cache_control)
+        : null,
+    ),
+  ];
+  const preview = () =>
+    request<PromptPreview & { wireRequest: { body: WireBody } }>({
+      type: "prompt.preview",
+      packageId,
+      playerInput: playerText,
+      turnNote,
+      model,
+    });
+  const shortPreview = await preview();
+  const sent: WireBody[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (_url, options) => {
+      if (typeof options?.body !== "string")
+        throw new Error("Missing Anthropic request body");
+      sent.push(JSON.parse(options.body) as WireBody);
+      if (sent.length === 1) {
+        await request({
+          type: "model.save",
+          connection: {
+            ...profile,
+            connectionId,
+            anthropicPromptCacheTtl: "1h",
+          },
+        });
+        return Response.json({
+          stop_reason: "tool_use",
+          content: [
+            { type: "tool_use", id: "read-1", name: "state_list", input: {} },
+          ],
+        });
+      }
+      return Response.json({
+        stop_reason: sent.length === 3 ? "max_tokens" : "end_turn",
+        content: [{ type: "text", text: "The innkeeper nods." }],
+      });
+    }),
+  );
+  const chainId = "anthropic-cache-duration";
+  const first = await request<V1PlayCallChainView>({
+    type: "play.chain.start",
+    worldId,
+    chainId,
+    exchangeId: "first",
+    playerText,
+    turnNote,
+  });
+  expect(first.status).toBe("ready");
+  expect(sent).toHaveLength(2);
+  // Preview's opening history is a package projection. The live world's
+  // committed opening has its own identity and recorded background.
+  expect(markers(shortPreview.wireRequest.body)).toEqual(markers(sent[0]!));
+  expect(
+    JSON.stringify(sent[0]).match(/"cache_control":\{"type":"ephemeral"\}/gu),
+  ).toHaveLength(3);
+  expect(
+    JSON.stringify(sent[1]).match(/"cache_control":\{"type":"ephemeral"\}/gu),
+  ).toHaveLength(3);
+
+  const longPreview = await preview();
+  const longMarker = /"cache_control":\{"type":"ephemeral","ttl":"1h"\}/gu;
+  expect(
+    JSON.stringify(longPreview.wireRequest.body).match(longMarker),
+  ).toHaveLength(3);
+  expect(
+    JSON.stringify(longPreview.wireRequest.body).replaceAll(',"ttl":"1h"', ""),
+  ).toBe(JSON.stringify(shortPreview.wireRequest.body));
+  const next = await request<V1PlayCallChainView>({
+    type: "play.chain.append",
+    worldId,
+    chainId,
+    exchangeId: "next",
+    playerText: "What is on the shelf?",
+    turnNote,
+  });
+  expect(next).toMatchObject({ status: "interrupted", canRetry: true });
+  expect(JSON.stringify(sent[2]).match(longMarker)).toHaveLength(3);
+  await request({
+    type: "model.save",
+    connection: { ...profile, connectionId, anthropicPromptCacheTtl: "5m" },
+  });
+
+  const cold = await reconnect();
+  const retry = await cold<V1PlayCallChainView>({
+    type: "play.chain.append",
+    worldId,
+    chainId,
+    exchangeId: "retry",
+    playerText: "",
+  });
+  expect(retry.status).toBe("ready");
+  expect(sent).toHaveLength(4);
+  expect(sent[3]).toEqual(
+    JSON.parse(JSON.stringify(sent[2]).replaceAll(',"ttl":"1h"', "")),
+  );
+});
+
 test("play uses the selected connection in preset order, freezing the tool loop, followup, retry and history", async () => {
   const { request, reconnect } = await setup();
   const { a, b } = await twoConnections(request);

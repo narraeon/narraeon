@@ -2,6 +2,7 @@ import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { playerInputText } from "../../shared/turn-guide.ts";
 import type {
+  AnthropicPromptCacheTtl,
   ModelPromptCacheStrategy,
   ModelProviderKind,
   ModelProviderDialect,
@@ -124,6 +125,8 @@ export interface ModelHostRequestConfig {
   maxOutputTokens: number;
   /** Absent in requests frozen before the transcript breakpoint existed. */
   cacheSuffixBreakpoint?: boolean;
+  /** Older Anthropic snapshots omit the field and encode the default 5-minute cache. */
+  anthropicPromptCacheTtl?: AnthropicPromptCacheTtl;
   /** Absent from historical Responses snapshots with the original wire encoding. */
   responsesTurnInstructions?: boolean;
   responsesCacheControl?: boolean;

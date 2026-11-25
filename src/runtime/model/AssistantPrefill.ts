@@ -5,7 +5,10 @@ import {
   validPromptCompilation,
   validPromptTools,
 } from "../prompt/PromptCompilationCodec.ts";
-import type { ModelAssistantPrefillMode } from "../../protocol/modelConnections.ts";
+import {
+  isAnthropicPromptCacheTtl,
+  type ModelAssistantPrefillMode,
+} from "../../protocol/modelConnections.ts";
 import type {
   ModelHost,
   ModelHostExchange,
@@ -369,6 +372,7 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
         "contextWindowTokens",
         "maxOutputTokens",
         "cacheSuffixBreakpoint",
+        "anthropicPromptCacheTtl",
         "responsesTurnInstructions",
         "responsesCacheControl",
         "supportsAllowedTools",
@@ -416,6 +420,9 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
         typeof c.responsesCacheControl === "boolean")) &&
     (c.cacheSuffixBreakpoint === undefined ||
       typeof c.cacheSuffixBreakpoint === "boolean") &&
+    (c.anthropicPromptCacheTtl === undefined ||
+      (c.provider === "anthropic_messages" &&
+        isAnthropicPromptCacheTtl(c.anthropicPromptCacheTtl))) &&
     (c.supportsAllowedTools === undefined ||
       typeof c.supportsAllowedTools === "boolean") &&
     (c.assistantPrefillMode === undefined ||

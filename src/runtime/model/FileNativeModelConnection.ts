@@ -1,6 +1,8 @@
 import {
+  anthropicConnectionCacheSettings,
   modelReasoningPolicyIssue,
   responsesConnectionCapabilities,
+  type AnthropicConnectionCacheSettings,
   type ModelAssistantPrefillMode,
   type ModelProviderDialect,
   type ModelReasoningEffort,
@@ -14,7 +16,8 @@ import type {
   ModelHostCacheStrategy,
 } from "./ModelHost.ts";
 
-export interface FileNativeModelConnection extends ResponsesConnectionCapabilities {
+export interface FileNativeModelConnection
+  extends ResponsesConnectionCapabilities, AnthropicConnectionCacheSettings {
   provider: FileNativePromptInput["modelBinding"]["provider"];
   dialect?: ModelProviderDialect;
   baseUrl: string;
@@ -58,6 +61,7 @@ export interface ResolvedFileNativeModelConnection extends Omit<
 
 export function resolveConnection(
   {
+    anthropicPromptCacheTtl,
     responsesTurnInstructions,
     responsesCacheControl,
     ...connection
@@ -66,6 +70,10 @@ export function resolveConnection(
 ): ResolvedFileNativeModelConnection {
   const resolved = structuredClone({
     ...connection,
+    ...anthropicConnectionCacheSettings(
+      connection.provider,
+      anthropicPromptCacheTtl,
+    ),
     ...(legacyResponses
       ? {}
       : responsesConnectionCapabilities(

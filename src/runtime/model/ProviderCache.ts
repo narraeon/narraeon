@@ -86,8 +86,10 @@ export function markLastMessage(messages: unknown[]): unknown[] {
 }
 
 /** Refuses a request over the breakpoint limit instead of silently dropping one. */
-export function checkedCacheBreakpoints<Body>(body: Body): Body {
-  const count = countCacheBreakpoints(body);
+export function checkedCacheBreakpoints<Body>(
+  body: Body,
+  count = countCacheBreakpoints(body),
+): Body {
   if (count > explicitCacheBreakpointLimit)
     throw new Error(
       `The request has ${count} cache breakpoints; the Anthropic limit is ${explicitCacheBreakpointLimit}.`,
