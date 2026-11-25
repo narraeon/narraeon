@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import { RuntimeDomainError } from "../../src/runtime/RuntimeDomainError.ts";
+import { ContentWorkspace } from "../../src/runtime/content/ContentWorkspace.ts";
 import {
   createHistoryQuery,
   historyEntries,
@@ -20,6 +22,7 @@ import {
   listTurns,
   type WorldTurnFileChange,
 } from "../../src/runtime/world/WorldTurnLedger.ts";
+import { createZip } from "../support/createZip.ts";
 
 // 控制随轮账本：控制编辑应用、世界修订应用、回退与分叉之间的一致性（#106）。
 
@@ -243,6 +246,132 @@ test("the draft receipt also identifies text saved through the legacy Base64 fie
   expect(await store.readSurface(worldId, "control")).toContainEqual({
     path: "blocks/world.md",
     contents: rule,
+  });
+});
+
+const resourcePath = "assets/icon.bin";
+const resourceBytes = Buffer.from([0xff, 0x00, 0xfe]);
+const encodedResource = {
+  path: resourcePath,
+  contents: resourceBytes.toString("base64"),
+  encoding: "base64" as const,
+};
+
+test("editing control text retains an opaque resource from an imported package", async () => {
+  const { store, worldId, worldRoot } = await world(resourceBytes);
+  const live = join(worldRoot, "control", resourcePath);
+  const staged = join(worldRoot, "runtime/control-draft", resourcePath);
+  expect(await readFile(live)).toEqual(resourceBytes);
+
+  const before = await store.readSurface(worldId, "control");
+  expect(before).toContainEqual(encodedResource);
+  const files = before.map((file) =>
+    file.path === "blocks/world.md"
+      ? { ...file, contents: "# Updated rules\n" }
+      : file,
+  );
+  const { fingerprint } = await store.saveControlDraft(worldId, files);
+  expect(await readFile(staged)).toEqual(resourceBytes);
+  expect(await readFile(live)).toEqual(resourceBytes);
+  await expect(
+    store.previewControlDraft(worldId, prompt, fingerprint),
+  ).resolves.toMatchObject({
+    diagnosticBinding: { controlFingerprint: fingerprint },
+  });
+  await store.applyControlDraft(worldId, prompt, fingerprint);
+
+  expect(await readFile(live)).toEqual(resourceBytes);
+  expect(await store.readSurface(worldId, "control")).toEqual(files);
+  const turns = await listTurns(worldRoot);
+  expect(modesOf(turns)).toEqual(["control_apply"]);
+  expect(
+    turns[0]?.files.filter(({ path }) => path.startsWith("control/")),
+  ).toMatchObject([{ path: "control/blocks/world.md" }]);
+  expect(await store.readSurface(worldId, "control", "genesis")).toEqual(
+    before,
+  );
+  const fork = await store.deriveWorld({
+    operationId: "fork-with-opaque-control-resource",
+    sourceWorldId: worldId,
+    sourceHead: "genesis",
+    hostPresetId: "host",
+  });
+  expect(await readFile(join(fork.worldRoot, "control", resourcePath))).toEqual(
+    resourceBytes,
+  );
+  await store.rewindPlayerRevision(worldId, "genesis");
+  expect(await readFile(live)).toEqual(resourceBytes);
+  expect(await store.readSurface(worldId, "control")).toEqual(before);
+});
+
+test("control draft receipts identify bytes rather than their decoded replacement characters or Base64 spelling", async () => {
+  const { store, worldId, worldRoot } = await world(resourceBytes);
+  const control = await store.readSurface(worldId, "control");
+  const { fingerprint } = await store.saveControlDraft(
+    worldId,
+    control.map((file) =>
+      file.path === resourcePath ? encodedResource : file,
+    ),
+  );
+  const staged = join(worldRoot, "runtime/control-draft", resourcePath);
+  expect(await readFile(staged)).toEqual(resourceBytes);
+  // Simulate a draft persisted by an older Runtime before re-opening it here.
+  await writeFile(staged, resourceBytes.toString("utf8"));
+  await expect(
+    store.previewControlDraft(worldId, prompt, fingerprint),
+  ).rejects.toMatchObject({
+    message: "World-control draft was replaced or removed",
+  });
+  await writeFile(staged, encodedResource.contents);
+  await expect(
+    store.applyControlDraft(worldId, prompt, fingerprint),
+  ).rejects.toMatchObject({
+    message: "World-control draft was replaced or removed",
+  });
+  await expect(store.applyControlDraft(worldId, prompt)).rejects.toThrow(
+    /read-only/u,
+  );
+  expect(await store.currentHead(worldId)).toBe("genesis");
+  expect(await readFile(join(worldRoot, "control", resourcePath))).toEqual(
+    resourceBytes,
+  );
+});
+
+test("saving a replacement, removal, or new opaque resource leaves the previous draft intact", async () => {
+  const { store, worldId, worldRoot } = await world(resourceBytes);
+  const before = await store.readSurface(worldId, "control");
+  const text = before.filter(({ path }) => path !== resourcePath);
+  const { fingerprint } = await store.saveControlDraft(worldId, before);
+
+  for (const files of [
+    text,
+    [...text, { path: resourcePath, contents: "replacement" }],
+    [
+      ...text,
+      { ...encodedResource, contents: Buffer.from([0xfe]).toString("base64") },
+    ],
+    [...before, { ...encodedResource, path: "assets/another.bin" }],
+  ]) {
+    const failure = await store
+      .saveControlDraft(worldId, files)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RuntimeDomainError);
+    if (!(failure instanceof RuntimeDomainError)) throw failure;
+    const protocolError = failure.toProtocolError("world.control-draft.save");
+    expect(protocolError).toMatchObject({
+      code: "invalid_request",
+      details: { reason: "control_resource_read_only" },
+    });
+    expect(protocolError?.message).toContain("Restore");
+  }
+
+  expect(
+    await readFile(join(worldRoot, "runtime/control-draft", resourcePath)),
+  ).toEqual(resourceBytes);
+  await expect(
+    store.previewControlDraft(worldId, prompt, fingerprint),
+  ).resolves.toMatchObject({
+    diagnosticBinding: { controlFingerprint: fingerprint },
   });
 });
 
@@ -511,28 +640,38 @@ async function snapshot(store: FileNativeWorldStore, worldId: string) {
   };
 }
 
-async function world() {
+async function world(resource?: Buffer) {
   const root = await mkdtemp(join(tmpdir(), "narraeon-world-control-ledger-"));
   roots.push(root);
   const store = new FileNativeWorldStore(root);
+  const fixture = [
+    {
+      path: "opening.md",
+      contents:
+        "The room falls quiet, leaving the present situation for your response.\n",
+    },
+    { path: "world/current-situation.yaml", contents: initialSituation() },
+    { path: "control/frame.yaml", contents: frameV1 },
+    { path: "control/blocks/world.md", contents: "# World Rules\n" },
+    {
+      path: "control/player-views.yaml",
+      contents: "format: narraeon.player-views/v1\nviews: []\n",
+    },
+  ];
+  const imported =
+    resource === undefined
+      ? null
+      : await new ContentWorkspace(root).importPortableContentPackageArchive(
+          createZip([
+            ...fixture,
+            { path: `control/${resourcePath}`, contents: resource },
+          ]),
+        );
   const created = await store.createFromContentPackage({
     operationId: `create-${roots.length}`,
-    sourcePackageId: "package",
-    sourcePackageTitle: "Test content package",
-    packageFiles: [
-      {
-        path: "opening.md",
-        contents:
-          "The room falls quiet, leaving the present situation for your response.\n",
-      },
-      { path: "world/current-situation.yaml", contents: initialSituation() },
-      { path: "control/frame.yaml", contents: frameV1 },
-      { path: "control/blocks/world.md", contents: "# World Rules\n" },
-      {
-        path: "control/player-views.yaml",
-        contents: "format: narraeon.player-views/v1\nviews: []\n",
-      },
-    ],
+    sourcePackageId: imported?.localId ?? "package",
+    sourcePackageTitle: imported?.title ?? "Test content package",
+    packageFiles: imported?.files ?? fixture,
     prompt,
   });
   const worldId = created.world.worldId;
