@@ -1822,16 +1822,28 @@ const worldFrameEnglishMessages: Record<string, string> = {
   调整注入顺序: "Change injection order",
   "YAML 路径": "YAML path",
   "Markdown 标题路径": "Markdown heading path",
+  "选择 YAML 节点（插槽 {index}）": "Choose YAML node (slot {index})",
+  "选择 Markdown 标题（插槽 {index}）":
+    "Choose Markdown heading (slot {index})",
+  先选择来源文件: "Choose the source file first",
+  选择一个节点: "Choose a node",
+  "YAML 正文根节点": "YAML body root",
+  当前路径不可用: "Current path unavailable",
+  "当前路径无法解析或不唯一。请选择其他节点，或手动修正路径。":
+    "The current path could not be resolved or is ambiguous. Choose another node or edit the path manually.",
+  "高级：手动填写节点路径": "Advanced: enter the node path manually",
+  每行填写一个标题层级: "Enter one heading level per line",
   "选择实际 YAML 文件": "Choose an actual YAML file",
   历史消息句柄: "History-message handle",
   选择实际文档文件: "Choose an actual document file",
-  "只列出内容包中带可识别 $document 技术头的实际文件。":
-    "Only actual files with a recognizable $document technical header are listed.",
+  "只列出当前草稿中可读取的世界文档。":
+    "Only readable world documents in the current draft are listed.",
   选择实际世界目录: "Choose an actual world directory",
   "（当前没有可关联文档）": "(no documents can be associated)",
   份文档: "documents",
-  "只列出当前内容包内确实包含可识别文档的目录。":
-    "Only directories that actually contain recognizable documents in this content package are listed.",
+  "只列出当前草稿中含可识别文档的目录。":
+    "Only directories containing recognizable documents in the current draft are listed.",
+  "实际关联 state/{directory}/。": "Associated with state/{directory}/.",
   "先选择来源 YAML 文件": "Choose the source YAML file first",
   "当前手动路径：": "Current manual path:",
   "（未解析）": "(unresolved)",
@@ -1859,8 +1871,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
     "The top level of frame.yaml must be a YAML map.",
   "YAML 无法解析。": "YAML could not be parsed.",
   "整份 YAML": "Whole YAML document",
-  "先在 world/ 的子目录中创建带 $document 技术头的文档。":
-    "Create a document with a $document technical header in a world/ subdirectory first.",
+  "先在 {root}/ 的子目录中创建带 $document 技术头的文档。":
+    "Create a document with a $document technical header in a {root}/ subdirectory first.",
   "先创建一份带 $document 技术头的 YAML 世界文档。":
     "Create a YAML world document with a $document technical header first.",
   "先创建一份带 $document 技术头的世界文档。":

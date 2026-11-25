@@ -307,6 +307,8 @@ Runtime 只知道控制文件的 `bindings.currentSituation` 把 `@current-situa
 
 ## 9. 世界提示框架
 
+在内容包或世界修订的文件面板打开 `control/frame.yaml` 后，可为「文档局部节点」材料槽从当前文件草稿挑选 YAML 字段或 Markdown 标题，也可手动填写。选择器保存路径与短引用。
+
 `control/frame.yaml` 的 V1 形状：
 
 ```yaml

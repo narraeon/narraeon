@@ -108,6 +108,8 @@ export function DocumentWorkbench({
       : "";
   const documentRoot =
     workspace.kind === "content-package" ? "world/" : "state/";
+  const documentLayout =
+    workspace.kind === "content-package" ? "content_package" : "world_revision";
   const selectedCodec = selectedFile?.path.startsWith(documentRoot)
     ? documentCodec(selectedFile.path)
     : null;
@@ -440,11 +442,7 @@ export function DocumentWorkbench({
               <PlayerViewEditor
                 contents={selectedFile.contents}
                 files={files}
-                layout={
-                  workspace.kind === "content-package"
-                    ? "content_package"
-                    : "world_revision"
-                }
+                layout={documentLayout}
                 onChange={replaceSelected}
                 onSave={saveShortcut}
               />
@@ -452,6 +450,7 @@ export function DocumentWorkbench({
               <WorldFrameEditor
                 contents={selectedFile.contents}
                 files={files}
+                layout={documentLayout}
                 dirty={workspace.dirty}
                 onChange={replaceSelected}
                 onSave={workspace.onSave}

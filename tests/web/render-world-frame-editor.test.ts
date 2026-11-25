@@ -298,6 +298,117 @@ maintenance:
     ).toBeTruthy();
   });
 
+  test("节点槽保留旧路径以便修复，候选包含可持久定位的真实路径", () => {
+    const changed = vi.fn<(contents: string) => void>();
+    render(
+      createElement(FrameHarness, {
+        initialContents: frame().replace(
+          "  - slot: { kind: additional_materials }",
+          "  - slot: { kind: node, document: character.alex, locator: { yaml: [lost] } }\n  - slot: { kind: additional_materials }",
+        ),
+        files: files().map((file) =>
+          file.path === "world/characters/alex.yaml"
+            ? {
+                ...file,
+                contents:
+                  file.contents +
+                  "状态:\n  天气: 小雨\n  人物: [甲, 乙]\n  '0': 映射键\n引用: { $ref: missing.document }\n",
+              }
+            : file,
+        ),
+        onContentsChange: changed,
+        onSave: vi.fn(),
+      }),
+    );
+
+    const node =
+      screen.getByLabelText<HTMLSelectElement>("选择 YAML 节点（插槽 3）");
+    expect(screen.getByLabelText<HTMLSelectElement>("文档 3").value).toBe(
+      "@character-alex",
+    );
+    expect(node.selectedOptions[0]?.text).toBe("lost");
+    expect(node.getAttribute("aria-invalid")).toBe("true");
+    expect(changed).not.toHaveBeenCalled();
+    const options = Array.from(node.options, ({ text }) => text);
+    expect(options).toContain("状态 › 天气 · 小雨");
+    expect(options).toContain("状态 › 人物");
+    expect(options).toContain("状态 › 0 · 映射键");
+    expect(options.join("\n")).not.toMatch(/\$document|人物 ›|引用/u);
+
+    const path = JSON.stringify({ yaml: ["状态", "天气"] });
+    fireEvent.change(node, { target: { value: path } });
+    expect(node.value).toBe(path);
+    expect(node.hasAttribute("aria-invalid")).toBe(false);
+    expect(latestFrame(changed).context[2]?.slot).toEqual({
+      kind: "node",
+      document: "@character-alex",
+      locator: { yaml: ["状态", "天气"] },
+    });
+  });
+
+  test("修订节点槽显示重复标题和重复文档的失效选择", () => {
+    const changed = vi.fn<(contents: string) => void>();
+    const revisions = [
+      ...files(),
+      {
+        path: "world/characters/another-alex.yaml",
+        contents: document("character.alex", "Duplicate"),
+      },
+    ].map((file) => ({
+      ...file,
+      path: file.path.replace(/^world\//u, "state/"),
+      contents:
+        file.path === "world/rules/lore.md"
+          ? file.contents + "\n## 重复\n甲\n\n## 重复\n乙\n\n## 可用\n正文。\n"
+          : file.contents,
+    }));
+    render(
+      createElement(FrameHarness, {
+        initialContents: frame().replace(
+          "  - slot: { kind: additional_materials }",
+          [
+            '  - slot: { kind: node, document: "@rule-lore", locator: { markdown: [重复] } }',
+            '  - slot: { kind: node, document: "@character-alex", locator: { yaml: [值] } }',
+            "  - slot: { kind: additional_materials }",
+          ].join("\n"),
+        ),
+        files: revisions,
+        layout: "world_revision",
+        onContentsChange: changed,
+        onSave: vi.fn(),
+      }),
+    );
+
+    const headings = screen.getByLabelText<HTMLSelectElement>(
+      "选择 Markdown 标题（插槽 3）",
+    );
+    expect(headings.selectedOptions[0]?.text).toBe("重复");
+    expect(headings.selectedOptions[0]?.disabled).toBe(true);
+    expect(Array.from(headings.options, ({ text }) => text)).toEqual([
+      "选择一个节点",
+      "重复",
+      "可用",
+    ]);
+    const ambiguousDocument =
+      screen.getByLabelText<HTMLSelectElement>("文档 4");
+    expect(ambiguousDocument.selectedOptions[0]?.text).toContain(
+      "@character-alex（当前未解析）",
+    );
+    expect(
+      screen.getByLabelText<HTMLSelectElement>("选择 YAML 节点（插槽 4）")
+        .disabled,
+    ).toBe(true);
+    fireEvent.change(headings, {
+      target: { value: JSON.stringify({ markdown: ["可用"] }) },
+    });
+    expect(latestFrame(changed).context[2]?.slot.locator).toEqual({
+      markdown: ["可用"],
+    });
+    expect(latestFrame(changed).context[3]?.slot.locator).toEqual({
+      yaml: ["值"],
+    });
+  });
+
   // Legacy ids must stay readable and switch to author-visible short refs.
   test("保存时把可解析的 id 一并规范化为 @短引用，无法解析的原样保留", () => {
     const changed = vi.fn<(contents: string) => void>();
@@ -355,11 +466,13 @@ context:
 function FrameHarness({
   initialContents,
   files,
+  layout,
   onContentsChange,
   onSave,
 }: {
   initialContents: string;
   files: ContentTreeFile[];
+  layout?: "content_package" | "world_revision";
   onContentsChange: (contents: string) => void;
   onSave: () => void;
 }): React.JSX.Element {
@@ -368,6 +481,7 @@ function FrameHarness({
   return createElement(WorldFrameEditor, {
     contents,
     files,
+    layout: layout ?? "content_package",
     dirty,
     onChange: (next) => {
       setContents(next);
