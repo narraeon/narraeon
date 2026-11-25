@@ -141,6 +141,61 @@ test("a localized orchestration refresh keeps the open prompt and saves its edit
   );
 });
 
+test("language changes keep the selected follow-up output, renderer, and preview draft", async ({
+  page,
+}) => {
+  const created = await runtime<{ preset: { id: string } }>(page, {
+    type: "play.create",
+    name: "Follow-up locale fixture",
+  });
+  await page.goto(`/#/orchestrations/${created.preset.id}`);
+  await page.getByRole("button", { name: "新增后置请求", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "后置请求名称" })).toHaveValue(
+    "新后置请求",
+  );
+  await page.getByRole("button", { name: "界面产物", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "产物显示位置", exact: true })
+    .selectOption("sidebar");
+  await page
+    .getByRole("button", { name: "新建 HTML 模板", exact: true })
+    .click();
+  const renderer = page.getByRole("textbox", { name: "HTML", exact: true });
+  const html = "<h2>Follow-up example</h2><!-- narraeon:content -->";
+  await renderer.fill(html);
+  await page.getByText("游玩效果预览 · 就地展开", { exact: true }).click();
+  const input = page.getByRole("textbox", {
+    name: /^(本页输入草稿（尚未发送）|Local input draft \(not sent\))$/u,
+  });
+  await input.fill("Keep this sample draft.");
+
+  await switchLanguage(page, "en");
+  await expect(
+    page.getByRole("button", { name: "Outputs", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("heading", { name: "Interface outputs", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Output position", exact: true }),
+  ).toHaveValue("sidebar");
+  await expect(
+    page.getByRole("combobox", { name: "Renderer", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Play preview · expand here", { exact: true }),
+  ).toBeVisible();
+  await expect(renderer).toHaveValue(html);
+  await expect(input).toHaveValue("Keep this sample draft.");
+
+  await switchLanguage(page, "zh-CN");
+  await expect(
+    page.getByRole("combobox", { name: "产物显示位置", exact: true }),
+  ).toHaveValue("sidebar");
+  await expect(renderer).toHaveValue(html);
+  await expect(input).toHaveValue("Keep this sample draft.");
+});
+
 test("a keyboard language change keeps picker focus and a selected model draft", async ({
   page,
 }) => {

@@ -12,7 +12,7 @@ import {
   builtinFollowupExample,
   type FollowupItem,
 } from "../shared/ordered-followups.ts";
-import { getWebLocale } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import type {
   PlayPresetStructuredEditor,
   PlayPresetFollowupDefinition,
@@ -23,7 +23,6 @@ import { PresetDisplayEditor } from "./PresetDisplayEditor.tsx";
 import { MountSelect } from "./PlayPresetEditorControls.tsx";
 import { artifactOptionLabel, mountLabel } from "./playPresetEditorLabels.ts";
 
-const t = (cn: string, en: string) => (getWebLocale() === "zh-CN" ? cn : en);
 export function PresetWorkbenchEditor({
   structure,
   files,
@@ -104,11 +103,8 @@ export function PresetWorkbenchEditor({
         : {
             type: "create-followup",
             id,
-            displayName: t("新后置请求", "New follow-up"),
-            body: t(
-              "根据本轮已提交叙事，生成下面声明的界面产物。",
-              "Generate the declared interface outputs from the settled narrative.",
-            ),
+            displayName: uiText("orchestration.followup.new"),
+            body: uiText("根据本轮已提交叙事，生成下面声明的界面产物。"),
           },
     );
     setSelection({
@@ -122,7 +118,7 @@ export function PresetWorkbenchEditor({
     return item.kind === "builtin"
       ? example.definition.displayName
       : item.kind === "content-package"
-        ? t("内容包后置组", "Content-package follow-ups")
+        ? uiText("内容包后置组")
         : (structure.followups.find((f) => f.id === item.id)?.displayName ??
           item.id);
   }
@@ -137,16 +133,16 @@ export function PresetWorkbenchEditor({
     <>
       <section className="preset-directory-group">
         <header>
-          <span>{t("回复完成后", "After the reply")}</span>
+          <span>{uiText("回复完成后")}</span>
           <button
             type="button"
-            aria-label={t("新增后置请求", "Add follow-up request")}
+            aria-label={uiText("新增后置请求")}
             onClick={() => addFollowup()}
           >
             ＋
           </button>
         </header>
-        <ol aria-label={t("后置请求", "Follow-up requests")}>
+        <ol aria-label={uiText("后置请求")}>
           {items.map((item, index) => (
             <li
               key={item.id}
@@ -190,15 +186,15 @@ export function PresetWorkbenchEditor({
                 {name(item)}
                 <small>
                   {item.kind === "builtin"
-                    ? t("系统", "System")
+                    ? uiText("系统")
                     : item.kind === "content-package"
-                      ? t("内容包", "Package")
-                      : t("用户", "User")}
+                      ? uiText("orchestration.followup.source.package")
+                      : uiText("用户")}
                 </small>
               </button>
               <input
                 type="checkbox"
-                aria-label={`${t("启用", "Enable")} ${name(item)}`}
+                aria-label={`${uiText("启用")} ${name(item)}`}
                 checked={item.enabled}
                 onChange={(e) =>
                   onChange((s) => ({
@@ -217,20 +213,17 @@ export function PresetWorkbenchEditor({
       </section>
       <section className="preset-directory-group">
         <header>
-          <span>{t("纯界面 · 不调用模型", "Interface · no model")}</span>
+          <span>{uiText("纯界面 · 不调用模型")}</span>
           <button
             type="button"
-            aria-label={t("新增纯界面", "Add interface panel")}
+            aria-label={uiText("新增纯界面")}
             onClick={() => {
               const id = `panel_${browserUUID().replaceAll("-", "")}`;
               onResourceEdit({
                 type: "create-panel",
                 id,
-                title: t("世界状态栏", "World status"),
-                emptyMessage: t(
-                  "当前没有可显示内容。",
-                  "No content to display.",
-                ),
+                title: uiText("世界状态栏"),
+                emptyMessage: uiText("orchestration.panel.empty"),
               });
               setSelection({ kind: "panel", id });
             }}
@@ -277,10 +270,8 @@ export function PresetWorkbenchEditor({
       <div className="preset-object-detail">
         <div className="preset-object-toolbar">
           <span>
-            {t("回复完成后", "After the reply")} /{" "}
-            {readonly
-              ? t("系统 / 内容包", "System / package")
-              : t("用户", "User")}
+            {uiText("回复完成后")} /{" "}
+            {readonly ? uiText("系统 / 内容包") : uiText("用户")}
           </span>
           <button
             type="button"
@@ -308,7 +299,7 @@ export function PresetWorkbenchEditor({
           </button>
           {followup && (
             <button type="button" onClick={() => addFollowup(followup)}>
-              {t("克隆后置请求", "Clone follow-up")}
+              {uiText("orchestration.followup.clone")}
             </button>
           )}
           {!readonly && (
@@ -319,27 +310,22 @@ export function PresetWorkbenchEditor({
                 setSelection(undefined);
               }}
             >
-              {t("删除", "Delete")}
+              {uiText("删除")}
             </button>
           )}
         </div>
         {!followup ? (
           <>
-            <h2>{t("内容包后置组", "Content-package follow-ups")}</h2>
-            <p>
-              {t(
-                "在此位置展开当前世界的内容包后置请求。无声明时为空组，不调用模型；正文由内容包管理。",
-                "The current world's follow-ups expand here. An empty group makes no model requests; edit definitions in the content package.",
-              )}
-            </p>
+            <h2>{uiText("内容包后置组")}</h2>
+            <p>{uiText("orchestration.followup.packageExpansion")}</p>
           </>
         ) : (
           <>
             <nav className="preset-detail-tabs">
               {[
-                ["prompt", t("提示词", "Prompt")],
-                ["outputs", t("界面产物", "Outputs")],
-                ["advanced", t("高级设置", "Advanced")],
+                ["prompt", uiText("提示词")],
+                ["outputs", uiText("界面产物")],
+                ["advanced", uiText("高级设置")],
               ].map(([id, label]) => (
                 <button
                   type="button"
@@ -351,20 +337,13 @@ export function PresetWorkbenchEditor({
                 </button>
               ))}
             </nav>
-            {readonly && (
-              <p>
-                {t(
-                  "系统示例完整只读；克隆后独立编辑。",
-                  "The complete system example is read-only. Clone to edit independently.",
-                )}
-              </p>
-            )}
+            {readonly && <p>{uiText("系统示例完整只读；克隆后独立编辑。")}</p>}
             {tab === "prompt" ? (
               <div className="preset-manuscript">
                 <label>
-                  {t("后置请求名称", "Follow-up name")}
+                  {uiText("后置请求名称")}
                   <input
-                    aria-label={t("后置请求名称", "Follow-up name")}
+                    aria-label={uiText("后置请求名称")}
                     readOnly={readonly}
                     value={followup.displayName}
                     onChange={(e) =>
@@ -376,11 +355,10 @@ export function PresetWorkbenchEditor({
                   />
                 </label>
                 <label>
-                  {t("提示词", "Prompt")}
+                  {uiText("提示词")}
                   <textarea
-                    aria-label={t(
-                      "这次额外请求要做什么",
-                      "What should this follow-up do?",
+                    aria-label={uiText(
+                      "orchestration.followup.promptPlaceholder",
                     )}
                     rows={16}
                     readOnly={readonly}
@@ -404,25 +382,17 @@ export function PresetWorkbenchEditor({
                     )
                   }
                 >
-                  {t("将产物引用加入提示词", "Insert output references")}
+                  {uiText("将产物引用加入提示词")}
                 </button>
               </div>
             ) : (
               <>
                 <h2>
                   {tab === "outputs"
-                    ? t("界面产物", "Interface outputs")
-                    : t(
-                        "此产物的数据格式要求",
-                        "This output's data requirements",
-                      )}
+                    ? uiText("orchestration.followup.outputs.heading")
+                    : uiText("此产物的数据格式要求")}
                 </h2>
-                <p>
-                  {t(
-                    "一条请求，可以生成多个界面产物。",
-                    "One request can generate several interface outputs.",
-                  )}
-                </p>
+                <p>{uiText("一条请求，可以生成多个界面产物。")}</p>
                 <div className="preset-output-cards">
                   {followup.artifacts.map((a) => (
                     <button
@@ -432,9 +402,7 @@ export function PresetWorkbenchEditor({
                       onClick={() => setOutput(a.name)}
                     >
                       <strong>{a.displayName ?? a.name}</strong>
-                      <small>
-                        {a.purpose ?? t("尚未填写用途", "No purpose yet")}
-                      </small>
+                      <small>{a.purpose ?? uiText("尚未填写用途")}</small>
                       <span>
                         {mountLabel(
                           structure.mounts.find((m) => m.channel === a.channel)
@@ -470,23 +438,17 @@ export function PresetWorkbenchEditor({
                         setOutput(a.name);
                       }}
                     >
-                      {t("＋ 新增产物", "＋ Add output")}
+                      {uiText("＋ 新增产物")}
                     </button>
                   )}
                 </div>
                 {!readonly && (
                   <details>
                     <summary>
-                      {t(
-                        "JavaScript 示例 · 新建独立产物",
-                        "JavaScript examples · create independent output",
-                      )}
+                      {uiText("JavaScript 示例 · 新建独立产物")}
                     </summary>
                     <p>
-                      {t(
-                        "新建示例不会覆盖现有资源，不会授予脚本许可。",
-                        "Creates independent files without overwriting resources or granting script permission.",
-                      )}
+                      {uiText("新建示例不会覆盖现有资源，不会授予脚本许可。")}
                     </p>
                     {(["actions", "card"] as const).map((kind) => (
                       <button
@@ -508,23 +470,17 @@ export function PresetWorkbenchEditor({
                         }}
                       >
                         {kind === "actions"
-                          ? t(
-                              "新建行动按钮示例",
-                              "Create action button example",
-                            )
-                          : t("新建场景卡片示例", "Create scene card example")}
+                          ? uiText("新建行动按钮示例")
+                          : uiText("新建场景卡片示例")}
                       </button>
                     ))}
                   </details>
                 )}
                 <details>
-                  <summary>
-                    {t("AI 如何提交这些产物", "How AI submits these outputs")}
-                  </summary>
+                  <summary>{uiText("AI 如何提交这些产物")}</summary>
                   <p>
-                    {t(
+                    {uiText(
                       "同一次后置模型响应，分别调用 artifact_emit；output 指定产物，payload 提交数据。不为每个产物另发请求。提交名自动分配，友好名称修改不改变绑定。",
-                      "In the same follow-up response, call artifact_emit for each output. output selects the declaration; payload supplies data. No separate request per output. Renaming a display label preserves its stable submission name.",
                     )}
                   </p>
                   {followup.artifacts.map((a) => (
@@ -569,17 +525,17 @@ export function PresetWorkbenchEditor({
                           }
                         >
                           {delta === -1
-                            ? t("产物前移", "Move output earlier")
-                            : t("产物后移", "Move output later")}
+                            ? uiText("产物前移")
+                            : uiText("产物后移")}
                         </button>
                       ))}
                     </div>
                     {tab === "outputs" ? (
                       <>
                         <label>
-                          {t("产物名称", "Output name")}
+                          {uiText("产物名称")}
                           <input
-                            aria-label={t("产物名称", "Output name")}
+                            aria-label={uiText("产物名称")}
                             maxLength={160}
                             value={artifact.displayName ?? artifact.name}
                             onChange={(e) =>
@@ -591,9 +547,9 @@ export function PresetWorkbenchEditor({
                           />
                         </label>
                         <label>
-                          {t("生成内容用途", "Generation purpose")}
+                          {uiText("生成内容用途")}
                           <textarea
-                            aria-label={t("生成内容用途", "Generation purpose")}
+                            aria-label={uiText("生成内容用途")}
                             maxLength={16000}
                             value={artifact.purpose ?? ""}
                             onChange={(e) =>
@@ -605,9 +561,9 @@ export function PresetWorkbenchEditor({
                           />
                         </label>
                         <label>
-                          {t("显示位置", "Display position")}
+                          {uiText("orchestration.output.displayPosition")}
                           <MountSelect
-                            ariaLabel={t("产物显示位置", "Output position")}
+                            ariaLabel={uiText("orchestration.output.position")}
                             value={
                               structure.mounts.find(
                                 (m) => m.channel === artifact.channel,
@@ -662,16 +618,13 @@ export function PresetWorkbenchEditor({
                         })
                       }
                     >
-                      {t("移除此产物", "Remove output")}
+                      {uiText("移除此产物")}
                     </button>
                   </fieldset>
                 )}
                 {tab === "advanced" && (
                   <label>
-                    {t(
-                      "本次所有产物合计上限（bytes）",
-                      "Total output byte limit",
-                    )}
+                    {uiText("orchestration.followup.maxTotalBytes")}
                     <input
                       type="number"
                       readOnly={readonly}
@@ -728,9 +681,9 @@ function ArtifactAdvancedEditor({
   return (
     <>
       <label>
-        {t("内容格式", "Content format")}
+        {uiText("内容格式")}
         <select
-          aria-label={t("内容格式", "Content format")}
+          aria-label={uiText("内容格式")}
           value={artifact.contentType}
           onChange={(e) => {
             const next = {
@@ -755,16 +708,12 @@ function ArtifactAdvancedEditor({
       {artifact.contentType === "application/json" && (
         <>
           <p>
-            {t(
+            {uiText(
               "约定字段、类型与必填项。要求会说明给模型，提交时由应用校验；不为模型开启 JSON 输出模式，不保证模型合法输出，也不自动往返修复。",
-              "Fields, types and required values are explained to the model and checked by the app on submission. This does not enable JSON output mode for the model, guarantee valid output, or automatically repair responses.",
             )}
           </p>
           <label>
-            {t(
-              "此产物的数据格式要求（JSON）",
-              "This output's data requirements (JSON)",
-            )}
+            {uiText("此产物的数据格式要求（JSON）")}
             <textarea
               rows={12}
               value={
@@ -797,7 +746,7 @@ function ArtifactAdvancedEditor({
               onChange(next);
             }}
           >
-            {t("移除格式要求", "Remove requirements")}
+            {uiText("移除格式要求")}
           </button>
         </>
       )}
@@ -805,17 +754,13 @@ function ArtifactAdvancedEditor({
         [
           [
             "strategy",
-            t("更新方式", "Update policy"),
+            uiText("更新方式"),
             ["replace", "append", "upsert", "transient", "hidden"],
           ],
-          [
-            "save",
-            t("保存范围", "Save scope"),
-            ["commit", "operation", "none"],
-          ],
+          ["save", uiText("保存范围"), ["commit", "operation", "none"]],
           [
             "invalidation",
-            t("清空条件", "Clearing condition"),
+            uiText("清空条件"),
             [
               "explicit_clear",
               "new_operation",
@@ -842,17 +787,13 @@ function ArtifactAdvancedEditor({
         </label>
       ))}
       <p>
-        {t(
+        {uiText(
           "更新方式决定同一产物如何合并：替换只留最新一份，追加保留多份，按标识更新只替换同标识的内容。保存范围、清空条件和生成期间显示的限制共同决定何时可见；关闭世界中的扩展仍会隐藏产物，清空指令仍可清除它。",
-          "The update policy combines results for this output: replace keeps the latest, append keeps multiple results, and keyed updates replace only the matching key. Save scope, clearing conditions and generation-only display limits jointly determine visibility. Disabling the world's extension still hides its outputs, and clear instructions can still remove them.",
         )}
       </p>
       {artifact.strategy === "upsert" && (
         <label>
-          {t(
-            "更新标识（相同标识覆盖旧内容）",
-            "Update key (replaces the result with the same key)",
-          )}
+          {uiText("更新标识（相同标识覆盖旧内容）")}
           <input
             value={artifact.key ?? ""}
             onChange={(e) => onChange({ ...artifact, key: e.target.value })}
@@ -860,7 +801,7 @@ function ArtifactAdvancedEditor({
         </label>
       )}
       <label>
-        {t("单次最多输出次数", "Maximum emits")}
+        {uiText("orchestration.output.maxEmits")}
         <input
           type="number"
           min={1}
@@ -878,7 +819,7 @@ function ArtifactAdvancedEditor({
             onChange({ ...artifact, required: e.target.checked })
           }
         />
-        {t("AI 必须生成此产物", "Required output")}
+        {uiText("AI 必须生成此产物")}
       </label>
     </>
   );

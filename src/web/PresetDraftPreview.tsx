@@ -14,9 +14,8 @@ import {
   type ArtifactPayload,
   type FrontendArtifactProjection,
 } from "./ArtifactExtensionHost.tsx";
-import { getWebLocale } from "./i18n.ts";
+import { uiText } from "./i18n.ts";
 import { mountLabel } from "./playPresetEditorLabels.ts";
-const t = (cn: string, en: string) => (getWebLocale() === "zh-CN" ? cn : en);
 export function PresetDraftPreview({
   client,
   presetId,
@@ -96,9 +95,7 @@ export function PresetDraftPreview({
           PlayPresetArtifactPayloadContract | undefined,
         payload,
       );
-      validation = result.ok
-        ? t("样例校验通过", "Sample valid")
-        : result.message;
+      validation = result.ok ? uiText("样例校验通过") : result.message;
     } catch (error) {
       validation = String(error);
     }
@@ -148,13 +145,10 @@ export function PresetDraftPreview({
     : undefined;
   return (
     <details className="preset-draft-preview">
-      <summary>
-        {t("游玩效果预览 · 就地展开", "Play preview · expand here")}
-      </summary>
+      <summary>{uiText("游玩效果预览 · 就地展开")}</summary>
       <p>
-        {t(
+        {uiText(
           "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此编排方案的脚本设置。",
-          "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this orchestration's script settings.",
         )}
       </p>
       <SyncNotice
@@ -163,14 +157,14 @@ export function PresetDraftPreview({
         onRead={() => void target.recover()}
       />
       {!snapshot && !syncFailed ? (
-        <p role="status">{t("正在解析当前草稿…", "Resolving draft…")}</p>
+        <p role="status">{uiText("正在解析当前草稿…")}</p>
       ) : null}
       {artifact && (
         <>
           <label>
-            {t("示例输入", "Sample input")}
+            {uiText("示例输入")}
             <textarea
-              aria-label={t("示例输入", "Sample input")}
+              aria-label={uiText("示例输入")}
               rows={6}
               value={
                 sample ??
@@ -189,7 +183,7 @@ export function PresetDraftPreview({
                   setSample(JSON.stringify(artifact.rawPayload, null, 2))
                 }
               >
-                {t("载入当前格式样例", "Load current format sample")}
+                {uiText("载入当前格式样例")}
               </button>
               <button
                 type="button"
@@ -208,13 +202,13 @@ export function PresetDraftPreview({
                   setSample(JSON.stringify(sample, null, 2));
                 }}
               >
-                {t("移除首个必填字段", "Remove first required field")}
+                {uiText("移除首个必填字段")}
               </button>
             </div>
           )}
           {validation && <p role="status">{validation}</p>}
           <details>
-            <summary>{t("处理后显示文本", "Processed display text")}</summary>
+            <summary>{uiText("处理后显示文本")}</summary>
             <pre>{processed?.final}</pre>
           </details>
           <label>
@@ -223,7 +217,7 @@ export function PresetDraftPreview({
               checked={disabled}
               onChange={(e) => setDisabled(e.target.checked)}
             />
-            {t("预览禁交互状态", "Preview disabled interactions")}
+            {uiText("预览禁交互状态")}
           </label>
         </>
       )}
@@ -243,17 +237,12 @@ export function PresetDraftPreview({
           </ArtifactExtensionHost>
         </section>
       ) : artifact ? (
-        <p>
-          {t("此产物未设置显示位置。", "This output has no display position.")}
-        </p>
+        <p>{uiText("此产物未设置显示位置。")}</p>
       ) : null}
       <label>
-        {t("本页输入草稿（尚未发送）", "Local input draft (not sent)")}
+        {uiText("本页输入草稿（尚未发送）")}
         <textarea
-          aria-label={t(
-            "本页输入草稿（尚未发送）",
-            "Local input draft (not sent)",
-          )}
+          aria-label={uiText("本页输入草稿（尚未发送）")}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
         />
