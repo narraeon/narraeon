@@ -71,8 +71,7 @@ export function buildPlayerViewDraft(
   const first = documents[0];
   const previous = first === undefined ? undefined : drafts.get(first);
   if (
-    previous !== undefined &&
-    previous.files.length === documents.length &&
+    previous?.files.length === documents.length &&
     documents.every((file, index) => file === previous.files[index])
   )
     return previous.draft;
