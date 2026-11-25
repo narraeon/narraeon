@@ -18,7 +18,7 @@ import {
   turnGuideWarnings,
   type TurnGuideLine,
 } from "../shared/turn-guide.ts";
-import { getWebLocale } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 
 export function OrderedPlayPromptEditor({
   entries,
@@ -51,8 +51,6 @@ export function OrderedPlayPromptEditor({
   const [selectedId, setSelectedId] = useState(entries[0]?.id);
   const [dragged, setDragged] = useState<string>();
   const locale = getWebLocale();
-  const zh = locale === "zh-CN";
-  const t = (en: string, cn: string) => (zh ? cn : en);
   const catalog: BuiltinPlayPrompt[] = authoring
     ? builtinAuthorPrompts(locale, "setting")
     : builtinPlayPrompts(locale);
@@ -66,16 +64,16 @@ export function OrderedPlayPromptEditor({
   const isModelPrompt = builtin?.dynamic === "model-prompt";
   const name = (entry: OrderedPlayPrompt) =>
     entry.kind === "world"
-      ? t("Complete world prompt", "完整内容包提示")
+      ? uiText("完整内容包提示")
       : entry.kind === "user" || entry.kind === "tail"
         ? entry.name
         : catalog.find((item) => item.id === entry.builtin)!.name;
   const categoryLabels: Record<PromptCategory | "tail", string> = {
-    mechanics: t("Required", "必选"),
-    choice: t("Choice", "选项"),
-    policy: t("Policy", "政策"),
-    style: t("Style", "文风"),
-    tail: t("Tail line", "尾部行"),
+    mechanics: uiText("必选"),
+    choice: uiText("选项"),
+    policy: uiText("政策"),
+    style: uiText("文风"),
+    tail: uiText("尾部行"),
   };
   const category = (entry: OrderedPlayPrompt) =>
     entry.kind === "tail"
@@ -133,7 +131,7 @@ export function OrderedPlayPromptEditor({
   }
   function add(
     body = "",
-    title = t("New prompt", "新提示词"),
+    title = uiText("新提示词"),
     messageRole: PromptMessageRole = "system",
     gameplay?: PromptGameplayScope,
     turnGuide?: string,
@@ -153,7 +151,7 @@ export function OrderedPlayPromptEditor({
     insert({
       id: browserUUID(),
       kind: "tail",
-      name: t("New tail line", "新尾部行"),
+      name: uiText("新尾部行"),
       enabled: true,
       body: "",
     });
@@ -212,9 +210,7 @@ export function OrderedPlayPromptEditor({
   return (
     <section
       aria-label={
-        authoring
-          ? t("Ordered authoring prompts", "设定完善提示词编排")
-          : t("Ordered play prompts", "游玩提示词编排")
+        authoring ? uiText("设定完善提示词编排") : uiText("游玩提示词编排")
       }
     >
       {migrationNotice && <p role="status">{migrationNotice}</p>}
@@ -227,23 +223,20 @@ export function OrderedPlayPromptEditor({
               onMergeConsecutiveMessagesChange(event.target.checked)
             }
           />
-          {t(
-            "Merge adjacent messages with the same role",
-            "合并相邻同角色消息",
-          )}
+          {uiText("合并相邻同角色消息")}
         </label>
       )}
       <div className="ordered-play-editor">
         <aside>
           <button type="button" onClick={() => add()}>
-            {t("Add prompt", "新增提示词")}
+            {uiText("新增提示词")}
           </button>
           {!authoring && (
             <button type="button" onClick={addTail}>
-              {t("Add tail line", "新增尾部行")}
+              {uiText("新增尾部行")}
             </button>
           )}
-          <ol aria-label={t("Prompt order", "提示词顺序")}>
+          <ol aria-label={uiText("提示词顺序")}>
             {entries.map((entry, position) => (
               <li
                 key={entry.id}
@@ -287,7 +280,7 @@ export function OrderedPlayPromptEditor({
                 {entry.kind !== "world" && (
                   <input
                     type="checkbox"
-                    aria-label={`${t("Enable", "启用")} ${name(entry)}`}
+                    aria-label={`${uiText("启用")} ${name(entry)}`}
                     checked={entry.enabled}
                     disabled={builtinOf(entry)?.required}
                     onChange={(event) =>
@@ -297,17 +290,16 @@ export function OrderedPlayPromptEditor({
                 )}
                 {entry.kind !== "world" &&
                   orderedPromptScope(entry, catalog) !== undefined && (
-                    <small>{t("Tabletop only", "仅跑团")}</small>
+                    <small>{uiText("仅跑团")}</small>
                   )}
                 {entry.kind !== "world" && !entry.enabled && (
-                  <small>{t("Disabled", "已停用")}</small>
+                  <small>{uiText("已停用")}</small>
                 )}
               </li>
             ))}
           </ol>
           <p>
-            {t(
-              "Drag or use Alt + arrow keys to reorder. Enabling one option in a choice group turns the others off.",
+            {uiText(
               "拖动或按 Alt + 方向键排序。启用选项组中的一项会关闭同组其他项。",
             )}
           </p>
@@ -322,14 +314,14 @@ export function OrderedPlayPromptEditor({
                   disabled={index <= 0}
                   onClick={() => move(selected.id, index - 1)}
                 >
-                  {t("Move up", "上移")}
+                  {uiText("上移")}
                 </button>
                 <button
                   type="button"
                   disabled={index >= entries.length - 1}
                   onClick={() => move(selected.id, index + 1)}
                 >
-                  {t("Move down", "下移")}
+                  {uiText("下移")}
                 </button>
                 {selected.kind === "user" && (
                   <label>
@@ -345,7 +337,7 @@ export function OrderedPlayPromptEditor({
                         )
                       }
                     />
-                    {t("Tabletop worlds only", "仅跑团世界生效")}
+                    {uiText("仅跑团世界生效")}
                   </label>
                 )}
                 {selected.kind !== "world" && (
@@ -358,7 +350,7 @@ export function OrderedPlayPromptEditor({
                         update({ ...selected, enabled: event.target.checked })
                       }
                     />
-                    {t("Enabled", "启用")}
+                    {uiText("orchestration.prompt.enabled")}
                   </label>
                 )}
                 {!isModelPrompt &&
@@ -370,14 +362,14 @@ export function OrderedPlayPromptEditor({
                           selected.kind === "user"
                             ? selected.body
                             : builtin!.body,
-                          `${name(selected)} ${t("copy", "副本")}`,
+                          `${name(selected)} ${uiText("副本")}`,
                           selected.messageRole ?? "system",
                           orderedPromptScope(selected, catalog),
                           orderedPromptTurnGuide(selected, catalog),
                         )
                       }
                     >
-                      {t("Clone prompt", "克隆提示词")}
+                      {uiText("克隆提示词")}
                     </button>
                   )}
                 {(selected.kind === "user" || selected.kind === "tail") && (
@@ -390,16 +382,16 @@ export function OrderedPlayPromptEditor({
                       setSelectedId(undefined);
                     }}
                   >
-                    {t("Delete prompt", "删除提示词")}
+                    {uiText("删除提示词")}
                   </button>
                 )}
               </div>
               <div className="ordered-play-prompt-heading">
                 {selected.kind !== "tail" && (
                   <label>
-                    {t("Message role", "发送角色")}
+                    {uiText("发送角色")}
                     <select
-                      aria-label={t("Message role", "发送角色")}
+                      aria-label={uiText("发送角色")}
                       value={selected.messageRole ?? "system"}
                       disabled={selected.kind === "builtin" && !isModelPrompt}
                       onChange={(event) => {
@@ -418,9 +410,9 @@ export function OrderedPlayPromptEditor({
                 )}
                 {selected.kind !== "world" && (
                   <label>
-                    {t("Prompt name", "提示词名称")}
+                    {uiText("提示词名称")}
                     <input
-                      aria-label={t("Prompt name", "提示词名称")}
+                      aria-label={uiText("提示词名称")}
                       value={name(selected)}
                       readOnly={selected.kind === "builtin"}
                       onChange={(event) => {
@@ -436,12 +428,9 @@ export function OrderedPlayPromptEditor({
               </div>
               {isModelPrompt ? (
                 <>
-                  <p>
-                    {modelConnection?.name ??
-                      t("No active model connection", "未启用模型连接")}
-                  </p>
+                  <p>{modelConnection?.name ?? uiText("未启用模型连接")}</p>
                   <label>
-                    {t("Prompt text", "提示词正文")}
+                    {uiText("提示词正文")}
                     <textarea
                       rows={8}
                       readOnly
@@ -450,7 +439,7 @@ export function OrderedPlayPromptEditor({
                   </label>
                   {onEditModelConnection && (
                     <button type="button" onClick={onEditModelConnection}>
-                      {t("Edit model connection", "编辑模型连接")}
+                      {uiText("编辑模型连接")}
                     </button>
                   )}
                 </>
@@ -458,15 +447,13 @@ export function OrderedPlayPromptEditor({
                 <>
                   <h4>{name(selected)}</h4>
                   <p>
-                    {t(
-                      "World instructions appear here. On a fresh context, frame-selected materials and the directory index are supplied as an initial tool result. Continuing retains these materials and appends actual interactions. Inspect the content in a world or content-package Prompt Preview.",
+                    {uiText(
                       "世界指令在此展开；全新上下文时，frame 选中的材料与目录索引作为初始工具结果提供。继续时保留初始材料，追加真实交互。请在具体世界或内容包的真实提示预览中检查正文。",
                     )}
                   </p>
                   {!authoring && (
                     <p>
-                      {t(
-                        "Turn-guide lines declared by the world frame (control/frame.yaml instructions with turnGuide) join the turn guide at this position.",
+                      {uiText(
                         "世界 frame（control/frame.yaml 的 instructions 中带 turnGuide 的项）声明的尾部行在此位置进入本轮提示。",
                       )}
                     </p>
@@ -474,16 +461,11 @@ export function OrderedPlayPromptEditor({
                 </>
               ) : selected.kind === "tail" ? (
                 <>
-                  <p>
-                    {t(
-                      "A tail line contributes one line to the guide for each play request.",
-                      "尾部行为每次游玩请求的本轮提示贡献一行。",
-                    )}
-                  </p>
+                  <p>{uiText("尾部行为每次游玩请求的本轮提示贡献一行。")}</p>
                   <label>
-                    {t("Tail line", "尾部行")}
+                    {uiText("尾部行")}
                     <input
-                      aria-label={t("Tail line", "尾部行")}
+                      aria-label={uiText("尾部行")}
                       value={selected.body}
                       onChange={(event) =>
                         setTurnGuide(selected, event.target.value)
@@ -495,16 +477,15 @@ export function OrderedPlayPromptEditor({
                 <>
                   {builtin && (
                     <p>
-                      {t(
-                        "Application builtin: always resolves the latest text. Clone to keep an editable, independent copy.",
+                      {uiText(
                         "系统引用始终使用应用最新版正文；克隆获得可编辑、独立的固定副本。",
                       )}
                     </p>
                   )}
                   <label>
-                    {t("Prompt text", "提示词正文")}
+                    {uiText("提示词正文")}
                     <textarea
-                      aria-label={t("Prompt text", "提示词正文")}
+                      aria-label={uiText("提示词正文")}
                       rows={22}
                       readOnly={selected.kind === "builtin"}
                       value={
@@ -518,14 +499,11 @@ export function OrderedPlayPromptEditor({
                   </label>
                   {!authoring && (
                     <label>
-                      {t("Turn-guide line", "本轮尾部提示")}
+                      {uiText("本轮尾部提示")}
                       <input
-                        aria-label={t("Turn-guide line", "本轮尾部提示")}
+                        aria-label={uiText("本轮尾部提示")}
                         value={turnGuideValue(selected)}
-                        placeholder={t(
-                          "Empty: this block adds no line to the turn guide",
-                          "留空则本块不进入本轮提示",
-                        )}
+                        placeholder={uiText("留空则本块不进入本轮提示")}
                         onChange={(event) =>
                           setTurnGuide(selected, event.target.value)
                         }
@@ -540,7 +518,7 @@ export function OrderedPlayPromptEditor({
                               update(next);
                             }}
                           >
-                            {t("Restore default line", "恢复默认尾部行")}
+                            {uiText("恢复默认尾部行")}
                           </button>
                         )}
                     </label>
@@ -554,12 +532,11 @@ export function OrderedPlayPromptEditor({
       {!authoring && (
         <section
           className="turn-guide-preview"
-          aria-label={t("Turn guide preview", "本轮提示预览")}
+          aria-label={uiText("本轮提示预览")}
         >
-          <h4>{t("Turn guide preview", "本轮提示预览")}</h4>
+          <h4>{uiText("本轮提示预览")}</h4>
           <p>
-            {t(
-              "The guide applies to the current request. Lines follow the order above. Provider mapping in Prompt Preview shows how they are sent.",
+            {uiText(
               "本轮提示只用于当前请求，各行按上方列表顺序排列。在提示词预览的 Provider 映射中可以查看实际发送位置。",
             )}
           </p>
@@ -569,12 +546,7 @@ export function OrderedPlayPromptEditor({
               {previewLines.map((item, position) =>
                 item.kind === "world" ? (
                   <li key="world">
-                    <em>
-                      {t(
-                        "World frame turn-guide lines appear here",
-                        "世界 frame 的尾部行在此位置",
-                      )}
-                    </em>
+                    <em>{uiText("世界 frame 的尾部行在此位置")}</em>
                   </li>
                 ) : (
                   <li key={item.entry.id}>
@@ -582,7 +554,7 @@ export function OrderedPlayPromptEditor({
                     <small>
                       {name(item.entry)}
                       {orderedPromptScope(item.entry, catalog) !== undefined
-                        ? ` · ${t("Tabletop only", "仅跑团")}`
+                        ? ` · ${uiText("仅跑团")}`
                         : ""}
                     </small>
                     {warnings.some(
@@ -594,10 +566,7 @@ export function OrderedPlayPromptEditor({
                             .filter((prior) => prior.kind === "line").length,
                     ) && (
                       <small role="alert">
-                        {t(
-                          "Over 120 characters; consider shortening",
-                          "超过 120 字，建议精简",
-                        )}
+                        {uiText("超过 120 字，建议精简")}
                       </small>
                     )}
                   </li>
@@ -605,28 +574,18 @@ export function OrderedPlayPromptEditor({
               )}
             </ol>
           ) : (
-            <p>
-              {t(
-                "No enabled entry contributes a line; nothing is appended.",
-                "没有启用的条目贡献尾部行，不追加本轮提示。",
-              )}
-            </p>
+            <p>{uiText("没有启用的条目贡献尾部行，不追加本轮提示。")}</p>
           )}
           {warnings.some((warning) => warning.kind === "line_count") && (
             <p role="alert">
-              {t(
-                "More than 10 lines; the turn guide is approaching the size of the prefix rules.",
-                "超过 10 行，本轮提示正在接近前部规则的体量。",
-              )}
+              {uiText("超过 10 行，本轮提示正在接近前部规则的体量。")}
             </p>
           )}
         </section>
       )}
       {authoring && builtin?.id === "author.mechanics" && (
         <details>
-          <summary>
-            {t("World revision tool contract", "世界修订工具契约")}
-          </summary>
+          <summary>{uiText("世界修订工具契约")}</summary>
           <pre>
             {
               builtinAuthorPrompts(locale, "world-revision").find(

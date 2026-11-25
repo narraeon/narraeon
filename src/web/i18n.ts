@@ -2823,6 +2823,216 @@ Object.assign(englishMessages, {
     "Could not refresh the conversation: {message}",
 });
 
+const orchestrationWorkbenchEnglishMessages: Record<string, string> = {
+  完整内容包提示: "Complete world prompt",
+  必选: "Required",
+  选项: "Choice",
+  政策: "Policy",
+  文风: "Style",
+  尾部行: "Tail line",
+  新提示词: "New prompt",
+  新尾部行: "New tail line",
+  设定完善提示词编排: "Ordered authoring prompts",
+  游玩提示词编排: "Ordered play prompts",
+  合并相邻同角色消息: "Merge adjacent messages with the same role",
+  新增提示词: "Add prompt",
+  新增尾部行: "Add tail line",
+  提示词顺序: "Prompt order",
+  仅跑团: "Tabletop only",
+  "拖动或按 Alt + 方向键排序。启用选项组中的一项会关闭同组其他项。":
+    "Drag or use Alt + arrow keys to reorder. Enabling one option in a choice group turns the others off.",
+  仅跑团世界生效: "Tabletop worlds only",
+  副本: "copy",
+  克隆提示词: "Clone prompt",
+  删除提示词: "Delete prompt",
+  提示词名称: "Prompt name",
+  未启用模型连接: "No active model connection",
+  编辑模型连接: "Edit model connection",
+  "世界指令在此展开；全新上下文时，frame 选中的材料与目录索引作为初始工具结果提供。继续时保留初始材料，追加真实交互。请在具体世界或内容包的真实提示预览中检查正文。":
+    "World instructions appear here. On a fresh context, frame-selected materials and the directory index are supplied as an initial tool result. Continuing retains these materials and appends actual interactions. Inspect the content in a world or content-package Prompt Preview.",
+  "世界 frame（control/frame.yaml 的 instructions 中带 turnGuide 的项）声明的尾部行在此位置进入本轮提示。":
+    "Turn-guide lines declared by the world frame (control/frame.yaml instructions with turnGuide) join the turn guide at this position.",
+  "尾部行为每次游玩请求的本轮提示贡献一行。":
+    "A tail line contributes one line to the guide for each play request.",
+  "系统引用始终使用应用最新版正文；克隆获得可编辑、独立的固定副本。":
+    "Application builtin: always resolves the latest text. Clone to keep an editable, independent copy.",
+  本轮尾部提示: "Turn-guide line",
+  留空则本块不进入本轮提示: "Empty: this block adds no line to the turn guide",
+  恢复默认尾部行: "Restore default line",
+  本轮提示预览: "Turn guide preview",
+  "本轮提示只用于当前请求，各行按上方列表顺序排列。在提示词预览的 Provider 映射中可以查看实际发送位置。":
+    "The guide applies to the current request. Lines follow the order above. Provider mapping in Prompt Preview shows how they are sent.",
+  "世界 frame 的尾部行在此位置": "World frame turn-guide lines appear here",
+  "超过 120 字，建议精简": "Over 120 characters; consider shortening",
+  "没有启用的条目贡献尾部行，不追加本轮提示。":
+    "No enabled entry contributes a line; nothing is appended.",
+  "超过 10 行，本轮提示正在接近前部规则的体量。":
+    "More than 10 lines; the turn guide is approaching the size of the prefix rules.",
+  世界修订工具契约: "World revision tool contract",
+  "根据本轮已提交叙事，生成下面声明的界面产物。":
+    "Generate the declared interface outputs from the settled narrative.",
+  内容包后置组: "Content-package follow-ups",
+  回复完成后: "After the reply",
+  系统: "System",
+  用户: "User",
+  "纯界面 · 不调用模型": "Interface · no model",
+  新增纯界面: "Add interface panel",
+  世界状态栏: "World status",
+  "系统 / 内容包": "System / package",
+  提示词: "Prompt",
+  界面产物: "Outputs",
+  高级设置: "Advanced",
+  "系统示例完整只读；克隆后独立编辑。":
+    "The complete system example is read-only. Clone to edit independently.",
+  后置请求名称: "Follow-up name",
+  将产物引用加入提示词: "Insert output references",
+  此产物的数据格式要求: "This output's data requirements",
+  "一条请求，可以生成多个界面产物。":
+    "One request can generate several interface outputs.",
+  尚未填写用途: "No purpose yet",
+  "＋ 新增产物": "＋ Add output",
+  "JavaScript 示例 · 新建独立产物":
+    "JavaScript examples · create independent output",
+  "新建示例不会覆盖现有资源，不会授予脚本许可。":
+    "Creates independent files without overwriting resources or granting script permission.",
+  新建行动按钮示例: "Create action button example",
+  新建场景卡片示例: "Create scene card example",
+  "AI 如何提交这些产物": "How AI submits these outputs",
+  "同一次后置模型响应，分别调用 artifact_emit；output 指定产物，payload 提交数据。不为每个产物另发请求。提交名自动分配，友好名称修改不改变绑定。":
+    "In the same follow-up response, call artifact_emit for each output. output selects the declaration; payload supplies data. No separate request per output. Renaming a display label preserves its stable submission name.",
+  产物前移: "Move output earlier",
+  产物后移: "Move output later",
+  产物名称: "Output name",
+  生成内容用途: "Generation purpose",
+  移除此产物: "Remove output",
+  "约定字段、类型与必填项。要求会说明给模型，提交时由应用校验；不为模型开启 JSON 输出模式，不保证模型合法输出，也不自动往返修复。":
+    "Fields, types and required values are explained to the model and checked by the app on submission. This does not enable JSON output mode for the model, guarantee valid output, or automatically repair responses.",
+  "此产物的数据格式要求（JSON）": "This output's data requirements (JSON)",
+  移除格式要求: "Remove requirements",
+  更新方式: "Update policy",
+  保存范围: "Save scope",
+  清空条件: "Clearing condition",
+  "更新方式决定同一产物如何合并：替换只留最新一份，追加保留多份，按标识更新只替换同标识的内容。保存范围、清空条件和生成期间显示的限制共同决定何时可见；关闭世界中的扩展仍会隐藏产物，清空指令仍可清除它。":
+    "The update policy combines results for this output: replace keeps the latest, append keeps multiple results, and keyed updates replace only the matching key. Save scope, clearing conditions and generation-only display limits jointly determine visibility. Disabling the world's extension still hides its outputs, and clear instructions can still remove them.",
+  "更新标识（相同标识覆盖旧内容）":
+    "Update key (replaces the result with the same key)",
+  "AI 必须生成此产物": "Required output",
+  样例校验通过: "Sample valid",
+  "游玩效果预览 · 就地展开": "Play preview · expand here",
+  "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此编排方案的脚本设置。":
+    "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this orchestration's script settings.",
+  "正在解析当前草稿…": "Resolving draft…",
+  示例输入: "Sample input",
+  载入当前格式样例: "Load current format sample",
+  移除首个必填字段: "Remove first required field",
+  处理后显示文本: "Processed display text",
+  预览禁交互状态: "Preview disabled interactions",
+  "此产物未设置显示位置。": "This output has no display position.",
+  "本页输入草稿（尚未发送）": "Local input draft (not sent)",
+  显示模板: "Display template",
+  显示方式: "Renderer",
+  默认显示: "Default display",
+  模板: "Template",
+  "新建 HTML 模板": "Create HTML template",
+  运行方式: "Rendering mode",
+  "交互界面（需本地脚本许可）":
+    "Interactive app (local script permission required)",
+  "模板用 <!-- narraeon:content --> 放置显示后内容；命名资源按声明引用提供给宿主。解绑保留原资源及其他引用。":
+    "Place displayed content with <!-- narraeon:content -->. The host resolves declared resource references. Unlinking retains resources and other references.",
+  "样式、JavaScript 与命名资源": "Styles, JavaScript and named resources",
+  移除此引用: "Unlink resource",
+  引用已有脚本: "Attach existing script",
+  引用已有资源: "Attach existing resource",
+  选择已有内容: "Select existing content",
+  资源名称: "Resource name",
+  资源类型: "Resource type",
+  新建命名资源: "Create named resource",
+  "新建 JavaScript": "Create JavaScript",
+  "JavaScript 数据与操作参考": "JavaScript data and command reference",
+  "render.update 的 payload.content 是显示处理后的字符串；JSON 使用 JSON.parse。payload 还包含 contentType、worldId、channel、key、interactionDisabled。请核对 event.source === parent、instanceId 和 nonce；requestId 用于关联 bridge.response 的 ok / error 回执。示例中的 request / fromHost 是源码定义的 helper。":
+    "render.update supplies payload.content as a processed string; parse JSON with JSON.parse. payload also carries contentType, worldId, channel, key and interactionDisabled. Check event.source === parent, instanceId and nonce; correlate bridge.response ok / error with requestId. request / fromHost are helpers defined in the example source.",
+  "window.__NARRAEON_ASSETS__ 按声明的资源引用映射源文本；CSS 自动注入，HTML/JS 资源作为文本提供，不会自动执行。":
+    "window.__NARRAEON_ASSETS__ maps declared resource references to source text. CSS is injected; HTML/JS assets are text and are not executed automatically.",
+  读取当前已显示频道产物: "Read displayed channel artifacts",
+  读取宿主提供的已提交玩家视图:
+    "Read committed player views supplied by the host",
+  "仅填写输入草稿；禁交互时拒绝":
+    "Fill the input draft only; rejected when interactions are disabled",
+  关闭当前实例: "Close this instance",
+  重新挂载当前实例并刷新宿主数据: "Remount this instance and refresh host data",
+  上报本地诊断: "Report a local diagnostic",
+  正则显示处理: "Regex display processing",
+  "只处理显示内容，不改变发给 AI 的提示词。禁用保留原规则。":
+    "Changes display only, never prompts sent to AI. Disabled rules are retained.",
+  规则集: "Rule set",
+  无显示处理: "No processing",
+  新建规则集: "Create rule set",
+  "原始规则（修复）": "Original rules (repair)",
+  新增正则规则: "Add regex rule",
+  启用规则: "Enable rule",
+  删除规则: "Delete rule",
+  阶段: "Stage",
+  原始显示文本: "Raw display text",
+  结构化数据的文本值: "Structured text values",
+  查找: "Find",
+  替换: "Replace",
+  标志: "Flags",
+  最大匹配次数: "Maximum matches",
+  失败行为: "On failure",
+  恢复原文: "Fallback",
+  跳过规则: "Skip",
+  停止处理: "Fail",
+};
+
+Object.assign(englishMessages, orchestrationWorkbenchEnglishMessages);
+
+// These workbench labels share Chinese text with other messages but use different English wording.
+const orchestrationWorkbenchVariants: Readonly<
+  Record<string, Record<AppLocale, string>>
+> = {
+  "orchestration.prompt.enabled": { "zh-CN": "启用", en: "Enabled" },
+  "orchestration.followup.new": { "zh-CN": "新后置请求", en: "New follow-up" },
+  "orchestration.followup.source.package": { "zh-CN": "内容包", en: "Package" },
+  "orchestration.panel.empty": {
+    "zh-CN": "当前没有可显示内容。",
+    en: "No content to display.",
+  },
+  "orchestration.followup.clone": {
+    "zh-CN": "克隆后置请求",
+    en: "Clone follow-up",
+  },
+  "orchestration.followup.packageExpansion": {
+    "zh-CN":
+      "在此位置展开当前世界的内容包后置请求。无声明时为空组，不调用模型；正文由内容包管理。",
+    en: "The current world's follow-ups expand here. An empty group makes no model requests; edit definitions in the content package.",
+  },
+  "orchestration.followup.promptPlaceholder": {
+    "zh-CN": "这次额外请求要做什么",
+    en: "What should this follow-up do?",
+  },
+  "orchestration.followup.outputs.heading": {
+    "zh-CN": "界面产物",
+    en: "Interface outputs",
+  },
+  "orchestration.output.displayPosition": {
+    "zh-CN": "显示位置",
+    en: "Display position",
+  },
+  "orchestration.output.position": {
+    "zh-CN": "产物显示位置",
+    en: "Output position",
+  },
+  "orchestration.followup.maxTotalBytes": {
+    "zh-CN": "本次所有产物合计上限（bytes）",
+    en: "Total output byte limit",
+  },
+  "orchestration.output.maxEmits": {
+    "zh-CN": "单次最多输出次数",
+    en: "Maximum emits",
+  },
+  "orchestration.display.regexRule": { "zh-CN": "规则", en: "Rule" },
+};
+
 export function setWebLocale(locale: AppLocale): void {
   if (!isAppLocale(locale)) throw new Error("Unsupported web locale");
   activeLocale = locale;
@@ -2834,11 +3044,14 @@ export function getWebLocale(): AppLocale {
 }
 
 export function uiText(
-  chinese: string,
+  message: string,
   variables: Readonly<Record<string, string | number>> = {},
 ): string {
   const template =
-    activeLocale === "zh-CN" ? chinese : (englishMessages[chinese] ?? chinese);
+    orchestrationWorkbenchVariants[message]?.[activeLocale] ??
+    (activeLocale === "zh-CN"
+      ? message
+      : (englishMessages[message] ?? message));
   return template.replace(
     /\{([A-Za-z][A-Za-z0-9]*)\}/gu,
     (match, key: string) => (key in variables ? String(variables[key]) : match),

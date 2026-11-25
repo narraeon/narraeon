@@ -3,7 +3,7 @@ import { resourceTitle } from "./preset-resource-names.ts";
 import { parseDisplayRegex } from "../shared/display-regex.ts";
 import { useState } from "react";
 import { parseDocument, stringify } from "yaml";
-import { getWebLocale } from "./i18n.ts";
+import { uiText } from "./i18n.ts";
 import type { FrontendRegexRule } from "./ArtifactExtensionHost.tsx";
 
 export interface DisplayDefinition {
@@ -14,7 +14,6 @@ export interface DisplayDefinition {
   scripts?: string[];
   assets?: string[];
 }
-const t = (cn: string, en: string) => (getWebLocale() === "zh-CN" ? cn : en);
 
 /** Edits references and their original resources; unlinking never deletes shared files. */
 export function PresetDisplayEditor({
@@ -51,11 +50,11 @@ export function PresetDisplayEditor({
   }
   return (
     <section className="preset-display-editor">
-      <h3>{t("显示模板", "Display template")}</h3>
+      <h3>{uiText("显示模板")}</h3>
       <label>
-        {t("显示方式", "Renderer")}
+        {uiText("显示方式")}
         <select
-          aria-label={t("显示方式", "Renderer")}
+          aria-label={uiText("显示方式")}
           value={value.renderer ?? ""}
           onChange={(e) =>
             e.target.value
@@ -63,12 +62,12 @@ export function PresetDisplayEditor({
               : value.renderer && detach("renderer", value.renderer)
           }
         >
-          <option value="">{t("默认显示", "Default display")}</option>
+          <option value="">{uiText("默认显示")}</option>
           {Object.keys(files)
             .filter((p) => p.startsWith("renderers/") && p.endsWith(".html"))
             .map((p, i) => (
               <option key={p} value={p}>
-                {t("模板", "Template")} {i + 1} · {resourceTitle(p)}
+                {uiText("模板")} {i + 1} · {resourceTitle(p)}
               </option>
             ))}
         </select>
@@ -83,7 +82,7 @@ export function PresetDisplayEditor({
           )
         }
       >
-        {t("新建 HTML 模板", "Create HTML template")}
+        {uiText("新建 HTML 模板")}
       </button>
       {value.renderer && (
         <label>
@@ -97,35 +96,24 @@ export function PresetDisplayEditor({
         </label>
       )}
       <label>
-        {t("运行方式", "Rendering mode")}
+        {uiText("运行方式")}
         <select
-          aria-label={t("运行方式", "Rendering mode")}
+          aria-label={uiText("运行方式")}
           value={value.rendererMode ?? "document"}
           onChange={(e) =>
             onEdit({ type: "mode", mode: e.target.value as "document" | "app" })
           }
         >
-          <option value="document">{t("静态文档", "Static document")}</option>
-          <option value="app">
-            {t(
-              "交互界面（需本地脚本许可）",
-              "Interactive app (local script permission required)",
-            )}
-          </option>
+          <option value="document">{uiText("静态文档")}</option>
+          <option value="app">{uiText("交互界面（需本地脚本许可）")}</option>
         </select>
       </label>
       <p>
-        {t(
+        {uiText(
           "模板用 <!-- narraeon:content --> 放置显示后内容；命名资源按声明引用提供给宿主。解绑保留原资源及其他引用。",
-          "Place displayed content with <!-- narraeon:content -->. The host resolves declared resource references. Unlinking retains resources and other references.",
         )}
       </p>
-      <h3>
-        {t(
-          "样式、JavaScript 与命名资源",
-          "Styles, JavaScript and named resources",
-        )}
-      </h3>
+      <h3>{uiText("样式、JavaScript 与命名资源")}</h3>
       {(["scripts", "assets"] as const).map((kind) => (
         <section key={kind}>
           {(value[kind] ?? []).map((path) => (
@@ -143,21 +131,19 @@ export function PresetDisplayEditor({
                 onChange={(e) => onWrite(path, e.target.value)}
               />
               <button type="button" onClick={() => detach(kind, path)}>
-                {t("移除此引用", "Unlink resource")}
+                {uiText("移除此引用")}
               </button>
             </details>
           ))}
           <label>
             {kind === "scripts"
-              ? t("引用已有脚本", "Attach existing script")
-              : t("引用已有资源", "Attach existing resource")}
+              ? uiText("引用已有脚本")
+              : uiText("引用已有资源")}
             <select
               value=""
               onChange={(e) => e.target.value && attach(kind, e.target.value)}
             >
-              <option value="">
-                {t("选择已有内容", "Select existing content")}
-              </option>
+              <option value="">{uiText("选择已有内容")}</option>
               {Object.keys(files)
                 .filter(
                   (p) =>
@@ -175,14 +161,14 @@ export function PresetDisplayEditor({
       ))}
       <div className="preset-inline">
         <input
-          aria-label={t("资源名称", "Resource name")}
-          placeholder={t("资源名称", "Resource name")}
+          aria-label={uiText("资源名称")}
+          placeholder={uiText("资源名称")}
           maxLength={24}
           value={resourceName}
           onChange={(e) => setResourceName(e.target.value)}
         />
         <select
-          aria-label={t("资源类型", "Resource type")}
+          aria-label={uiText("资源类型")}
           value={resourceType}
           onChange={(e) => setResourceType(e.target.value)}
         >
@@ -200,7 +186,7 @@ export function PresetDisplayEditor({
             )
           }
         >
-          {t("新建命名资源", "Create named resource")}
+          {uiText("新建命名资源")}
         </button>
         <button
           type="button"
@@ -212,69 +198,42 @@ export function PresetDisplayEditor({
             )
           }
         >
-          {t("新建 JavaScript", "Create JavaScript")}
+          {uiText("新建 JavaScript")}
         </button>
       </div>
       <details>
-        <summary>
-          {t(
-            "JavaScript 数据与操作参考",
-            "JavaScript data and command reference",
-          )}
-        </summary>
+        <summary>{uiText("JavaScript 数据与操作参考")}</summary>
         <p>
-          {t(
+          {uiText(
             "render.update 的 payload.content 是显示处理后的字符串；JSON 使用 JSON.parse。payload 还包含 contentType、worldId、channel、key、interactionDisabled。请核对 event.source === parent、instanceId 和 nonce；requestId 用于关联 bridge.response 的 ok / error 回执。示例中的 request / fromHost 是源码定义的 helper。",
-            "render.update supplies payload.content as a processed string; parse JSON with JSON.parse. payload also carries contentType, worldId, channel, key and interactionDisabled. Check event.source === parent, instanceId and nonce; correlate bridge.response ok / error with requestId. request / fromHost are helpers defined in the example source.",
           )}
         </p>
         <p>
-          {t(
+          {uiText(
             "window.__NARRAEON_ASSETS__ 按声明的资源引用映射源文本；CSS 自动注入，HTML/JS 资源作为文本提供，不会自动执行。",
-            "window.__NARRAEON_ASSETS__ maps declared resource references to source text. CSS is injected; HTML/JS assets are text and are not executed automatically.",
           )}
         </p>
         <dl>
           <dt>read_channel</dt>
-          <dd>
-            {t("读取当前已显示频道产物", "Read displayed channel artifacts")}
-          </dd>
+          <dd>{uiText("读取当前已显示频道产物")}</dd>
           <dt>read_player_view</dt>
-          <dd>
-            {t(
-              "读取宿主提供的已提交玩家视图",
-              "Read committed player views supplied by the host",
-            )}
-          </dd>
+          <dd>{uiText("读取宿主提供的已提交玩家视图")}</dd>
           <dt>composer.set_draft</dt>
-          <dd>
-            {t(
-              "仅填写输入草稿；禁交互时拒绝",
-              "Fill the input draft only; rejected when interactions are disabled",
-            )}
-          </dd>
+          <dd>{uiText("仅填写输入草稿；禁交互时拒绝")}</dd>
           <dt>panel.close</dt>
-          <dd>{t("关闭当前实例", "Close this instance")}</dd>
+          <dd>{uiText("关闭当前实例")}</dd>
           <dt>panel.refresh</dt>
-          <dd>
-            {t(
-              "重新挂载当前实例并刷新宿主数据",
-              "Remount this instance and refresh host data",
-            )}
-          </dd>
+          <dd>{uiText("重新挂载当前实例并刷新宿主数据")}</dd>
           <dt>diagnostic</dt>
-          <dd>{t("上报本地诊断", "Report a local diagnostic")}</dd>
+          <dd>{uiText("上报本地诊断")}</dd>
         </dl>
       </details>
-      <h3>{t("正则显示处理", "Regex display processing")}</h3>
+      <h3>{uiText("正则显示处理")}</h3>
       <p>
-        {t(
-          "只处理显示内容，不改变发给 AI 的提示词。禁用保留原规则。",
-          "Changes display only, never prompts sent to AI. Disabled rules are retained.",
-        )}
+        {uiText("只处理显示内容，不改变发给 AI 的提示词。禁用保留原规则。")}
       </p>
       <label>
-        {t("规则集", "Rule set")}
+        {uiText("规则集")}
         <select
           value={value.regex ?? ""}
           onChange={(e) =>
@@ -283,12 +242,12 @@ export function PresetDisplayEditor({
               : value.regex && detach("regex", value.regex)
           }
         >
-          <option value="">{t("无显示处理", "No processing")}</option>
+          <option value="">{uiText("无显示处理")}</option>
           {Object.keys(files)
             .filter((p) => p.startsWith("regex/"))
             .map((p, i) => (
               <option key={p} value={p}>
-                {t("规则集", "Rule set")} {i + 1} · {resourceTitle(p)}
+                {uiText("规则集")} {i + 1} · {resourceTitle(p)}
               </option>
             ))}
         </select>
@@ -297,7 +256,7 @@ export function PresetDisplayEditor({
         type="button"
         onClick={() => create("regex", "yaml", stringify({ rules: [] }))}
       >
-        {t("新建规则集", "Create rule set")}
+        {uiText("新建规则集")}
       </button>
       {value.regex && (
         <RegexEditor
@@ -360,7 +319,7 @@ function RegexEditor({
       <>
         <p role="alert">{failure}</p>
         <textarea
-          aria-label={t("原始规则（修复）", "Original rules (repair)")}
+          aria-label={uiText("原始规则（修复）")}
           value={source}
           onChange={(e) => onChange(e.target.value)}
         />
@@ -386,7 +345,7 @@ function RegexEditor({
           ])
         }
       >
-        {t("新增正则规则", "Add regex rule")}
+        {uiText("新增正则规则")}
       </button>
       {failure && <p role="alert">{failure}</p>}
       {[...rules]
@@ -396,7 +355,7 @@ function RegexEditor({
           return (
             <fieldset key={r.order}>
               <legend>
-                {t("规则", "Rule")} {position + 1}
+                {uiText("orchestration.display.regexRule")} {position + 1}
               </legend>
               <label>
                 <input
@@ -404,7 +363,7 @@ function RegexEditor({
                   checked={r.enabled !== false}
                   onChange={(e) => update(index, { enabled: e.target.checked })}
                 />
-                {t("启用规则", "Enable rule")}
+                {uiText("启用规则")}
               </label>
               <div className="preset-inline">
                 <button
@@ -425,11 +384,11 @@ function RegexEditor({
                   type="button"
                   onClick={() => write(rules.filter((_, i) => i !== index))}
                 >
-                  {t("删除规则", "Delete rule")}
+                  {uiText("删除规则")}
                 </button>
               </div>
               <label>
-                {t("阶段", "Stage")}
+                {uiText("阶段")}
                 <select
                   value={r.scope}
                   onChange={(e) =>
@@ -438,14 +397,12 @@ function RegexEditor({
                     })
                   }
                 >
-                  <option value="raw_text">
-                    {t("原始显示文本", "Raw display text")}
-                  </option>
+                  <option value="raw_text">{uiText("原始显示文本")}</option>
                   <option value="markdown_html">
-                    {t("Markdown HTML", "Markdown HTML")}
+                    {uiText("Markdown HTML")}
                   </option>
                   <option value="structured_payload">
-                    {t("结构化数据的文本值", "Structured text values")}
+                    {uiText("结构化数据的文本值")}
                   </option>
                 </select>
               </label>
@@ -453,9 +410,9 @@ function RegexEditor({
                 <label key={k}>
                   {
                     {
-                      pattern: t("查找", "Find"),
-                      replace: t("替换", "Replace"),
-                      flags: t("标志", "Flags"),
+                      pattern: uiText("查找"),
+                      replace: uiText("替换"),
+                      flags: uiText("标志"),
                     }[k]
                   }
                   <input
@@ -465,7 +422,7 @@ function RegexEditor({
                 </label>
               ))}
               <label>
-                {t("最大匹配次数", "Maximum matches")}
+                {uiText("最大匹配次数")}
                 <input
                   type="number"
                   min={1}
@@ -476,7 +433,7 @@ function RegexEditor({
                 />
               </label>
               <label>
-                {t("失败行为", "On failure")}
+                {uiText("失败行为")}
                 <select
                   value={r.errorPolicy}
                   onChange={(e) =>
@@ -486,9 +443,9 @@ function RegexEditor({
                     })
                   }
                 >
-                  <option value="fallback">{t("恢复原文", "Fallback")}</option>
-                  <option value="skip">{t("跳过规则", "Skip")}</option>
-                  <option value="fail">{t("停止处理", "Fail")}</option>
+                  <option value="fallback">{uiText("恢复原文")}</option>
+                  <option value="skip">{uiText("跳过规则")}</option>
+                  <option value="fail">{uiText("停止处理")}</option>
                 </select>
               </label>
             </fieldset>
