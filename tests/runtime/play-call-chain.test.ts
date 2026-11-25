@@ -58,6 +58,7 @@ import { PlayCallChain } from "../../src/runtime/play/PlayCallChain.ts";
 import {
   preparePlayerRevisionTrace,
   prepareForkTrace,
+  restorePlayDocuments,
 } from "../../src/runtime/play/PlayTraceRetention.ts";
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
 import {
@@ -4432,6 +4433,326 @@ test("精读授权在同一进程的发送间保留；重启后从保留的对�
     ),
   ).toMatchObject({ ok: false });
 });
+
+test.each(["live", "restart", "revision"] as const)(
+  "游玩列表的精读授权在 %s 保留相同范围",
+  async (mode) => {
+    const label = `retained-list-read-${mode}`;
+    const { worlds, worldId, root } = await createWorld(label, [
+      ...worldFiles(),
+      {
+        path: "world/characters/qin.yaml",
+        contents:
+          "$document:\n  id: person.qin\n  ref: qin\n  title: Qin\n  summary: Courier\n  aliases: []\ntasks: [Clinic visit, Pick up letter, Private delivery]\nnotes: [Keep this note]\nrelationship: Just met\npending: Ask for umbrella\n",
+      },
+    ]);
+    const read = (ref: string) => ({
+      id: `read-${ref}`,
+      name: "context_read",
+      arguments: { ref: `@qin#/${ref}` },
+    });
+    const edit = (
+      id: string,
+      op: "remove" | "replace",
+      yaml: (string | number)[],
+    ) => ({
+      id,
+      name: "world_patch",
+      arguments: {
+        target: "@qin",
+        edits: [
+          { op, locator: { yaml }, ...(op === "replace" ? { value: id } : {}) },
+        ],
+      },
+    });
+    const model = (
+      steps: ConstructorParameters<typeof ScriptedModelHost>[0]["steps"],
+    ) => new ScriptedModelHost({ binding: modelBinding(), steps });
+    const probes = [
+      edit("kept", "replace", ["relationship"]),
+      edit("shifted-read", "replace", ["tasks", 0]),
+      edit("shifted-unread", "replace", ["tasks", 1]),
+      edit("removed", "replace", ["pending"]),
+    ];
+    const expected = [true, false, false, false];
+    const live = new PlayCallChain(worlds);
+    await live.start({
+      worldId,
+      chainId: label,
+      exchangeId: "first",
+      playerText: "Help Qin.",
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+      modelHost: model([
+        {
+          outcome: "response",
+          toolCalls: [
+            read("tasks/0"),
+            read("tasks/1"),
+            read("relationship"),
+            read("pending"),
+            read("notes/0"),
+            edit("remove-first", "remove", ["tasks", 0]),
+            read("tasks/0"), // Duplicate ID: the receipt is reused without re-reading.
+            edit("remove-pending", "remove", ["pending"]),
+          ],
+        },
+        { outcome: "response", text: "One task is complete." },
+      ]),
+    });
+    const cold = new PlayCallChain(new FileNativeWorldStore(root));
+    let legacy: ReturnType<typeof restorePlayDocuments> | undefined;
+    if (mode === "restart") {
+      const binding = await worlds.bindPlayCallChain(worldId);
+      const { value } = (await worlds.playTimeline.readCurrent(worldId))!;
+      for (const { result } of value.completedTools)
+        delete result.patchAuthorization;
+      legacy = restorePlayDocuments(binding.files, value, value.events);
+    }
+    const warmUp = edit("partial", "replace", ["relationship"]);
+    warmUp.arguments.edits.unshift({
+      op: "remove",
+      locator: { yaml: ["notes", 0] },
+      value: "Remove rejects this extra argument",
+    });
+    await live.append({
+      worldId,
+      chainId: label,
+      exchangeId: "partial",
+      playerText: "Greet Qin.",
+      modelHost: model([
+        { outcome: "response", toolCalls: [warmUp] },
+        { outcome: "response", text: "Qin is greeted." },
+      ]),
+    });
+    const settled = (await worlds.playTimeline.readCurrent(worldId))!.value;
+    expect(
+      settled.completedTools.find(({ key }) => key.endsWith(":partial"))?.result
+        .markdown,
+    ).toContain("1/2 edits applied");
+    let chainId = label;
+    if (mode === "revision") {
+      const suffix = await live.append({
+        worldId,
+        chainId,
+        exchangeId: "discarded",
+        playerText: "Wait.",
+        modelHost: model([
+          {
+            outcome: "response",
+            toolCalls: [read("tasks/0"), read("tasks/1")],
+          },
+          { outcome: "response", text: "Qin waits." },
+        ]),
+      });
+      const player = suffix.events.findLast(
+        (event) => event.kind === "player",
+      )!;
+      const revised = await cold.revisePlayer({
+        operationId: "revise-list",
+        worldId,
+        chainId,
+        eventId: player.id,
+        replacementExchangeId: "next",
+        replacementText: "Talk to Qin.",
+        continuation: "continue_context",
+      });
+      chainId = revised.playCallChain.chainId;
+    }
+    const view = await (mode === "live" ? live : cold).append({
+      worldId,
+      chainId,
+      exchangeId: "next",
+      playerText: mode === "revision" ? "" : "Talk to Qin.",
+      modelHost: model([
+        {
+          outcome: "response",
+          toolCalls: [
+            ...probes,
+            edit("failed-removal", "replace", ["notes", 0]),
+          ],
+        },
+        { outcome: "response", text: "Qin replies." },
+      ]),
+    });
+    const outcome = (callId: string) =>
+      view.events.find(
+        (event) => event.kind === "tool_result" && event.callId === callId,
+      );
+    expect(probes.map(({ id }) => outcome(id))).toMatchObject(
+      expected.map((ok) => ({ ok })),
+    );
+    expect(outcome("failed-removal")).toMatchObject({ ok: true });
+    if (legacy !== undefined) {
+      const restored = legacy;
+      expect(probes.map((call) => restored.execute(call, []).ok)).toEqual(
+        expected,
+      );
+    }
+  },
+);
+
+test.each(["live", "restart", "rewind", "fresh"] as const)(
+  "创建文档后在 %s 只保留同段对话中已提交的写入资格",
+  async (mode) => {
+    const chainId = `retained-created-document-${mode}`;
+    const { worlds, worldId, root } = await createWorld(chainId, [
+      ...worldFiles(),
+      {
+        path: "world/lantern.yaml",
+        contents:
+          "$document:\n  id: item.lantern\n  ref: lantern\n  title: Lantern\n  summary: A lantern\n  aliases: []\nowner: Qin\n",
+      },
+    ]);
+    const create = {
+      parent: "@dir-/",
+      codec: "yaml",
+      refHint: "lantern",
+      title: "Second lantern",
+      summary: "A spare lantern",
+      aliases: [],
+      body: "owner: Qin\n",
+    };
+    const model = (
+      toolCalls: {
+        id: string;
+        name: string;
+        arguments: unknown;
+      }[],
+    ) =>
+      new ScriptedModelHost({
+        binding: modelBinding(),
+        steps: [
+          { outcome: "response", toolCalls },
+          { outcome: "response", text: "Qin tends to the lanterns." },
+        ],
+      });
+    const bindings = {
+      worldId,
+      hostBinding: hostBinding(),
+      playPreset: playPreset(),
+      modelBinding: modelBinding(),
+    };
+    const live = new PlayCallChain(worlds);
+    const rejected = await live.start({
+      ...bindings,
+      chainId,
+      exchangeId: "failed-create",
+      playerText: "Consider making a lantern.",
+      modelHost: model([
+        {
+          id: "invalid-lantern",
+          name: "world_create",
+          arguments: { ...create, body: "owner: [\n" },
+        },
+      ]),
+    });
+    expect(rejected.events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_result",
+        callId: "invalid-lantern",
+        ok: false,
+      }),
+    );
+    const createHost = model([
+      { id: "create-lantern", name: "proxy_world_create", arguments: create },
+    ]);
+    const created = await live.append({
+      worldId,
+      chainId,
+      exchangeId: "create",
+      playerText: "Make a second lantern.",
+      modelHost: createHost,
+    });
+    const creationReceipt = sent(createHost.requests[1]!)
+      .filter((item) => item.kind === "tool")
+      .find(({ toolCallId }) => toolCallId === "create-lantern");
+    expect(creationReceipt?.markdown).toMatch(/^@lantern-2 write succeeded\n/u);
+    const coldWorlds = new FileNativeWorldStore(root);
+    const cold = new PlayCallChain(coldWorlds);
+    let continuedChainId = chainId;
+    if (mode === "rewind") {
+      const player = created.events.findLast(
+        (event) => event.kind === "player",
+      )!;
+      const revised = await cold.revisePlayer({
+        operationId: "revise-create",
+        worldId,
+        chainId,
+        eventId: player.id,
+        replacementExchangeId: "edit",
+        replacementText: "Leave the lanterns alone.",
+        continuation: "continue_context",
+      });
+      continuedChainId = revised.playCallChain.chainId;
+    }
+    const edit = (target: string) => ({
+      id: `edit-${target}`,
+      name: "world_patch",
+      arguments: {
+        target: `@${target}`,
+        edits: [{ op: "replace", locator: { yaml: ["owner"] }, value: "Alex" }],
+      },
+    });
+    const editHost = model([edit("lantern-2"), edit("lantern")]);
+    const view =
+      mode === "fresh"
+        ? await cold.start({
+            ...bindings,
+            chainId: "fresh-lantern",
+            exchangeId: "edit",
+            playerText: "Pass a lantern to Alex.",
+            modelHost: editHost,
+          })
+        : await (mode === "live" ? live : cold).append({
+            worldId,
+            chainId: continuedChainId,
+            exchangeId: "edit",
+            playerText: mode === "rewind" ? "" : "Pass a lantern to Alex.",
+            modelHost: editHost,
+          });
+    const mayEdit = mode === "live" || mode === "restart";
+    const results = view.events.filter((event) => event.kind === "tool_result");
+    expect(results.find(({ callId }) => callId === "edit-lantern-2")?.ok).toBe(
+      mayEdit,
+    );
+    expect(results.find(({ callId }) => callId === "edit-lantern")?.ok).toBe(
+      false,
+    );
+    const rejectedWrite = sent(editHost.requests[1]!)
+      .filter((item) => item.kind === "tool")
+      .find(({ toolCallId }) => toolCallId === "edit-lantern");
+    expect(rejectedWrite?.markdown).toContain("Read @lantern exactly");
+    const files = await coldWorlds.readSurface(worldId, "state");
+    expect(
+      files.find(({ path }) => path === "lantern.yaml")?.contents,
+    ).toContain("owner: Qin");
+    const second = files.find(({ path }) => path === "lantern-2.yaml");
+    if (mode === "rewind") expect(second).toBeUndefined();
+    else
+      expect(second?.contents).toContain(`owner: ${mayEdit ? "Alex" : "Qin"}`);
+    if (mode === "restart") {
+      const binding = await coldWorlds.bindPlayCallChain(worldId);
+      const { value } = (await coldWorlds.playTimeline.readCurrent(worldId))!;
+      const creation = value.completedTools.find(
+        ({ name, result }) => name === "world_create" && result.ok,
+      )!.result;
+      expect(creation.createdDocumentId).toEqual(expect.any(String));
+      delete creation.createdDocumentId;
+      const legacy = restorePlayDocuments(binding.files, value, value.events);
+      expect(legacy.execute(edit("lantern-2"), []).ok).toBe(true);
+      expect(legacy.execute(edit("lantern"), []).ok).toBe(false);
+      creation.markdown = "@lantern-2 pending write";
+      const unsettled = restorePlayDocuments(
+        binding.files,
+        value,
+        value.events,
+      );
+      expect(unsettled.execute(edit("lantern-2"), []).ok).toBe(false);
+    }
+  },
+);
 
 test("重新生成或修改消息后，保留前缀中的精读授权被回放，模型无需重读即可修改", async () => {
   const { worlds, worldId, root } = await createWorld("revised-read", [
