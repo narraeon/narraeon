@@ -208,7 +208,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(timeline).not.toContainText("原来的第二段回复");
     await expect(regenerate).toHaveCount(1);
     await page.getByLabel("你的行动").fill("");
-    await page.getByRole("button", { name: "追加行动", exact: true }).click();
+    await page.getByRole("button", { name: "继续故事", exact: true }).click();
     await expect(
       page.getByText("空输入续写回复", { exact: true }),
     ).toBeVisible();

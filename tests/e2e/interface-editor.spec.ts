@@ -229,7 +229,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       page.getByText("Alex greets you.", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "追加行动", exact: true }),
+      page.getByRole("button", { name: "继续故事", exact: true }),
     ).toBeEnabled();
     // Only the main model tool response and final narration were dispatched.
     expect(requests).toBe(2);

@@ -333,7 +333,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     // A second follow-up fails after the first content has become visible.
     send(pending.shift()!, { content: "No required artifact emitted." });
     await expect(
-      page.getByRole("button", { name: "追加行动", exact: true }),
+      page.getByRole("button", { name: "继续故事", exact: true }),
     ).toBeEnabled();
     await expect(
       panel.getByText("Saved panel at the same head", { exact: true }),
@@ -395,7 +395,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       .fill("Continue with saved disabled followups.");
     await page.getByRole("button", { name: "追加行动", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "追加行动", exact: true }),
+      page.getByRole("button", { name: "继续故事", exact: true }),
     ).toBeEnabled();
     await expect.poll(() => requests).toBe(4);
     expect(pending).toHaveLength(0);
@@ -438,7 +438,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       await page.getByLabel("你的行动").fill(`Later action ${index}`);
       await page.getByRole("button", { name: "追加行动", exact: true }).click();
       await expect(
-        page.getByRole("button", { name: "追加行动", exact: true }),
+        page.getByRole("button", { name: "继续故事", exact: true }),
       ).toBeEnabled();
     }
     await open();

@@ -472,7 +472,19 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
 
   await expect(
     page.getByRole("button", { name: "从全新上下文发送行动", exact: true }),
-  ).toBeVisible();
+  ).toBeDisabled();
+  await page.getByLabel("你的行动").press("Enter");
+  await page.getByLabel("更多", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "接着当前对话继续", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", {
+      name: "用新对话继续（保留故事进度）",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
   expect(providerRequests).toHaveLength(count);
   await page.getByLabel("你的行动").fill("保留这份行动草稿。");
   await page
@@ -480,7 +492,7 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     .click();
   await expect(
     page.getByRole("button", { name: "追加行动", exact: true }),
-  ).toBeVisible();
+  ).toBeEnabled();
   await expect(page.getByLabel("你的行动")).toHaveValue("保留这份行动草稿。");
   await expect(
     page.getByText("世界已在当前上下文之外更新；下一次行动会从新上下文开始。"),
@@ -494,16 +506,16 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     page.getByText("下一条消息将开启全新上下文", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "追加行动", exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "继续故事", exact: true }),
+  ).toBeEnabled();
   await page.reload();
   await expect(page).toHaveURL(/#\/world\//u);
   await expect(
     page.getByText("下一条消息将开启全新上下文", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "追加行动", exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "继续故事", exact: true }),
+  ).toBeEnabled();
   expect(providerRequests).toHaveLength(count);
   await page.getByLabel("你的行动").fill("保留这份行动草稿。");
   responses.push("Alex 点头，继续刚才的话题。");

@@ -10,7 +10,7 @@ let provider: Server;
 let providerUrl = "";
 const steps: ProviderStep[] = [];
 const providerRequests: string[] = [];
-test.use({ runtimeScope: "failure-recovery" });
+test.use({ runtimeScope: "failure-recovery", hasTouch: true });
 test.setTimeout(120_000);
 const recoveryExpect = expect.configure({ timeout: 30_000 });
 
@@ -163,6 +163,14 @@ for (const locale of ["zh-CN", "en"] as const)
       name: english ? "Wrap up here" : "在此收尾",
       exact: true,
     });
+    const draftActions = page.getByRole("group", {
+      name: english ? "Edit this turn" : "编辑本轮",
+      exact: true,
+    });
+    const sendActions = page.getByRole("group", {
+      name: english ? "Send now" : "立即发送",
+      exact: true,
+    });
     const note = page.getByLabel(
       english ? "One-turn request text" : "本轮临时要求内容",
       { exact: true },
@@ -174,6 +182,24 @@ for (const locale of ["zh-CN", "en"] as const)
     await expect(shortcut).toHaveCount(0);
     await more.focus();
     await page.keyboard.press("Enter");
+    await expect(
+      draftActions.getByRole("button", {
+        name: english ? "Wrap up here" : "在此收尾",
+      }),
+    ).toBeVisible();
+    await expect(shortcut).toHaveAccessibleDescription(
+      english
+        ? "Fills in the one-turn request for your next action or story continuation. Nothing is sent yet."
+        : "只填入本轮临时要求，供下次发送行动或继续故事时使用。点击不会发送。",
+      { timeout: 2_000 },
+    );
+    await expect(
+      sendActions.getByRole("button", {
+        name: english ? "Send first action" : "发送第一步行动",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await expect(sendActions.getByRole("button")).toHaveCount(2);
     await shortcut.focus();
     await page.keyboard.press("Enter");
     await expect(note).toBeFocused();
@@ -353,8 +379,24 @@ for (const locale of ["zh-CN", "en"] as const)
     await recoveryExpect(resend).toBeEnabled();
     expect(providerRequests).toHaveLength(3);
     expect(providerRequests[2]).not.toContain(wrapUp);
+    const retryLabel = english ? "Retry this turn" : "重试本轮";
+    const retry = page.getByRole("button", { name: retryLabel, exact: true });
+    await expect(retry).toHaveText(retryLabel);
+    await expect(retry).toBeInViewport({ ratio: 1 });
+    await more.tap();
+    const retryInChat = sendActions.getByRole("button", {
+      name: english
+        ? "Retry this turn in the current chat"
+        : "在当前对话重试本轮",
+      exact: true,
+    });
+    await expect(retryInChat).toBeEnabled();
+    await expect(retryInChat).toHaveAccessibleDescription(
+      english ? "Reuse the last saved request." : "沿用上一次保存的请求。",
+    );
+    await more.tap();
     steps.push({ kind: "text", text: "Alex leads you into the corridor." });
-    await resend.click();
+    await retry.tap();
     await recoveryExpect(
       page.getByText("Alex leads you into the corridor.", { exact: true }),
     ).toBeVisible();
@@ -403,7 +445,8 @@ for (const locale of ["zh-CN", "en"] as const)
     await recoveryExpect(fresh).toHaveCount(0);
     const originalRequest = providerRequests.at(-1);
     steps.push({ kind: "text", text: "A lantern lights the corridor." });
-    await resend.click();
+    await more.tap();
+    await retryInChat.tap();
     await recoveryExpect(
       page.getByText("A lantern lights the corridor.", { exact: true }),
     ).toBeVisible();
@@ -430,6 +473,39 @@ for (const locale of ["zh-CN", "en"] as const)
     await recoveryExpect(
       page.getByText("I ask about the corridor.", { exact: true }),
     ).toHaveCount(1);
+    const continueLabel = english ? "Continue story" : "继续故事";
+    const continueStory = page.getByRole("button", {
+      name: continueLabel,
+      exact: true,
+    });
+    await expect(continueStory).toHaveText(continueLabel);
+    await expect(continueStory).toBeInViewport({ ratio: 1 });
+    await expect(input).toHaveValue("");
+    const countBeforeContinuation = providerRequests.length;
+    await more.tap();
+    await shortcut.tap();
+    await expect(note).toHaveValue(wrapUp);
+    expect(providerRequests).toHaveLength(countBeforeContinuation);
+    steps.push({ kind: "text", text: "The garden gate closes softly." });
+    await continueStory.tap();
+    await recoveryExpect(
+      page.getByText("The garden gate closes softly.", { exact: true }),
+    ).toBeVisible();
+    expect(providerRequests).toHaveLength(countBeforeContinuation + 1);
+    const continuation = JSON.parse(providerRequests.at(-1)!) as ChatRequest;
+    expect(continuation.messages.at(-1)?.content).toContain(wrapUp);
+    expect(
+      continuation.messages.filter(
+        ({ role, content }) =>
+          role === "user" && content?.includes(`<${inputTag}>`),
+      ),
+    ).toHaveLength(1);
+    expect(
+      await runtime(page, {
+        type: "play.chain.inspect",
+        worldId: created.world.worldId,
+      }),
+    ).toMatchObject({ chainId: freshChain.chainId, status: "ready" });
   });
 
 test("protocol switch is temporary and restored protocol accepts changed model settings", async ({

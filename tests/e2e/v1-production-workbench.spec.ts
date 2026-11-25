@@ -1265,11 +1265,11 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "Where should we meet beforehand?",
   );
   await expect(page.getByLabel("你的行动")).toHaveValue("");
-  await expect(page.getByRole("button", { name: "追加行动" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "继续故事" })).toBeEnabled();
   responses.push(
     chatText("Alex reconsiders and says to meet downstairs at 7:20."),
   );
-  await page.getByRole("button", { name: "追加行动" }).click();
+  await page.getByRole("button", { name: "继续故事" }).click();
   await expect(
     page.getByText("Alex reconsiders and says to meet downstairs at 7:20."),
   ).toBeVisible();

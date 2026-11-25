@@ -711,12 +711,26 @@ export function WorldPage({
   const playIdle =
     pending === null && activeStatus !== "running" && !worldRevisionLocked;
   const canStartFresh = hasPlayerText && playIdle;
+  const currentRecovery =
+    activeStatus === "interrupted" && activeCanRetry
+      ? activeFailureKind === "dispatch_budget"
+        ? "resume"
+        : "retry"
+      : null;
   const canAppend =
     playIdle &&
     freshContextReason === undefined &&
     (activeChainId === null
       ? hasPlayerText
       : activeStatus === "ready" || (!hasPlayerText && activeCanRetry));
+  const defaultSubmitFresh =
+    preferFreshContext || activeChainId === null || activeChainStale;
+  const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
+  const primaryAction = defaultSubmitFresh
+    ? "fresh"
+    : hasPlayerText
+      ? "append"
+      : (currentRecovery ?? (activeStatus === "ready" ? "continue" : "append"));
 
   useEffect(() => {
     if (!playProgressActive) return;
@@ -1460,9 +1474,6 @@ export function WorldPage({
     onConfigureModel,
   };
 
-  const defaultSubmitFresh =
-    preferFreshContext || activeChainId === null || activeChainStale;
-  const defaultSubmitEnabled = defaultSubmitFresh ? canStartFresh : canAppend;
   const composer = useConversationComposer(
     modelConfigured && defaultSubmitEnabled,
     submitCurrentMode,
@@ -1811,14 +1822,17 @@ export function WorldPage({
               composer,
               canAppend: canAppend && modelConfigured,
               canStartFresh: canStartFresh && modelConfigured,
-              defaultSubmitFresh,
+              primaryAction,
+              currentAction:
+                activeChainId === null
+                  ? "first"
+                  : (currentRecovery ?? "current"),
               defaultSubmitEnabled: defaultSubmitEnabled && modelConfigured,
               submitting: pending === "play-fresh" || pending === "play-append",
               onSubmitAlternate: submitPlayChain,
             }}
             disabled={!playIdle || !modelConfigured}
             showTechnicalInfo={readingPreferences.showTechnicalInfo}
-            activeCanRetry={activeCanRetry}
           >
             <SyncNotice
               failed={decorationFailed}

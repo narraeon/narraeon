@@ -393,7 +393,7 @@ for (const late of ["success", "failure"] as const)
         ),
     );
     await expect(
-      page.getByRole("button", { name: "Append action", exact: true }),
+      page.getByRole("button", { name: "Continue story", exact: true }),
     ).toBeEnabled();
     await expect(
       page.getByText("Temporarily unable to sync", { exact: true }),

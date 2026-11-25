@@ -1814,8 +1814,6 @@ const worldPageEnglishMessages: Record<string, string> = {
   "模型调用已经结束，正在刷新结果…":
     "The model call has already ended; refreshing the result…",
   模型调用失败: "Model call failed",
-  "模型请求中断；清空输入后点击追加上下文即可原样发送上次请求。":
-    "The model request was interrupted. Clear the input and append context to resend the previous request unchanged.",
   "调用链处理失败；旧请求不能重发，请使用全新上下文。":
     "Call-chain processing failed. The old request cannot be resent; start a new context.",
   "AI 已沿现有上下文继续生成，没有追加玩家指令。":
@@ -2136,7 +2134,11 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   排版密度: "Layout density",
   "接下来，你要做什么？": "What do you do next?",
   本轮临时要求: "One-turn request",
+  编辑本轮: "Edit this turn",
+  立即发送: "Send now",
   在此收尾: "Wrap up here",
+  "只填入本轮临时要求，供下次发送行动或继续故事时使用。点击不会发送。":
+    "Fills in the one-turn request for your next action or story continuation. Nothing is sent yet.",
   "这段就在这里收尾，保存后续需要的信息，并登记检查点。":
     "Wrap up this part here, save what is needed for later, and register a checkpoint.",
   本轮: "This turn",
@@ -2245,6 +2247,16 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "追加不会重新编译世界材料。": "Appending does not recompile world materials.",
   接着当前对话继续: "Continue current session",
   追加行动: "Append action",
+  发送第一步行动: "Send first action",
+  继续故事: "Continue story",
+  重试本轮: "Retry this turn",
+  在当前对话重试本轮: "Retry this turn in the current chat",
+  "沿用上一次保存的请求。": "Reuse the last saved request.",
+  继续本轮: "Resume this turn",
+  接着暂停的本轮生成: "Resume the paused turn",
+  "沿用暂停前保存的请求。": "Use the request saved before the pause.",
+  "继续本轮沿用暂停前保存的请求。":
+    "Resuming this turn uses the request saved before the pause.",
   更多: "More",
   选择文档: "Choose document",
   "配置模型后可查看下次发送的预览。":

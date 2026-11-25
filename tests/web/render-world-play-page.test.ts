@@ -159,6 +159,8 @@ describe("世界游玩页面", () => {
       name: "续写",
     });
     expect(screen.queryByRole("button", { name: "重新发送" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "继续故事" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重试本轮" })).toBeNull();
     fireEvent.click(button);
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
@@ -750,7 +752,11 @@ describe("世界游玩页面", () => {
       return Promise.reject(new Error(`Unexpected request: ${input.type}`));
     });
     renderWorld({ request });
-    const resume = await screen.findByRole("button", { name: "继续生成" });
+    expect(
+      await screen.findByRole("button", { name: "继续生成" }),
+    ).toBeTruthy();
+    const resume = screen.getByRole("button", { name: "继续本轮" });
+    expect(resume.textContent).toBe("继续本轮");
     expect(
       screen.getByText("游玩生成已暂停").closest('[role="status"]'),
     ).toBeTruthy();
@@ -1393,7 +1399,7 @@ describe("世界游玩页面", () => {
       await screen.findByText("上下文 62%");
       act(() => onConnection?.("reconnecting"));
       if (trigger === "command")
-        fireEvent.click(screen.getByRole("button", { name: "追加行动" }));
+        fireEvent.click(screen.getByRole("button", { name: "继续故事" }));
       else {
         advanced = true;
         act(
@@ -1409,8 +1415,9 @@ describe("世界游玩页面", () => {
       expect(screen.queryByText(/世界已在当前上下文之外更新/u)).toBeNull();
       await waitFor(() =>
         expect(
-          screen.getByRole<HTMLButtonElement>("button", { name: "追加行动" })
-            .disabled,
+          screen.getByRole<HTMLButtonElement>("button", {
+            name: latestStatus === "running" ? "追加行动" : "继续故事",
+          }).disabled,
         ).toBe(latestStatus === "running"),
       );
       expect(
@@ -1683,7 +1690,7 @@ describe("世界游玩页面", () => {
     ).toBeTruthy();
     expect(
       screen.getByRole<HTMLButtonElement>("button", {
-        name: "接着当前对话继续",
+        name: "发送第一步行动",
       }).disabled,
     ).toBe(true);
 
@@ -2717,7 +2724,7 @@ describe("世界游玩页面", () => {
     ).toHaveLength(2);
   });
 
-  test("没有既有上下文时点击追加会自动从当前世界开始", async () => {
+  test("没有既有上下文时发送第一步行动会从当前世界开始", async () => {
     let chain: V1PlayCallChainView | null = null;
     const client = {
       request: vi.fn(<T>(request: V1Request) => {
@@ -2743,7 +2750,15 @@ describe("世界游玩页面", () => {
     fireEvent.change(screen.getByLabelText("你的行动"), {
       target: { value: "I open the dormitory door." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
+    fireEvent.click(screen.getByLabelText("更多"));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "立即发送" })).getByRole(
+        "button",
+        {
+          name: "发送第一步行动",
+        },
+      ),
+    );
 
     await screen.findByText("Alex opens the door and lets you go first.");
     expect(
@@ -6594,7 +6609,7 @@ test("a lost play response and failed recovery preserve the draft until a read c
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Look outside." } });
-  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
+  fireEvent.click(screen.getByRole("button", { name: "发送第一步行动" }));
   await screen.findByText("暂时无法同步");
   expect(input.value).toBe("Look outside.");
   offline = false;
@@ -6837,7 +6852,7 @@ test("a confirmed play receipt keeps the timeline fallback usable when world rea
     name: "你的行动",
   });
   fireEvent.change(input, { target: { value: "Open the door." } });
-  fireEvent.click(screen.getByRole("button", { name: "接着当前对话继续" }));
+  fireEvent.click(screen.getByRole("button", { name: "发送第一步行动" }));
   await screen.findByText("暂时无法同步");
   await screen.findByText("Alex opens the door and lets you go first.");
   fireEvent.change(input, {
