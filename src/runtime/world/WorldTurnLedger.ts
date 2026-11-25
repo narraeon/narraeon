@@ -9,6 +9,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import {
+  contentTreeFileFromBytes,
+  type ContentTreeFile,
+} from "../content/ContentTreeFile.ts";
 
 // 世界轮账本：当前文件就是当前端点；每轮只记录它改动过的文件的修改前像。
 // 回退只追加一轮 rewind，它在读取时被视为逻辑上的空操作，被丢弃的轮不再可达。
@@ -844,6 +848,32 @@ export async function readTreeAt(
   return (await readLedgerFiles(root, sequence, { dirs })).files;
 }
 
+/** Read exact control resources while applying the same published-endpoint overlay. */
+export async function readControlFilesAt(
+  root: string,
+  sequence: number | undefined,
+): Promise<ContentTreeFile[]> {
+  const relative = (path: string) => path.slice("control/".length);
+  const { files } = await readLedgerProjectionWith(
+    root,
+    sequence,
+    () => ({ dirs: ["control"], projection: undefined }),
+    async (path) => {
+      try {
+        return contentTreeFileFromBytes(
+          relative(path),
+          await readFile(join(root, path)),
+        );
+      } catch (error: unknown) {
+        if (isMissing(error)) return null;
+        throw error;
+      }
+    },
+    (path, contents) => ({ path: relative(path), contents }),
+  );
+  return [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 /** Read files and borrowed turn records from one published endpoint. */
 export async function readLedgerFiles(
   root: string,
@@ -869,21 +899,39 @@ export async function readLedgerFiles(
   return { sequence: position, files, turns };
 }
 
+type SelectLedgerProjection<Projection> = (
+  position: number,
+  turnsBack: () => IterableIterator<WorldTurnRecord>,
+) => {
+  dirs?: readonly string[];
+  paths?: readonly string[];
+  projection: Projection;
+};
+
 /** Choose the files for a projection from the same view used to recover them. */
-export async function readLedgerProjection<Projection>(
+export function readLedgerProjection<Projection>(
   root: string,
   sequence: number | undefined,
-  select: (
-    position: number,
-    turnsBack: () => IterableIterator<WorldTurnRecord>,
-  ) => {
-    dirs?: readonly string[];
-    paths?: readonly string[];
-    projection: Projection;
-  },
+  select: SelectLedgerProjection<Projection>,
+) {
+  return readLedgerProjectionWith(
+    root,
+    sequence,
+    select,
+    (path) => readTextOrNull(join(root, path)),
+    (_path, before) => before,
+  );
+}
+
+async function readLedgerProjectionWith<Projection, File>(
+  root: string,
+  sequence: number | undefined,
+  select: SelectLedgerProjection<Projection>,
+  readCurrent: (path: string) => Promise<File | null>,
+  readBefore: (path: string, before: string) => File,
 ): Promise<{
   sequence: number;
-  files: Map<string, string>;
+  files: Map<string, File>;
   projection: Projection;
 }> {
   const key = resolve(root);
@@ -906,7 +954,7 @@ export async function readLedgerProjection<Projection>(
       const stable = async () =>
         (await readHead(root)) === view.head &&
         readers.generation === generation;
-      let files: Map<string, string>;
+      let files: Map<string, File>;
       try {
         const pendingPath = turnFileName(view.head + 1);
         const pendingText = await readTextOrNull(join(root, pendingPath));
@@ -921,7 +969,14 @@ export async function readLedgerProjection<Projection>(
         );
         for (const [path, before] of overlayAfter(view, position))
           overlay.set(path, before);
-        files = await collectFiles(root, dirs, paths, overlay);
+        files = await collectFiles(
+          root,
+          dirs,
+          paths,
+          overlay,
+          readCurrent,
+          readBefore,
+        );
       } catch (error: unknown) {
         if (await stable()) throw error;
         continue;
@@ -939,25 +994,27 @@ export async function readLedgerProjection<Projection>(
   }
 }
 
-async function collectFiles(
+async function collectFiles<File>(
   root: string,
   dirs: readonly string[],
   paths: readonly string[],
   overlay: ReadonlyMap<string, string | null>,
-): Promise<Map<string, string>> {
+  readCurrent: (path: string) => Promise<File | null>,
+  readBefore: (path: string, before: string) => File,
+): Promise<Map<string, File>> {
   const wanted = new Set(paths);
   for (const dir of dirs)
     for (const path of await listFiles(root, dir)) wanted.add(path);
-  const files = new Map<string, string>();
+  const files = new Map<string, File>();
   for (const [path, before] of overlay) {
     if (wanted.has(path) || dirs.some((dir) => path.startsWith(`${dir}/`))) {
       wanted.delete(path);
-      if (before !== null) files.set(path, before);
+      if (before !== null) files.set(path, readBefore(path, before));
     }
   }
   for (const path of wanted) {
-    const text = await readTextOrNull(join(root, path));
-    if (text !== null) files.set(path, text);
+    const file = await readCurrent(path);
+    if (file !== null) files.set(path, file);
   }
   return files;
 }

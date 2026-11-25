@@ -28,6 +28,7 @@ import {
 import {
   appendTurnWithDigest,
   initializeLedger,
+  readControlFilesAt,
   readEndpoint,
   readHead as readLedgerHead,
   readLedgerFiles,
@@ -240,6 +241,7 @@ export class WorldLedgerAuthority {
     head?: string,
   ): Promise<ContentTreeFile[]> {
     const position = head === undefined ? undefined : parsePosition(head);
+    if (surface === "control") return readControlFilesAt(this.#root, position);
     return surfaceFiles(
       await readTreeAt(this.#root, position, [surface]),
       surface,
@@ -254,9 +256,13 @@ export class WorldLedgerAuthority {
       .sort((left, right) => left.path.localeCompare(right.path));
   }
 
-  /** 端点的控制文件：与状态同一账本视图，回退与分叉随端点恢复。 */
+  /** Text projection used by the compiler and existing revision workspace. */
   async recoverControl(head?: string): Promise<ContentTreeFile[]> {
-    return this.recoverSurface("control", head);
+    const position = head === undefined ? undefined : parsePosition(head);
+    return surfaceFiles(
+      await readTreeAt(this.#root, position, ["control"]),
+      "control",
+    );
   }
 
   /** 把当前端点的控制文件替换为 next 所需的逐文件改动（写入或删除，未变化的不记录）。 */
@@ -265,14 +271,14 @@ export class WorldLedgerAuthority {
     next: readonly ContentTreeFile[],
   ): Promise<WorldTurnFileChange[]> {
     const current = await readTreeAt(this.#root, position, ["control"]);
-    const wanted = new Map<string, string>(
-      next.map((file) => [`control/${file.path}`, file.contents]),
-    );
+    const wanted = new Map(next.map((file) => [`control/${file.path}`, file]));
     const changes: WorldTurnFileChange[] = [];
     for (const path of current.keys())
       if (!wanted.has(path)) changes.push({ path, content: null });
-    for (const [path, contents] of wanted)
-      if (current.get(path) !== contents)
+    // The advanced editor checks opaque resources against the published bytes.
+    // They are carried through its whole-tree draft without creating ledger writes.
+    for (const [path, { contents, encoding }] of wanted)
+      if (encoding === undefined && current.get(path) !== contents)
         changes.push({ path, content: contents });
     return changes;
   }

@@ -46,7 +46,10 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import type { ContentTreeFile } from "../content/ContentWorkspace.ts";
+import {
+  contentTreeFileFromBytes,
+  type ContentTreeFile,
+} from "../content/ContentTreeFile.ts";
 import {
   inspectContentPackageCurrentTree,
   isContentPackageWorldDocumentPath,
@@ -1040,10 +1043,10 @@ export class FileNativeWorldStore {
           await this.ensureCurrentStorage(worldId);
           const root = join(this.#worldsRoot, worldId);
           await readPublicationAt(root);
-          assertControlGameplayUnchanged(
-            await readTree(join(root, "control")),
-            files,
+          const current = await new WorldLedgerAuthority(root).recoverSurface(
+            "control",
           );
+          assertControlGameplayUnchanged(current, files);
           if (files.length === 0) throw unsavedControlDraft();
           const staging = join(root, `runtime/.control-draft-${randomUUID()}`);
           const staged = join(staging, "control");
@@ -1051,7 +1054,8 @@ export class FileNativeWorldStore {
             await writeSurface(staging, "control", files);
             const written = exactControlDraftWrite(files)
               ? files
-              : await readTree(staged);
+              : await readTree(staged, readControlFile);
+            assertOpaqueControlResourcesUnchanged(current, written);
             const final = join(root, "runtime/control-draft");
             await rm(final, { recursive: true, force: true });
             await rename(staged, final);
@@ -1163,9 +1167,9 @@ export class FileNativeWorldStore {
               path: `state/${path}`,
               contents,
             })),
-            ...draft.map(({ path, contents }) => ({
-              path: `control/${path}`,
-              contents,
+            ...draft.map((file) => ({
+              ...file,
+              path: `control/${file.path}`,
             })),
           ],
         }),
@@ -1197,6 +1201,11 @@ export class FileNativeWorldStore {
           );
           const authority = new WorldLedgerAuthority(root);
           const endpoint = await authority.recover();
+          const current = await authority.recoverSurface(
+            "control",
+            endpoint.head,
+          );
+          assertOpaqueControlResourcesUnchanged(current, draft);
           const preview = this.#compileControlDraft(
             worldId,
             prompt,
@@ -1204,10 +1213,7 @@ export class FileNativeWorldStore {
             draft,
             fingerprint,
           );
-          assertControlGameplayUnchanged(
-            await authority.recoverControl(endpoint.head),
-            draft,
-          );
+          assertControlGameplayUnchanged(current, draft);
           // 控制编辑应用是一轮 `control_apply`：只含 control 改动，与其他轮一样可回退。
           await this.#commitHistoryChange({
             operationId: `control-apply-${randomUUID()}`,
@@ -1276,7 +1282,10 @@ export class FileNativeWorldStore {
     try {
       await this.ensureCurrentStorage(worldId);
       await readPublicationAt(root);
-      draft = await readTree(join(root, "runtime/control-draft"));
+      draft = await readTree(
+        join(root, "runtime/control-draft"),
+        readControlFile,
+      );
     } catch (error: unknown) {
       if (
         expectedFingerprint !== undefined &&
@@ -2009,12 +2018,10 @@ export class FileNativeWorldStore {
                   path: `world/${path}`,
                   contents,
                 })),
-                ...(input.control ?? basisControl).map(
-                  ({ path, contents }) => ({
-                    path: `control/${path}`,
-                    contents,
-                  }),
-                ),
+                ...(input.control ?? basisControl).map((file) => ({
+                  ...file,
+                  path: `control/${file.path}`,
+                })),
               ],
               { requireOpening: false },
             );
@@ -2358,7 +2365,25 @@ async function writeSurface(
   }
 }
 
-async function readTree(root: string, prefix = ""): Promise<ContentTreeFile[]> {
+async function readTextFile(
+  root: string,
+  path: string,
+): Promise<ContentTreeFile> {
+  return { path, contents: await readFile(join(root, path), "utf8") };
+}
+
+async function readControlFile(
+  root: string,
+  path: string,
+): Promise<ContentTreeFile> {
+  return contentTreeFileFromBytes(path, await readFile(join(root, path)));
+}
+
+async function readTree(
+  root: string,
+  read: (root: string, path: string) => Promise<ContentTreeFile> = readTextFile,
+  prefix = "",
+): Promise<ContentTreeFile[]> {
   let entries;
   try {
     entries = await readdir(join(root, prefix), { withFileTypes: true });
@@ -2369,9 +2394,8 @@ async function readTree(root: string, prefix = ""): Promise<ContentTreeFile[]> {
   const files: ContentTreeFile[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const path = prefix.length === 0 ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory()) files.push(...(await readTree(root, path)));
-    else if (entry.isFile())
-      files.push({ path, contents: await readFile(join(root, path), "utf8") });
+    if (entry.isDirectory()) files.push(...(await readTree(root, read, path)));
+    else if (entry.isFile()) files.push(await read(root, path));
   }
   return files;
 }
@@ -2384,7 +2408,7 @@ function immutableFiles(files: readonly ContentTreeFile[]) {
   }));
 }
 
-function sha256(contents: string): string {
+function sha256(contents: string | Buffer): string {
   return `sha256:${createHash("sha256").update(contents).digest("hex")}`;
 }
 
@@ -2427,14 +2451,48 @@ function exactControlDraftWrite(files: readonly ContentTreeFile[]): boolean {
 
 function controlDraftFingerprint(files: readonly ContentTreeFile[]): string {
   // Retain the published digest for ordinary text. Hash contents separately
-  // when a source includes the separator used by the legacy serialization.
-  if (!files.some(({ contents }) => contents.includes("\0")))
+  // for opaque files or sources with the legacy serialization separator.
+  if (
+    !files.some(
+      ({ contents, encoding }) =>
+        encoding !== undefined || contents.includes("\0"),
+    )
+  )
     return fingerprint(files);
-  const digests = files.map(({ path, contents }) => ({
+  const digests = files.map(({ path, contents, encoding }) => ({
     path,
-    contents: sha256(contents),
+    contents: sha256(
+      encoding === "base64" ? Buffer.from(contents, "base64") : contents,
+    ),
   }));
   return sha256(`\0narraeon.control-draft/v1\0${fingerprint(digests)}`);
+}
+
+function assertOpaqueControlResourcesUnchanged(
+  current: readonly ContentTreeFile[],
+  draft: readonly ContentTreeFile[],
+): void {
+  const opaqueResources = (files: readonly ContentTreeFile[]) =>
+    new Map(
+      files
+        .filter(({ encoding }) => encoding === "base64")
+        .map(({ path, contents }) => [path, contents]),
+    );
+  const before = opaqueResources(current);
+  const after = opaqueResources(draft);
+  for (const path of new Set([...before.keys(), ...after.keys()])) {
+    if (before.get(path) === after.get(path)) continue;
+    throw new RuntimeDomainError(
+      `Opaque control resource "${path}" is read-only. Restore the current file or omit it if it is new.`,
+      {
+        receipt: {
+          code: "invalid_request",
+          commands: ["world.control-draft.save", "world.control-draft.apply"],
+          details: { reason: "control_resource_read_only", path },
+        },
+      },
+    );
+  }
 }
 
 function unsavedControlDraft(): FileNativeWorldCreationError {
