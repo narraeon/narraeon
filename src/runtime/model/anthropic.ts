@@ -495,6 +495,7 @@ export async function exchangeAnthropic(
     if (!validAnthropicContent(content))
       throw new ModelResponseFormatError(
         "Return a valid Anthropic Messages assistant response. Each tool call needs an ID, a name and valid arguments.",
+        "请返回有效的 Anthropic Messages assistant 响应。每个工具调用都需要 ID、名称和有效参数。",
       );
     await trace("anthropic_response", payload);
     const reasoningContent = content

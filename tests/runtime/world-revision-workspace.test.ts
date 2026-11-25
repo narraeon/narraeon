@@ -1,4 +1,3 @@
-import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { authoringTargetContract } from "./support/authoring-target-contract.ts";
 import type * as FileSystem from "node:fs/promises";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -3214,7 +3213,7 @@ test.each([false, true])(
     if (correcting)
       expect(last).toHaveProperty(
         "text",
-        expect.stringContaining("Return a corrected response"),
+        expect.stringContaining("请针对原请求返回格式正确的响应"),
       );
     expect(resumed.messages.map(({ role }) => role)).toEqual([
       "user",
@@ -4382,9 +4381,14 @@ test.each(["assistant", "disabled"] as const)(
     });
     expect(done.runStatus).toBe("ready");
     expect(done.messages.at(-1)?.text).toBe("修订\n 说明。");
+    const prefix = "修订\n ";
+    const wireText =
+      mode === "disabled"
+        ? `Runtime：上一条响应已中断。请从下方正文中断的位置接着写，只返回后续正文，不要重复已写部分或添加开场说明。\n\n${prefix}`
+        : prefix;
     expect((sent[1]?.messages as unknown[]).at(-1)).toEqual({
       role: mode === "disabled" ? "user" : "assistant",
-      content: mode === "disabled" ? continuationPrompt("修订\n ") : "修订\n ",
+      content: wireText,
     });
     expect((sent[1]?.messages as unknown[]).slice(0, -1)).toEqual(
       sent[0]?.messages,
@@ -4400,7 +4404,7 @@ test.each(["assistant", "disabled"] as const)(
     expect(context.status).toBe("available");
     expect(context.messages).toContainEqual({
       role: mode === "disabled" ? "user · continuation" : "assistant · prefill",
-      text: mode === "disabled" ? continuationPrompt("修订\n ") : "修订\n ",
+      text: wireText,
     });
 
     expect((await worlds.recoverEndpoint(worldId)).head).toBe(before);

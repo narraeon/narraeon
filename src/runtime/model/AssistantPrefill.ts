@@ -16,6 +16,12 @@ import type {
   ModelHostResponse,
 } from "./ModelHost.ts";
 
+const continuationInstructions = {
+  en: "Runtime: The previous response was interrupted. Continue the following response exactly where it ended. Return only the subsequent text, without repeating the prefix or adding a preamble.",
+  "zh-CN":
+    "Runtime：上一条响应已中断。请从下方正文中断的位置接着写，只返回后续正文，不要重复已写部分或添加开场说明。",
+};
+
 export type AssistantPrefill = NonNullable<
   ModelHostExchange["assistantPrefill"]
 >;
@@ -57,7 +63,13 @@ export function prefillFor(
     mode === "disabled" ||
     (request.modelConfig.provider === "anthropic_messages" && /\s$/u.test(text))
   )
-    return { text, mode: "prompt" };
+    return {
+      text,
+      mode: "prompt",
+      ...(request.bootstrap.locale === undefined
+        ? {}
+        : { instruction: continuationInstructions[request.bootstrap.locale] }),
+    };
   return { text, mode };
 }
 
@@ -72,8 +84,11 @@ export function assertAssistantPrefill(request: ModelHostExchange): void {
 }
 
 /** The instruction exists only on the wire, never as a player or author turn. */
-export function continuationPrompt(text: string): string {
-  return `Runtime: The previous response was interrupted. Continue the following response exactly where it ended. Return only the subsequent text, without repeating the prefix or adding a preamble.\n\n${text}`;
+export function continuationPrompt(
+  text: string,
+  instruction = continuationInstructions.en,
+): string {
+  return `${instruction}\n\n${text}`;
 }
 
 export function prefillMessage(
@@ -84,7 +99,12 @@ export function prefillMessage(
   const prefix = request.assistantPrefill;
   if (prefix === undefined) return [];
   if (prefix.mode === "prompt")
-    return [{ role: "user", content: continuationPrompt(prefix.text) }];
+    return [
+      {
+        role: "user",
+        content: continuationPrompt(prefix.text, prefix.instruction),
+      },
+    ];
   return [
     {
       role: "assistant",
@@ -117,6 +137,8 @@ export function completeAssistantPrefill(
     // Reproduce the Runtime instruction on later turns so signed native output
     // (including Google thought steps) is replayed byte-for-byte as received.
     state.continuedPrefixLength = prefix.text.length;
+    if (prefix.instruction !== undefined)
+      state.continuedPrefixInstruction = prefix.instruction;
   } else if (state?.protocol === "chat_completions") {
     if (
       typeof state.assistantMessage !== "object" ||

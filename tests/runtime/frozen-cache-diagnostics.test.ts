@@ -60,7 +60,9 @@ function captureHost(
     host,
     send: async (request: ModelHostExchange): Promise<WireRequest> => {
       await expect(host.exchange(request)).rejects.toThrow(
-        "Synthetic transport response",
+        provider === "google_interactions"
+          ? "Google Interactions request was rejected"
+          : "Synthetic transport response",
       );
       const body = transport.mock.lastCall?.[1]?.body;
       if (typeof body !== "string")
@@ -115,6 +117,51 @@ function requestFor(bootstrap: PromptCompilation): ModelHostExchange {
     maxOutputTokens: 2_048,
   };
 }
+
+test.each([
+  ["chat_completions", "en"],
+  ["chat_completions", "zh-CN"],
+  ["google_interactions", "en"],
+  ["google_interactions", "zh-CN"],
+] as const)(
+  "%s renders the %s initial preload in the wire request and Preview",
+  async (provider, locale) => {
+    const { host, send } = captureHost(provider);
+    const input = createMinimalFileNativePreviewInput({
+      ...host.binding(),
+      playerInput: "Look around",
+      playerInputPlacement: "append",
+    });
+    const bootstrap = new FileNativePromptCompiler({
+      locale,
+    }).compilePlayCallChain(
+      input,
+      builtinDefaultPlayPresetBinding(locale),
+    ).bootstrap;
+    const request = requestFor(bootstrap);
+    const body = await send(request);
+    const notice = locale === "zh-CN" ? "Runtime 预载：" : "Runtime preload:";
+    expect(JSON.stringify(body)).toContain(notice);
+    expect(host.previewRequest(request).body).toEqual(body);
+    if (locale === "en") {
+      const legacy = structuredClone(bootstrap);
+      delete legacy.locale;
+      delete legacy.provider.preload?.notice;
+      expect(await send(requestFor(legacy))).toEqual(body);
+    }
+
+    const nextLocale = locale === "zh-CN" ? "en" : "zh-CN";
+    const refreshed = new FileNativePromptCompiler({
+      locale: nextLocale,
+    }).compilePlayCallChain(
+      { ...input, frozenWorldContext: bootstrap },
+      builtinDefaultPlayPresetBinding(nextLocale),
+    ).bootstrap;
+    expect(refreshed.locale).toBe(nextLocale);
+    expect(refreshed.provider.preload).toEqual(bootstrap.provider.preload);
+    expect(JSON.stringify(await send(requestFor(refreshed)))).toContain(notice);
+  },
+);
 
 function cacheMarkerCount(value: unknown): number {
   return JSON.stringify(value).match(/"cache_control":/gu)?.length ?? 0;

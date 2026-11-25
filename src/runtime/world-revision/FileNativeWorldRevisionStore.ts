@@ -1,3 +1,4 @@
+import { isAppLocale } from "../../protocol/appPreferences.ts";
 import {
   validPartialAuthoringResponse,
   type PartialAuthoringResponse,
@@ -1016,7 +1017,13 @@ function validModelToolCall(value: unknown): boolean {
 
 function validProviderState(state: unknown, text: string): boolean {
   if (!isRecord(state)) return false;
-  const { continuedPrefixLength, ...value } = state;
+  const { continuedPrefixLength, continuedPrefixInstruction, ...value } = state;
+  if (
+    continuedPrefixInstruction !== undefined &&
+    (typeof continuedPrefixInstruction !== "string" ||
+      continuedPrefixLength === undefined)
+  )
+    return false;
   if (
     continuedPrefixLength !== undefined &&
     (typeof continuedPrefixLength !== "number" ||
@@ -1057,16 +1064,21 @@ function validProviderState(state: unknown, text: string): boolean {
 function validPromptCompilation(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "logicalMessages",
-      "provider",
-      "tools",
-      "toolUniverse",
-      "toolStrategy",
-      "coverage",
-      "budget",
-      "cache",
-    ]) &&
+    hasExactKeys(
+      value,
+      [
+        "logicalMessages",
+        "provider",
+        "tools",
+        "toolUniverse",
+        "toolStrategy",
+        "coverage",
+        "budget",
+        "cache",
+      ],
+      ["locale"],
+    ) &&
+    (value.locale === undefined || isAppLocale(value.locale)) &&
     validLogicalMessages(value.logicalMessages) &&
     isRecord(value.provider) &&
     validToolDefinitions(value.tools) &&

@@ -2465,6 +2465,7 @@ export class PlayCallChain {
     response: Awaited<ReturnType<ModelHost["exchange"]>>,
     pauseAfterDispatch: boolean,
   ): Promise<ResponseSettlement> {
+    const locale = session.lastRequest?.bootstrap.locale ?? "en";
     const durable = durableModelResponse(response);
     const existing = session.events.find(({ id }) => id === advance.eventId);
     if (existing?.kind !== "assistant")
@@ -2547,7 +2548,7 @@ export class PlayCallChain {
         workingTools,
         advance.exchange,
         call,
-        this.#compiler.locale,
+        locale,
         resolutionSeed,
       );
       prepared.push(item);
@@ -2609,7 +2610,7 @@ export class PlayCallChain {
             previous.kind === "read_document"
               ? Buffer.byteLength(previous.body, "utf8")
               : null,
-            this.#compiler.locale,
+            locale,
           );
         }
       } catch {
@@ -2667,9 +2668,7 @@ export class PlayCallChain {
         ? [assistantItem]
         : []),
       ...prepared.map(({ transcript }) => structuredClone(transcript)),
-      ...(calls.length > 0 && hasText
-        ? [toolStepNotice(this.#compiler.locale)]
-        : []),
+      ...(calls.length > 0 && hasText ? [toolStepNotice(locale)] : []),
     ];
     const completedTools = [...workingTools.values()].map((item) =>
       structuredClone(item),
@@ -2738,6 +2737,7 @@ export class PlayCallChain {
 
     finalizeWriteReceipts({
       documents: session.documents,
+      locale,
       stateChanges,
       completedTools,
       trailingEvents,
@@ -2778,7 +2778,7 @@ export class PlayCallChain {
         session,
         session.lastRequest?.maxOutputTokens ?? 1,
         session.exchange,
-        this.#compiler.locale,
+        locale,
       );
       if (session.lastRequest !== null)
         nextRequest.bootstrap = structuredClone(session.lastRequest.bootstrap);
@@ -2985,6 +2985,7 @@ export class PlayCallChain {
           )
             throw new ModelResponseFormatError(
               "A tool-call ID already has a settled result in this turn. Use that result and issue a new ID for any new call.",
+              "本轮已有同一工具调用 ID 的结算结果。请使用该结果，并为新的工具调用分配新 ID。",
             );
         }
         if (
@@ -2993,6 +2994,7 @@ export class PlayCallChain {
         )
           throw new ModelResponseFormatError(
             "This request requires narrative text only. Return the narrative without calling tools.",
+            "本次请求只需要叙事正文。请直接返回正文，不要调用工具。",
           );
         this.#setInvocationAbortable(session.chainId, false);
         if ((response.toolCalls?.length ?? 0) > 0)
@@ -3009,7 +3011,10 @@ export class PlayCallChain {
             event.stopReason = error.message;
             request = {
               ...request,
-              appended: [...request.appended, error.notice()],
+              appended: [
+                ...request.appended,
+                error.notice(request.bootstrap.locale),
+              ],
               requestAttempt: attempt + 1,
             };
             delete request.assistantPrefill;
@@ -3748,6 +3753,7 @@ function durableModelResponse(
  */
 function finalizeWriteReceipts(settlement: {
   documents: FileNativePlayDocuments;
+  locale: AppLocale;
   stateChanges: FileNativeStateChange[];
   completedTools: PersistedCompletedToolCall[];
   trailingEvents: V1PlayCallChainEvent[];
@@ -3764,6 +3770,7 @@ function finalizeWriteReceipts(settlement: {
     const markdown = settlement.documents.settledWriteReceipt(
       candidateWrite,
       committedWrite !== undefined,
+      settlement.locale,
     );
     if (completed.name === "world_create" && committedWrite?.kind === "create")
       completed.result.createdDocumentId = committedWrite.documentId;

@@ -1760,7 +1760,13 @@ function validModelToolCall(value: unknown): boolean {
 
 function validProviderState(state: unknown, text: string): boolean {
   if (!isRecord(state)) return false;
-  const { continuedPrefixLength, ...value } = state;
+  const { continuedPrefixLength, continuedPrefixInstruction, ...value } = state;
+  if (
+    continuedPrefixInstruction !== undefined &&
+    (typeof continuedPrefixInstruction !== "string" ||
+      continuedPrefixLength === undefined)
+  )
+    return false;
   if (
     continuedPrefixLength !== undefined &&
     (typeof continuedPrefixLength !== "number" ||

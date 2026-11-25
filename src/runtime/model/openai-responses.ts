@@ -488,6 +488,7 @@ export async function exchangeResponses(
     if (!validResponsesOutput(output))
       throw new ModelResponseFormatError(
         "Return a valid Responses API assistant response with well-formed messages and tool calls.",
+        "请返回有效的 Responses API assistant 响应，确保消息和工具调用格式正确。",
       );
     const text = output
       .flatMap((item) => {
