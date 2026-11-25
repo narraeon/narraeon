@@ -6422,7 +6422,7 @@ function deferredProtagonistRevision() {
 test("主角确认前不发送，确认后到模型结束持续保护交互和导航", async () => {
   const f = deferredProtagonistRevision();
   render(createElement(StrictMode, null, createElement(WorldPage, f.props)));
-  await act(() => f.openWorld());
+  act(f.openWorld);
   const confirm = await screen.findByRole<HTMLButtonElement>("button", {
     name: "确认并定制",
   });
@@ -6449,7 +6449,10 @@ test("主角确认前不发送，确认后到模型结束持续保护交互和�
       .disabled,
   ).toBe(true);
 
-  await act(() => f.acknowledge());
+  await act(async () => {
+    f.acknowledge();
+    await Promise.resolve();
+  });
   expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
     dirty: false,
     busy: true,
@@ -6475,13 +6478,13 @@ test("主角确认前不发送，确认后到模型结束持续保护交互和�
 test("主角定制发送失败后保留模板，并以相同请求身份明确重试", async () => {
   const f = deferredProtagonistRevision();
   render(createElement(StrictMode, null, createElement(WorldPage, f.props)));
-  await act(() => f.openWorld());
+  act(f.openWorld);
   const initial = await screen.findByRole<HTMLButtonElement>("button", {
     name: "确认并定制",
   });
   await waitFor(() => expect(initial.disabled).toBe(false));
   fireEvent.click(initial);
-  await act(() => f.rejectSend(new Error("模板发送失败")));
+  act(() => f.rejectSend(new Error("模板发送失败")));
   await screen.findByText("模板发送失败");
   expect(screen.getByText("冷静果断")).toBeTruthy();
   expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({

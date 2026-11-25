@@ -108,21 +108,37 @@ async function runtime<T = unknown>(
   expect(response.ok(), JSON.stringify(payload)).toBe(true);
   return payload.result;
 }
-async function setup(page: Page, locale: "en" | "zh-CN", title: string) {
+async function setup(
+  page: Page,
+  locale: "en" | "zh-CN",
+  title: string,
+  configureModel = true,
+) {
   await runtime(page, { type: "preferences.save", locale });
-  await runtime(page, {
-    type: "model.save",
-    connection: {
-      name: "Protagonist fixture",
-      presetId: "custom",
-      provider: "chat_completions",
-      baseUrl: providerUrl,
-      apiKey: "fixture-secret",
-      modelId: "protagonist-model",
-      contextWindowTokens: 64000,
-      maxOutputTokens: 8192,
-    },
-  });
+  if (configureModel) {
+    await runtime(page, {
+      type: "model.save",
+      connection: {
+        name: "Protagonist fixture",
+        presetId: "custom",
+        provider: "chat_completions",
+        baseUrl: providerUrl,
+        apiKey: "fixture-secret",
+        modelId: "protagonist-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 8192,
+      },
+    });
+  } else {
+    const { connections } = await runtime<ModelConnectionLibraryView>(page, {
+      type: "model.read",
+    });
+    for (const connection of connections)
+      await runtime(page, {
+        type: "model.delete",
+        connectionId: connection.id,
+      });
+  }
   const source = await runtime<{ localId: string }>(page, {
     type: "content.create",
   });
@@ -269,6 +285,9 @@ test("review and explicitly apply a Chinese protagonist customization on a narro
   await expect(card.getByRole("heading", { name: "冷静调查员" })).toBeVisible();
   expect(
     await card.evaluate((element) => element.getBoundingClientRect().right),
+  ).toBeLessThanOrEqual(390);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
   const confirm = card.getByRole("button", { name: "确认并定制", exact: true });
   await expect(confirm).toBeEnabled();
@@ -488,11 +507,11 @@ async function selectTemplateAndCreate(
     .click();
 }
 
-test("an unconfigured card returns from model setup to the same world and can skip to the opening", async ({
+test("create with no model, set one up, and return to the same template before confirming", async ({
   page,
 }) => {
   const title = "Offline protagonist world";
-  await setup(page, "en", title);
+  await setup(page, "en", title, false);
   const providerCount = providerRequests.length;
   await selectTemplateAndCreate(
     page,
@@ -502,15 +521,6 @@ test("an unconfigured card returns from model setup to the same world and can sk
   const card = page.getByRole("region", { name: "Confirm your protagonist" });
   await expect(card).toBeVisible();
   const worldId = await createdWorldId(page, title);
-  const { activeConnectionId } = await runtime<ModelConnectionLibraryView>(
-    page,
-    { type: "model.read" },
-  );
-  await runtime(page, {
-    type: "model.delete",
-    connectionId: activeConnectionId!,
-  });
-  await page.reload();
   const address = page.url();
   await expect(
     card.getByText("Connect a model to customize your protagonist with AI."),
@@ -519,6 +529,10 @@ test("an unconfigured card returns from model setup to the same world and can sk
     card.getByRole("button", { name: "Confirm and customize" }),
   ).toHaveCount(0);
   expect(
+    (await runtime<ModelConnectionLibraryView>(page, { type: "model.read" }))
+      .configured,
+  ).toBe(false);
+  expect(
     (
       await runtime<{ worldRevision: unknown }>(page, {
         type: "world.read",
@@ -526,17 +540,18 @@ test("an unconfigured card returns from model setup to the same world and can sk
       })
     ).worldRevision,
   ).toBeNull();
-  await card
-    .getByRole("button", { name: "Configure model connection", exact: true })
-    .click();
+
+  const configure = card.getByRole("button", {
+    name: "Configure model connection",
+    exact: true,
+  });
+  await configure.click();
   await expect(page).toHaveURL(/#\/models$/u);
   await page.goBack();
   await expect(page).toHaveURL(address);
   await expect(card.getByText("Travels by starlight.")).toBeVisible();
 
-  await card
-    .getByRole("button", { name: "Configure model connection", exact: true })
-    .click();
+  await configure.click();
   await page
     .getByLabel("Configuration name", { exact: true })
     .fill("Restored connection");
@@ -551,27 +566,8 @@ test("an unconfigured card returns from model setup to the same world and can sk
     .click();
   await expect(page).toHaveURL(address);
   await expect(card.getByText("Travels by starlight.")).toBeVisible();
-  await expect(
-    card.getByRole("button", { name: "Confirm and customize" }),
-  ).toBeEnabled();
-
-  const restored = await runtime<ModelConnectionLibraryView>(page, {
-    type: "model.read",
-  });
-  await runtime(page, {
-    type: "model.delete",
-    connectionId: restored.activeConnectionId!,
-  });
-  await page.reload();
-  await card.getByRole("button", { name: "Skip and read opening" }).click();
-  await expect(
-    page.getByRole("article", { name: "Story timeline" }),
-  ).toContainText(title);
-  await page.reload();
-  await expect(
-    page.getByRole("article", { name: "Story timeline" }),
-  ).toContainText(title);
-  await expect(card).toHaveCount(0);
+  const confirm = card.getByRole("button", { name: "Confirm and customize" });
+  await expect(confirm).toBeEnabled();
   expect(providerRequests).toHaveLength(providerCount);
   expect(
     (
@@ -581,6 +577,53 @@ test("an unconfigured card returns from model setup to the same world and can sk
       })
     ).worldRevision,
   ).toBeNull();
+
+  await confirm.click();
+  await expect(
+    card.getByText("Protagonist updated; review the changes before applying."),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(providerCount + 2);
+  const { worlds } = await runtime<{ worlds: { title: string }[] }>(page, {
+    type: "workspace.read",
+  });
+  expect(worlds.filter((world) => world.title === title)).toHaveLength(1);
+});
+
+test("skip a selected template and reopen the original opening without a model", async ({
+  page,
+}) => {
+  const title = "Read without connecting";
+  await setup(page, "en", title, false);
+  const providerCount = providerRequests.length;
+  await selectTemplateAndCreate(
+    page,
+    "Skip profile",
+    "No customization confirm.",
+  );
+  const card = page.getByRole("region", { name: "Confirm your protagonist" });
+  await expect(card.getByText("No customization confirm.")).toBeVisible();
+  const worldId = await createdWorldId(page, title);
+  const readWorld = () =>
+    runtime<{ head: string; worldRevision: unknown }>(page, {
+      type: "world.read",
+      worldId,
+    });
+  const before = await readWorld();
+  await card.getByRole("button", { name: "Skip and read opening" }).click();
+  const story = page.getByRole("article", { name: "Story timeline" });
+  await expect(story).toContainText(
+    "You stand at the threshold of a world still waiting to be written.",
+  );
+  await page.reload();
+  await expect(story).toContainText(
+    "You stand at the threshold of a world still waiting to be written.",
+  );
+  await expect(card).toHaveCount(0);
+  expect(providerRequests).toHaveLength(providerCount);
+  expect(await readWorld()).toMatchObject({
+    head: before.head,
+    worldRevision: null,
+  });
 });
 
 test("a customization request can ask for more information and resume after reload", async ({
