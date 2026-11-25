@@ -508,6 +508,145 @@ afterEach(async () => {
   );
 });
 
+const localChat = {
+  name: "Local Chat",
+  presetId: "custom",
+  provider: "chat_completions",
+  baseUrl: "http://127.0.0.2:11434/v1",
+  modelId: "local-model",
+  contextWindowTokens: 32_000,
+  maxOutputTokens: 2_000,
+} as const;
+
+test("免 Key 编辑、模型列表、重开和克隆不沿用旧凭据", async () => {
+  const root = await temporaryRoot();
+  const fetch_ = vi
+    .fn<typeof fetch>()
+    .mockImplementation(() =>
+      Promise.resolve(Response.json({ data: [{ id: localChat.modelId }] })),
+    );
+  const store = new ModelConnectionStore(root, fetch_);
+  const keyed = await store.save({ ...localChat, apiKey: "old-secret" });
+  const connectionId = keyed.activeConnectionId!;
+  const options = {
+    connectionId,
+    provider: localChat.provider,
+    baseUrl: localChat.baseUrl,
+  };
+  await store.listModels(options);
+  expect(
+    new Headers(fetch_.mock.lastCall?.[1]?.headers).get("Authorization"),
+  ).toBe("Bearer old-secret");
+
+  await expect(
+    store.listModels({ ...options, authMode: "none" }),
+  ).resolves.toEqual({ models: [localChat.modelId] });
+  expect(
+    new Headers(fetch_.mock.lastCall?.[1]?.headers).has("Authorization"),
+  ).toBe(false);
+  await store.save({ ...localChat, connectionId, authMode: "none" });
+  const path = join(root, "model-connections-v1.json");
+  expect(await readFile(path, "utf8")).not.toContain("old-secret");
+
+  const reopened = new ModelConnectionStore(root, fetch_);
+  expect((await reopened.view()).connections[0]).toMatchObject({
+    id: connectionId,
+    hasApiKey: false,
+  });
+  expect((await reopened.view()).connections[0]).not.toHaveProperty("apiKey");
+  const { copiedConnectionId, library } = await reopened.copy(
+    connectionId,
+    "Copy",
+  );
+  expect(library.activeConnectionId).toBe(connectionId);
+  expect(library.connections[1]).toMatchObject({ hasApiKey: false });
+  await reopened.select(copiedConnectionId);
+  await expect(reopened.bind()).resolves.toMatchObject({ authMode: "none" });
+  const persisted = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { authMode?: string; apiKey?: string }[];
+  };
+  expect(persisted.connections).toHaveLength(2);
+  for (const stored of persisted.connections) {
+    expect(stored.authMode).toBe("none");
+    expect(stored).not.toHaveProperty("apiKey");
+  }
+
+  const copyOptions = { ...options, connectionId: copiedConnectionId };
+  await expect(reopened.listModels(copyOptions)).rejects.toThrow(
+    "requires an API key",
+  );
+  expect(fetch_).toHaveBeenCalledTimes(2);
+  await expect(
+    reopened.save({
+      ...localChat,
+      connectionId: copiedConnectionId,
+      authMode: "api_key",
+    }),
+  ).rejects.toThrow("requires an API key");
+  await reopened.save({
+    ...localChat,
+    connectionId: copiedConnectionId,
+    apiKey: "replacement-secret",
+  });
+  await reopened.listModels(copyOptions);
+  expect(
+    new Headers(fetch_.mock.lastCall?.[1]?.headers).get("Authorization"),
+  ).toBe("Bearer replacement-secret");
+});
+
+test("免 Key 只接受显式选择的 Chat Completions 回环连接", async () => {
+  const root = await temporaryRoot();
+  const fetch_ = vi.fn<typeof fetch>();
+  const store = new ModelConnectionStore(root, fetch_);
+  for (const overrides of [
+    { baseUrl: "http://192.168.1.10/v1" },
+    { baseUrl: "http://localhost.example/v1" },
+    { baseUrl: "http://127.0.0.1.example/v1" },
+    { baseUrl: "http://[::ffff:127.0.0.1]/v1" },
+    { provider: "openai_responses" },
+    { provider: "anthropic_messages" },
+    { provider: "google_interactions" },
+  ] as const) {
+    const input = { ...localChat, ...overrides, authMode: "none" } as const;
+    await expect(store.save(input)).rejects.toThrow(
+      "requires a loopback Chat Completions endpoint",
+    );
+    await expect(store.listModels(input)).rejects.toThrow(
+      "requires a loopback Chat Completions endpoint",
+    );
+  }
+  await expect(store.listModels(localChat)).rejects.toThrow(
+    "requires an API key",
+  );
+  await expect(store.save(localChat)).rejects.toThrow("requires an API key");
+  await expect(
+    store.save({ ...localChat, authMode: "none", apiKey: "unused" }),
+  ).rejects.toThrow("Do not enter an API key");
+  expect(fetch_).not.toHaveBeenCalled();
+
+  await store.save({ ...localChat, apiKey: "legacy-secret" });
+  const path = join(root, "model-connections-v1.json");
+  const document = JSON.parse(await readFile(path, "utf8")) as {
+    connections: { authMode?: string; apiKey?: string; baseUrl: string }[];
+  };
+  const stored = document.connections[0]!;
+  delete stored.authMode;
+  await writeFile(path, JSON.stringify(document));
+  await expect(store.bind()).resolves.toMatchObject({
+    apiKey: "legacy-secret",
+  });
+  delete stored.apiKey;
+  await writeFile(path, JSON.stringify(document));
+  await expect(store.bind()).rejects.toThrow("API Key must be a string");
+
+  stored.authMode = "none";
+  stored.baseUrl = "https://outside.invalid/v1";
+  await writeFile(path, JSON.stringify(document));
+  await expect(store.bind()).rejects.toThrow(
+    "requires a loopback Chat Completions endpoint",
+  );
+});
+
 test("保存多份模型配置、显式切换并且不向浏览器返回 API Key", async () => {
   const root = await temporaryRoot();
   const store = new ModelConnectionStore(root);

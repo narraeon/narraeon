@@ -894,6 +894,8 @@ const englishMessages: Record<string, string> = {
     "Delete model connection “{name}”? Its configuration and local credentials will be removed. This cannot be undone.",
   "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。":
     "Cloned as “{name}”. The copy keeps the locally stored credential without switching the active configuration.",
+  "已克隆为「{name}」。副本无需 API Key，当前配置保持不变。":
+    "Cloned as “{name}” without an API key. The active configuration is unchanged.",
   "保存多份本机配置并明确切换。API Key 不会返回浏览器；切换失败时 Runtime 不会悄悄改用另一份配置。":
     "Save multiple local configurations and switch explicitly. API keys are never returned to the browser, and Runtime does not silently use another configuration when a switch fails.",
   当前配置: "Current configuration",
@@ -905,6 +907,13 @@ const englishMessages: Record<string, string> = {
   提供商: "Provider",
   配置名称: "Configuration name",
   协议适配器: "Protocol adapter",
+  鉴权方式: "Authentication",
+  "无需 API Key": "No API key",
+  "无需 API Key 仅适用于本机回环地址，例如 http://localhost:11434/v1。":
+    "No API key is available only for loopback addresses, such as http://localhost:11434/v1.",
+  "保存后会移除这份配置原有的 API Key。":
+    "Saving removes the API key stored for this configuration.",
+  "请输入 API Key": "Enter an API key",
   已填入: "Using",
   "的内置端点；手动修改后按自定义端点保存。":
     "'s built-in endpoint. After a manual edit it will be saved as a custom endpoint.",

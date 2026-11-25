@@ -173,10 +173,12 @@ export class FileNativeModelHost implements ModelHost {
     if (frozen.modelConfig === undefined) {
       const {
         baseUrl: _baseUrl,
+        authMode: _authMode,
         apiKey: _apiKey,
         ...config
       } = this.#connection;
       void _baseUrl;
+      void _authMode;
       void _apiKey;
       frozen.modelConfig = config;
     }
@@ -199,6 +201,9 @@ export class FileNativeModelHost implements ModelHost {
         cacheSuffixBreakpoint:
           request.modelConfig.cacheSuffixBreakpoint === true,
         baseUrl: this.#connection.baseUrl,
+        ...(this.#connection.authMode === undefined
+          ? {}
+          : { authMode: this.#connection.authMode }),
         apiKey: this.#connection.apiKey,
       },
       this.#fetch,

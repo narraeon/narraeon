@@ -108,7 +108,7 @@ node dist/node/cli/main.js web
 ## First-time setup
 
 1. **Choose the interface language.** Use the language selector in the header. The choice is saved locally. It changes the interface and Runtime-owned default prompts, but it does not rewrite content or custom prompts you have already saved.
-2. **Configure a model connection.** Open **Model connection**, choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's real context-window and maximum-output limits. Saving a connection also makes it the active connection.
+2. **Configure a model connection.** Open **Model connection**, choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's real context-window and maximum-output limits. For a local Chat Completions endpoint on `localhost`, `127.0.0.0/8`, or `[::1]` that accepts unauthenticated requests, choose **No API key** under **Authentication**. You can then fetch the model list without entering a key. Saving a connection also makes it the active connection.
 3. **Prepare a content package.** Create a blank package or import a ZIP. A content package is a world template, not a live save. Its main surfaces are:
 
    ```text

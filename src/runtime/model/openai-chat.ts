@@ -315,7 +315,7 @@ export async function exchangeChat(
       url,
       {
         method: "POST",
-        headers: bearerProviderHeaders(connection.apiKey),
+        headers: chatHeaders(connection),
         body: bodyJson,
         ...(signal === undefined ? {} : { signal }),
       },
@@ -454,8 +454,14 @@ export function previewChat(
   const url = providerUrl(connection);
   return providerRequestPreview(
     connection,
-    bearerProviderHeaders(connection.apiKey),
+    chatHeaders(connection),
     chatRequestBody(connection, request, url),
     url.pathname,
+  );
+}
+
+function chatHeaders(connection: ResolvedFileNativeModelConnection) {
+  return bearerProviderHeaders(
+    connection.authMode === "none" ? undefined : connection.apiKey,
   );
 }

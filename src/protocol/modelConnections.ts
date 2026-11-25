@@ -18,6 +18,30 @@ export type ModelProviderKind =
   | "anthropic_messages"
   | "google_interactions";
 
+export type ModelConnectionAuthMode = "api_key" | "none";
+
+export function supportsUnauthenticatedModelConnection(
+  provider: ModelProviderKind,
+  baseUrl: string,
+): boolean {
+  if (provider !== "chat_completions") return false;
+  try {
+    const url = new URL(baseUrl);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      (url.hostname === "localhost" ||
+        url.hostname === "[::1]" ||
+        /^127(?:\.\d{1,3}){3}$/u.test(url.hostname))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The wire dialect is explicit because an OpenAI-shaped proxy can expose
  * continuation and reasoning extensions that are not part of the OpenAI API.
@@ -417,7 +441,7 @@ export interface ModelConnectionView
   assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: number;
   maxOutputTokens: number;
-  hasApiKey: true;
+  hasApiKey: boolean;
 }
 
 export interface ModelConnectionLibraryView {
@@ -440,6 +464,7 @@ export interface SaveModelConnectionInput
   provider: ModelProviderKind;
   dialect?: ModelProviderDialect;
   baseUrl: string;
+  authMode?: ModelConnectionAuthMode;
   apiKey?: string;
   modelId: string;
   modelPrompt?: string;
@@ -457,5 +482,6 @@ export interface ListProviderModelsInput {
   connectionId?: string;
   provider: ModelProviderKind;
   baseUrl: string;
+  authMode?: ModelConnectionAuthMode;
   apiKey?: string;
 }
