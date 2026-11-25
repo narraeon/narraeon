@@ -13,10 +13,12 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   ContentTreeEditor,
+  type ContentTreeEditorProps,
   type ContentTreeIssue,
 } from "../../src/web/ContentTreeEditor.tsx";
 import type { ContentTreeFile } from "../../src/protocol/v1.ts";
 
+import { useAuthoringFileView } from "../../src/web/authoring-file-list.ts";
 import { setWebLocale } from "../../src/web/i18n.ts";
 import { PackageScriptPermissionControl } from "../../src/web/PackageScriptPermissionControl.tsx";
 
@@ -135,6 +137,15 @@ describe("内容包手动编辑界面", () => {
   });
 });
 
+function EditorWithFileView(props: ContentTreeEditorProps): React.JSX.Element {
+  const fileView = useAuthoringFileView(
+    props.files,
+    props.mode ?? "content-package",
+    props.selectedPath,
+  );
+  return createElement(ContentTreeEditor, { ...props, fileView });
+}
+
 function EditorHarness({
   initialFiles,
   issues,
@@ -146,7 +157,7 @@ function EditorHarness({
 }): React.JSX.Element {
   const [draft, setDraft] = useState(initialFiles);
   const [dirty, setDirty] = useState(false);
-  return createElement(ContentTreeEditor, {
+  return createElement(EditorWithFileView, {
     files: draft,
     status: issues.length === 0 ? "usable" : "needs_repair",
     issues,
@@ -293,7 +304,7 @@ describe("内容包保存冲突提示", () => {
       onDelete: vi.fn(),
     };
     const { unmount } = render(
-      createElement(ContentTreeEditor, {
+      createElement(EditorWithFileView, {
         ...props,
         conflict: true,
         onLoadLatest,
@@ -305,7 +316,7 @@ describe("内容包保存冲突提示", () => {
     expect(onLoadLatest).toHaveBeenCalledTimes(1);
     unmount();
 
-    render(createElement(ContentTreeEditor, props));
+    render(createElement(EditorWithFileView, props));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "加载最新版本" })).toBeNull();
   });

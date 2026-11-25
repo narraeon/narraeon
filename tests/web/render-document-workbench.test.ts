@@ -1,13 +1,28 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { gameplayFile } from "../../src/protocol/gameplay.ts";
 import type { ContentTreeFile } from "../../src/protocol/v1.ts";
 import { DocumentWorkbench } from "../../src/web/DocumentWorkbench.tsx";
+import { useAuthoringFileView } from "../../src/web/authoring-file-list.ts";
 import { setWebLocale } from "../../src/web/i18n.ts";
+
+function WorkbenchHarness({
+  workspace,
+  selectedPath,
+}: Pick<ComponentProps<typeof DocumentWorkbench>, "workspace"> & {
+  selectedPath?: string;
+}): React.JSX.Element {
+  const fileView = useAuthoringFileView(
+    workspace.files,
+    workspace.kind,
+    selectedPath,
+  );
+  return createElement(DocumentWorkbench, { workspace, fileView });
+}
 
 afterEach(() => {
   cleanup();
@@ -74,7 +89,7 @@ test.each([
     };
     const onFilesChange = vi.fn<(files: ContentTreeFile[]) => void>();
     render(
-      createElement(DocumentWorkbench, {
+      createElement(WorkbenchHarness, {
         workspace: {
           kind: path.startsWith("state/")
             ? "world-revision"
@@ -111,7 +126,7 @@ test("opening an existing empty world document leaves it empty", () => {
   const path = "world/rules/empty.md";
   const onFilesChange = vi.fn();
   render(
-    createElement(DocumentWorkbench, {
+    createElement(WorkbenchHarness, {
       workspace: {
         kind: "content-package",
         files: [{ path, contents: "" }],
@@ -135,7 +150,7 @@ describe("文档工作区与编排方案文件", () => {
   test("内容包中的 control/gameplay.json 可以打开和编辑，不显示 JSON 不支持的提示", () => {
     const onFilesChange = vi.fn();
     render(
-      createElement(DocumentWorkbench, {
+      createElement(WorkbenchHarness, {
         workspace: {
           kind: "content-package",
           files,
@@ -160,7 +175,7 @@ describe("文档工作区与编排方案文件", () => {
 
   test("新建 control/gameplay.json 的路径仍会被当作草稿路径检查，其他 JSON 继续被拒绝", () => {
     render(
-      createElement(DocumentWorkbench, {
+      createElement(WorkbenchHarness, {
         workspace: {
           kind: "content-package",
           files: [{ path: "opening.md", contents: "" }],
@@ -185,7 +200,7 @@ describe("文档工作区与编排方案文件", () => {
 
   test("世界修订中的编排方案文件只读，并且不显示 JSON 或修订路径的误导提示", () => {
     render(
-      createElement(DocumentWorkbench, {
+      createElement(WorkbenchHarness, {
         workspace: {
           kind: "world-revision",
           files: [

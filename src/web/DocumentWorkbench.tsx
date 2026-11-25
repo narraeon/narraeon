@@ -16,6 +16,10 @@ import {
 } from "./world-document-draft.ts";
 import { WorldDocumentMetadataForm } from "./WorldDocumentMetadataForm.tsx";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
+import type {
+  AuthoringFileTarget,
+  AuthoringFileView,
+} from "./authoring-file-list.ts";
 
 export interface DocumentWorkbenchIssue {
   code: string;
@@ -49,57 +53,34 @@ interface WorldRevisionWorkspace {
 }
 
 type DocumentWorkspace = ContentPackageWorkspace | WorldRevisionWorkspace;
-type DocumentWorkspaceKind = DocumentWorkspace["kind"];
+type DocumentWorkspaceKind = AuthoringFileTarget;
 
 export function DocumentWorkbench({
   workspace,
-  selectedPath: controlledPath,
-  onSelectedPathChange,
+  fileView,
   revisionBase,
 }: {
   workspace: DocumentWorkspace;
-  selectedPath?: string;
-  onSelectedPathChange?: (path: string) => void;
+  fileView: AuthoringFileView;
   revisionBase?: RevisionDocumentBase;
 }): React.JSX.Element {
   const { files } = workspace;
-  const [query, setQuery] = useState("");
-  const [requestedPath, setRequestedPath] = useState("");
   const [pathEdit, setPathEdit] = useState({ sourcePath: "", value: "" });
   const [newPath, setNewPath] = useState("");
   const [newPathTouched, setNewPathTouched] = useState(false);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
-  const orderedFiles = useMemo(
-    () =>
-      [...files].sort((left, right) =>
-        comparePaths(workspace.kind, left, right),
-      ),
-    [files, workspace.kind],
-  );
-  const preferredPath =
-    (workspace.kind === "content-package"
-      ? (orderedFiles.find(({ path }) => path === "opening.md")?.path ??
-        orderedFiles.find(({ path }) => path === "world/current-situation.yaml")
-          ?.path)
-      : orderedFiles.find(({ path }) => path === "state/current-situation.yaml")
-          ?.path) ??
-    orderedFiles[0]?.path ??
-    "";
-  const requested = controlledPath ?? requestedPath;
-  const selectedPath = files.some(({ path }) => path === requested)
-    ? requested
-    : preferredPath;
-  const selectedFile = files.find(({ path }) => path === selectedPath);
+  const {
+    ordered: orderedFiles,
+    visible: visibleFiles,
+    selected: selectedFile,
+    query,
+    onQueryChange,
+    onSelect: select,
+  } = fileView;
+  const selectedPath = selectedFile?.path ?? "";
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
   const { issues } = workspace;
-  const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
-  const visibleFiles =
-    normalizedQuery.length === 0
-      ? orderedFiles
-      : orderedFiles.filter((file) =>
-          file.path.toLocaleLowerCase("zh-CN").includes(normalizedQuery),
-        );
   const groups = groupsFor(workspace.kind, visibleFiles);
   const selectedIssues = issues.filter(({ path }) => path === selectedPath);
   const pathError =
@@ -126,11 +107,6 @@ export function DocumentWorkbench({
     files,
     workspace.kind,
   );
-
-  function select(path: string): void {
-    if (controlledPath === undefined) setRequestedPath(path);
-    onSelectedPathChange?.(path);
-  }
 
   function replaceSelected(contents: string): void {
     if (selectedFile === undefined) return;
@@ -174,7 +150,14 @@ export function DocumentWorkbench({
     const remaining = files
       .filter(({ path }) => path !== selectedFile.path)
       .map((file) => ({ ...file }));
-    select(nextSelectedPath(remaining, selectedFile.path, workspace.kind));
+    const previousIndex = orderedFiles.findIndex(
+      ({ path }) => path === selectedFile.path,
+    );
+    select(
+      orderedFiles[previousIndex + 1]?.path ??
+        orderedFiles[previousIndex - 1]?.path ??
+        "",
+    );
     workspace.onFilesChange(remaining);
   }
 
@@ -193,24 +176,50 @@ export function DocumentWorkbench({
     source.scrollTop = source.scrollHeight;
   }
 
+  const filter = (
+    <label className="content-file-filter">
+      <span>{uiText("筛选文件")}</span>
+      <input
+        type="search"
+        value={query}
+        placeholder={uiText("标题、短引用或路径")}
+        onChange={(event) => onQueryChange(event.currentTarget.value)}
+      />
+    </label>
+  );
+  const mobileFiles = useMemo(() => {
+    if (selectedFile === undefined || visibleFiles.includes(selectedFile))
+      return visibleFiles;
+    const matches = new Set(visibleFiles);
+    return orderedFiles.filter(
+      (file) => matches.has(file) || file === selectedFile,
+    );
+  }, [orderedFiles, visibleFiles, selectedFile]);
+
   return (
     <div
       className={`content-file-workspace document-workbench document-workbench-${workspace.kind} ${styles.workspace} ${styles.workbench}`}
     >
-      <label className="content-mobile-file-picker">
-        {uiText("当前文件")}
-        <select
-          aria-label={uiText("选择编辑文件")}
-          value={selectedPath}
-          onChange={(event) => select(event.currentTarget.value)}
-        >
-          {orderedFiles.map((file) => (
-            <option key={file.path} value={file.path}>
-              {file.path}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="content-mobile-file-picker">
+        {filter}
+        {visibleFiles.length === 0 && (
+          <p className="field-note">{uiText("没有匹配的文件。")}</p>
+        )}
+        <label>
+          {uiText("当前文件")}
+          <select
+            aria-label={uiText("选择编辑文件")}
+            value={selectedPath}
+            onChange={(event) => select(event.currentTarget.value)}
+          >
+            {mobileFiles.map((file) => (
+              <option key={file.path} value={file.path}>
+                {file.path}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <aside
         className={`content-file-sidebar ${styles.sidebar}`}
         aria-label={
@@ -232,19 +241,7 @@ export function DocumentWorkbench({
             {visibleFiles.length} / {files.length}
           </span>
         </header>
-        <label className="content-file-filter">
-          <span>{uiText("筛选文件")}</span>
-          <input
-            type="search"
-            value={query}
-            placeholder={
-              workspace.kind === "content-package"
-                ? uiText("人物、地点或文件名")
-                : uiText("查找人物、地点、规则…")
-            }
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
+        {filter}
         <nav
           className="content-file-list"
           aria-label={
@@ -624,45 +621,6 @@ function validateDraftPath(
   );
   if (duplicate) return uiText("当前草稿中已经存在同一路径。");
   return "";
-}
-
-function comparePaths(
-  kind: DocumentWorkspaceKind,
-  left: ContentTreeFile,
-  right: ContentTreeFile,
-): number {
-  const rank = (path: string): number => {
-    if (kind === "content-package") {
-      if (path === "opening.md") return 0;
-      if (path === "world/current-situation.yaml") return 1;
-      if (path.startsWith("world/")) return 2;
-      if (path === "control/frame.yaml") return 3;
-      if (path.startsWith("control/")) return 4;
-      return 5;
-    }
-    if (path === "state/current-situation.yaml") return 0;
-    if (path.startsWith("state/")) return 1;
-    if (path === "control/frame.yaml") return 2;
-    if (path.startsWith("control/")) return 3;
-    return 4;
-  };
-  return (
-    rank(left.path) - rank(right.path) || left.path.localeCompare(right.path)
-  );
-}
-
-function nextSelectedPath(
-  remaining: readonly ContentTreeFile[],
-  removedPath: string,
-  kind: DocumentWorkspaceKind,
-): string {
-  const ordered = [...remaining].sort((left, right) =>
-    comparePaths(kind, left, right),
-  );
-  const following = ordered.find(
-    ({ path }) => path.localeCompare(removedPath) > 0,
-  );
-  return following?.path ?? ordered.at(-1)?.path ?? "";
 }
 
 function leafName(path: string): string {
