@@ -351,8 +351,42 @@ async function taskMs({ cdp }) {
   return metrics.find(({ name }) => name === "TaskDuration").value * 1000;
 }
 
+async function scrollIntoHistory({ page, cdp, mobile }) {
+  await page.waitForFunction(() =>
+    globalThis.readingBenchmark.scrolledToReply(),
+  );
+  const reader = page.locator(".world-reader-scroll");
+  const box = await reader.boundingBox();
+  const bottomPosition = await reader.evaluate((el) => el.scrollTop);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  if (mobile) {
+    await cdp.send("Input.synthesizeScrollGesture", {
+      x,
+      y,
+      yDistance: Math.round(box.height * 2),
+      speed: 2500,
+      gestureSourceType: "touch",
+    });
+  } else {
+    await page.mouse.move(x, y);
+    await page.mouse.wheel(0, -box.height * 2);
+  }
+  await page.waitForFunction(
+    (position) =>
+      globalThis.document.querySelector(".world-reader-scroll").scrollTop <
+      position - 100,
+    bottomPosition,
+  );
+  assert(
+    await page.evaluate(() => globalThis.readingBenchmark.recordHistory()),
+    "Scroll gesture did not reveal an older narrative anchor",
+  );
+}
+
 export async function submitReading(sessions, expectedText, arm) {
-  const [{ page, cdp, mobile }, second] = sessions;
+  const [sender, second] = sessions;
+  const { page, mobile } = sender;
   const priorTasks = await Promise.all(sessions.map(taskMs));
   const button = page.getByRole("button", {
     name: "Append action",
@@ -367,45 +401,18 @@ export async function submitReading(sessions, expectedText, arm) {
     (value) => globalThis.readingBenchmark.arm(null, value),
     normalized,
   );
-  const receipt = page.waitForResponse(
-    (item) =>
-      item.url().endsWith("/api/runtime/v1") &&
-      item.request().postDataJSON()?.request?.type === "play.chain.append",
-  );
-  await (mobile ? button.tap() : button.click());
-  if (arm === "history") {
-    await page.waitForFunction(() =>
-      globalThis.readingBenchmark.scrolledToReply(),
-    );
-    const reader = page.locator(".world-reader-scroll");
-    const box = await reader.boundingBox();
-    const bottomPosition = await reader.evaluate((el) => el.scrollTop);
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
-    if (mobile) {
-      await cdp.send("Input.synthesizeScrollGesture", {
-        x,
-        y,
-        yDistance: box.height * 2,
-        speed: 2500,
-        gestureSourceType: "touch",
-      });
-    } else {
-      await page.mouse.move(x, y);
-      await page.mouse.wheel(0, -box.height * 2);
-    }
-    await page.waitForFunction(
-      (position) =>
-        globalThis.document.querySelector(".world-reader-scroll").scrollTop <
-        position - 100,
-      bottomPosition,
-    );
-    assert(
-      await page.evaluate(() => globalThis.readingBenchmark.recordHistory()),
-      "Scroll gesture did not reveal an older narrative anchor",
-    );
-  }
-  const result = (await (await receipt).json()).result;
+  const [receipt] = await Promise.all([
+    page.waitForResponse(
+      (item) =>
+        item.url().endsWith("/api/runtime/v1") &&
+        item.request().postDataJSON()?.request?.type === "play.chain.append",
+    ),
+    (async () => {
+      await (mobile ? button.tap() : button.click());
+      if (arm === "history") await scrollIntoHistory(sender);
+    })(),
+  ]);
+  const result = (await receipt.json()).result;
   const browsers = await Promise.all(
     sessions.map(async (session, index) => {
       await session.page.waitForFunction(() =>
@@ -443,7 +450,10 @@ export function verifyReading(trace, expectedText, expectMarkdown, repliedAt) {
     true,
     "The final character was unreachable by scrolling to the bottom",
   );
-  if (expectMarkdown && expectedText.startsWith("## ")) {
+  if (
+    expectedText.startsWith("## ") &&
+    (expectMarkdown || trace.finalShape.headings > 0)
+  ) {
     const sections = expectedText.match(/^## /gm).length;
     assert.deepEqual(trace.finalShape, {
       headings: sections,
