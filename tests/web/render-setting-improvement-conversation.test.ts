@@ -315,7 +315,7 @@ test.each(["content-package", "world-revision"] as const)(
       1,
     );
     expect(html).toContain("正在等待自动重试…");
-    expect(html).toContain("自动重试 2/3");
+    expect(html).toContain("自动重试 2/5");
     expect(html).not.toContain("setting-conversation-failure");
     expect(html).toContain('<details class="model-call-details">');
     current.runStatus = "ready";

@@ -16,43 +16,47 @@ import {
   type ModelRetryEvidence,
 } from "../../src/protocol/modelRetry.ts";
 
-test("retry budget is initial plus three attempts with bounded jitter", async () => {
-  await Promise.resolve();
-  const waits: number[] = [];
-  const receipts: ModelRetryEvidence[] = [];
-  const dispatch = vi.fn(async () => {
+test.each([
+  { reason: "rate_limit", waits: [1250, 2500, 5000, 10000, 10000] },
+  { reason: "connect_timeout", waits: [1250, 2500, 5000] },
+] as const)(
+  "$reason retries use bounded jitter and stop at their limit",
+  async ({ reason, waits: expectedWaits }) => {
     await Promise.resolve();
-    throw new RetryableModelFailure("rate_limit");
-  });
-  await expect(
-    withModelRetry(dispatch, {
-      random: () => 1,
-      now: () => 10,
-      sleep: async (ms) => {
-        await Promise.resolve();
-        waits.push(ms);
-      },
-      onRetry: (receipt) => {
-        receipts.push(receipt);
-      },
-    }),
-  ).rejects.toBeInstanceOf(ModelHostFailureError);
-  expect(dispatch).toHaveBeenCalledTimes(4);
-  expect(waits).toEqual([1250, 2500, 5000]);
-  expect(receipts.map(({ status }) => status)).toEqual([
-    "waiting",
-    "dispatching",
-    "waiting",
-    "dispatching",
-    "waiting",
-    "dispatching",
-  ]);
-  expect(
-    validOptionalModelRetries(
-      receipts.filter(({ status }) => status === "waiting"),
-    ),
-  ).toBe(true);
-});
+    const waits: number[] = [];
+    const receipts: ModelRetryEvidence[] = [];
+    const dispatch = vi.fn(async () => {
+      await Promise.resolve();
+      throw new RetryableModelFailure(reason);
+    });
+    await expect(
+      withModelRetry(dispatch, {
+        random: () => 1,
+        now: () => 10,
+        sleep: async (ms) => {
+          await Promise.resolve();
+          waits.push(ms);
+        },
+        onRetry: (receipt) => {
+          receipts.push(receipt);
+        },
+      }),
+    ).rejects.toBeInstanceOf(ModelHostFailureError);
+    expect(waits).toEqual(expectedWaits);
+    expect(dispatch).toHaveBeenCalledTimes(expectedWaits.length + 1);
+    expect(receipts.map(({ status }) => status)).toEqual(
+      expectedWaits.flatMap(() => ["waiting", "dispatching"]),
+    );
+    const waiting = receipts.filter(({ status }) => status === "waiting");
+    expect(validOptionalModelRetries(waiting)).toBe(true);
+    expect(
+      validOptionalModelRetries([
+        ...waiting,
+        { ...waiting.at(-1), retry: waiting.length + 1 },
+      ]),
+    ).toBe(false);
+  },
+);
 
 test("Retry-After accepts seconds and HTTP dates and caps cumulative waits", async () => {
   await Promise.resolve();

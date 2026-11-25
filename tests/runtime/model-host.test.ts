@@ -3443,7 +3443,7 @@ test.each([
   "anthropic_messages",
   "google_interactions",
 ] as const)(
-  "%s retries two 429 rejections with identical native requests",
+  "%s retries five 429 rejections with identical native requests",
   async (provider) => {
     vi.useFakeTimers();
     try {
@@ -3460,7 +3460,7 @@ test.each([
         async (_url, init) => {
           await Promise.resolve();
           bodies.push(init?.body);
-          if (bodies.length < 3)
+          if (bodies.length < 6)
             return new Response(
               JSON.stringify({
                 error: {
@@ -3538,9 +3538,9 @@ test.each([
       });
       await vi.runAllTimersAsync();
       await checked;
-      expect(bodies).toHaveLength(3);
+      expect(bodies).toHaveLength(6);
       expect(new Set(bodies).size).toBe(1);
-      expect(receipts).toHaveLength(4);
+      expect(receipts).toHaveLength(10);
     } finally {
       vi.useRealTimers();
     }
@@ -3593,7 +3593,7 @@ test.each([
         () => {
           attempts++;
           return Promise.resolve(
-            new Response(attempts < 4 ? "first rejection" : body, {
+            new Response(attempts < 6 ? "first rejection" : body, {
               status: 429,
             }),
           );
@@ -3606,7 +3606,7 @@ test.each([
         .catch((reason: unknown) => reason);
       await vi.runAllTimersAsync();
       expect(await error).toMatchObject({ message: diagnostic });
-      expect(attempts).toBe(4);
+      expect(attempts).toBe(6);
     } finally {
       vi.useRealTimers();
     }

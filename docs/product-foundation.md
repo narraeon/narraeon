@@ -105,7 +105,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 
 - **双轨分离**（[ADR-0035](adr/0035-provider-continuation-is-opaque-and-bound.md)）：完整响应拆分为**模型调用投影**与不透明 **Provider 续传载荷**（原样追加下一次同协议请求，不从投影重建、不存整份 HTTP response、不向玩家投影签名／加密推理）。
 - **预算与缓存诚实**：直传 `maxOutputTokens`，不做 token 估算、上下文准入或自动摘要；缓存键与断点不泄内部 ID；7 项 usage 逐项保留 provenance，未报告不计零。
-- **有界容错**：主动生成上限 64 步（达限暂停可继续）；结构错误最多自纠 1 次；仅 429 与未建连超时自动退避（≤3 次、总计 ≤30s）；其余中断保留冻结请求与部分正文供显式重发或续写。细节见 [`docs/specs/model-providers-and-resilience.md`](specs/model-providers-and-resilience.md)。
+- **有界容错**：主动生成上限 64 步（达限暂停可继续）；结构错误最多自纠 1 次；临时 429 最多自动重试 5 次，未建连超时最多 3 次，单步累计等待 ≤30s；其余中断保留冻结请求与部分正文供显式重发或续写。细节见 [`docs/specs/model-providers-and-resilience.md`](specs/model-providers-and-resilience.md)。
 
 ### 5.3 跑团判定、玩家视图与玩法扩展
 
