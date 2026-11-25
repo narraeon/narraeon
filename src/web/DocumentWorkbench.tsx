@@ -1,11 +1,18 @@
 import styles from "./DocumentWorkbench.module.css";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { gameplayPath } from "../protocol/gameplay.ts";
-import type { ContentTreeFile } from "../protocol/v1.ts";
+import type {
+  ContentTreeFile,
+  V1SettingAuthoringDiff,
+} from "../protocol/v1.ts";
 import { documentCodec } from "../shared/world-document-format.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { newFileContents } from "./world-document-draft.ts";
+import {
+  newFileContents,
+  revisionBaseDocumentIds,
+} from "./world-document-draft.ts";
+import { WorldDocumentMetadataForm } from "./WorldDocumentMetadataForm.tsx";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
 
 export interface DocumentWorkbenchIssue {
@@ -13,6 +20,11 @@ export interface DocumentWorkbenchIssue {
   path: string;
   message: string;
   documentId?: string;
+}
+
+export interface RevisionDocumentBase {
+  files: readonly ContentTreeFile[];
+  diff?: readonly V1SettingAuthoringDiff[];
 }
 
 interface ContentPackageWorkspace {
@@ -41,10 +53,12 @@ export function DocumentWorkbench({
   workspace,
   selectedPath: controlledPath,
   onSelectedPathChange,
+  revisionBase,
 }: {
   workspace: DocumentWorkspace;
   selectedPath?: string;
   onSelectedPathChange?: (path: string) => void;
+  revisionBase?: RevisionDocumentBase;
 }): React.JSX.Element {
   const { files } = workspace;
   const [query, setQuery] = useState("");
@@ -52,6 +66,7 @@ export function DocumentWorkbench({
   const [pathEdit, setPathEdit] = useState({ sourcePath: "", value: "" });
   const [newPath, setNewPath] = useState("");
   const [newPathTouched, setNewPathTouched] = useState(false);
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
   const orderedFiles = useMemo(
     () =>
       [...files].sort((left, right) =>
@@ -91,6 +106,18 @@ export function DocumentWorkbench({
       : "";
   const documentRoot =
     workspace.kind === "content-package" ? "world/" : "state/";
+  const selectedCodec = selectedFile?.path.startsWith(documentRoot)
+    ? documentCodec(selectedFile.path)
+    : null;
+  const baseFiles = revisionBase?.files;
+  const baseDiff = revisionBase?.diff;
+  const fixedRefIds = useMemo(
+    () =>
+      baseFiles === undefined
+        ? undefined
+        : revisionBaseDocumentIds(baseFiles, baseDiff),
+    [baseFiles, baseDiff],
+  );
   const newPathError = validateDraftPath(
     newPath,
     undefined,
@@ -153,6 +180,15 @@ export function DocumentWorkbench({
     if (!workspace.dirty) return;
     if (workspace.kind === "content-package" || !workspace.pending)
       workspace.onSave();
+  }
+
+  function writeBody(): void {
+    const source = sourceRef.current;
+    if (source === null) return;
+    source.focus({ preventScroll: true });
+    source.setSelectionRange(source.value.length, source.value.length);
+    source.scrollIntoView({ block: "start" });
+    source.scrollTop = source.scrollHeight;
   }
 
   return (
@@ -322,6 +358,16 @@ export function DocumentWorkbench({
             ? uiText("文件编辑器")
             : uiText("文件编辑器：{path}", { path: selectedFile.path })
         }
+        onKeyDown={(event) => {
+          if (
+            !event.defaultPrevented &&
+            (event.ctrlKey || event.metaKey) &&
+            event.key.toLowerCase() === "s"
+          ) {
+            event.preventDefault();
+            saveShortcut();
+          }
+        }}
       >
         {selectedFile === undefined ? (
           <div className="content-editor-empty">
@@ -397,41 +443,47 @@ export function DocumentWorkbench({
                 onSave={workspace.onSave}
               />
             ) : (
-              <label className="content-source-editor">
-                <span>
-                  {uiText("文件内容")}
-                  <small>
-                    {workspace.kind === "content-package"
-                      ? uiText("Ctrl / ⌘ + S 整批保存")
-                      : workspace.kind === "world-revision"
-                        ? uiText("Ctrl / ⌘ + S 保存到修订工作树")
-                        : uiText("Ctrl / ⌘ + S 预览整笔修订")}
-                  </small>
-                </span>
-                <textarea
-                  rows={27}
-                  spellCheck={false}
-                  readOnly={isRevisionGameplayFile(
-                    selectedFile,
-                    workspace.kind,
-                  )}
-                  value={selectedFile.contents}
-                  placeholder={editorPlaceholder(selectedFile.path)}
-                  aria-label={uiText("编辑 {path}", {
-                    path: selectedFile.path,
-                  })}
-                  onChange={(event) => replaceSelected(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      (event.ctrlKey || event.metaKey) &&
-                      event.key.toLocaleLowerCase("en-US") === "s"
-                    ) {
-                      event.preventDefault();
-                      saveShortcut();
-                    }
-                  }}
-                />
-              </label>
+              <>
+                {selectedCodec !== null && (
+                  <WorldDocumentMetadataForm
+                    key={selectedFile.path}
+                    file={selectedFile}
+                    files={files}
+                    codec={selectedCodec}
+                    root={documentRoot}
+                    fixedRefIds={fixedRefIds}
+                    onChange={replaceSelected}
+                    onWriteBody={writeBody}
+                  />
+                )}
+                <label className="content-source-editor">
+                  <span>
+                    {uiText(selectedCodec === null ? "文件内容" : "文件源码")}
+                    <small>
+                      {workspace.kind === "content-package"
+                        ? uiText("Ctrl / ⌘ + S 整批保存")
+                        : workspace.kind === "world-revision"
+                          ? uiText("Ctrl / ⌘ + S 保存到修订工作树")
+                          : uiText("Ctrl / ⌘ + S 预览整笔修订")}
+                    </small>
+                  </span>
+                  <textarea
+                    ref={sourceRef}
+                    rows={27}
+                    spellCheck={false}
+                    readOnly={isRevisionGameplayFile(
+                      selectedFile,
+                      workspace.kind,
+                    )}
+                    value={selectedFile.contents}
+                    placeholder={editorPlaceholder(selectedFile.path)}
+                    aria-label={uiText("编辑 {path}", {
+                      path: selectedFile.path,
+                    })}
+                    onChange={(event) => replaceSelected(event.target.value)}
+                  />
+                </label>
+              </>
             )}
             <footer className="content-source-meta">
               <span>{fileKind(selectedFile)}</span>

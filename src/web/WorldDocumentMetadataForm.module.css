@@ -1,0 +1,86 @@
+.form,
+.aliases {
+  display: grid;
+  justify-items: stretch;
+  min-inline-size: 0;
+  gap: 0.6rem;
+  margin: 0.85rem 0 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.65rem 0.8rem;
+}
+
+.form legend {
+  padding-inline: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.form .aliases legend {
+  font-size: 0.75rem;
+}
+
+.headingFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.form label,
+.form small,
+.form p,
+.repair {
+  font-size: 0.75rem;
+}
+
+.form small,
+.repair {
+  color: var(--muted);
+}
+
+.form :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+}
+
+.form textarea {
+  resize: vertical;
+}
+
+.form [aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.reference,
+.aliasRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.aliasRow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.form button {
+  justify-self: start;
+  font-size: 0.75rem;
+  padding: 0.4rem 0.65rem;
+}
+
+.form .writeBody {
+  justify-self: end;
+}
+
+.repair {
+  margin: 0.75rem 0 0;
+}
+
+@media (max-width: 32rem) {
+  .headingFields {
+    grid-template-columns: 1fr;
+  }
+}

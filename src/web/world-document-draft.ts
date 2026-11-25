@@ -1,6 +1,9 @@
 import { parseDocument, stringify } from "yaml";
 
-import type { ContentTreeFile } from "../protocol/v1.ts";
+import type {
+  ContentTreeFile,
+  V1SettingAuthoringDiff,
+} from "../protocol/v1.ts";
 import {
   documentCodec,
   markdownFrontMatter,
@@ -10,9 +13,49 @@ import {
 import { browserUUID } from "./browser-uuid.ts";
 import { uiText } from "./i18n.ts";
 
+export type WorldDocumentRoot = "world/" | "state/";
+
+export function readDraftIdentity(
+  file: ContentTreeFile,
+  root: WorldDocumentRoot,
+): { id: string | null; ref: string | null } | null {
+  if (file.encoding !== undefined || !file.path.startsWith(root)) return null;
+  const codec = documentCodec(file.path);
+  if (codec === null) return null;
+  const source =
+    codec === "markdown"
+      ? markdownFrontMatter(file.contents.replaceAll("\r\n", "\n"))
+      : file.contents;
+  // Direct scalar reads also reserve identifiers from incomplete file drafts.
+  const document = parseDocument(source);
+  const id: unknown = document.getIn(["$document", "id"]);
+  const ref: unknown = document.getIn(["$document", "ref"]);
+  return {
+    id: typeof id === "string" ? id : null,
+    ref: typeof ref === "string" ? ref : null,
+  };
+}
+
+export function revisionBaseDocumentIds(
+  files: readonly ContentTreeFile[],
+  diff: readonly V1SettingAuthoringDiff[] | undefined,
+): ReadonlySet<string> {
+  const original = new Map(files.map((file) => [file.path, file]));
+  for (const { path, before } of diff ?? []) {
+    if (before === null) original.delete(path);
+    else original.set(path, { path, contents: before });
+  }
+  return new Set(
+    [...original.values()].flatMap((file) => {
+      const id = readDraftIdentity(file, "state/")?.id;
+      return id == null ? [] : [id];
+    }),
+  );
+}
+
 export function newFileContents(
   path: string,
-  root: "world/" | "state/",
+  root: WorldDocumentRoot,
   files: readonly ContentTreeFile[],
 ): string {
   const codec = path.startsWith(root) ? documentCodec(path) : null;
@@ -21,20 +64,9 @@ export function newFileContents(
   const occupiedIds = new Set<string>();
   const occupiedRefs = new Set<string>();
   for (const file of files) {
-    if (file.encoding !== undefined || !file.path.startsWith(root)) continue;
-    const existingCodec = documentCodec(file.path);
-    if (existingCodec === null) continue;
-    const source =
-      existingCodec === "markdown"
-        ? markdownFrontMatter(file.contents.replaceAll("\r\n", "\n"))
-        : file.contents;
-    // Read scalar nodes directly so an incomplete body or other draft errors
-    // do not hide readable identifiers or require evaluating YAML aliases.
-    const document = parseDocument(source);
-    const id: unknown = document.getIn(["$document", "id"]);
-    const ref: unknown = document.getIn(["$document", "ref"]);
-    if (typeof id === "string") occupiedIds.add(id);
-    if (typeof ref === "string") occupiedRefs.add(ref);
+    const identity = readDraftIdentity(file, root);
+    if (identity?.id != null) occupiedIds.add(identity.id);
+    if (identity?.ref != null) occupiedRefs.add(identity.ref);
   }
 
   let id: string;

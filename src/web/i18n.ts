@@ -825,6 +825,31 @@ const englishMessages: Record<string, string> = {
   "写下玩家首次行动前立即看到的局面……":
     "Describe the situation visible immediately before the player's first action…",
   新文档: "New document",
+  文档元数据: "Document metadata",
+  文件源码: "File source",
+  文档标题: "Document title",
+  文档摘要: "Document summary",
+  文档别名: "Document aliases",
+  公开短引用: "Public short reference",
+  继续写正文: "Continue writing the body",
+  添加别名: "Add alias",
+  "别名 {number}": "Alias {number}",
+  "移除别名 {number}": "Remove alias {number}",
+  "无法读取文档元数据。请在下方编辑源码修复。":
+    "This document's metadata could not be read. Repair it in the source editor below.",
+  "无法用表单修改此处。请在下方编辑源码。":
+    "This edit could not be applied in the form. Edit the source below.",
+  "已应用的世界文档须保留原短引用。":
+    "Applied world documents keep their existing short references.",
+  "请输入 2–32 个小写英文字母、数字或连字符，以字母开头。":
+    "Enter 2–32 lowercase letters, digits or hyphens, starting with a letter.",
+  "此短引用已用于 {path}。": "This short reference is already used in {path}.",
+  "标题须为 1–120 个字符，首尾不能有空白。":
+    "Enter 1–120 characters, with no leading or trailing whitespace.",
+  "标题须为 1–120 个字符。": "Enter a title of 1–120 characters.",
+  "摘要须为 1–240 个字符。": "Enter a summary of 1–240 characters.",
+  "别名须为 1–64 个字符。": "Enter 1–64 characters per alias.",
+  "最多可填写 16 个别名。": "Enter up to 16 aliases.",
   "用一句话概括这份文档。": "Summarize this document in one sentence.",
   "修改 Markdown 文档标题时，文件头的 title 和正文的一级标题须一致。":
     "When editing a Markdown document title, keep the title in the file header and the level-one heading in the body the same.",

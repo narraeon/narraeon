@@ -5,6 +5,7 @@ import type { ContentTreeFile } from "../protocol/v1.ts";
 import {
   DocumentWorkbench,
   type DocumentWorkbenchIssue,
+  type RevisionDocumentBase,
 } from "./DocumentWorkbench.tsx";
 import { uiText } from "./i18n.ts";
 
@@ -13,6 +14,7 @@ export type ContentTreeIssue = DocumentWorkbenchIssue;
 export interface ContentTreeEditorProps {
   scriptPermission?: ReactNode;
   mode?: "content-package" | "world-revision";
+  revisionBase?: RevisionDocumentBase;
   files: readonly ContentTreeFile[];
   status: "usable" | "needs_repair";
   issues: readonly ContentTreeIssue[];
@@ -68,6 +70,7 @@ export function ContentTreeEditor({
   dirty,
   saving = false,
   conflict = false,
+  revisionBase,
   onFilesChange,
   onSave,
   onLoadLatest,
@@ -150,6 +153,7 @@ export function ContentTreeEditor({
       </div>
 
       <DocumentWorkbench
+        {...(revisionBase === undefined ? {} : { revisionBase })}
         {...(selectedPath === undefined ? {} : { selectedPath })}
         {...(onSelectedPathChange === undefined
           ? {}

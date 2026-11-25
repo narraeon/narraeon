@@ -1679,6 +1679,9 @@ export function WorldPage({
         contentEditor={{
           mode: "world-revision",
           files: revisionFiles,
+          revisionBase: epoch?.locked
+            ? epoch
+            : { files: authoring.serverFiles },
           ...(selectedDocument === ""
             ? {}
             : {
