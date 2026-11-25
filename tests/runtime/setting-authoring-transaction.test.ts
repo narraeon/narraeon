@@ -65,6 +65,14 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
     };
   };
   expect(patchSchema.properties?.op?.enum).toContain("remove");
+  expect(patchSchema.properties?.op?.enum).toEqual(
+    expect.arrayContaining([
+      "add_section",
+      "replace_section",
+      "rename_section",
+      "remove_section",
+    ]),
+  );
   expect(patchSchema.properties?.locator?.items?.type).toEqual([
     "string",
     "integer",
@@ -97,6 +105,50 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
   expect(englishContract).toContain("remains available through state_list");
   expect(englishContract).not.toMatch(
     /planning phase|generation phase|finish tool|preview and finish tools/iu,
+  );
+});
+
+test("an ambiguous Markdown path requires a complete read before its diagnostic is visible", () => {
+  const path = "world/rules/watch.md";
+  const source = `---\n$document:\n  id: rules.watch\n  ref: watch\n  title: Rules\n  summary: Watch rules.\n  aliases: []\n---\n# Rules\n\n## Harbor\n\n### Watch\n\nFirst report.\n\n### Watch\n\nSecond report.\n`;
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: [
+      ...minimalFileNativeContentScaffold("en"),
+      { path, contents: source },
+    ],
+    locale: "en",
+    preview: () => preview,
+  });
+  const remove = {
+    id: "remove-watch",
+    name: "setting_patch",
+    arguments: {
+      document: path,
+      op: "remove_section",
+      locator: ["Harbor", "Watch"],
+    },
+  };
+  const [unreadAmbiguous, unreadMissing, read, ambiguous] = transaction.execute(
+    [
+      remove,
+      {
+        ...remove,
+        id: "remove-missing",
+        arguments: { ...remove.arguments, locator: ["Missing"] },
+      },
+      { id: "read", name: "setting_read", arguments: { path } },
+      { ...remove, id: "remove-after-read" },
+    ],
+  );
+  expect(unreadAmbiguous?.markdown).toContain("Read @watch completely");
+  expect(unreadMissing?.markdown).toBe(unreadAmbiguous?.markdown);
+  expect(read).toMatchObject({ isError: false });
+  expect(ambiguous).toMatchObject({ isError: true, changes: [] });
+  expect(ambiguous?.markdown).toContain("locator_ambiguous");
+  expect(ambiguous?.markdown).toContain("Harbor > Watch");
+  expect(ambiguous?.markdown).not.toContain("First report");
+  expect(transaction.files().find((file) => file.path === path)?.contents).toBe(
+    source,
   );
 });
 

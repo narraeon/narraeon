@@ -1,4 +1,10 @@
-import { expect, type Page, type Request, type Route } from "@playwright/test";
+import {
+  expect,
+  type Locator,
+  type Page,
+  type Request,
+  type Route,
+} from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import type { AuthoringConversationView } from "../../src/web/AuthoringTarget.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
@@ -10,6 +16,7 @@ let provider: Server;
 let providerUrl = "";
 let providerCalls = 0;
 let rejectModel = false;
+let toolBatches: { name: string; arguments: object }[][] = [];
 
 test.beforeAll(async () => {
   provider = createServer((request, response) => {
@@ -28,6 +35,24 @@ test.beforeAll(async () => {
         );
       } else {
         response.writeHead(200, { "content-type": "text/event-stream" });
+        const tools = toolBatches.shift();
+        if (tools !== undefined) {
+          const toolCalls = tools.map((tool, index) => ({
+            index,
+            id: `authoring-tool-${providerCalls}-${index}`,
+            type: "function",
+            function: {
+              name: tool.name,
+              arguments: JSON.stringify(tool.arguments),
+            },
+          }));
+          response.end(
+            `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: toolCalls } }] })}\n\n` +
+              `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n` +
+              "data: [DONE]\n\n",
+          );
+          return;
+        }
         response.end(
           `data: ${JSON.stringify({ choices: [{ delta: { content: "The authoring reply is visible." } }] })}\n\n` +
             `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
@@ -54,6 +79,7 @@ test.afterAll(async () => {
 test.beforeEach(async ({ page }) => {
   providerCalls = 0;
   rejectModel = false;
+  toolBatches = [];
   await page.addInitScript(() => {
     const sources: EventSource[] = [];
     const NativeEventSource = window.EventSource;
@@ -87,6 +113,166 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const kind of ["setting", "revision"] as const) {
+  test(`${kind} patches one Markdown section and restores its exact before-image`, async ({
+    page,
+  }) => {
+    const relativePath = "rules/section-rules.md";
+    const path = `${kind === "setting" ? "world" : "state"}/${relativePath}`;
+    const oldBody = "The harbor bell sounds at dusk.";
+    const newBody = "The harbor bell sounds at dawn.";
+    const longBody = Array.from(
+      { length: 240 },
+      (_, index) => `Archive entry ${index + 1} stays exactly as written.`,
+    ).join("\n\n");
+    const source = `---\n$document:\n  id: doc.section-rules\n  ref: section-rules\n  title: Harbor rules\n  summary: Exact sections of a long text.\n  aliases: [Bell rules]\n---\n\n# Harbor rules\n\nPreamble stays.\n\n## Harbor\n\n### Watch\n\n${oldBody}\n\n## Market\n\n### Watch\n\nThe market watch stays.\n\n## Archive\n\n${longBody}  \n\n`;
+    const target = await prepare(page, kind, true, "zh-CN", {
+      path: `world/${relativePath}`,
+      contents: source,
+    });
+    const prefix = kind === "setting" ? "setting" : "world_revision";
+    const patch = (args: {
+      op: string;
+      locator: string[];
+      markdown?: string;
+      title?: string;
+    }) => ({
+      name: `${prefix}_patch`,
+      arguments: { document: "@section-rules", ...args },
+    });
+    const exact = patch({
+      op: "replace_section",
+      locator: ["Harbor", "Watch"],
+      markdown: `### Watch\n\n${newBody}`,
+    });
+    const read = { name: `${prefix}_read`, arguments: { path } };
+    const after = source.replace(oldBody, newBody);
+    const readCommitted = async () =>
+      (
+        await runtime<{ path: string; contents: string }[]>(page, {
+          type: "world.surface.read",
+          worldId: target.id,
+          surface: "state",
+        })
+      ).find((file) => file.path === relativePath)?.contents;
+    toolBatches.push([
+      exact,
+      read,
+      patch({
+        op: "add_section",
+        locator: ["Harbor"],
+        markdown: "### Watch\n\nThis would duplicate the existing heading.",
+      }),
+      exact,
+    ]);
+    const requestText = "Change just the harbor watch rule.";
+    const view = await sendFreshConversation(page, target.prefix, requestText);
+    const calls = view.turns[0]!.exchanges[0]!.toolCalls;
+    expect(calls[3]?.result, calls[3]?.result?.markdown).toMatchObject({
+      isError: false,
+      changes: [{ path, before: source, after }],
+    });
+    expect(calls[0]?.result?.markdown).toContain("必须完整读取");
+    expect(calls[2]?.result?.markdown).toContain("locator_ambiguous");
+    expect(calls[2]?.result?.markdown).toContain("Harbor > Watch");
+    expect(calls[2]?.result?.markdown).toContain("唯一");
+    expect(calls[2]?.result?.changes).toEqual([]);
+    expect(
+      (await target.files()).find((file) => file.path === path)?.contents,
+    ).toBe(after);
+    if (kind === "revision") expect(await readCommitted()).toBe(source);
+
+    await page.reload();
+    if (kind === "revision") await target.open();
+    await expect(userText(page, requestText)).toBeVisible();
+    const accepted = page.locator(".setting-exchange-tool.is-ok").filter({
+      hasText: `${prefix}_patch`,
+    });
+    const diff = accepted.locator(".setting-change-diff");
+    const revealDiff = async () => {
+      await openDetails(page.locator(".model-call-details > summary"));
+      await openDetails(accepted.locator("xpath=ancestor::details[1]/summary"));
+      await openDetails(accepted.locator(":scope > summary"));
+      await openDetails(diff.locator(":scope > summary"));
+    };
+    await revealDiff();
+    await expect(diff.locator(".unified-diff-add")).toContainText(newBody);
+    await expect(diff.locator(".unified-diff-remove")).toContainText(oldBody);
+    const editor = await openEditor(page, kind);
+    const draftPath = "control/blocks/world.md";
+    const draft = `${await editor.inputValue()}\nKeep this editor draft.\n`;
+    await editor.fill(draft);
+    await page
+      .getByRole("button", { name: "收起文件面板", exact: true })
+      .click();
+    const rollback = diff.getByRole("button", { name: "回滚这个文件" });
+    await expect(rollback).toBeDisabled();
+    await expect(await openEditor(page, kind)).toHaveValue(draft);
+    await page
+      .getByRole("button", { name: "收起文件面板", exact: true })
+      .click();
+    await fileDraftActions(page, kind).save.click();
+    await expect(page.locator(".setting-workspace-feedback")).toContainText(
+      kind === "setting"
+        ? "内容包当前树已整批保存"
+        : "手动修改已保存到修订工作树",
+    );
+    await revealDiff();
+    await expect(rollback).toBeEnabled();
+    await rollback.click();
+    await expect(accepted).toContainText("当前文件已是修改前版本");
+    await page.reload();
+    if (kind === "revision") await target.open();
+    await expect(userText(page, requestText)).toBeVisible();
+    expect(
+      (await target.files()).find((file) => file.path === path)?.contents,
+    ).toBe(source);
+    expect(
+      (await target.files()).find((file) => file.path === draftPath)?.contents,
+    ).toBe(draft);
+
+    toolBatches.push([
+      exact,
+      read,
+      patch({
+        op: "add_section",
+        locator: [],
+        markdown: "## Pier\n\nPier access changes daily.",
+      }),
+      patch({ op: "rename_section", locator: ["Pier"], title: "Dock" }),
+      patch({ op: "remove_section", locator: ["Market", "Watch"] }),
+      exact,
+    ]);
+    const followUp = "Update the harbor and dock.";
+    const updated = await target.message(
+      followUp,
+      "section-followup",
+      view.sessionId,
+    );
+    const followUpCalls = updated.turns.at(-1)?.exchanges[0]?.toolCalls ?? [];
+    expect(followUpCalls[0]?.result?.markdown).toContain("必须完整读取");
+    expect(followUpCalls.slice(1).map((call) => call.result?.isError)).toEqual(
+      Array.from({ length: 5 }, () => false),
+    );
+    const finished =
+      after.replace("### Watch\n\nThe market watch stays.\n\n", "") +
+      "## Dock\n\nPier access changes daily.\n";
+    expect(
+      (await target.files()).find((file) => file.path === path)?.contents,
+    ).toBe(finished);
+    if (kind === "revision") {
+      expect(await readCommitted()).toBe(source);
+      await expect(userText(page, followUp)).toBeVisible();
+      await page
+        .getByRole("button", { name: "应用并解锁", exact: true })
+        .click();
+      await expect(page.locator(".world-feedback.status")).toContainText(
+        "世界修订已应用并解锁",
+      );
+      await page.reload();
+      expect(await readCommitted()).toBe(finished);
+    }
+  });
+
   for (const locale of ["zh-CN", "en"] as const) {
     test(`${kind} resolves a file draft beside the conversation with the drawer closed (${locale})`, async ({
       page,
@@ -1136,6 +1322,16 @@ test("a lost package gameplay receipt refreshes authoring metadata before drafts
   expect(providerCalls).toBe(0);
 });
 
+async function openDetails(summary: Locator): Promise<void> {
+  if (
+    !(await summary.evaluate((element) =>
+      element.parentElement?.hasAttribute("open"),
+    ))
+  ) {
+    await summary.click();
+  }
+}
+
 function runtimeInput(route: Route): V1Request | undefined {
   return (route.request().postDataJSON() as { request?: V1Request } | null)
     ?.request;
@@ -1322,6 +1518,7 @@ async function prepare(
   kind: Kind,
   open = true,
   locale: "zh-CN" | "en" = "zh-CN",
+  addedFile?: { path: string; contents: string },
 ) {
   const chinese = locale === "zh-CN";
   await runtime(page, { type: "preferences.save", locale });
@@ -1342,6 +1539,18 @@ async function prepare(
     type: "content.create-sample",
     locale: "zh-CN",
   });
+  if (addedFile !== undefined) {
+    const current = await runtime<{
+      treeRevision: string;
+      files: { path: string; contents: string }[];
+    }>(page, { type: "content.read", packageId: pack.localId });
+    await runtime(page, {
+      type: "content.replace",
+      packageId: pack.localId,
+      baseTreeRevision: current.treeRevision,
+      files: [...current.files, addedFile],
+    });
+  }
   let id = pack.localId;
   if (kind === "revision") {
     const created = await runtime<{ world: { worldId: string } }>(page, {

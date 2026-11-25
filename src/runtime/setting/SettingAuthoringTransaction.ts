@@ -31,6 +31,8 @@ import type {
 } from "../prompt/FileNativePromptCompiler.ts";
 import type { AuthoringPreloadRecord } from "../authoring/AuthoringRequestSnapshot.ts";
 import {
+  formatWorldDocumentLocator,
+  validMarkdownLocator,
   WorldDocumentStore,
   type WorldDocumentCatalogResult,
   type WorldDocumentDescriptor,
@@ -39,7 +41,7 @@ import {
   type WorldDocumentQueryFailure,
   type WorldDocumentRevisionChange,
   type WorldDocumentRevisionCommand,
-  type WorldDocumentRevisionTarget,
+  type WorldDocumentRevisionEdit,
   type WorldDocumentRevisionYamlValue,
   type WorldDocumentSelector,
   type WorldDocumentWriteRevisionCommand,
@@ -440,14 +442,14 @@ export function authoringToolDefinitions(
           document: text,
           op: {
             type: "string",
-            enum: ["add", "replace", "append", "remove", "set_metadata"],
+            enum: patchOps,
           },
           locator: {
             type: "array",
-            minItems: 1,
             items: { type: ["string", "integer"] },
           },
           value: {},
+          markdown: text,
           title: { type: "string", minLength: 1, maxLength: 120 },
           summary: { type: "string", minLength: 1, maxLength: 240 },
           aliases: {
@@ -472,6 +474,12 @@ export function authoringToolDefinitions(
   ];
 }
 
+const patchDescription: Record<AppLocale, string> = {
+  en: 'Patch a completely read world document by @ref or logical path. For YAML, locator is a non-empty array of map keys or zero-based array indexes. Use add or replace to write a value, append to add an item to an existing array, and remove to delete a node. For Markdown, locator lists exact heading titles from the top-level section down to the target, excluding the document’s # title and heading markers, e.g. ["Harbor", "Watch"]. For replace_section, send the complete section in markdown, starting with its heading at the same level. A missing section can be added under its existing parent. For add_section, locator names the parent (use [] for a new top-level section) and markdown starts with the new heading one level below it. Use rename_section with title for the new heading, and remove_section to delete the selected section. A section includes its subheadings. Use set_metadata with only the title, summary, or aliases that change.',
+  "zh-CN":
+    '按 @ref 或逻辑路径局部修改已完整读取的世界文档。YAML 的 locator 是由 map key 或从 0 开始的数组下标组成的非空数组。add 或 replace 写入值，append 向既有数组追加元素，remove 删除节点。Markdown 的 locator 按层级列出从顶层小节到目标小节的准确标题文字，不含文档一级标题与 # 标记，例如 ["港口", "值守"]。replace_section 的 markdown 以同名同级标题开头，包含完整小节；目标缺失时可在已有父节下新增。add_section 的 locator 指向父节（新增顶层小节用 []），markdown 以比父节低一级的新标题开头。rename_section 用 title 改标题，remove_section 删除目标节。小节包括它的子节。set_metadata 只提供要改的 title、summary 或 aliases。',
+};
+
 const toolDescriptionsEn = (
   tabletop: boolean,
 ): Record<SettingAuthoringOperation, string> => ({
@@ -482,8 +490,7 @@ const toolDescriptionsEn = (
   create:
     "Create one world/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
   write_file: `Replace a completely read world/ .yaml or .md document body while preserving its identity and metadata, or create/replace opening.md, control/frame.yaml, control/player-views.yaml, ${tabletop ? "control/blocks/*.md, or control/gameplay.json (only a tabletop resolution scheme may change)" : "or control/blocks/*.md"}, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources. path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with setting_create.`,
-  patch:
-    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op "set_metadata" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with setting_write_file.',
+  patch: patchDescription.en,
   move: "Move a completely read world document to a new world/ .yaml or .md logical path while preserving its identity and contents.",
   delete:
     "Permanently delete a completely read world document from the content-package current tree. Runtime rejects deletion while currentSituation, a frame slot, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
@@ -499,8 +506,7 @@ const toolDescriptionsZhCN = (
   create:
     "创建一份 world/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
   write_file: `整份替换已完整读取的 world/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 opening.md、control/frame.yaml、control/player-views.yaml、control/blocks/*.md${tabletop ? "、control/gameplay.json（只能修改跑团判定方案，玩法模式不可改）" : ""}，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 setting_create。`,
-  patch:
-    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op "set_metadata"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 setting_write_file 整份重写。',
+  patch: patchDescription["zh-CN"],
   move: "把已完整读取的世界文档移动到新的 world/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   delete:
     "从内容包当前树永久删除一份已完整读取的 world 文档。若 currentSituation、frame slot、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
@@ -516,8 +522,7 @@ const worldRevisionDescriptionsEn = (
   create:
     "Create one state/ .yaml or .md document. Supply a unique lowercase ASCII ref, title, summary, aliases, and body without a technical header; Runtime completes the storage envelope. The created document is already fully read.",
   write_file: `Replace a completely read state/ .yaml or .md document body while preserving its identity and metadata, or create/replace control/frame.yaml, control/player-views.yaml, or control/blocks/*.md, plus control/followups.yaml and its referenced prompts/*.md, renderers/*.html, scripts/*.js, regex/*.yaml and assets/* text resources.${tabletop ? " Replacing the existing control/gameplay.json is allowed only if both the gameplay mode and resolution scheme stay unchanged." : ""} path may also be an @ref. On a valid document, title, summary, and aliases may be given in the same write to update metadata (any subset; omitted fields are kept), but ref never changes. To repair a damaged world document, provide ref, title, summary, and aliases together; Runtime preserves any recoverable storage identity. Create new world documents with world_revision_create.`,
-  patch:
-    'Update a completely read YAML world document without rewriting unrelated content. locator is a non-empty path whose segments are map keys or zero-based array indexes. Use add for a missing map key or array index, replace for an existing node, append for the end of an existing array, and remove for an existing map key or array item. To update title, summary, or aliases, use op "set_metadata" with only the fields that change; omitted fields are kept. Rewrite Markdown bodies with world_revision_write_file.',
+  patch: patchDescription.en,
   move: "Move a completely read world document to a new state/ .yaml or .md logical path while preserving its identity and contents.",
   delete:
     "Permanently delete a completely read document under state/ in the world revision worktree. Runtime rejects deletion while currentSituation, a frame slot, maintenance.clock, a player-view selector, or another document's $ref still points to it, and reports every blocking location. Delete or redirect those references first.",
@@ -533,8 +538,7 @@ const worldRevisionDescriptionsZhCN = (
   create:
     "创建一份 state/ 下的 .yaml 或 .md 文档；提供唯一的小写 ASCII ref、标题、摘要、别名和不含技术头的正文，Runtime 自行完成存储封装。创建成功的文档视为已经完整读取。",
   write_file: `整份替换已完整读取的 state/ .yaml 或 .md 正文并保留身份和元信息，或创建／替换 control/frame.yaml、control/player-views.yaml、control/blocks/*.md，以及 control/followups.yaml 和其中引用的 prompts/*.md、renderers/*.html、scripts/*.js、regex/*.yaml、assets/* 文本资源。${tabletop ? "替换既有 control/gameplay.json 时，玩法模式和判定方案必须保持不变。" : ""}path 也可以是 @ref。有效文档可在同一次写入中提供 title、summary、aliases 的任意子集更新元信息，未提供的保持不变，但 ref 不能改。修复损坏世界文档时同时提供 ref、title、summary、aliases，Runtime 会保留仍可恢复的存储身份。新建世界文档使用 world_revision_create。`,
-  patch:
-    '细粒度更新已完整读取的 YAML 世界文档，不重写无关内容。locator 是非空路径，每段可以是 map key 或从 0 开始的数组下标；add 新建 map key 或数组位置，replace 更新既有节点，append 追加既有数组，remove 删除既有 map key 或数组项。需要更新 title、summary 或 aliases 时用 op "set_metadata"，只提供要改变的字段，未提供的保持不变。Markdown 正文用 world_revision_write_file 整份重写。',
+  patch: patchDescription["zh-CN"],
   move: "把已完整读取的世界文档移动到新的 state/ .yaml 或 .md 逻辑路径，并保留身份与内容。",
   delete:
     "从世界修订工作树的 state/ 目录下永久删除一份已完整读取的世界文档。若 currentSituation、frame slot、maintenance.clock、player-view selector 或其他文档的 $ref 仍指向它，Runtime 会拒绝并返回全部精确阻挡位置；请先删除或改向这些引用。",
@@ -845,6 +849,7 @@ export class SettingAuthoringTransaction {
           commands: worldRevisionCommands(
             snapshot,
             call,
+            reads,
             this.#surface,
             this.#locale,
           ),
@@ -1409,11 +1414,12 @@ function isWorldWriteCall(
 function worldRevisionCommands(
   snapshot: WorldDocumentStore,
   call: NormalizedCall,
+  reads: ReadAuthorizations,
   surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): WorldDocumentRevisionCommand[] {
   if (call.operation !== "write_file")
-    return [worldRevisionCommand(snapshot, call, surface, locale)];
+    return [worldRevisionCommand(snapshot, call, reads, surface, locale)];
   const logicalPath = writeFileLogicalPath(
     snapshot,
     requiredString(call.arguments.path, "path"),
@@ -1477,6 +1483,7 @@ function writeFileLogicalPath(
 function worldRevisionCommand(
   snapshot: WorldDocumentStore,
   call: NormalizedCall,
+  reads: ReadAuthorizations,
   surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): WorldDocumentRevisionCommand {
@@ -1539,51 +1546,69 @@ function worldRevisionCommand(
     };
   }
   if (call.operation === "patch") {
-    const op = requiredPatchOp(call.arguments, surface);
-    if (op === "set_metadata") {
-      const metadata = metadataFields(call.arguments, surface, locale);
+    const args = call.arguments;
+    const op = requiredPatchOp(args, surface);
+    const document = revisionTarget(
+      requiredString(args.document, "document"),
+      surface,
+    );
+    if (isMarkdownSectionPatchOp(op)) {
+      const target = snapshot.query({ kind: "read_document", document });
+      if (target.kind === "error")
+        throw new SettingAuthoringError(
+          renderRevisionFailure(target.diagnostics, surface, locale),
+        );
+      if (target.kind !== "read_document")
+        throw new Error("Unexpected world-document patch lookup result");
+      assertSnapshotReadAuthorization(snapshot.id, reads);
+      assertDocumentRead(reads, target.document, locale);
+      if (target.codec !== "markdown")
+        throw new SettingAuthoringError(
+          localized(
+            locale,
+            "Section edits require a Markdown world document",
+            "小节编辑需要 Markdown 世界文档",
+          ),
+        );
       return {
         kind: "patch",
-        document: revisionTarget(
-          requiredString(call.arguments.document, "document"),
-          surface,
-        ),
+        document,
+        edits: [markdownSectionPatchEdit(op, args, surface, locale)],
+      };
+    }
+    if (op === "set_metadata") {
+      const metadata = metadataFields(args, surface, locale);
+      return {
+        kind: "patch",
+        document,
         edits: [{ op: "set_metadata", ...metadata }],
       };
     }
-    const locator = requiredYamlLocatorPath(call.arguments.locator, "locator");
+    const locator = requiredYamlLocatorPath(args.locator, "locator");
     if (op === "remove") {
-      if (!hasOnly(call.arguments, ["document", "op", "locator"]))
+      if (!hasOnly(args, ["document", "op", "locator"]))
         throw new SettingAuthoringError(
           `${authoringToolName(surface, "patch")} remove accepts only document, op, and locator`,
         );
       assertNoLiteralUnicodeEscapes(locator, locale);
       return {
         kind: "patch",
-        document: revisionTarget(
-          requiredString(call.arguments.document, "document"),
-          surface,
-        ),
+        document,
         edits: [{ op: "remove", locator: { yaml: locator } }],
       };
     }
     if (
-      !hasOnly(call.arguments, ["document", "op", "locator", "value"]) ||
-      !Object.hasOwn(call.arguments, "value")
+      !hasOnly(args, ["document", "op", "locator", "value"]) ||
+      !Object.hasOwn(args, "value")
     )
       throw new SettingAuthoringError(
         `${authoringToolName(surface, "patch")} ${op} requires document, op, locator, and value`,
       );
-    const value = structuredClone(
-      call.arguments.value,
-    ) as WorldDocumentRevisionYamlValue;
+    const value = structuredClone(args.value) as WorldDocumentRevisionYamlValue;
     assertNoLiteralUnicodeEscapes({ locator, value }, locale);
     return {
       kind: "patch",
-      document: revisionTarget(
-        requiredString(call.arguments.document, "document"),
-        surface,
-      ),
+      document,
       edits: [
         {
           op,
@@ -1596,6 +1621,38 @@ function worldRevisionCommand(
     };
   }
   throw new SettingAuthoringError(`Unsupported write tool: ${call.name}`);
+}
+
+function markdownSectionPatchEdit(
+  op: MarkdownSectionPatchOp,
+  args: Record<string, unknown>,
+  surface: SettingAuthoringSurface,
+  locale: AppLocale,
+): WorldDocumentRevisionEdit {
+  const locator = { markdown: args.locator };
+  if (!validMarkdownLocator(locator, op === "add_section"))
+    throw new SettingAuthoringError(
+      localized(
+        locale,
+        `${op} requires a locator array of exact heading titles. Use [] only with add_section to add a top-level section`,
+        `${op} 的 locator 必须是准确标题文字的数组；仅在 add_section 新增顶层小节时使用 []`,
+      ),
+    );
+  const allowed = ["document", "op", "locator"];
+  if (op === "rename_section") allowed.push("title");
+  else if (op !== "remove_section") allowed.push("markdown");
+  if (!hasOnly(args, allowed))
+    throw new SettingAuthoringError(
+      `${authoringToolName(surface, "patch")} ${op} accepts only ${allowed.join(", ")}`,
+    );
+  const edit =
+    op === "remove_section"
+      ? { op, locator }
+      : op === "rename_section"
+        ? { op, locator, title: requiredString(args.title, "title") }
+        : { op, locator, markdown: requiredString(args.markdown, "markdown") };
+  assertNoLiteralUnicodeEscapes(edit, locale);
+  return edit;
 }
 
 /** The world-document path pattern for a surface, e.g. `world/…yaml` or `state/…md`. */
@@ -1809,7 +1866,7 @@ function recoverStoredDocumentId(
 function revisionTarget(
   value: string,
   surface: SettingAuthoringSurface,
-): WorldDocumentRevisionTarget {
+): WorldDocumentSelector {
   const selector = documentSelector(value, surface);
   if (selector === null)
     throw new SettingAuthoringError(
@@ -2123,25 +2180,41 @@ function assertWorldWritesAuthorized(
   changes: readonly WorldDocumentRevisionChange[],
   locale: AppLocale,
 ): void {
+  assertSnapshotReadAuthorization(snapshotId, reads);
+  for (const change of changes)
+    if (
+      change.before !== null &&
+      !reads.damagedWorldPaths.has(change.before.logicalPath)
+    )
+      assertDocumentRead(reads, change, locale);
+}
+
+function assertSnapshotReadAuthorization(
+  snapshotId: string,
+  reads: ReadAuthorizations,
+): void {
   if (reads.snapshotId !== snapshotId)
     throw new Error(
       "Read authorization belongs to another current-tree revision",
     );
-  for (const change of changes) {
-    if (
-      change.before === null ||
-      reads.worldDocumentIds.has(change.documentId) ||
-      reads.damagedWorldPaths.has(change.before.logicalPath)
-    )
-      continue;
+}
+
+function assertDocumentRead(
+  reads: ReadAuthorizations,
+  {
+    documentId,
+    shortRef,
+  }: Pick<WorldDocumentDescriptor, "documentId" | "shortRef">,
+  locale: AppLocale,
+): void {
+  if (!reads.worldDocumentIds.has(documentId))
     throw new SettingAuthoringError(
       localized(
         locale,
-        `Read @${change.shortRef} completely before changing it`,
-        `修改 @${change.shortRef} 前必须完整读取该文档`,
+        `Read @${shortRef} completely before changing it`,
+        `修改 @${shortRef} 前必须完整读取该文档`,
       ),
     );
-  }
 }
 
 function renderWorldWriteSuccess(
@@ -2171,15 +2244,30 @@ function renderRevisionFailure(
   diagnostics: readonly {
     code: string;
     logicalPath?: string;
+    locator?: WorldDocumentLocator;
     message: string;
   }[],
   surface: SettingAuthoringSurface,
   locale: AppLocale,
 ): string {
   return diagnostics
-    .map(
-      ({ code, logicalPath, message }) =>
-        `${code}${logicalPath === undefined ? "" : ` · ${logicalPath}`} · ${publicSettingDiagnosticMessage(code, message, surface, locale)}`,
+    .map(({ code, logicalPath, locator, message }) =>
+      [
+        code,
+        ...(logicalPath === undefined ? [] : [logicalPath]),
+        ...(locator !== undefined && "markdown" in locator
+          ? [formatWorldDocumentLocator(locator)]
+          : []),
+        code === "locator_ambiguous" &&
+        locator !== undefined &&
+        "markdown" in locator
+          ? localized(
+              locale,
+              "Markdown heading paths must be unique. Check the parent headings and remove or rename any duplicate",
+              "Markdown 标题路径必须唯一。请核对父节路径，并删除或重命名重复标题",
+            )
+          : publicSettingDiagnosticMessage(code, message, surface, locale),
+      ].join(" · "),
     )
     .join("\n");
 }
@@ -2708,12 +2796,25 @@ function safePath(path: string, surface: SettingAuthoringSurface): string {
   return path;
 }
 
+const markdownSectionPatchOps = [
+  "replace_section",
+  "add_section",
+  "rename_section",
+  "remove_section",
+] as const;
+type MarkdownSectionPatchOp = (typeof markdownSectionPatchOps)[number];
+
+function isMarkdownSectionPatchOp(op: PatchOp): op is MarkdownSectionPatchOp {
+  return (markdownSectionPatchOps as readonly PatchOp[]).includes(op);
+}
+
 const patchOps = [
   "add",
   "replace",
   "append",
   "remove",
   "set_metadata",
+  ...markdownSectionPatchOps,
 ] as const;
 type PatchOp = (typeof patchOps)[number];
 

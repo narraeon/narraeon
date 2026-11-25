@@ -58,9 +58,11 @@ AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `se
 
 - **Revision 级写前读取授权**：修改或删除既有文件前必须先完整读取；由 AI 本次新建或已成功修改过的完整文件视为已读。读取授权严格绑定产生它的精确当前树 revision；其他对话或手动编辑发布新树后旧授权立即失效，必须重新读取。
 - **`setting_patch` 单操作语义（与游玩 `world_patch` 严格区分）**：
-  - `setting_patch` 单次工具调用**只接收单个 `op`**（`add`、`replace`、`append`、`remove`、`set_metadata`），**不接受 `edits` 数组**（`SettingAuthoringTransaction.ts:436`）；其中 `op: "set_metadata"` 只传需改动的 `title`、`summary` 或 `aliases`（至少一项），省略字段由 Runtime 保留。
+  - `setting_patch` 单次调用传单个 `op`。`set_metadata` 只传需改动的 `title`、`summary` 或 `aliases`（至少一项），省略字段由 Runtime 保留。
   - 批量修改通过模型在**同一完整响应中连续发出多条工具调用**完成，由 Runtime 顺序执行并在响应结束时统一原子发布。
-  - 路径不存在时的写入规则与游玩 `world_patch` 共用：`add` 与 `replace` 均为 upsert（缺失父级 map 自动创建，数组下标越界追加至末尾），`remove` 删除已存在路径、不存在时为 no-op 并在回执中注明；YAML locator 支持 map key 与从 `0` 开始的数组下标。
+  - YAML 的 `locator` 是 map key 与从 `0` 开始的数组下标组成的非空数组。`add` 与 `replace` 均为 upsert（缺失父级 map 自动创建，数组下标越界追加至末尾），`append` 向已有数组追加，`remove` 删除已存在路径，路径不存在时无改动。
+  - Markdown 小节操作沿用游玩的精确标题路径规则。`locator` 是标题文字的数组，从顶层小节逐级写到目标，省略文档一级标题和 `#` 标记，例如 `["港口", "值守"]`。不同父节中的同名小节可分别定位；完整路径有歧义时，工具拒绝并返回该路径。
+  - `replace_section` 的 `markdown` 从同名同级标题开始，写入整个小节及其子节。目标缺失时可在已存在的父级下新增。`add_section` 的 `locator` 指向父节（`[]` 表示新增顶层小节），`markdown` 从低一级的新标题开始。`rename_section` 通过 `title` 重命名，`remove_section` 删除整个小节，目标缺失时无改动。小节以外的源码和文档身份原样保留，修改前仍须完整读取该文档。
 - **新建、移动、物理删除与字符安全**：
   - 新建文档时 AI 提供唯一 `ref`、标题、摘要、别名、路径与正文，Runtime 生成并隐藏 `$document.id`；模型读取、引用与控制选择器一律使用 `@ref`，内部 ID 自动投影回 `@ref`。
   - 疑似重复 JSON 转义遗留的字面 `\uXXXX` 内容直接拒绝该次调用，Runtime 不猜测解码。
@@ -92,7 +94,7 @@ AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `se
 - 进入修订页面（`world.revision.open`／`overview`）仅读取当前世界与修订历史，**不创建 epoch、不锁定世界**。
 - 首次实际文件编辑（`world.revision.files.replace`）或发送首条修订消息（`world.revision.message`）时，Runtime 从固定当前端点和控制指纹创建唯一 `state/*` + `control/*` 工作树，并持久化非过期独占锁。`opening.md` 已提交为 genesis 叙事，无可写当前文件；`control/gameplay.json` 禁止更改。
 - 锁有效期间排斥游玩、时间线修订、控制草稿保存与应用、分叉、导出与删除世界；只读检查、故事导出与本地世界名称修改仍可用。浏览器关闭与 Runtime 重启恢复同一活动 epoch，不释放锁，也不重基工作树。
-- 手动保存与每份完整 AI 工具响应串行结算至同一工作树 revision，并共同追加精确逐文件 before／after 至同一改动历史（无独立手动／AI 模式）。物理删除与移动沿用设定完善规则（删除需已完整读取且无任何引用阻挡，以文档身份判断既有文档改写）。
+- 手动保存与每份完整 AI 工具响应串行结算至同一工作树 revision，并共同追加精确逐文件 before／after 至同一改动历史（无独立手动／AI 模式）。`world_revision_patch` 共用 §3.2 的单操作、YAML 和 Markdown 参数与读取规则，操作 `state/` 的世界文档。物理删除与移动同样沿用设定完善规则（删除需已完整读取且无任何引用阻挡，以文档身份判断既有文档改写）。
 - 活动 epoch 内支持按文件独立回滚为任一历史改动的 before-image（追加新的 rollback 改动，不删对话或旧差异）。
 
 ### 4.2 原子应用、放弃与崩溃恢复

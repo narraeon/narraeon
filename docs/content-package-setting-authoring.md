@@ -428,12 +428,11 @@ AI 设定完善面向内容包当前树，不修改运行中世界（运行中�
 3. **开场白同步检查**：开局地点、人物、局面、语气或行动钩子改变时，先完整读取再更新 `opening.md`；不受影响时保持原文。
 4. **审阅逐调用差异与覆盖报告**：每份完整工具响应结算后会直接发布到当前树并展示红绿 diff、机械检查与确定性「游玩读取覆盖」报告；如局部改动不满意，可直接对单份文件点击回滚前像，或继续同一对话让 AI 修正。Runtime 不做世界语义校验，设定是否合理仍由作者与实模评测把关。
 
-### Patch 行为提示（区分 `setting_patch` 与 `world_patch`）
+### 用标题或字段定位局部改动
 
-- 设定完善 `setting_patch` 与游玩 `world_patch` 共用路径写入规则：修改前必须先读取目标；`add` 与 `replace` 均为 upsert（缺失的父级 map 自动创建，数组下标越界时追加至末尾），`remove` 删除已存在路径、不存在时为 no-op 并在回执中注明。因此修改前仍须按已读到的准确字段名操作，「穿着」这类拼写不一致会静默新增为第二个字段。
-- **注意两者在参数与批量语义上的区别**：
-  - 设定完善 **`setting_patch`** 单次调用**只接收单个 `op`**（不接受 `edits` 数组），多处修改通过同一响应连续发出多条工具调用并在响应结束统一原子发布（权威规则见 [设定完善规格 §3.2](specs/authoring-and-world-revision.md#32-工具全集读取授权与-setting_patch-规则)）。
-  - 游玩 **`world_patch`** 单次调用接收 **1–32 条 `edits`**，整批先通过写入授权前置检查（任一越权则整次拒绝），再逐条处理并报告结果（权威规则见 [游玩调用链规格 §2.4](specs/play-history-and-world-lifecycle.md#24-world_patchworld_createworld_retire-与回执)）。
+- 在设定完善或世界修订中，可直接告诉 AI「只把 `港口 → 值守` 改成清晨交接」。AI 完整读取 Markdown 后，用这一层级的标题来定位小节。同名的「集市 → 值守」和文档其他部分仍保留原文。完整路径重复时，工具会指出哪条路径需要澄清。检查逐文件差异后，可回滚该文件。世界修订需由作者应用才会提交到世界。 [作者工具规格 §3.2](specs/authoring-and-world-revision.md#32-工具全集读取授权与-setting_patch-规则)
+- 修改 YAML 时，沿用已读正文中的准确字段名。`add` 和 `replace` 都可以创建缺失的字段，拼错名称可能会新增第二个字段。 [作者工具规格 §3.2](specs/authoring-and-world-revision.md#32-工具全集读取授权与-setting_patch-规则)
+- `setting_patch` 和 `world_revision_patch` 每次接收一个 `op`，同一模型响应里的多条调用按顺序执行，成功改动统一结算。游玩 `world_patch` 每次接收 1–32 条 `edits`，整批通过写入授权检查后逐条执行并报告。 [游玩调用链规格 §2.4](specs/play-history-and-world-lifecycle.md#24-world_patchworld_createworld_retire-与回执)
 
 ### 发现路径、注入权重与职责分离
 
