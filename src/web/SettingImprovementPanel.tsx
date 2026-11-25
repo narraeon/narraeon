@@ -26,14 +26,7 @@ import { createClientId } from "./ClientId.ts";
 import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
@@ -129,11 +122,10 @@ interface SettingImprovementPanelProps {
       path: string,
     ) => Promise<V1SettingImprovementRollbackResult>;
   };
-  initialMessage?: string;
-  onInitialMessageStarted?: () => void;
   onConfigureModel: () => void;
   onBack: () => void;
   showWorkspaceBack?: boolean;
+  backLabel?: string;
   onCreateWorld?: () => void;
   onNavigationProtectionChange?: (
     protection: WorkspaceNavigationProtection,
@@ -190,11 +182,10 @@ export function SettingImprovementPanel({
     onDeleteSession,
     onRollbackFile,
   },
-  initialMessage,
-  onInitialMessageStarted,
   onConfigureModel,
   onBack,
   showWorkspaceBack = true,
+  backLabel,
   onCreateWorld,
   onNavigationProtectionChange,
   packageGameplay,
@@ -213,7 +204,6 @@ export function SettingImprovementPanel({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const initialMessageSent = useRef(false);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [fileRailMode, setFileRailMode] = useState<FileRailMode>("preview");
@@ -400,14 +390,6 @@ export function SettingImprovementPanel({
     }
   };
 
-  useEffect(() => {
-    if (initialMessage === undefined || initialMessageSent.current || disabled)
-      return;
-    initialMessageSent.current = true;
-    onInitialMessageStarted?.();
-    void sendText(initialMessage);
-  }, [initialMessage, disabled, onInitialMessageStarted, sendText]);
-
   const canSendMessage =
     !disabled &&
     view?.freshContextReason === undefined &&
@@ -589,7 +571,9 @@ export function SettingImprovementPanel({
               type="button"
               disabled={navigationBusy}
               onClick={requestBack}
-              aria-label={uiText(revisingWorld ? "返回游玩" : "返回工作区")}
+              aria-label={
+                backLabel ?? uiText(revisingWorld ? "返回游玩" : "返回工作区")
+              }
             >
               ←
             </button>

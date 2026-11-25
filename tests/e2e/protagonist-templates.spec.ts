@@ -7,6 +7,7 @@ import type {
   V1Request,
   V1WorldRevisionOverview,
 } from "../../src/protocol/v1.ts";
+import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
 import type { ProtagonistTemplatesView } from "../../src/protocol/protagonistTemplates.ts";
 
 let provider: Server;
@@ -25,8 +26,24 @@ test.beforeAll(async () => {
         messages: { role: string; content?: unknown }[];
       };
       const last = payload.messages.at(-1);
-      const delta =
-        last?.role === "user"
+      const userText = last?.role === "user" ? String(last.content) : "";
+      if (
+        userText.includes("Retry fixture profile") &&
+        providerRequests.filter((request) =>
+          request.includes("Retry fixture profile"),
+        ).length === 1
+      ) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: { message: "Fixture customization failure" },
+          }),
+        );
+        return;
+      }
+      const delta = userText.includes("Ask for a detail")
+        ? { content: "Which name should I use for your protagonist?" }
+        : last?.role === "user"
           ? {
               tool_calls: [
                 {
@@ -169,7 +186,7 @@ async function createdWorldId(page: Page, title: string) {
   return workspace.worlds.find((world) => world.title === title)!.worldId;
 }
 
-test("manage templates and apply the automatically opened protagonist revision before first play", async ({
+test("review and explicitly apply a Chinese protagonist customization on a narrow screen", async ({
   page,
 }) => {
   const title = "主角验收世界";
@@ -211,7 +228,10 @@ test("manage templates and apply the automatically opened protagonist revision b
   await page
     .getByLabel("主角模板", { exact: true })
     .selectOption(templates.templates[0]!.id);
+  await page.setViewportSize({ width: 390, height: 840 });
   const sent: V1Request[] = [];
+  const creationRequests: V1Request[] = [];
+  const beforeProvider = providerRequests.length;
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
@@ -219,13 +239,45 @@ test("manage templates and apply the automatically opened protagonist revision b
     ) {
       const next = (request.postDataJSON() as { request: V1Request }).request;
       if (next.type === "world.revision.message") sent.push(next);
+      if (next.type === "world.create") creationRequests.push(next);
     }
   });
-  await page
-    .getByRole("button", { name: "从当前内容包创建", exact: true })
-    .click();
+  const create = page.getByRole("button", {
+    name: "从当前内容包创建",
+    exact: true,
+  });
+  await expect(create).toBeEnabled();
+  await create.evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
+  const card = page.getByRole("region", { name: "确认你的主角" });
+  await expect(card.getByRole("heading", { name: "冷静调查员" })).toBeVisible();
+  await expect(card.getByText("独立模板标记", { exact: true })).toBeVisible();
+  const worldId = await createdWorldId(page, title);
+  const before = await runtime<{ head: string; worldRevision: unknown }>(page, {
+    type: "world.read",
+    worldId,
+  });
+  expect(before.worldRevision).toBeNull();
+  expect(creationRequests).toHaveLength(1);
+  expect(sent).toEqual([]);
+  expect(providerRequests).toHaveLength(beforeProvider);
+  const address = page.url();
+  await page.reload();
+  await expect(page).toHaveURL(address);
+  await expect(card.getByRole("heading", { name: "冷静调查员" })).toBeVisible();
+  expect(
+    await card.evaluate((element) => element.getBoundingClientRect().right),
+  ).toBeLessThanOrEqual(390);
+  const confirm = card.getByRole("button", { name: "确认并定制", exact: true });
+  await expect(confirm).toBeEnabled();
+  await confirm.evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
   await expect(
-    page.getByRole("button", { name: "应用并开始游玩", exact: true }),
+    card.getByRole("button", { name: "应用并开始游玩", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("Protagonist updated; review the changes before applying.", {
@@ -241,11 +293,16 @@ test("manage templates and apply the automatically opened protagonist revision b
     templates.templates[0]!.body,
   );
   expect(providerRequests.at(-2)).toContain("不要擅自新建");
-  const worldId = await createdWorldId(page, title);
-  const before = await runtime<{ head: string }>(page, {
-    type: "world.read",
-    worldId,
-  });
+  await page.reload();
+  await expect(
+    card.getByText("Protagonist updated; review the changes before applying."),
+  ).toBeVisible();
+  expect(sent).toHaveLength(1);
+  expect(providerRequests).toHaveLength(beforeProvider + 2);
+  await card.getByText("state/player.yaml", { exact: true }).click();
+  await expect(
+    card.getByRole("table", { name: "state/player.yaml" }),
+  ).toContainText("Name: Custom Investigator");
   const epoch = (
     await runtime<V1WorldRevisionOverview>(page, {
       type: "world.revision.overview",
@@ -275,6 +332,9 @@ test("manage templates and apply the automatically opened protagonist revision b
     .getByRole("button", { name: "应用并开始游玩", exact: true })
     .click();
   await expect(page.getByLabel("你的行动", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("你的行动", { exact: true })).toBeVisible();
+  await expect(card).toHaveCount(0);
   const after = await runtime<{ head: string; worldRevision: unknown }>(page, {
     type: "world.read",
     worldId,
@@ -333,6 +393,18 @@ test("English template revision can be discarded and choosing None retains mecha
       exact: true,
     })
     .click();
+  const card = page.getByRole("region", { name: "Confirm your protagonist" });
+  await expect(
+    card.getByText("English template", { exact: true }),
+  ).toBeVisible();
+  await card.getByRole("button", { name: "Advanced world revision" }).click();
+  await expect(
+    page.getByRole("button", { name: "Return to protagonist confirmation" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Return to protagonist confirmation" })
+    .click();
+  await card.getByRole("button", { name: "Confirm and customize" }).click();
   await expect(
     page.getByText("Protagonist updated; review the changes before applying.", {
       exact: true,
@@ -347,10 +419,8 @@ test("English template revision can be discarded and choosing None retains mecha
     type: "world.read",
     worldId,
   });
-  await page.getByRole("button", { name: "Discard", exact: true }).click();
-  await page
-    .getByRole("dialog", { name: /Every unapplied manual and model change/ })
-    .getByRole("button", { name: "Discard", exact: true })
+  await card
+    .getByRole("button", { name: "Discard customization and read opening" })
     .click();
   await expect(page.getByLabel("Your action", { exact: true })).toBeVisible();
   const after = await runtime<{ head: string; worldRevision: unknown }>(page, {
@@ -393,4 +463,224 @@ test("English template revision can be discarded and choosing None retains mecha
     page.getByRole("button", { name: "Apply and start playing", exact: true }),
   ).toHaveCount(0);
   expect(providerRequests).toHaveLength(requestsBefore);
+});
+
+async function selectTemplateAndCreate(
+  page: Page,
+  name: string,
+  body: string,
+): Promise<void> {
+  const { templates } = await runtime<ProtagonistTemplatesView>(page, {
+    type: "protagonist-templates.save",
+    name,
+    body,
+  });
+  await page.reload();
+  const template = templates.find((item) => item.name === name)!;
+  await page
+    .getByLabel("Protagonist template", { exact: true })
+    .selectOption(template.id);
+  await page
+    .getByRole("button", {
+      name: "Create from current content package",
+      exact: true,
+    })
+    .click();
+}
+
+test("an unconfigured card returns from model setup to the same world and can skip to the opening", async ({
+  page,
+}) => {
+  const title = "Offline protagonist world";
+  await setup(page, "en", title);
+  const providerCount = providerRequests.length;
+  await selectTemplateAndCreate(
+    page,
+    "Offline traveller",
+    "Travels by starlight.",
+  );
+  const card = page.getByRole("region", { name: "Confirm your protagonist" });
+  await expect(card).toBeVisible();
+  const worldId = await createdWorldId(page, title);
+  const { activeConnectionId } = await runtime<ModelConnectionLibraryView>(
+    page,
+    { type: "model.read" },
+  );
+  await runtime(page, {
+    type: "model.delete",
+    connectionId: activeConnectionId!,
+  });
+  await page.reload();
+  const address = page.url();
+  await expect(
+    card.getByText("Connect a model to customize your protagonist with AI."),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Confirm and customize" }),
+  ).toHaveCount(0);
+  expect(
+    (
+      await runtime<{ worldRevision: unknown }>(page, {
+        type: "world.read",
+        worldId,
+      })
+    ).worldRevision,
+  ).toBeNull();
+  await card
+    .getByRole("button", { name: "Configure model connection", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/models$/u);
+  await page.goBack();
+  await expect(page).toHaveURL(address);
+  await expect(card.getByText("Travels by starlight.")).toBeVisible();
+
+  await card
+    .getByRole("button", { name: "Configure model connection", exact: true })
+    .click();
+  await page
+    .getByLabel("Configuration name", { exact: true })
+    .fill("Restored connection");
+  await page.getByLabel("Base URL", { exact: true }).fill(providerUrl);
+  await page.getByLabel("API Key", { exact: true }).fill("fixture-key");
+  await page.getByLabel("Model ID", { exact: true }).fill("protagonist-model");
+  await page
+    .getByRole("button", {
+      name: "Save and enable model connection",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(address);
+  await expect(card.getByText("Travels by starlight.")).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Confirm and customize" }),
+  ).toBeEnabled();
+
+  const restored = await runtime<ModelConnectionLibraryView>(page, {
+    type: "model.read",
+  });
+  await runtime(page, {
+    type: "model.delete",
+    connectionId: restored.activeConnectionId!,
+  });
+  await page.reload();
+  await card.getByRole("button", { name: "Skip and read opening" }).click();
+  await expect(
+    page.getByRole("article", { name: "Story timeline" }),
+  ).toContainText(title);
+  await page.reload();
+  await expect(
+    page.getByRole("article", { name: "Story timeline" }),
+  ).toContainText(title);
+  await expect(card).toHaveCount(0);
+  expect(providerRequests).toHaveLength(providerCount);
+  expect(
+    (
+      await runtime<{ worldRevision: unknown }>(page, {
+        type: "world.read",
+        worldId,
+      })
+    ).worldRevision,
+  ).toBeNull();
+});
+
+test("a customization request can ask for more information and resume after reload", async ({
+  page,
+}) => {
+  await setup(page, "en", "Clarification world");
+  const providerCount = providerRequests.length;
+  await selectTemplateAndCreate(page, "Question profile", "Ask for a detail");
+  const card = page.getByRole("region", { name: "Confirm your protagonist" });
+  await card.getByRole("button", { name: "Confirm and customize" }).click();
+  await expect(
+    card.getByText("Which name should I use for your protagonist?"),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Apply and start playing" }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(
+    card.getByText("Which name should I use for your protagonist?"),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(providerCount + 1);
+  await card
+    .getByLabel("Additional details")
+    .fill("Use Custom Investigator as the name.");
+  await card.getByRole("button", { name: "Send details" }).click();
+  await expect(
+    card.getByText("Protagonist updated; review the changes before applying."),
+  ).toBeVisible();
+  expect(providerRequests).toHaveLength(providerCount + 3);
+  await card.getByRole("button", { name: "Apply and start playing" }).click();
+  await expect(page.getByLabel("Your action", { exact: true })).toBeVisible();
+});
+
+test("retry uses the saved revision after provider failure", async ({
+  page,
+}) => {
+  const title = "Retry world";
+  await setup(page, "en", title);
+  const providerCount = providerRequests.length;
+  await selectTemplateAndCreate(page, "Retry profile", "Retry fixture profile");
+  const card = page.getByRole("region", { name: "Confirm your protagonist" });
+  await card.getByRole("button", { name: "Confirm and customize" }).click();
+  await expect(card.getByRole("alert")).toContainText(
+    "Fixture customization failure",
+  );
+  await page.reload();
+  await card.getByRole("button", { name: "Retry customization" }).click();
+  await expect(
+    card.getByText("Protagonist updated; review the changes before applying."),
+  ).toBeVisible();
+  const worldId = await createdWorldId(page, title);
+  const overview = await runtime<V1WorldRevisionOverview>(page, {
+    type: "world.revision.overview",
+    worldId,
+  });
+  expect(
+    overview.latest?.messages.filter(({ role }) => role === "user"),
+  ).toHaveLength(1);
+  expect(providerRequests).toHaveLength(providerCount + 3);
+});
+
+test("reload during creation recovers the same published world and keeps the template", async ({
+  page,
+}) => {
+  const title = "Recover creation world";
+  await setup(page, "en", title);
+  const beforeProvider = providerRequests.length;
+  let creates = 0;
+  let publish!: () => void;
+  const published = new Promise<void>((resolve) => (publish = resolve));
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/runtime/v1", async (route) => {
+    const request = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (request.type !== "world.create") return route.continue();
+    creates += 1;
+    const response = await route.fetch();
+    expect(response.ok(), await response.text()).toBe(true);
+    publish();
+    await hold;
+    await route.fulfill({ response }).catch(() => undefined);
+  });
+  try {
+    await selectTemplateAndCreate(
+      page,
+      "Recovered template",
+      "Recorded before reload.",
+    );
+    await published;
+    await page.reload();
+    const card = page.getByRole("region", { name: "Confirm your protagonist" });
+    await expect(card.getByText("Recorded before reload.")).toBeVisible();
+    const { worlds } = await runtime<{ worlds: { title: string }[] }>(page, {
+      type: "workspace.read",
+    });
+    expect(worlds.filter((world) => world.title === title)).toHaveLength(1);
+    expect(creates).toBe(1);
+    expect(providerRequests).toHaveLength(beforeProvider);
+  } finally {
+    release();
+  }
 });

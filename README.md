@@ -121,7 +121,7 @@ node dist/node/cli/main.js web
 
 4. **Edit or improve the setting.** Edit files directly, or ask the model to read, discuss, or change the package. Successful model edits are saved directly to the package when each complete tool response settles.
 5. **Review the orchestration.** The built-in orchestration is ready to use and follows the selected language. Orchestrations hold reusable host guidance, narrative prompts, follow-up requests, and optional interface extensions.
-6. **Create a world.** A usable content package can be copied into a new independent world. Later edits to the source package do not alter worlds that already exist.
+6. **Create a world.** A usable content package can be copied into a new independent world. Later edits to the source package do not alter worlds that already exist. If you select a protagonist template, review it in the new world and choose **Confirm and customize** or **Skip and read opening**. Customization becomes part of the world when you review and apply it.
 
 ## How play works
 

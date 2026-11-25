@@ -6318,6 +6318,9 @@ function deferredProtagonistRevision() {
     resolveSend = resolve;
     rejectSend = reject;
   });
+  window.sessionStorage.removeItem(
+    "narraeon.protagonist-customization:world-one",
+  );
   let epoch: V1WorldRevisionEpochView | null = null;
   let latest: V1WorldRevisionView | null = null;
   const files = worldView(null).state;
@@ -6334,7 +6337,14 @@ function deferredProtagonistRevision() {
     request: vi.fn(async (request: V1Request): Promise<unknown> => {
       if (request.type === "world.read") return initialWorld;
       if (request.type === "world.revision.overview")
-        return { ...worldRevisionOverview(epoch), latest };
+        return {
+          ...worldRevisionOverview(epoch),
+          latest,
+          history:
+            latest === null
+              ? []
+              : [{ sessionId: latest.sessionId, epochId: latest.epochId }],
+        };
       if (request.type === "world.surface.read")
         return request.surface === "state" ? files : [];
       if (request.type === "world.revision.message") return send;
@@ -6346,6 +6356,7 @@ function deferredProtagonistRevision() {
   };
   const view = (runStatus: "running" | "ready"): V1WorldRevisionView => ({
     sessionId: "protagonist-session",
+    confirmedRequestIds: ["protagonist-request"],
     worldId: "world-one",
     epochId: worldRevisionEpoch([]).epochId,
     runStatus,
@@ -6365,11 +6376,12 @@ function deferredProtagonistRevision() {
     onRenameWorld: vi.fn(() => Promise.resolve()),
     onOpenWorld: vi.fn(() => Promise.resolve()),
     onNavigationProtectionChange: vi.fn(),
-    protagonistRevision: {
+    initialProtagonistCustomization: {
+      name: "冷静调查员",
+      body: "冷静果断",
       message: "固定说明\n\n主角模板：冷静调查员",
-      started: false,
+      requestId: "protagonist-request",
     },
-    onProtagonistRevisionStarted: vi.fn(),
   };
   return {
     client,
@@ -6406,178 +6418,97 @@ function deferredProtagonistRevision() {
   };
 }
 
-function expectProtagonistInteractionLocked() {
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", {
-      name: "返回游玩",
-    }).disabled,
-  ).toBe(true);
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", { name: "编辑" }).disabled,
-  ).toBe(true);
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", {
-      name: "全新上下文",
-    }).disabled,
-  ).toBe(true);
-  expect(screen.getByRole<HTMLTextAreaElement>("textbox").disabled).toBe(true);
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", {
-      name: "应用并开始游玩",
-    }).disabled,
-  ).toBe(true);
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", { name: "放弃" }).disabled,
-  ).toBe(true);
-}
-
-test("自动主角修订从延迟 HTTP 派发到延迟观察完成持续保护交互和导航", async () => {
+test("主角确认前不发送，确认后到模型结束持续保护交互和导航", async () => {
   const f = deferredProtagonistRevision();
-  const rendered = render(
-    createElement(StrictMode, null, createElement(WorldPage, f.props)),
-  );
-  await waitFor(() =>
-    expect(
-      f.client.request.mock.calls.some(
-        ([request]) => request.type === "world.surface.read",
-      ),
-    ).toBe(true),
-  );
+  render(createElement(StrictMode, null, createElement(WorldPage, f.props)));
+  await act(() => f.openWorld());
+  const confirm = await screen.findByRole<HTMLButtonElement>("button", {
+    name: "确认并定制",
+  });
+  await waitFor(() => expect(confirm.disabled).toBe(false));
   expect(
     f.client.request.mock.calls.some(
       ([request]) => request.type === "world.revision.message",
     ),
   ).toBe(false);
-  await act(async () => {
-    f.openWorld();
-    await Promise.resolve();
-  });
-  await waitFor(() =>
-    expect(f.props.onProtagonistRevisionStarted).toHaveBeenCalledOnce(),
-  );
-  expectProtagonistInteractionLocked();
+  expect(screen.getByText("冷静果断")).toBeTruthy();
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  const sent = () =>
+    f.client.request.mock.calls.filter(
+      ([request]) => request.type === "world.revision.message",
+    );
+  expect(sent()).toHaveLength(1);
   expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
     dirty: false,
     busy: true,
   });
-  fireEvent.click(screen.getByRole("button", { name: "返回游玩" }));
-  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-  fireEvent.change(screen.getByRole("textbox"), {
-    target: { value: "重复发送" },
-  });
-  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-  rendered.rerender(
-    createElement(
-      StrictMode,
-      null,
-      createElement(WorldPage, {
-        ...f.props,
-        protagonistRevision: { ...f.props.protagonistRevision, started: true },
-      }),
-    ),
-  );
   expect(
-    f.client.request.mock.calls.filter(
-      ([request]) => request.type === "world.revision.message",
-    ),
-  ).toHaveLength(1);
-  expect(
-    screen.queryByLabelText("编辑 state/current-situation.yaml"),
-  ).toBeNull();
-  await act(async () => {
-    f.acknowledge();
-    await Promise.resolve();
-  });
-  expectProtagonistInteractionLocked();
+    screen.getByRole<HTMLButtonElement>("button", { name: "高级世界修订" })
+      .disabled,
+  ).toBe(true);
+
+  await act(() => f.acknowledge());
   expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
     dirty: false,
     busy: true,
   });
   await act(f.complete);
   await waitFor(() =>
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", {
-        name: "返回游玩",
-      }).disabled,
-    ).toBe(false),
-  );
-  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
-    dirty: false,
-    busy: false,
-  });
-});
-
-test("自动主角修订请求失败释放交互保护并恢复正文供明确重试", async () => {
-  const f = deferredProtagonistRevision();
-  const rendered = render(
-    createElement(StrictMode, null, createElement(WorldPage, f.props)),
-  );
-  await act(async () => {
-    f.openWorld();
-    await Promise.resolve();
-  });
-  await waitFor(() =>
-    expect(f.props.onProtagonistRevisionStarted).toHaveBeenCalledOnce(),
-  );
-  expectProtagonistInteractionLocked();
-  rendered.rerender(
-    createElement(
-      StrictMode,
-      null,
-      createElement(WorldPage, {
-        ...f.props,
-        protagonistRevision: { ...f.props.protagonistRevision, started: true },
-      }),
-    ),
-  );
-  await act(async () => {
-    f.rejectSend(new Error("模板发送失败"));
-    await Promise.resolve();
-  });
-  await screen.findByRole("alert");
-  expect(screen.getByRole("alert").textContent).toContain("模板发送失败");
-  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(
-    f.props.protagonistRevision.message,
+    expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
+      dirty: false,
+      busy: false,
+    }),
   );
   expect(
     screen.getByRole<HTMLButtonElement>("button", {
-      name: "返回游玩",
+      name: "放弃定制，阅读开场",
     }).disabled,
   ).toBe(false);
-  expect(
-    screen.getByRole<HTMLButtonElement>("button", { name: "编辑" }).disabled,
-  ).toBe(false);
-  expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
-    dirty: false,
-    busy: false,
-  });
-  expect(
-    f.client.request.mock.calls.filter(
-      ([request]) => request.type === "world.revision.message",
-    ),
-  ).toHaveLength(1);
-  expect(
-    f.client.request.mock.calls.some(
-      ([request]) => request.type === "world.revision.discard",
-    ),
-  ).toBe(false);
-  await act(async () => {
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    await Promise.resolve();
-  });
-  expect(
-    f.client.request.mock.calls.filter(
-      ([request]) => request.type === "world.revision.message",
-    ),
-  ).toHaveLength(2);
-  await screen.findByText("模板发送失败");
-  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(
-    f.props.protagonistRevision.message,
+  expect(sent()).toHaveLength(1);
+  window.sessionStorage.removeItem(
+    "narraeon.protagonist-customization:world-one",
   );
+});
+
+test("主角定制发送失败后保留模板，并以相同请求身份明确重试", async () => {
+  const f = deferredProtagonistRevision();
+  render(createElement(StrictMode, null, createElement(WorldPage, f.props)));
+  await act(() => f.openWorld());
+  const initial = await screen.findByRole<HTMLButtonElement>("button", {
+    name: "确认并定制",
+  });
+  await waitFor(() => expect(initial.disabled).toBe(false));
+  fireEvent.click(initial);
+  await act(() => f.rejectSend(new Error("模板发送失败")));
+  await screen.findByText("模板发送失败");
+  expect(screen.getByText("冷静果断")).toBeTruthy();
   expect(f.props.onNavigationProtectionChange).toHaveBeenLastCalledWith({
     dirty: false,
     busy: false,
   });
+  fireEvent.click(screen.getByRole("button", { name: "重试定制" }));
+  await waitFor(() =>
+    expect(
+      f.client.request.mock.calls.filter(
+        ([request]) => request.type === "world.revision.message",
+      ),
+    ).toEqual(
+      Array.from({ length: 2 }, () => [
+        {
+          type: "world.revision.message",
+          worldId: "world-one",
+          requestId: "protagonist-request",
+          continuation: { kind: "fresh_context" },
+          message: f.props.initialProtagonistCustomization.message,
+        },
+      ]),
+    ),
+  );
+  await screen.findByText("模板发送失败");
+  window.sessionStorage.removeItem(
+    "narraeon.protagonist-customization:world-one",
+  );
 });
 
 test.each(["keep", "revert"] as const)(

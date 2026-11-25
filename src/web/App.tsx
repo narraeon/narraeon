@@ -31,7 +31,11 @@ import { SyncNotice } from "./SyncNotice.tsx";
 import { readAfterCommit } from "./RequestOutcome.ts";
 import { compareWorldActivity } from "../shared/world-activity-order.ts";
 import { saveFile } from "./androidBridge.ts";
-import { WorldCreation } from "./WorldCreation.ts";
+import {
+  saveProtagonistCustomization,
+  type ProtagonistCustomization,
+} from "./ProtagonistCustomization.ts";
+import { WorldCreation, type CreatedWorldReceipt } from "./WorldCreation.ts";
 import { setWebLocale, uiText } from "./i18n.ts";
 import { WorkspaceHeader, type WorkspaceScreen } from "./WorkspaceHeader.tsx";
 import { CreateContentPackageDialog } from "./CreateContentPackageDialog.tsx";
@@ -94,8 +98,8 @@ type LeaveIntent =
   | { kind: "browser"; entry: BrowserWorkspaceEntry }
   | { kind: "program"; navigate: () => void };
 
-interface CreationModelVisit {
-  creation: BrowserWorkspaceEntry;
+interface ModelSetupVisit {
+  origin: BrowserWorkspaceEntry;
   settings: BrowserWorkspaceEntry;
 }
 
@@ -116,9 +120,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const creationModelVisit = useRef<CreationModelVisit | null>(null);
+  const modelSetupVisit = useRef<ModelSetupVisit | null>(null);
   const [confirmedModelVisit, setConfirmedModelVisit] =
-    useState<CreationModelVisit | null>(null);
+    useState<ModelSetupVisit | null>(null);
   const [creatingWorld, setCreatingWorld] = useState(false);
   const creatingWorldRef = useRef(false);
   const [deletingPackage, setDeletingPackage] = useState(false);
@@ -132,7 +136,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         setCreationSyncError(failed ? error : undefined);
       }),
   );
-  const creationTemplate = useRef<ProtagonistTemplate | undefined>(undefined);
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigation, setChildNavigation] =
@@ -161,10 +164,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const files = authoring.files;
   const packageDetail = authoring.target?.packageDetail ?? null;
   const [worldId, setWorldId] = useState("");
-  const [protagonistRevision, setProtagonistRevision] = useState<{
+  const [newProtagonist, setNewProtagonist] = useState<{
     worldId: string;
-    message: string;
-    started: boolean;
+    customization: ProtagonistCustomization;
   } | null>(null);
   const [notice, setNotice] = useState(uiText("正在读取工作区…"));
   const [localeSaving, setLocaleSaving] = useState(false);
@@ -207,13 +209,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
     const entry = readBrowserWorkspaceEntry();
-    const modelVisit = creationModelVisit.current;
+    const modelVisit = modelSetupVisit.current;
     if (
       modelVisit !== null &&
       (next.screen !== "model" ||
         !sameBrowserWorkspaceEntry(modelVisit.settings, entry))
     )
-      creationModelVisit.current = null;
+      modelSetupVisit.current = null;
     packageOpenRequest.current += 1;
     packageReadTarget.current?.dispose();
     packageRetryEntry.current = null;
@@ -899,24 +901,25 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     );
   }
 
-  function configureModelForCreation(): void {
-    const creation = readBrowserWorkspaceEntry();
+  function configureModelWithReturn(): void {
+    const origin = readBrowserWorkspaceEntry();
+    const location = locationRef.current;
     if (
-      locationRef.current.screen !== "create" ||
-      creation.hash !== "#/create" ||
+      (location.screen !== "create" && location.screen !== "world") ||
+      origin.hash !== workspaceHash(location) ||
       workspace?.model.configured !== false ||
       navigationLocked
     )
       return;
     switchLocation({ screen: "model" });
     const settings = browserEntry.current;
-    if (settings !== null) creationModelVisit.current = { creation, settings };
+    if (settings !== null) modelSetupVisit.current = { origin, settings };
   }
 
   useEffect(() => {
     if (confirmedModelVisit === null) return;
     const stillInSettings =
-      creationModelVisit.current === confirmedModelVisit &&
+      modelSetupVisit.current === confirmedModelVisit &&
       locationRef.current.screen === "model" &&
       sameBrowserWorkspaceEntry(
         confirmedModelVisit.settings,
@@ -926,11 +929,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       return;
     setConfirmedModelVisit(null);
     if (!stillInSettings || workspace?.model.configured !== true) return;
-    // Traverse to the existing creation entry so browser Back and Forward
+    // Traverse to the existing workspace entry so browser Back and Forward
     // keep their original destinations. The normal restore path revalidates it.
-    creationModelVisit.current = null;
+    modelSetupVisit.current = null;
     returnToBrowserWorkspaceEntry(
-      confirmedModelVisit.creation,
+      confirmedModelVisit.origin,
       confirmedModelVisit.settings,
     );
   }, [
@@ -985,7 +988,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     creatingWorldRef.current = true;
     setCreatingWorld(true);
     const packageId = selected;
-    creationTemplate.current = template;
     const model = modelBinding();
     try {
       const authoring = await creationOverviewTarget.read();
@@ -1003,6 +1005,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageDetail?.localId === packageId
           ? packageDetail.treeRevision
           : undefined,
+        template,
       );
       acceptCreatedWorld(created);
     } catch (error: unknown) {
@@ -1014,25 +1017,33 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  function acceptCreatedWorld(created: HomeWorld): void {
-    const template = creationTemplate.current;
-    if (template !== undefined)
-      setProtagonistRevision({
-        worldId: created.worldId,
-        message: uiText(
-          "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}",
-          { body: template.body },
-        ),
-        started: false,
-      });
-    acceptWorld(created);
-    openWorld(created.worldId);
+  function acceptCreatedWorld({
+    world,
+    customization,
+  }: CreatedWorldReceipt): void {
+    if (customization !== null) {
+      saveProtagonistCustomization(world.worldId, customization);
+      setNewProtagonist({ worldId: world.worldId, customization });
+    }
+    acceptWorld(world);
+    openWorld(world.worldId);
   }
 
   async function rereadCreation(): Promise<void> {
     const created = await worldCreation.recover();
     if (created !== null) acceptCreatedWorld(created);
   }
+
+  const restoreCreation = useEffectEvent(async () => {
+    const created = await worldCreation.restore(client);
+    if (created !== null) acceptCreatedWorld(created);
+  });
+
+  const creationLocation =
+    screen === "create" ? "#/create" : screen === "content" ? selected : null;
+  useEffect(() => {
+    if (creationLocation !== null) void restoreCreation();
+  }, [creationLocation]);
 
   function modelBinding() {
     const connection = workspace?.model.connections.find(
@@ -1180,20 +1191,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   // Async preset actions retain this instance even after a later page mounts.
   const presetPageInstance = presetPageInstanceRef.current;
-  const modelVisit = creationModelVisit.current;
+  const modelVisit = modelSetupVisit.current;
   const worldContent =
     screen === "world" ? (
       <WorldPage
         showWorkspaceBack={false}
-        {...(protagonistRevision?.worldId === worldId
-          ? {
-              protagonistRevision,
-              onProtagonistRevisionStarted: () =>
-                setProtagonistRevision((current) =>
-                  current === null ? null : { ...current, started: true },
-                ),
-              onProtagonistRevisionFinished: () => setProtagonistRevision(null),
-            }
+        {...(newProtagonist?.worldId === worldId
+          ? { initialProtagonistCustomization: newProtagonist.customization }
           : {})}
         key={worldId}
         client={client}
@@ -1202,6 +1206,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         modelConfigured={workspace.model.configured}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
+        onConfigureProtagonistModel={configureModelWithReturn}
+        onProtagonistCustomizationFinished={() => setNewProtagonist(null)}
         onNavigationProtectionChange={setChildNavigation}
         onRenameWorld={(name) => renameWorld(worldId, name)}
         onRecoverWorkspace={() => workspaceTarget.recover()}
@@ -1500,10 +1506,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               updateWorkspace((current) => ({ ...current, model }))
             }
             onConnectionActivated={() => {
-              if (
-                modelVisit !== null &&
-                creationModelVisit.current === modelVisit
-              )
+              if (modelVisit !== null && modelSetupVisit.current === modelVisit)
                 setConfirmedModelVisit(modelVisit);
             }}
             onNotice={setNotice}
@@ -1531,7 +1534,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             onCreate={(template) => void createWorld(template)}
             onNavigationProtectionChange={setChildNavigation}
             onEdit={() => navigate("content")}
-            onConfigureModel={configureModelForCreation}
+            onConfigureModel={configureModelWithReturn}
           />
         )}
         {screen === "preview" && (
