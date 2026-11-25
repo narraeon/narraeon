@@ -1,4 +1,7 @@
-import type { ModelRetryEvidence } from "../protocol/modelRetry.ts";
+import {
+  modelRetryLimit,
+  type ModelRetryEvidence,
+} from "../protocol/modelRetry.ts";
 import { uiText } from "./i18n.ts";
 
 export function ModelRetryStatus({
@@ -19,7 +22,10 @@ export function ModelRetryStatus({
             entry.reason === "rate_limit" ? "服务商暂时限流" : "连接建立超时",
           )}
           {" · "}
-          {uiText("自动重试 {retry}/3", { retry: entry.retry })}
+          {uiText("自动重试 {retry}/{limit}", {
+            retry: entry.retry,
+            limit: modelRetryLimit[entry.reason],
+          })}
           {" · "}
           {uiText("等待约 {seconds} 秒", {
             seconds: Math.ceil(entry.waitMs / 1000),

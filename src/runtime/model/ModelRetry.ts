@@ -1,4 +1,7 @@
-import type { ModelRetryEvidence } from "../../protocol/modelRetry.ts";
+import {
+  modelRetryLimit,
+  type ModelRetryEvidence,
+} from "../../protocol/modelRetry.ts";
 import {
   ModelHostCancelledError,
   ModelHostFailureError,
@@ -84,9 +87,14 @@ export async function withModelRetry<T>(
       return await dispatch();
     } catch (error) {
       if (options.signal?.aborted) throw cancelled();
-      if (!(error instanceof RetryableModelFailure) || retry >= 3) throw error;
+      if (
+        !(error instanceof RetryableModelFailure) ||
+        retry >= modelRetryLimit[error.reason]
+      )
+        throw error;
+      const baseWaitMs = Math.min(1000 * 2 ** retry, 8000);
       const waitMs = Math.max(
-        1000 * 2 ** retry * (1 + (options.random ?? Math.random)() * 0.25),
+        baseWaitMs * (1 + (options.random ?? Math.random)() * 0.25),
         error.retryAfterMs,
       );
       if (total + waitMs > 30_000) {

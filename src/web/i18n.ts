@@ -1924,7 +1924,7 @@ const worldPageEnglishMessages: Record<string, string> = {
     "The Provider recommends waiting {seconds} seconds before trying again.",
   服务商暂时限流: "Provider temporarily rate limited the request",
   连接建立超时: "Connection timed out before dispatch",
-  "自动重试 {retry}/3": "Automatic retry {retry}/3",
+  "自动重试 {retry}/{limit}": "Automatic retry {retry}/{limit}",
   "等待约 {seconds} 秒": "Wait about {seconds} seconds",
   "等待中，可停止": "Waiting; you can stop",
   "正在等待自动重试…": "Waiting to retry automatically…",

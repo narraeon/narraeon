@@ -7396,14 +7396,14 @@ test("automatic retry updates one progress position then disappears after succes
   };
   renderWorld(client);
   await screen.findByRole("heading", { name: "宿舍世界" });
-  await screen.findByText("自动重试 1/3", { exact: false });
+  await screen.findByText("自动重试 1/5", { exact: false });
   expect(
     document.querySelectorAll(".play-run-progress .model-retry-status p"),
   ).toHaveLength(1);
   expect(screen.queryByText("正在等待模型响应…")).toBeNull();
   assistant.retries.push({
     retry: 2,
-    reason: "rate_limit",
+    reason: "connect_timeout",
     waitMs: 2000,
     retryAt: Date.now() + 2000,
     status: "waiting",

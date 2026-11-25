@@ -10,13 +10,18 @@ export interface ModelRetryEvidence {
   status: "waiting" | "dispatching";
 }
 
+export const modelRetryLimit = {
+  rate_limit: 5,
+  connect_timeout: 3,
+} as const;
+
 export function validOptionalModelRetries(
   value: unknown,
 ): value is ModelRetryEvidence[] | undefined {
   return (
     value === undefined ||
     (Array.isArray(value) &&
-      value.length <= 3 &&
+      value.length <= modelRetryLimit.rate_limit &&
       value.every((entry: unknown, index) => {
         if (typeof entry !== "object" || entry === null) return false;
         const item = entry as Partial<ModelRetryEvidence>;
@@ -28,6 +33,7 @@ export function validOptionalModelRetries(
             (Number.isFinite(item.retryAfterMs) && item.retryAfterMs >= 0)) &&
           item.retry === index + 1 &&
           (item.reason === "rate_limit" || item.reason === "connect_timeout") &&
+          item.retry <= modelRetryLimit[item.reason] &&
           typeof item.waitMs === "number" &&
           Number.isFinite(item.waitMs) &&
           item.waitMs >= 1000 &&
