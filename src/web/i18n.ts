@@ -1816,8 +1816,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
   新增材料类型: "Add material type",
   新增材料插槽: "Add material slot",
   "源码视图（frame.yaml）": "Source view (frame.yaml)",
-  "可视化修改会把 YAML 重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。":
-    "Visual changes rewrite YAML into a stable format. Edit here to repair unknown fields or preserve the current source exactly.",
+  "表单修改保留 YAML 注释和未编辑的节点。也可在这里直接编辑源码。":
+    "Form edits keep YAML comments and unedited nodes. You can also edit the source directly here.",
   "直接编辑 control/frame.yaml": "Edit control/frame.yaml directly",
   调整注入顺序: "Change injection order",
   "YAML 路径": "YAML path",

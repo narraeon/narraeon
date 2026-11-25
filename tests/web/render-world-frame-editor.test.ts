@@ -46,6 +46,70 @@ test("English material names agree between the slot picker and the cards", () =>
 });
 
 describe("世界提示框架可视化编辑器", () => {
+  test("表单改值、增删和调序保留框架文件头、行尾与未编辑节点", () => {
+    const changed = vi.fn<(contents: string) => void>();
+    const original = `# 框架文件头
+format: narraeon.world-frame/v1
+bindings: { currentSituation: 'situation.current' } # 情境备注
+instructions:
+  # 指令列表备注
+  - markdown: 'blocks/style.md' # 文风路径
+    turnGuide: '原文' # 尾部备注
+  # 维护前置备注
+  - { markdown: "blocks/state.md" } # 维护备注
+context:
+  - slot: { kind: current_situation }
+  # 目录备注
+  - slot: { kind: catalog, directory: 'characters', maxEntries: 24 } # 插槽备注
+  - slot: { kind: additional_materials }
+maintenance:
+  documents: { '@character-alex': 2500 } # 建议体积备注
+`;
+    render(
+      createElement(FrameHarness, {
+        initialContents: original,
+        files: files(),
+        onContentsChange: changed,
+        onSave: vi.fn(),
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("尾部提示 World Style"), {
+      target: { value: "新提示" },
+    });
+    const source = screen.getByLabelText<HTMLTextAreaElement>(
+      "直接编辑 control/frame.yaml",
+    );
+    expect(source.value).toContain("# 框架文件头\n");
+    expect(source.value).toContain(
+      "bindings: { currentSituation: '@current-situation' } # 情境备注",
+    );
+    expect(source.value).toContain("turnGuide: '新提示' # 尾部备注");
+
+    fireEvent.click(screen.getByRole("button", { name: "下移 World Style" }));
+    expect(source.value).toMatch(
+      /# 指令列表备注\n {2}# 维护前置备注\n {2}- \{ markdown: "blocks\/state\.md" \} # 维护备注\n {2}- markdown: 'blocks\/style\.md' # 文风路径/u,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "加入独立尾部行" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "移除指令 独立尾部行" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "上移材料 2" }));
+    fireEvent.change(screen.getByLabelText("最多目录项 1"), {
+      target: { value: "12" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "新增材料插槽" }));
+    fireEvent.click(screen.getByRole("button", { name: "移除材料 3" }));
+    expect(source.value).toMatch(
+      /# 目录备注\n {2}- slot: \{ kind: catalog, directory: 'characters', maxEntries: 12 \} # 插槽备注\n {2}- slot: \{ kind: current_situation \}/u,
+    );
+    expect(source.value).toContain(
+      "documents: { '@character-alex': 2500 } # 建议体积备注",
+    );
+    expect(latestFrame(changed).instructions).toHaveLength(2);
+    expect(latestFrame(changed).context).toHaveLength(3);
+  });
+
   test("建议体积保持材料身份，调序不丢失设置，清空可取消建议", () => {
     const changed = vi.fn<(contents: string) => void>();
     render(
@@ -234,8 +298,7 @@ describe("世界提示框架可视化编辑器", () => {
     ).toBeTruthy();
   });
 
-  // Every edit rewrites all of frame.yaml. Retaining ids would expose doc.<uuid>
-  // values that later model edits cannot associate with any setting tool result.
+  // Legacy ids must stay readable and switch to author-visible short refs.
   test("保存时把可解析的 id 一并规范化为 @短引用，无法解析的原样保留", () => {
     const changed = vi.fn<(contents: string) => void>();
     render(

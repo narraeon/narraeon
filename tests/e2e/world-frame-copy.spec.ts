@@ -85,6 +85,94 @@ for (const locale of appLocales) {
         .click();
       await expect(source).toBeVisible();
       await expect(source).toHaveValue(/format: narraeon\.world-frame\/v1/u);
+
+      const formatted = (await source.inputValue()).replace(
+        /^format: narraeon\.world-frame\/v1/mu,
+        "# Author header\nformat: narraeon.world-frame/v1 # Format note",
+      );
+      await source.fill(formatted);
+      const sourceToggle = editor.getByText(
+        chinese ? "源码视图（frame.yaml）" : "Source view (frame.yaml)",
+        { exact: true },
+      );
+      await sourceToggle.click();
+      const sizeLabel = chinese
+        ? "建议体积（UTF-8 字节，可留空）"
+        : "Advisory size (UTF-8 bytes, optional)";
+      await editor
+        .getByRole("spinbutton", { name: sizeLabel })
+        .first()
+        .fill("1234");
+      await sourceToggle.click();
+      await expect(source).toHaveValue(
+        /^# Author header\nformat: narraeon\.world-frame\/v1 # Format note/mu,
+      );
+      const unsupported = formatted.replace(/^bindings:/mu, "bindings: &keep");
+      await source.fill(unsupported);
+      await expect(source).toHaveValue(unsupported);
+      await expect(
+        editor.getByText(
+          chinese
+            ? "当前 YAML 暂时无法可视化"
+            : "Current YAML cannot be visualized yet",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(
+        editor.getByRole("spinbutton", { name: sizeLabel }),
+      ).toHaveCount(0);
+      await source.fill(formatted);
+      await expect(
+        editor.getByRole("spinbutton", { name: sizeLabel }).first(),
+      ).toBeVisible();
+      await editor
+        .getByRole("spinbutton", { name: sizeLabel })
+        .first()
+        .fill("1234");
+      const button = (zh: string, en: string) =>
+        page.getByRole("button", { name: chinese ? zh : en, exact: true });
+      await button("整批保存", "Save all changes").click();
+      await expect(
+        page.getByText(chinese ? "当前树已保存" : "Current tree saved", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await button("收起文件面板", "Close file panel").click();
+      await button("创建世界", "Create world").click();
+      await expect(
+        page.getByLabel(chinese ? "你的行动" : "Your action"),
+      ).toBeVisible();
+      await button("世界", "Worlds").click();
+      await button("修订当前世界", "Revise current world").click();
+      await page
+        .getByRole("navigation", {
+          name: chinese ? "世界修订工具" : "World-revision tools",
+        })
+        .getByRole("button", { name: chinese ? "编辑" : "Edit", exact: true })
+        .click();
+      await button(
+        "打开 control/frame.yaml",
+        "Open control/frame.yaml",
+      ).click();
+      await expect(
+        editor.getByRole("spinbutton", { name: sizeLabel }).first(),
+      ).toHaveValue("1234");
+      await editor
+        .getByRole("spinbutton", { name: sizeLabel })
+        .first()
+        .fill("2345");
+      await sourceToggle.click();
+      await expect(source).toHaveValue(
+        /^# Author header\nformat: narraeon\.world-frame\/v1 # Format note/mu,
+      );
+      await expect(source).toHaveValue(/advisoryBytes: 2345/u);
+      await button("保存到修订", "Save to revision").click();
+      await expect(
+        page.getByText(
+          chinese ? "修订工作树已保存" : "Revision worktree saved",
+          { exact: true },
+        ),
+      ).toBeVisible();
     } finally {
       await servers.stopAll();
       await rm(root, { force: true, recursive: true });

@@ -1,9 +1,13 @@
 import { browserUUID } from "./browser-uuid.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useMemo, useState } from "react";
-import { parse, stringify } from "yaml";
+import { isMap, isNode, isSeq, parse, stringify } from "yaml";
 
 import type { ContentTreeFile } from "../protocol/v1.ts";
+import {
+  exceedsRestrictedYamlShape,
+  parseRestrictedYamlDocument,
+} from "../shared/restricted-yaml.ts";
 import {
   documentCodec,
   markdownFrontMatter,
@@ -58,34 +62,28 @@ function findDocument(
 /**
  * Rewrites resolvable ids to short refs on the way out.
  *
- * Every edit restringifies the whole frame anyway, so leaving untouched fields
- * as ids buys nothing and costs plenty: a runtime-assigned id reads as
- * `doc.<uuid>`, and no tool the setting author has reports ids, so a later AI
- * edit cannot tell which document such a slot points at. Handles that resolve
- * to nothing are left exactly as written — they are the author's to fix.
+ * The author tools report short refs. Normalizing only resolvable ids keeps
+ * their associations readable to the author and leaves broken handles intact
+ * for repair.
  */
 function normalizeDocumentHandles(
-  draft: FrameRecord,
+  draft: FrameYaml,
   documents: readonly DocumentOption[],
 ): void {
-  const normalize = (handle: unknown): string | undefined => {
-    if (typeof handle !== "string" || handle.length === 0) return undefined;
+  const normalize = (path: YamlPath): void => {
+    const handle: unknown = draft.getIn(path);
+    if (typeof handle !== "string" || handle === "" || handle.startsWith("@"))
+      return;
     const document = findDocument(documents, handle);
-    return document === undefined ? undefined : documentHandle(document);
+    if (document !== undefined) draft.setIn(path, documentHandle(document));
   };
-  if (isRecord(draft.bindings)) {
-    const bound = normalize(draft.bindings.currentSituation);
-    if (bound !== undefined) draft.bindings.currentSituation = bound;
-  }
-  if (!Array.isArray(draft.context)) return;
-  for (const entry of draft.context) {
-    if (!isRecord(entry) || !isRecord(entry.slot)) continue;
-    const slotDocument = normalize(entry.slot.document);
-    if (slotDocument !== undefined) entry.slot.document = slotDocument;
-    if (!isRecord(entry.slot.from)) continue;
-    const fromDocument = normalize(entry.slot.from.document);
-    if (fromDocument !== undefined) entry.slot.from.document = fromDocument;
-  }
+  normalize(["bindings", "currentSituation"]);
+  const context: unknown = draft.get("context", true);
+  if (!isSeq(context)) return;
+  context.items.forEach((_, index) => {
+    normalize(["context", index, "slot", "document"]);
+    normalize(["context", index, "slot", "from", "document"]);
+  });
 }
 
 interface YamlLocatorOption {
@@ -104,10 +102,13 @@ interface MarkdownBlockOption {
   title: string;
 }
 
-interface ParsedFrame {
-  value: FrameRecord | null;
-  error: string | null;
-}
+type FrameYaml = NonNullable<
+  ReturnType<typeof parseRestrictedYamlDocument>["document"]
+>;
+type YamlPath = readonly (string | number)[];
+type ParsedFrame =
+  | { value: FrameRecord; document: FrameYaml; error: null }
+  | { value: null; document?: never; error: string };
 
 const optionalSlotKinds = [
   {
@@ -188,24 +189,26 @@ export function WorldFrameEditor({
     directories,
   );
 
-  const updateFrame = (update: (draft: FrameRecord) => void): void => {
-    if (frame === null) return;
-    const draft = structuredClone(frame);
+  const updateFrame = (update: (draft: FrameYaml) => void): void => {
+    if (parsed.document === undefined) return;
+    const draft = parsed.document.clone();
     update(draft);
     normalizeDocumentHandles(draft, documents);
-    onChange(stringify(draft, { lineWidth: 0 }));
+    onChange(draft.toString({ lineWidth: 0 }));
   };
 
   const updateInstructions = (next: FrameInstruction[]): void => {
-    updateFrame((draft) => {
-      draft.instructions = next;
-    });
+    if (instructions === null) return;
+    updateFrame((draft) =>
+      updateFrameOrder(draft, "instructions", instructions, next),
+    );
   };
 
   const updateContext = (next: FrameContextEntry[]): void => {
-    updateFrame((draft) => {
-      draft.context = next;
-    });
+    if (contextEntries === null) return;
+    updateFrame((draft) =>
+      updateFrameOrder(draft, "context", contextEntries, next),
+    );
   };
 
   const addRequiredSlot = (
@@ -296,9 +299,14 @@ export function WorldFrameEditor({
                 type="button"
                 className="secondary-button"
                 onClick={() =>
-                  updateFrame((draft) => {
-                    draft.format = worldFrameFormat;
-                  })
+                  updateFrame((draft) =>
+                    replaceFrameValue(
+                      draft,
+                      ["format"],
+                      frame.format,
+                      worldFrameFormat,
+                    ),
+                  )
                 }
               >
                 {uiText("修复为 V1 格式")}
@@ -367,9 +375,17 @@ export function WorldFrameEditor({
                 }
                 onChange={(event) => {
                   const handle = event.currentTarget.value;
-                  updateFrame((draft) => {
-                    draft.bindings = { currentSituation: handle };
-                  });
+                  const bindings = isRecord(frame.bindings)
+                    ? { ...frame.bindings, currentSituation: handle }
+                    : { currentSituation: handle };
+                  updateFrame((draft) =>
+                    replaceFrameValue(
+                      draft,
+                      ["bindings"],
+                      frame.bindings,
+                      bindings,
+                    ),
+                  );
                 }}
               >
                 <option value="">{uiText("选择一份世界文档")}</option>
@@ -414,9 +430,14 @@ export function WorldFrameEditor({
               <MalformedFrameSection
                 name="instructions"
                 onReset={() =>
-                  updateFrame((draft) => {
-                    draft.instructions = [];
-                  })
+                  updateFrame((draft) =>
+                    replaceFrameValue(
+                      draft,
+                      ["instructions"],
+                      frame.instructions,
+                      [],
+                    ),
+                  )
                 }
               />
             ) : (
@@ -437,19 +458,13 @@ export function WorldFrameEditor({
                       instruction.markdown ??
                       uiText("独立尾部行");
                     const updateLine = (value: string) =>
-                      updateInstructions(
-                        instructions.map((candidate, position) => {
-                          if (position !== index) return candidate;
-                          const next = { ...candidate };
-                          // A block row drops its line when cleared; a
-                          // tail-only row keeps the (empty) line so the
-                          // entry stays valid until it is removed.
-                          if (value === "" && candidate.markdown !== undefined)
-                            delete next.turnGuide;
-                          else next.turnGuide = value;
-                          return next;
-                        }),
-                      );
+                      updateFrame((draft) => {
+                        const path = ["instructions", index, "turnGuide"];
+                        // A tail-only row keeps its line until removed.
+                        if (value === "" && instruction.markdown !== undefined)
+                          draft.deleteIn(path);
+                        else draft.setIn(path, value);
+                      });
                     return (
                       <li key={`${instruction.markdown ?? "tail"}-${index}`}>
                         <span className="world-frame-order-number">
@@ -582,9 +597,14 @@ export function WorldFrameEditor({
             frame={frame}
             documents={documents}
             onChange={(maintenance) =>
-              updateFrame((draft) => {
-                draft.maintenance = maintenance;
-              })
+              updateFrame((draft) =>
+                replaceFrameValue(
+                  draft,
+                  ["maintenance"],
+                  frame.maintenance,
+                  maintenance,
+                ),
+              )
             }
           />
 
@@ -623,9 +643,9 @@ export function WorldFrameEditor({
               <MalformedFrameSection
                 name="context"
                 onReset={() =>
-                  updateFrame((draft) => {
-                    draft.context = [];
-                  })
+                  updateFrame((draft) =>
+                    replaceFrameValue(draft, ["context"], frame.context, []),
+                  )
                 }
               />
             ) : (
@@ -680,11 +700,16 @@ export function WorldFrameEditor({
                           !isRequiredSlot(entry.slot.kind) ||
                           countSlot(contextEntries, entry.slot.kind) > 1
                         }
-                        onChange={(slot) => {
-                          const next = [...contextEntries];
-                          next[index] = { slot };
-                          updateContext(next);
-                        }}
+                        onChange={(slot) =>
+                          updateFrame((draft) =>
+                            replaceFrameValue(
+                              draft,
+                              ["context", index, "slot"],
+                              entry.slot,
+                              slot,
+                            ),
+                          )
+                        }
                         onMove={(target) =>
                           updateContext(moveItem(contextEntries, index, target))
                         }
@@ -743,7 +768,7 @@ export function WorldFrameEditor({
         <summary>{uiText("源码视图（frame.yaml）")}</summary>
         <p>
           {uiText(
-            "可视化修改会把 YAML 重新整理为稳定格式；需要修复未知字段或保留当前原文时可在这里编辑。",
+            "表单修改保留 YAML 注释和未编辑的节点。也可在这里直接编辑源码。",
           )}
         </p>
         <textarea
@@ -1295,10 +1320,22 @@ function MalformedFrameSection({
 
 function readWorldFrame(source: string): ParsedFrame {
   try {
-    const value: unknown = parse(source);
-    if (!isRecord(value))
+    const { document, problems } = parseRestrictedYamlDocument(source, {
+      rejectRawControlCharacters: false,
+    });
+    if (document === undefined)
+      return {
+        value: null,
+        error: uiText("YAML 无法解析：{message}", {
+          message: problems[0]?.detail ?? problems[0]?.message ?? "",
+        }),
+      };
+    const value: unknown = document.toJS({ maxAliasCount: 0 });
+    if (!isMap(document.contents) || !isRecord(value))
       return { value: null, error: uiText("frame.yaml 顶层必须是 YAML map。") };
-    return { value, error: null };
+    if (exceedsRestrictedYamlShape(value))
+      return { value: null, error: uiText("YAML 无法解析。") };
+    return { value, document, error: null };
   } catch (error: unknown) {
     return {
       value: null,
@@ -1308,6 +1345,60 @@ function readWorldFrame(source: string): ParsedFrame {
           : uiText("YAML 无法解析。"),
     };
   }
+}
+
+function updateFrameOrder<T>(
+  draft: FrameYaml,
+  key: "instructions" | "context",
+  previous: readonly T[],
+  next: readonly T[],
+): void {
+  const sequence: unknown = draft.get(key, true);
+  if (!isSeq(sequence)) return;
+  const nodes = new Map(
+    previous.map((value, index) => [value, sequence.items[index]]),
+  );
+  sequence.items = next.map(
+    (value) => nodes.get(value) ?? draft.createNode(value),
+  );
+}
+
+function replaceFrameValue(
+  draft: FrameYaml,
+  path: YamlPath,
+  previous: unknown,
+  next: unknown,
+): void {
+  if (Object.is(previous, next)) return;
+  const node: unknown = draft.getIn(path, true);
+  if (isMap(node) && isRecord(previous) && isRecord(next)) {
+    for (const key of Object.keys(previous)) {
+      if (!Object.hasOwn(next, key)) draft.deleteIn([...path, key]);
+    }
+    for (const [key, value] of Object.entries(next)) {
+      replaceFrameValue(draft, [...path, key], previous[key], value);
+    }
+    return;
+  }
+  if (isSeq(node) && Array.isArray(previous) && Array.isArray(next)) {
+    next.forEach((value, index) =>
+      replaceFrameValue(draft, [...path, index], previous[index], value),
+    );
+    node.items.length = next.length;
+    return;
+  }
+  if (
+    isNode(node) &&
+    (isMap(node) || isSeq(node) || typeof next === "object")
+  ) {
+    const replacement = draft.createNode(next);
+    replacement.comment = node.comment ?? null;
+    replacement.commentBefore = node.commentBefore ?? null;
+    replacement.spaceBefore = node.spaceBefore ?? false;
+    draft.setIn(path, replacement);
+    return;
+  }
+  draft.setIn(path, next);
 }
 
 function frameInstructions(frame: FrameRecord): FrameInstruction[] | null {
