@@ -20,6 +20,70 @@ import { worldRevisionToolDefinitions } from "../../src/runtime/world-revision/W
 import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 
 test.each([
+  ["en", "Read the [harbor chart](https://story.invalid/tide)."],
+  [
+    "zh-CN",
+    "沿着[港口](https://story.invalid/Users/tide)前进。\n\n" +
+      '![潮汐图](HTTPS://story.invalid/tmp/tide.png "潮汐图")\n' +
+      "更多：http://story.invalid/var/maps?next=/home/tide。\n" +
+      "<https://story.invalid/etc/maps>\n" +
+      "备用：http://[2001:db8::1]:8080/opt/maps\n",
+  ],
+] as const)("%s 首轮生产编译保留开场白中的网页链接原文", (locale, opening) => {
+  const request = input({ playerInputPlacement: "append" });
+  request.world.history = { "message.genesis.narrator": opening };
+
+  const { bootstrap } = new FileNativePromptCompiler({
+    locale,
+  }).compilePlayCallChain(request, builtinDefaultPlayPresetBinding(locale));
+
+  expect(bootstrap.provider.preload?.markdown.split(opening)).toHaveLength(2);
+});
+
+test.each([
+  [
+    "同一行的 Windows 路径",
+    "[Chart](https://story.invalid/tide)(C:/Users/host/chart.md)",
+    "internal_path_leakage",
+  ],
+  [
+    "链接前的 Windows 路径",
+    String.raw`C:\Users\host\chart.md beside [Chart](https://story.invalid/tide)`,
+    "internal_path_leakage",
+  ],
+  [
+    "下一行的 POSIX 路径",
+    "![Chart](https://story.invalid/img/tide.png)\n`/tmp/host/chart.md`",
+    "internal_path_leakage",
+  ],
+  [
+    "紧接中文标点的 POSIX 路径",
+    "港口：https://story.invalid/tide，/opt/host/chart.md",
+    "internal_path_leakage",
+  ],
+  [
+    "本地文件 URL",
+    "[Chart](https://story.invalid/tide) or <file:///home/host/chart.md>",
+    "internal_path_leakage",
+  ],
+  [
+    "同一段的内部字段",
+    "[Chart](https://story.invalid/tide)\nRuntime operationId leaked",
+    "internal_field_leakage",
+  ],
+] as const)("开场白含网页链接时，生产编译仍拒绝%s", (_label, opening, code) => {
+  const request = input({ playerInputPlacement: "append" });
+  request.world.history = { "message.genesis.narrator": opening };
+
+  expect(() =>
+    new FileNativePromptCompiler().compilePlayCallChain(
+      request,
+      builtinDefaultPlayPresetBinding(),
+    ),
+  ).toThrow(expect.objectContaining<Partial<PromptCompilationError>>({ code }));
+});
+
+test.each([
   ["en", false, "already seen by the player"],
   ["en", true, "already seen by the player"],
   ["zh-CN", false, "玩家已经读过的开场白"],

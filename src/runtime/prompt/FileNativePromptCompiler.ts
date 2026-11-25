@@ -3507,6 +3507,10 @@ const leakageFields = [
   "version",
 ];
 
+// Stop at Markdown and prose delimiters so surrounding paths remain visible.
+const webAddress =
+  /\bhttps?:\/\/(?:\[[\da-f:.]+\]|[^/\s<>\p{Quotation_Mark}\p{Ps}\p{Pe}`\\，。；：！？、])[^\s<>\p{Quotation_Mark}\p{Ps}\p{Pe}`\\，。；：！？、]*/giu;
+
 export function scanRuntimeLeakage(
   messages: PromptCompilation["logicalMessages"],
 ): void {
@@ -3523,7 +3527,7 @@ export function scanRuntimeLeakage(
         );
       if (
         /(?:[A-Za-z]:[\\/]|\/(?:home|Users|mnt|tmp|var|workspace|private|opt|root|etc)\/)/u.test(
-          block.markdown,
+          block.markdown.replace(webAddress, " "),
         )
       )
         throw new PromptCompilationError(
