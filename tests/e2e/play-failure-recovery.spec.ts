@@ -1,6 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import {
+  rawControlFile,
+  selectControlFile,
+  worldRulesPath,
+} from "../support/worldControlEditor.ts";
 import type { V1PlayCallChainView, V1Request } from "../../src/protocol/v1.ts";
 
 type ProviderStep =
@@ -811,10 +816,12 @@ test("model settings on the failure card confirms leaving a control draft", asyn
   await expect(adjustOutput).toBeEnabled();
 
   const manage = page.getByRole("dialog", { name: "世界管理" });
-  const draft = manage.getByLabel("世界控制文件（JSON）");
+  const draft = rawControlFile(manage, worldRulesPath);
   const openControl = async () => {
     await page.getByRole("button", { name: "世界管理", exact: true }).click();
     await manage.getByText("世界控制 · 高级编辑", { exact: true }).click();
+    await selectControlFile(manage, worldRulesPath);
+    await expect(draft).toBeVisible();
   };
   const closeManage = () =>
     manage.getByRole("button", { name: "关闭", exact: true }).click();

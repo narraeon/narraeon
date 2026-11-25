@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
+import { openFrameSource } from "../support/worldControlEditor.ts";
 
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   const response = await page.request.post("/api/runtime/v1", {
@@ -171,8 +172,10 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     "right",
   );
   await page.getByRole("button", { name: "世界管理", exact: true }).click();
-  await page.getByText("世界控制 · 高级编辑", { exact: true }).click();
-  await page.getByLabel("世界控制文件（JSON）").fill("invalid draft");
+  const management = page.getByRole("dialog", { name: "世界管理" });
+  await management.getByText("世界控制 · 高级编辑", { exact: true }).click();
+  const frame = await openFrameSource(management);
+  await frame.fill("invalid: [draft");
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),
   ).toBeEnabled();
@@ -180,10 +183,7 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),
   ).toBeEnabled();
-  await page
-    .getByRole("dialog", { name: "世界管理" })
-    .getByRole("button", { name: "关闭", exact: true })
-    .click();
+  await management.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "返回工作区", exact: true }).click();
   await page
     .locator(".home-world-library")

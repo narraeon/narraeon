@@ -3,6 +3,11 @@ import { expect, type Page } from "@playwright/test";
 import { appLocales } from "../../src/protocol/appPreferences.ts";
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import {
+  rawControlFile,
+  selectControlFile,
+  worldRulesPath,
+} from "../support/worldControlEditor.ts";
 
 test.use({ runtimeScope: "world-control-draft-conflict" });
 
@@ -54,10 +59,9 @@ for (const locale of appLocales) {
           { exact: true },
         )
         .click();
-      const editor = dialog.getByRole("textbox", {
-        name: t("世界控制文件（JSON）", "World-control files (JSON)"),
-      });
-      await expect(editor).toHaveValue(/frame\.yaml/u);
+      await selectControlFile(dialog, worldRulesPath, locale);
+      const editor = rawControlFile(dialog, worldRulesPath, locale);
+      await expect(editor).toHaveValue(worldRules(base));
       return {
         editor,
         preview: dialog.getByRole("button", {
@@ -79,8 +83,8 @@ for (const locale of appLocales) {
     };
     const a = await open(tabA);
     const b = await open(tabB);
-    const sourceA = JSON.stringify(changedFiles(base, "TAB_A"), null, 2);
-    const sourceB = JSON.stringify(changedFiles(base, "TAB_B"), null, 2);
+    const sourceA = worldRules(changedFiles(base, "TAB_A"));
+    const sourceB = worldRules(changedFiles(base, "TAB_B"));
     await a.editor.fill(sourceA);
     await b.editor.fill(sourceB);
 
@@ -177,6 +181,12 @@ function changedFiles(base: ContentTreeFile[], tag: string): ContentTreeFile[] {
       ? { ...file, contents: `${file.contents}\n${tag}\n` }
       : file,
   );
+}
+
+function worldRules(files: ContentTreeFile[]): string {
+  const rules = files.find((file) => file.path === "blocks/world.md");
+  if (rules === undefined) throw new Error("Missing world rules fixture");
+  return rules.contents;
 }
 
 async function runtime<Result = unknown>(
