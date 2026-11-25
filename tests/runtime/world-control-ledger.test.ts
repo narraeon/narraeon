@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,6 +158,92 @@ test("控制编辑应用是一轮 control_apply：只推进一轮，回退到应
   expect(await fixture.store.readSurface(fixture.worldId, "control")).toEqual(
     before,
   );
+});
+
+test("control apply rechecks the confirmed draft against the latest state", async () => {
+  const { store, worldId, worldRoot } = await world();
+  const control = await store.readSurface(worldId, "control");
+  const draft = control.map((file) =>
+    file.path === "player-views.yaml"
+      ? {
+          ...file,
+          contents: `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: Status
+    items:
+      - id: situation
+        label: Situation
+        select: { document: "@current-situation", locator: { yaml: [情况] } }
+`,
+        }
+      : file,
+  );
+
+  store.freezeControl(worldId, "control-preview-running");
+  const { fingerprint } = await store.saveControlDraft(worldId, draft);
+  const preview = await store.previewControlDraft(worldId, prompt, fingerprint);
+  expect(preview.diagnosticBinding.controlFingerprint).toBe(fingerprint);
+  await expect(
+    store.applyControlDraft(worldId, prompt, fingerprint),
+  ).rejects.toMatchObject({
+    code: "operation_conflict",
+  });
+  store.releaseControl(worldId, "control-preview-running");
+
+  const before = initialSituation();
+  const after = before.replace("情况: 安静", "状态: 安静");
+  const hash = (contents: string) =>
+    `sha256:${createHash("sha256").update(contents).digest("hex")}`;
+  await store.commitPlayStep({
+    worldId,
+    operationId: "remove-draft-only-view-source",
+    parentHead: "genesis",
+    historyAppend: [],
+    nextMaterials: [],
+    stateChanges: [
+      {
+        kind: "replace",
+        documentId: "situation.current",
+        stableShortRef: "current-situation",
+        relativePath: "current-situation.yaml",
+        codec: "yaml",
+        expectedPreviousHash: hash(before),
+        nextHash: hash(after),
+        canonicalNextBytes: after,
+      },
+    ],
+  });
+  await expect(
+    store.applyControlDraft(worldId, prompt, fingerprint),
+  ).rejects.toThrow("Player views in the control draft cannot be applied");
+  expect(await store.currentHead(worldId)).toBe("commit:1");
+  expect(modesOf(await listTurns(worldRoot))).toEqual(["play"]);
+  expect(await store.readSurface(worldId, "control")).toEqual(control);
+});
+
+test("the draft receipt also identifies text saved through the legacy Base64 field", async () => {
+  const { store, worldId } = await world();
+  const originals = await store.readSurface(worldId, "control");
+  const rule = "# World rules\n\nRetain continuity.\n";
+  const files = originals.map((file) =>
+    file.path === "blocks/world.md"
+      ? {
+          ...file,
+          encoding: "base64" as const,
+          contents: Buffer.from(rule).toString("base64"),
+        }
+      : file,
+  );
+
+  const { fingerprint } = await store.saveControlDraft(worldId, files);
+  const preview = await store.previewControlDraft(worldId, prompt, fingerprint);
+  expect(preview.diagnosticBinding.controlFingerprint).toBe(fingerprint);
+  await store.applyControlDraft(worldId, prompt, fingerprint);
+  expect(await store.readSurface(worldId, "control")).toContainEqual({
+    path: "blocks/world.md",
+    contents: rule,
+  });
 });
 
 test("回退到较早的回退轮后可以重新打开和分叉", async () => {

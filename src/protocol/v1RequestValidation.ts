@@ -593,8 +593,15 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
   "play.timeline.context": [safeEventId],
 };
 
+const controlDraftFingerprint = field("expectedFingerprint", {
+  type: "string",
+  pattern: "^sha256:[0-9a-f]{64}$",
+});
+
 const worldChecks: Partial<Record<Command, readonly Check[]>> = {
   "world.create": [field("model", object)],
+  "world.control-draft.preview": [controlDraftFingerprint],
+  "world.control-draft.apply": [controlDraftFingerprint],
   "world.story.export": [
     field(
       "format",

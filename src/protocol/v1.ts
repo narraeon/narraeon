@@ -260,8 +260,16 @@ export type V1Request =
       worldId: string;
       files: ContentTreeFile[];
     }
-  | { type: "world.control-draft.preview"; worldId: string }
-  | { type: "world.control-draft.apply"; worldId: string }
+  | {
+      type: "world.control-draft.preview";
+      worldId: string;
+      expectedFingerprint?: string;
+    }
+  | {
+      type: "world.control-draft.apply";
+      worldId: string;
+      expectedFingerprint?: string;
+    }
   | { type: "world.revision.open"; worldId: string }
   | { type: "world.revision.overview"; worldId: string }
   | { type: "world.revision.status"; worldId: string; sessionId?: string }

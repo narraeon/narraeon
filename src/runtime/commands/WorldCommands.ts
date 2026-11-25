@@ -264,6 +264,7 @@ export class WorldCommands {
         return this.#services.worlds.previewControlDraft(
           request.worldId,
           prompt,
+          request.expectedFingerprint,
         );
       }
       case "world.control-draft.apply": {
@@ -274,7 +275,11 @@ export class WorldCommands {
               ? "预览世界控制。"
               : "Preview world control.",
         };
-        return this.#services.worlds.applyControlDraft(request.worldId, prompt);
+        return this.#services.worlds.applyControlDraft(
+          request.worldId,
+          prompt,
+          request.expectedFingerprint,
+        );
       }
       case "world.derive": {
         const preset = await this.#services.playPresets.bindCurrent();
