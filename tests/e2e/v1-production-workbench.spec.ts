@@ -809,21 +809,20 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toBeVisible();
   await page.getByRole("button", { name: "收起世界栏" }).click();
 
+  const worldPatch = tool("world_patch", {
+    target: "@current-situation",
+    edits: [
+      {
+        op: "replace",
+        locator: { yaml: ["situation"] },
+        value:
+          "Alex has put away the jersey and is waiting for you to confirm the training plan.",
+      },
+    ],
+  });
   responses.push(
     chatTools(
-      [
-        tool("world_patch", {
-          target: "@current-situation",
-          edits: [
-            {
-              op: "replace",
-              locator: { yaml: ["situation"] },
-              value:
-                "Alex has put away the jersey and is waiting for you to confirm the training plan.",
-            },
-          ],
-        }),
-      ],
+      [worldPatch],
       "I will update the record before narrating the result.",
     ),
     chatText(
@@ -918,17 +917,21 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(reasoning).toContainText(
     "First verify the character's current location and the player's action.",
   );
+  const writeReceipt = "@current-situation 写入成功";
   await expect(callChain).toContainText("调用 world_patch");
-  await expect(callChain).not.toContainText(
-    "@current-situation write succeeded",
-  );
+  await expect(callChain).not.toContainText(writeReceipt);
   const toolCall = callChain
     .getByText("调用 world_patch")
     .locator("xpath=ancestor::details[1]");
   await expect(toolCall).not.toHaveAttribute("open", "");
   await toolCall.locator("summary").click();
-  await expect(toolCall).toContainText("@current-situation write succeeded");
+  await expect(toolCall).toContainText(writeReceipt);
   const firstPlayRequest = providerRequest();
+  expect(firstPlayRequest.messages).toContainEqual({
+    role: "tool",
+    tool_call_id: worldPatch.id,
+    content: writeReceipt,
+  });
   expect(JSON.stringify(firstPlayRequest)).toContain(
     "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
   );
