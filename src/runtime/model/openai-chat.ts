@@ -59,10 +59,17 @@ import {
 function chatRequestBody(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
+  url: URL,
 ): Record<string, unknown> {
   const tools = providerToolDefinitions(request);
   const allowedTools = providerAllowedTools(request);
   const hasPolicy = hasFrozenToolPolicy(request);
+  const outputLimitField =
+    url.origin === "https://api.openai.com" &&
+    url.pathname === "/v1/chat/completions" &&
+    /^o\d+(?:-|$)/u.test(connection.modelId)
+      ? "max_completion_tokens"
+      : "max_tokens";
   return checkedCacheBreakpoints({
     model: connection.modelId,
     ...chatReasoningRequest(connection),
@@ -91,7 +98,7 @@ function chatRequestBody(
       : tools.length === 0
         ? {}
         : { tool_choice: "auto" }),
-    max_tokens: request.maxOutputTokens,
+    [outputLimitField]: request.maxOutputTokens,
     stream: true,
     stream_options: { include_usage: true },
   });
@@ -290,10 +297,10 @@ export async function exchangeChat(
 ): Promise<ModelHostResponse> {
   const onDelta = observer?.onDelta;
   const signal = observer?.signal;
-  const body = chatRequestBody(connection, request);
+  const url = providerUrl(connection);
+  const body = chatRequestBody(connection, request, url);
   const bodyJson = JSON.stringify(body);
   await trace("chat_request", body);
-  const url = providerUrl(connection);
   const capture = providerCapture(
     failureLog,
     connection.provider,
@@ -444,9 +451,11 @@ export function previewChat(
   connection: ResolvedFileNativeModelConnection,
   request: ModelHostExchange,
 ): ModelHostWireRequest {
+  const url = providerUrl(connection);
   return providerRequestPreview(
     connection,
     bearerProviderHeaders(connection.apiKey),
-    chatRequestBody(connection, request),
+    chatRequestBody(connection, request, url),
+    url.pathname,
   );
 }

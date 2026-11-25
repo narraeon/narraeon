@@ -15,6 +15,7 @@
 
 - 保留有序前部编码为 system 前缀；工具结果编码为逐项 `tool` message。
 - 支持标准端点与 CLIProxyAPI 方言。
+- 发往 `https://api.openai.com/v1/chat/completions` 的 o 系列请求将 `maxOutputTokens` 编码为 `max_completion_tokens`。其余 Chat 请求（包括兼容代理）继续使用 `max_tokens`。每次请求只发送一个输出上限字段。[OpenAI Chat Completions 参考](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 - 通过 Chat Completions 代理调用 Claude 时通常只能获得 `reasoning_content`，协议本身不能保证携带签名 thinking；需要可验证无损续传时必须使用 Anthropic Messages 或支持 `reasoning.encrypted_content` 的 OpenAI Responses 兼容路径，不得切割正文猜测 thinking。
 
 ### 1.2 OpenAI Responses
