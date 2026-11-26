@@ -39,12 +39,27 @@ export async function testModelConnection(
   let googleTerminalStatus: "incomplete" | "requires_continuation" | undefined;
   const fetchOnce: typeof fetch = async (url, init) => {
     if (dispatched) throw new Error("The connection test already dispatched");
+    if (typeof init?.body !== "string")
+      throw new Error("The connection test requires an encoded request body");
     signal.throwIfAborted();
-    dispatched = true;
-    const response = await fetchImplementation(url, {
+    const payload = new TextEncoder().encode(init.body);
+    const headers = new Headers(init.headers);
+    headers.set("Content-Length", String(payload.byteLength));
+    // A replayable string lets Node fetch resend a POST after HTTP 421.
+    const options: RequestInit & { duplex: "half" } = {
       ...init,
+      headers,
+      body: new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(payload);
+          stream.close();
+        },
+      }),
+      duplex: "half",
       redirect: "manual",
-    });
+    };
+    dispatched = true;
+    const response = await fetchImplementation(url, options);
     status = response.status;
     if (status >= 300 && status < 400) {
       void response.body?.cancel().catch(() => undefined);

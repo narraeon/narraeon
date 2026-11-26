@@ -293,6 +293,7 @@ test("reports a bounded outcome without retrying, redirecting, or disclosing pro
       ["http-400", "parameters"],
       ["http-404", "not_found"],
       ["http-307", "redirect"],
+      ["http-421", "failed"],
       ["reasoning-only", "reasoning_only"],
       ["blank-text", "no_text"],
       ["length-blank", "output_limit"],

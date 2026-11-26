@@ -1,3 +1,4 @@
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ModelConnectionStore } from "../model/ModelConnectionStore.ts";
 import type { CommandFor } from "./Command.ts";
 
@@ -23,4 +24,3 @@ export function handleModelCommand(
       return models.test(request.connection, locale);
   }
 }
-import type { AppLocale } from "../../protocol/appPreferences.ts";
