@@ -525,10 +525,10 @@ export function OrderedPlayPromptEditor({
                   )}
                 </>
               )}
-              {promptPreview}
             </div>
           ))}
       </div>
+      {promptPreview}
       {!authoring && (
         <section
           className="turn-guide-preview"
