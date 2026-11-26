@@ -89,6 +89,35 @@ export const semanticCases = [
   },
 ];
 
+const original = (id) => {
+  const question = semanticCases.find((item) => item.id === id);
+  return { ...question, replicateOf: id };
+};
+
+export const followupCases = [
+  original("reference-setting"),
+  original("reference-revision"),
+  {
+    ...original("reference-revision"),
+    id: "reference-heldout",
+    replicateOf: undefined,
+    body: "Use abrupt stops and a clipped harbor cadence in play dialogue. Let speakers answer the question beneath the words.",
+    question:
+      "In my existing campaign, I like the dockworkers' clipped delivery at the table. Between sessions I revise the campaign records with the authoring assistant and want those records to read like field notes. Is there one place to tune this? How can I tell I got both effects? Advice only.",
+  },
+  original("boundary"),
+  {
+    id: "boundary-heldout",
+    locale: "en",
+    question:
+      "I picked a different model connection and now Send is greyed out on the story page.",
+    intent: "advice",
+  },
+  original("heldout-edit"),
+  original("dialogue-advice"),
+  original("rule-advice"),
+];
+
 function prompt(id, name, body, messageRole, gameplay) {
   return {
     kind: "user",

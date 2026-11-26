@@ -14,7 +14,11 @@ import {
   RuntimeServerPool,
   availableRuntimePort,
 } from "../../tests/support/runtimeServer.ts";
-import { semanticCases, withSemanticFixture } from "./semantic-cases.mjs";
+import {
+  followupCases,
+  semanticCases,
+  withSemanticFixture,
+} from "./semantic-cases.mjs";
 
 const protocols = ["openai_responses", "chat_completions"];
 const previewProviders = ["anthropic_messages", "google_interactions"];
@@ -23,15 +27,16 @@ export async function evaluateSemantic(args) {
   const [destination, model, ...options] = args;
   if (!destination || !model) {
     throw new Error(
-      "Usage: node scripts/evaluate-orchestration-editor/run.mjs --semantic NEW_OUTPUT_DIRECTORY MODEL_ID [--repo=RUNTIME_ROOT] [--cases=ID,ID] [--fixtures-only]",
+      "Usage: node scripts/evaluate-orchestration-editor/run.mjs --semantic NEW_OUTPUT_DIRECTORY MODEL_ID [--repo=RUNTIME_ROOT] [--follow-up] [--cases=ID,ID] [--fixtures-only]",
     );
   }
   const output = resolve(destination);
   const selected = options.find((option) => option.startsWith("--cases="));
   const caseIds = selected?.slice("--cases=".length).split(",");
+  const suite = options.includes("--follow-up") ? followupCases : semanticCases;
   const cases = caseIds
-    ? semanticCases.filter(({ id }) => caseIds.includes(id))
-    : semanticCases;
+    ? suite.filter(({ id }) => caseIds.includes(id))
+    : suite;
   assert(
     cases.length > 0 && (!caseIds || caseIds.length === cases.length),
     "Invalid case selection",
