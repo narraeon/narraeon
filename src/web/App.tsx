@@ -25,10 +25,11 @@ import {
 import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
 import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import { RuntimeRequestError, type RuntimeClient } from "./runtimeClient.ts";
+import { createClientId } from "./ClientId.ts";
 import { ReadTarget } from "./ReadTarget.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
-import { readAfterCommit } from "./RequestOutcome.ts";
+import { hasUnconfirmedOutcome, readAfterCommit } from "./RequestOutcome.ts";
 import { compareWorldActivity } from "../shared/world-activity-order.ts";
 import { saveFile } from "./androidBridge.ts";
 import {
@@ -157,6 +158,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const creatingWorldRef = useRef(false);
   const [deletingPackage, setDeletingPackage] = useState(false);
   const deletingPackageRef = useRef(false);
+  const copyingPackageRef = useRef(false);
+  const packageCopyAttempt = useRef<{
+    origin: WorkspaceLocation;
+    packageId: string;
+    operationId: string;
+  } | null>(null);
   const [creationSyncFailed, setCreationSyncFailed] = useState(false);
   const [creationSyncError, setCreationSyncError] = useState<unknown>();
   const [worldCreation] = useState(
@@ -822,6 +829,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageId = selected,
   ): Promise<void> {
     const origin = locationRef.current;
+    const copying = type === "content.copy";
+    if (copying && copyingPackageRef.current) return;
+    if (copying) copyingPackageRef.current = true;
     const deletingFromEditor =
       origin.screen === "content" && type === "content.delete";
     if (deletingFromEditor) {
@@ -838,9 +848,19 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
     try {
       if (type === "content.copy") {
-        acceptPackage(
-          await client.request<HomeContentPackage>({ type, packageId }),
-        );
+        const previous = packageCopyAttempt.current;
+        const operationId =
+          previous?.origin === origin && previous.packageId === packageId
+            ? previous.operationId
+            : createClientId("copy-package");
+        packageCopyAttempt.current = { origin, packageId, operationId };
+        const result = await client.request<HomeContentPackage>({
+          type,
+          packageId,
+          operationId,
+        });
+        packageCopyAttempt.current = null;
+        acceptPackage(result);
       } else {
         await client.request({ type, packageId });
         updateWorkspace((current) => ({
@@ -864,9 +884,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       )
         switchLocation({ screen: "home" });
     } catch (error: unknown) {
+      if (copying && !hasUnconfirmedOutcome(error))
+        packageCopyAttempt.current = null;
       await workspaceTarget.recover();
       report(error);
     } finally {
+      if (copying) copyingPackageRef.current = false;
       if (deletingFromEditor) {
         deletingPackageRef.current = false;
         setDeletingPackage(false);

@@ -140,6 +140,11 @@ export class FileNativeWorldOperationCoordinator {
     return this.#queue.run(worldId, action);
   }
 
+  /** Choose a free display title and publish within one library-wide turn. */
+  withForkPublication<Value>(action: () => Promise<Value>): Promise<Value> {
+    return this.#queue.run("\0fork-publication", action);
+  }
+
   /** Runs a world-changing action in the world's in-process queue. */
   async withWorldAuthorityLock<Value>(
     worldId: string,

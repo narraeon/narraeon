@@ -43,7 +43,12 @@ export async function handleContentCommand(
         { baseTreeRevision: request.baseTreeRevision },
       );
     case "content.copy":
-      return content.copyCurrentTreeContentPackage(request.packageId);
+      return content.copyCurrentTreeContentPackage(
+        request.packageId,
+        request.operationId === undefined
+          ? {}
+          : { operationId: request.operationId },
+      );
     case "content.delete":
       await content.deleteCurrentTreeContentPackage(request.packageId);
       return { deleted: true };

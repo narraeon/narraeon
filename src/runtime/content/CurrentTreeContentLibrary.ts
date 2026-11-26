@@ -17,6 +17,14 @@ import {
 import { linkExclusive } from "../FileNativeExclusiveLink.ts";
 import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import { basename, dirname, isAbsolute, join, posix, win32 } from "node:path";
+import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+import {
+  derivedDisplayName,
+  localDisplayNameLimit,
+} from "../DerivedDisplayName.ts";
 
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
@@ -46,6 +54,7 @@ const localIdPattern =
 const localMetadataFileName = "local.json";
 const currentTreeFileName = "current-tree.json";
 const currentTreePreviousFileName = ".current-tree.previous.json";
+const copyReceiptFileName = "copy-receipt.json";
 const defaultLimits = defaultContentWorkspaceLimits;
 
 interface StoredLocalMetadata {
@@ -238,16 +247,66 @@ export class CurrentTreeContentLibrary {
 
   copyPackage(
     localId: string,
-    options: CurrentTreeMutationOptions = {},
+    options: CurrentTreeMutationOptions & {
+      locale?: AppLocale;
+      operationId?: string;
+    } = {},
   ): Promise<EditableContentPackageDetail> {
     return this.#mutate(async () => {
       options.signal?.throwIfAborted();
+      const copy =
+        options.operationId === undefined
+          ? undefined
+          : {
+              localId: copyPackageId(options.operationId),
+              receipt: serialize({
+                operationId: options.operationId,
+                sourceId: localId,
+              }),
+            };
+      if (copy !== undefined) {
+        const receipt = await readFile(
+          join(this.#packageRoot(copy.localId), copyReceiptFileName),
+          "utf8",
+        ).catch((error: unknown) => {
+          if (isNodeErrorCode(error, "ENOENT")) return undefined;
+          throw error;
+        });
+        if (receipt !== undefined) {
+          if (receipt !== copy.receipt)
+            throw new CurrentTreeContentLibraryError(
+              "The content-package copy operation was already used for a different source",
+              {
+                receipt: {
+                  code: "operation_conflict",
+                  commands: ["content.copy"],
+                },
+              },
+            );
+          return this.readPackage(copy.localId);
+        }
+      }
       const source = await this.readPackage(localId);
       options.signal?.throwIfAborted();
+      const titles = [];
+      for (const id of await this.#listPackageIds()) {
+        const metadata = await this.#readPackageMetadata(id);
+        titles.push(
+          metadata.schemaVersion === 2
+            ? metadata.title
+            : (metadata.name ?? (await this.readPackage(id)).title),
+        );
+      }
       return this.#publishNewPackage(
         source.files,
-        source.title,
+        derivedDisplayName(
+          source.title,
+          "copy",
+          options.locale ?? defaultAppLocale,
+          titles,
+        ),
         options.signal,
+        copy,
       );
     });
   }
@@ -289,6 +348,14 @@ export class CurrentTreeContentLibrary {
   }
 
   async listPackages(): Promise<EditableContentPackageSummary[]> {
+    const packages: EditableContentPackageSummary[] = [];
+    for (const id of await this.#listPackageIds()) {
+      packages.push(summarizeContentPackage(await this.readPackage(id)));
+    }
+    return packages;
+  }
+
+  async #listPackageIds(): Promise<string[]> {
     let entries;
     try {
       entries = await readdir(this.#packagesRoot, { withFileTypes: true });
@@ -303,7 +370,7 @@ export class CurrentTreeContentLibrary {
         },
       );
     }
-    const packages: EditableContentPackageSummary[] = [];
+    const ids: string[] = [];
     for (const entry of entries.sort((left, right) =>
       compareStrings(left.name, right.name),
     )) {
@@ -314,10 +381,9 @@ export class CurrentTreeContentLibrary {
           "The content-package library contains an unrecognized entry",
         );
       }
-      const detail = await this.readPackage(entry.name);
-      packages.push(summarizeContentPackage(detail));
+      ids.push(entry.name);
     }
-    return packages;
+    return ids;
   }
 
   async readScriptGrants(localId: string): Promise<string[]> {
@@ -374,16 +440,7 @@ export class CurrentTreeContentLibrary {
     package: EditableContentPackageDetail;
   }> {
     const packageRoot = this.#packageRoot(localId);
-    const metadata = await readJsonFile(
-      join(packageRoot, localMetadataFileName),
-      () => new CurrentTreeContentPackageNotFoundError(),
-      "The local content-package envelope is damaged",
-    );
-    if (!isStoredMetadata(metadata) || metadata.localId !== localId) {
-      throw new CurrentTreeContentLibraryError(
-        "The local content-package envelope is damaged",
-      );
-    }
+    const metadata = await this.#readPackageMetadata(localId);
     const storedTree = await readJsonFile(
       join(packageRoot, currentTreeFileName),
       () =>
@@ -420,6 +477,21 @@ export class CurrentTreeContentLibrary {
     };
   }
 
+  async #readPackageMetadata(
+    localId: string,
+  ): Promise<StoredLocalMetadata | LegacyStoredLocalMetadata> {
+    const metadata = await readJsonFile(
+      join(this.#packageRoot(localId), localMetadataFileName),
+      () => new CurrentTreeContentPackageNotFoundError(),
+      "The local content-package envelope is damaged",
+    );
+    if (!isStoredMetadata(metadata) || metadata.localId !== localId)
+      throw new CurrentTreeContentLibraryError(
+        "The local content-package envelope is damaged",
+      );
+    return metadata;
+  }
+
   /**
    * Title a package in the local library. The title lives in the package's own
    * local shell, not in its content, so renaming never touches a document the
@@ -438,15 +510,6 @@ export class CurrentTreeContentLibrary {
       try {
         options.signal?.throwIfAborted();
         const packageRoot = this.#packageRoot(localId);
-        const metadata = await readJsonFile(
-          join(packageRoot, localMetadataFileName),
-          () => new CurrentTreeContentPackageNotFoundError(),
-          "The local content-package envelope is damaged",
-        );
-        if (!isStoredMetadata(metadata) || metadata.localId !== localId)
-          throw new CurrentTreeContentLibraryError(
-            "The local content-package envelope is damaged",
-          );
         await writeStoredLocalMetadata(packageRoot, {
           schemaVersion: 2,
           localId,
@@ -658,9 +721,10 @@ export class CurrentTreeContentLibrary {
     normalized: ContentTreeFile[],
     title: string,
     signal?: AbortSignal,
+    copy?: { localId: string; receipt: string },
   ): Promise<EditableContentPackageDetail> {
-    const localId = `package-${randomUUID()}`;
-    const stagingPath = join(this.#stagingRoot, localId);
+    const localId = copy?.localId ?? `package-${randomUUID()}`;
+    const stagingPath = join(this.#stagingRoot, randomUUID());
     const finalPath = join(this.#packagesRoot, localId);
     await Promise.all([
       mkdir(this.#packagesRoot, { recursive: true, mode: 0o700 }),
@@ -681,6 +745,11 @@ export class CurrentTreeContentLibrary {
         join(stagingPath, currentTreeFileName),
         serializeCurrentTree(normalized),
       );
+      if (copy !== undefined)
+        await writeDurableNewFile(
+          join(stagingPath, copyReceiptFileName),
+          copy.receipt,
+        );
       signal?.throwIfAborted();
       await this.#beforePackagePublish?.();
       signal?.throwIfAborted();
@@ -725,6 +794,17 @@ export class CurrentTreeContentLibrary {
       release();
     }
   }
+}
+
+/** Keep the existing package ID format while making a copy addressable on retry. */
+function copyPackageId(operationId: string): string {
+  const hash = createHash("sha256")
+    .update(`content.copy:${operationId}`)
+    .digest();
+  hash[6] = (hash[6]! & 0x0f) | 0x40;
+  hash[8] = (hash[8]! & 0x3f) | 0x80;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `package-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function detail(
@@ -1100,7 +1180,10 @@ function legacyContentDerivedTitle(
   );
 }
 
-const packageTitlePattern = /^[^\r\n]{1,160}$/u;
+const packageTitlePattern = new RegExp(
+  `^[^\\r\\n]{1,${localDisplayNameLimit}}$`,
+  "u",
+);
 
 function validPackageTitle(title: string): boolean {
   return packageTitlePattern.test(title);

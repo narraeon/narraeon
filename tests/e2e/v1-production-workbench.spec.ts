@@ -1266,7 +1266,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .filter({ hasText: "Where should we meet beforehand?" });
   await playerBranchPoint.getByRole("button", { name: "创建分叉" }).click();
   await expect(
-    page.getByRole("heading", { name: "Dormitory World (fork)" }),
+    page.getByRole("heading", { name: "Dormitory World · 分叉", exact: true }),
   ).toBeVisible();
   const derivedTimeline = page.getByLabel("故事时间线");
   await expect(derivedTimeline).toContainText("模型推理");
@@ -1298,7 +1298,10 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .getByRole("button", { name: "创建分叉" })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Dormitory World (fork)" }),
+    page.getByRole("heading", {
+      name: "Dormitory World · 分叉 2",
+      exact: true,
+    }),
   ).toBeVisible();
   expect([...observationKinds].sort()).toEqual(["play", "revision", "setting"]);
   expect(

@@ -226,13 +226,11 @@ export class ContentWorkspace {
 
   copyCurrentTreeContentPackage(
     localId: string,
-    options: ContentWorkspaceOperationOptions = {},
+    options: ContentWorkspaceOperationOptions & { operationId?: string } = {},
   ) {
+    const locale = this.#locale();
     return this.#mutate(() =>
-      this.#currentTreeLibrary.copyPackage(
-        localId,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
+      this.#currentTreeLibrary.copyPackage(localId, { ...options, locale }),
     );
   }
 

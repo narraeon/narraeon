@@ -154,7 +154,7 @@ describe("YAML/Markdown 内容包当前树", () => {
       imported.localId,
     );
     expect(copied.localId).not.toBe(imported.localId);
-    expect(copied.title).toBe(repaired.title);
+    expect(copied.title).toBe(`${repaired.title} · Copy`);
     expect(copied.files).toEqual(repaired.files);
 
     const exported = await workspace.exportCurrentTreeContentPackage(

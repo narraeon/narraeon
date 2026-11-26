@@ -282,12 +282,14 @@ export class WorldCommands {
         );
       }
       case "world.derive": {
+        const locale = this.#services.locale();
         const preset = await this.#services.playPresets.bindCurrent();
         const result = await this.#services.playCallChains.deriveWorld({
           operationId: request.operationId,
           sourceWorldId: request.sourceWorldId,
           sourceHead: request.sourceHead,
           hostPresetId: preset.id,
+          locale,
         });
         await this.#reconcileResultArtifacts(result);
         return { outcome: result.outcome, world: result.world };

@@ -483,7 +483,7 @@ describe("从内容包创建文件原生世界", () => {
       hostPresetId: "host-1",
     });
 
-    expect(derived.world.title).toBe(`${"界".repeat(153)} (fork)`);
+    expect(derived.world.title).toBe(`${"界".repeat(152)}… · Fork`);
     expect(Array.from(derived.world.title)).toHaveLength(160);
   });
 });

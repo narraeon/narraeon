@@ -459,6 +459,12 @@ const invalidContentArchive =
   "content.import.archiveBase64 is not a supported content-package ZIP";
 
 const contentChecks: Partial<Record<Command, readonly Check[]>> = {
+  "content.copy": [
+    field("operationId", {
+      type: "string",
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$",
+    }),
+  ],
   "content.create-sample": [
     check(
       exactFields({ locale: { enum: appLocales } }),

@@ -322,8 +322,9 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
     .locator(".call-chain-player")
     .filter({ hasText: freshEdit });
   await revisedPlayer.getByRole("button", { name: fork, exact: true }).click();
+  const forkTitle = `${title} · ${t("分叉", "Fork")}`;
   await expect(
-    page.getByRole("heading", { name: `${title} (fork)`, exact: true }),
+    page.getByRole("heading", { name: forkTitle, exact: true }),
   ).toBeVisible();
   await expect(revisedTimeline).toContainText(freshEdit);
   await expect(revisedTimeline).not.toContainText(originalAction);
@@ -336,6 +337,12 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   await page
     .getByRole("button", { name: t("返回工作区", "Back to workspace") })
     .click();
+  await expect(
+    page.getByRole("button", {
+      name: t(`打开世界：${forkTitle}`, `Open world: ${forkTitle}`),
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.getByRole("button", { name: openWorld, exact: true }).click();
   await expect(revisedTimeline).toContainText(freshEdit);
   await expect(revisedTimeline).not.toContainText(originalAction);
