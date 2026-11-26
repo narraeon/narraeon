@@ -35,6 +35,7 @@ import {
   provenanceVersion,
 } from "../../src/runtime/play/OrchestrationProvenanceStore.ts";
 import { orchestrationManifest } from "../../src/shared/application-preset-files.ts";
+import { defaultSettingImprovementPromptForLocale } from "../../src/shared/default-setting-improvement-prompt.ts";
 import {
   builtinPlayPrompts,
   type OrderedPlayPrompt,
@@ -1621,11 +1622,164 @@ test("one orchestration_read batch supports paging and grants complete reads per
   ]);
 });
 
+test("the English harbor authoring batch reads the full guidance without a second page", async () => {
+  const f = await setup();
+  const surface = "authorPrompts";
+  const entryIds = [
+    "author.play-reference",
+    "author.guidance",
+    "author.target",
+  ];
+  const guidance = defaultSettingImprovementPromptForLocale("en");
+  expect(guidance).toHaveLength(4900);
+  f.respond((request) => {
+    if (request.exchange === 1)
+      return reply(
+        "",
+        tool("harbor-read", "orchestration_read", {
+          surface,
+          revision: f.initial.revision,
+          entryIds,
+        }),
+      );
+    expect(toolReceipt(request, "harbor-read").data).toMatchObject({
+      entries: [
+        { id: entryIds[0], nextOffset: null, completeForEditing: true },
+        {
+          id: entryIds[1],
+          text: guidance,
+          offset: 0,
+          end: 4900,
+          nextOffset: null,
+          completeForEditing: true,
+        },
+        { id: entryIds[2], nextOffset: null, completeForEditing: true },
+      ],
+    });
+    return reply("Read all three entries.");
+  });
+
+  const outcome = await f.editor().send({ ...f.send("harbor-batch"), surface });
+  expect(outcome.runStatus, outcome.lastFailure ?? undefined).toBe("ready");
+  expect(f.requests).toHaveLength(2);
+});
+
+test("an implicit batch that approaches the byte limit falls back and only grants the delivered ranges", async () => {
+  const f = await setup();
+  const surface = "playPrompts";
+  const structure = f.initial.structure!;
+  const longIds = Array.from({ length: 5 }, (_, i) => `long-batch-entry-${i}`);
+  const shortId = "short-batch-entry";
+  const target = longIds[0]!;
+  const pagedId = longIds.at(-1)!;
+  const entryIds = [...longIds, shortId];
+  const body = "界".repeat(6000);
+  structure.playPrompts!.push(
+    ...longIds.map((id) => ({
+      id,
+      kind: "user" as const,
+      name: id,
+      body: id === pagedId ? "界".repeat(6200) : body,
+      enabled: true,
+    })),
+    { id: shortId, kind: "user", name: shortId, body: "Short.", enabled: true },
+  );
+  const saved = await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: f.initial.files,
+    expectedRevision: f.initial.revision,
+    structure,
+  });
+  const revision = saved.preset.draft!.revision;
+  const read = (id: string, args: object) =>
+    tool(id, "orchestration_read", { surface, revision, ...args });
+  const disable = (entryId: string) => ({
+    op: "update",
+    operationId: `disable-${entryId}`,
+    entryId,
+    enabled: false,
+  });
+
+  f.respond((request) => {
+    switch (request.exchange) {
+      case undefined:
+        throw new Error("Missing exchange index");
+      case 1:
+        return reply(
+          "",
+          read("implicit", { entryIds }),
+          read("default-page-size", { entryIds: [pagedId] }),
+        );
+      case 2: {
+        const receipt = toolReceipt(request, "implicit");
+        expect(receipt.isError).toBe(false);
+        expect(receipt.data).toMatchObject({
+          entries: [
+            ...longIds.map((id) => ({
+              id,
+              text: body.slice(0, 4096),
+              offset: 0,
+              end: 4096,
+              nextOffset: 4096,
+              completeForEditing: false,
+            })),
+            { id: shortId, nextOffset: null, completeForEditing: true },
+          ],
+        });
+        const bytes = Buffer.byteLength(JSON.stringify(receipt.data), "utf8");
+        expect(bytes).toBeGreaterThan(60 * 1024);
+        expect(bytes).toBeLessThanOrEqual(64 * 1024);
+        expect(toolReceipt(request, "default-page-size").data).toMatchObject({
+          entries: [{ id: pagedId, end: 6144, nextOffset: 6144 }],
+        });
+        return reply(
+          "",
+          edit("partial-write", revision, [disable(target)]),
+          read("explicit-expanded", { entryIds, limit: 6144 }),
+        );
+      }
+      case 3:
+        expect(toolReceipt(request, "partial-write").data.error).toContain(
+          "Read the complete current entry",
+        );
+        expect(toolReceipt(request, "explicit-expanded").data.error).toContain(
+          "64 KiB",
+        );
+        return reply("", read("remainder", { entryId: target, offset: 4096 }));
+      case 4:
+        expect(toolReceipt(request, "remainder").data).toMatchObject({
+          id: target,
+          text: body.slice(4096),
+          nextOffset: null,
+          completeForEditing: true,
+        });
+        return reply(
+          "",
+          edit("accepted", revision, [disable(target), disable(shortId)]),
+        );
+      default:
+        expect(toolReceipt(request, "accepted").data.status).toBe(
+          "draft_saved",
+        );
+        return reply("Saved both fully read entries.");
+    }
+  });
+
+  const outcome = await f.editor().send(f.send("batch-fallback", revision));
+  expect(outcome.runStatus, outcome.lastFailure ?? undefined).toBe("ready");
+  expect(outcome.changes).toHaveLength(1);
+  expect(outcome.changes[0]?.entries.map(({ entryId }) => entryId)).toEqual([
+    target,
+    shortId,
+  ]);
+});
+
 test("an oversized or invalid batch never grants edit authorization", async () => {
   const f = await setup();
   const surface = "playPrompts";
   const structure = f.initial.structure!;
-  const ids = ["large-one", "large-two", "large-three", "large-four"];
+  const ids = Array.from({ length: 6 }, (_, i) => `large-${i}`);
   for (const id of ids)
     structure.playPrompts!.push({
       id,
@@ -1634,6 +1788,14 @@ test("an oversized or invalid batch never grants edit authorization", async () =
       body: "界".repeat(16_384),
       enabled: true,
     });
+  const shortId = "unread-short";
+  structure.playPrompts!.push({
+    id: shortId,
+    kind: "user",
+    name: shortId,
+    body: "Short.",
+    enabled: true,
+  });
   const saved = await f.drafts.save({
     presetId: f.presetId,
     name: f.initial.name,
@@ -1652,7 +1814,8 @@ test("an oversized or invalid batch never grants edit authorization", async () =
       case 1:
         return reply(
           "",
-          read("oversized", { entryIds: ids, limit: 16_384 }),
+          read("oversized", { entryIds: [shortId, ...ids], limit: 16_384 }),
+          read("oversized-default", { entryIds: [shortId, ...ids] }),
           read("too-many", {
             entryIds: Array.from({ length: 9 }, (_, i) => `entry-${i}`),
           }),
@@ -1662,9 +1825,13 @@ test("an oversized or invalid batch never grants edit authorization", async () =
             revision: f.initial.revision,
           }),
           read("invalid-offset", { entryIds: ids, offset: 16_385 }),
+          read("singular-default", { entryId: ids[1] }),
         );
       case 2:
         expect(toolReceipt(request, "oversized").data.error).toContain(
+          "64 KiB",
+        );
+        expect(toolReceipt(request, "oversized-default").data.error).toContain(
           "64 KiB",
         );
         expect(toolReceipt(request, "too-many").data.error).toContain(
@@ -1679,13 +1846,20 @@ test("an oversized or invalid batch never grants edit authorization", async () =
         expect(toolReceipt(request, "invalid-offset").data.error).toContain(
           "Invalid body range",
         );
+        expect(toolReceipt(request, "singular-default").data).toMatchObject({
+          id: ids[1],
+          offset: 0,
+          end: 8192,
+          nextOffset: 8192,
+          completeForEditing: false,
+        });
         return reply(
           "",
           edit("no-read-grant", revision, [
             {
               op: "update",
               operationId: "unearned-write",
-              entryId: ids[0],
+              entryId: shortId,
               enabled: false,
             },
           ]),
