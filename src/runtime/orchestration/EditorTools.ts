@@ -108,7 +108,8 @@ const numberProperty = { type: "integer", minimum: 0 };
 const maxEntryReadLength = 16_384;
 const maxBatchReadEntries = 8;
 const maxBatchReadBytes = 64 * 1024;
-const defaultBatchEntryLength = 4096;
+const defaultBatchEntryLength = 6144;
+const fallbackBatchEntryLength = 4096;
 
 function definition(
   name: string,
@@ -555,23 +556,27 @@ function read(
       `Read 1 to ${maxBatchReadEntries} distinct entry IDs in one batch`,
     );
 
-  // Reads only grant evidence if the entire bounded response can be returned.
-  const candidate = { ...auth, reads: structuredClone(auth.reads) };
-  const range = {
-    offset: args.offset,
-    limit: args.limit ?? defaultBatchEntryLength,
-  };
-  const result = {
-    surface,
-    revision: target.revision,
-    entries: ids.map((id: unknown) => readEntry(id, range, scope, candidate)),
-  };
-  if (Buffer.byteLength(JSON.stringify(result), "utf8") > maxBatchReadBytes)
-    throw new Error(
-      "Batch read exceeds 64 KiB. Use fewer entry IDs or a smaller limit.",
-    );
-  auth.reads = candidate.reads;
-  return result;
+  const limits =
+    args.limit === undefined
+      ? [defaultBatchEntryLength, fallbackBatchEntryLength]
+      : [args.limit ?? fallbackBatchEntryLength];
+  for (const limit of limits) {
+    // Each attempt starts from delivered evidence, including after fallback.
+    const candidate = { ...auth, reads: structuredClone(auth.reads) };
+    const range = { offset: args.offset, limit };
+    const result = {
+      surface,
+      revision: target.revision,
+      entries: ids.map((id: unknown) => readEntry(id, range, scope, candidate)),
+    };
+    if (Buffer.byteLength(JSON.stringify(result), "utf8") > maxBatchReadBytes)
+      continue;
+    auth.reads = candidate.reads;
+    return result;
+  }
+  throw new Error(
+    "Batch read exceeds 64 KiB. Use fewer entry IDs or a smaller limit.",
+  );
 }
 
 function readEntry(
