@@ -49,6 +49,10 @@ import { FileNativeWorldRevisionStore } from "./world-revision/FileNativeWorldRe
 import { WorldRevisionSession } from "./world-revision/WorldRevisionSession.ts";
 import { WorldRevisionWorkspace } from "./world-revision/WorldRevisionWorkspace.ts";
 
+import { EditorSessionStore } from "./orchestration/EditorSessionStore.ts";
+import { OrchestrationEditorSession } from "./orchestration/OrchestrationEditorSession.ts";
+import type { OrchestrationEditorExtension } from "./orchestration/EditorTools.ts";
+
 import { ConversationChanges } from "./ConversationChanges.ts";
 import type {
   ConversationTarget,
@@ -68,6 +72,7 @@ export class V1Runtime {
   readonly #errorLog: FileNativeRuntimeErrorLog | undefined;
   readonly #preferences: AppPreferencesStore;
   readonly #protagonistTemplates: ProtagonistTemplateStore;
+  readonly #orchestration: OrchestrationEditorSession;
   readonly #settingImprovements: SettingImprovementSession;
   readonly #worldRevisions: WorldRevisionSession;
   readonly #authoringCommands: AuthoringCommands;
@@ -82,6 +87,7 @@ export class V1Runtime {
     logRoot?: string;
     archiveUploadPolicy?: ArchiveUploadPolicy;
     generationActivity?: GenerationActivity;
+    orchestrationEditorExtension?: OrchestrationEditorExtension;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
     this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
@@ -122,6 +128,19 @@ export class V1Runtime {
       input.generationActivity === undefined
         ? {}
         : { generationActivity: input.generationActivity };
+    this.#orchestration = new OrchestrationEditorSession({
+      ...generation,
+      changed: (presetId, durable) =>
+        this.#conversationChanges.publish(`orchestration:${presetId}`, durable),
+      store: new EditorSessionStore(join(input.configRoot, "orchestration-sessions")),
+      drafts: this.#playPresets,
+      locale: () => this.#locale,
+      bindModelHost: () => this.#modelHost(),
+      bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
+      ...(input.orchestrationEditorExtension === undefined
+        ? {}
+        : { extension: input.orchestrationEditorExtension }),
+    });
     this.#settingImprovements = new SettingImprovementSession({
       ...generation,
       changed: (id, durable) =>
@@ -257,6 +276,7 @@ export class V1Runtime {
     this.#locale = (await this.#preferences.view()).locale;
     this.#compiler.setLocale(this.#locale);
     await this.#playPresets.initialize();
+    await this.#orchestration.initialize();
     await this.worldArchives.initialize();
   }
 
@@ -280,6 +300,9 @@ export class V1Runtime {
       if (mayChangeUserState(request.type)) {
         if ("packageId" in request)
           this.#conversationChanges.publish(`setting:${request.packageId}`);
+        if ("presetId" in request && typeof request.presetId === "string" &&
+            (request.type.startsWith("orchestration.") || request.type.startsWith("play.")))
+          this.#conversationChanges.publish(`orchestration:${request.presetId}`);
         if ("worldId" in request) {
           this.#conversationChanges.publish(`play:${request.worldId}`);
           this.#conversationChanges.publish(`revision:${request.worldId}`);
@@ -384,6 +407,13 @@ export class V1Runtime {
           },
         };
       }
+      case "orchestration":
+        return {
+          kind: "orchestration",
+          value: previous?.kind === "orchestration"
+            ? this.#orchestration.observeProgress(previous.value)
+            : await this.#orchestration.status(target.id, target.sessionId),
+        };
       case "revision":
         return {
           kind: "revision",
@@ -399,6 +429,12 @@ export class V1Runtime {
     request: V1Request,
     playCallChainObserver?: PlayCallChainObserver,
   ): Promise<unknown> {
+    if (hasCommandPrefix(request, "orchestration"))
+      return this.#orchestration.handle(request);
+    if (request.type === "play.draft.discard")
+      return this.#orchestration.discardDraft(request.presetId, request.expectedRevision);
+    if (request.type === "play.delete")
+      return this.#orchestration.deletePreset(request.presetId);
     if (
       hasCommandPrefix(request, "setting-improvement") ||
       hasCommandPrefix(request, "world.revision")

@@ -1,3 +1,4 @@
+import type { V1OrchestrationStatus } from "./orchestrationSession.ts";
 import type {
   V1PlayCallChainView,
   V1PlayRunProgress,
@@ -7,7 +8,7 @@ import type {
 
 export type ConversationTarget =
   | { kind: "play"; id: string }
-  | { kind: "setting" | "revision"; id: string; sessionId?: string };
+  | { kind: "setting" | "revision" | "orchestration"; id: string; sessionId?: string };
 
 export type ConversationState =
   | {
@@ -16,7 +17,8 @@ export type ConversationState =
       extensionsRevision?: number;
     }
   | { kind: "setting"; value: V1SettingImprovementStatus }
-  | { kind: "revision"; value: V1WorldRevisionStatus };
+  | { kind: "revision"; value: V1WorldRevisionStatus }
+  | { kind: "orchestration"; value: V1OrchestrationStatus };
 
 export type ConversationUpdate =
   | { kind: "snapshot"; value: ConversationState }

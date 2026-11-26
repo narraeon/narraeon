@@ -83,7 +83,7 @@ export class ModelConnectionUnavailableError extends RuntimeDomainError {
     super("No V1 model connection is enabled", {
       receipt: {
         code: "invalid_request",
-        commands: ["play.chain.start", "play.chain.append"],
+        commands: ["play.chain.start", "play.chain.append", "orchestration.message"],
       },
     });
     this.name = "ModelConnectionUnavailableError";

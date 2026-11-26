@@ -107,9 +107,31 @@ const requiredFields = {
     sessionId: text,
     requestId: text,
   },
+  "orchestration.overview": { presetId: text },
+  "orchestration.session.read": { presetId: text, sessionId: text },
+  "orchestration.session.delete": { presetId: text, sessionId: text },
+  "orchestration.message": {
+    presetId: text,
+    requestId: text,
+    message: text,
+    expectedRevision: text,
+    surface: { enum: ["playPrompts", "authorPrompts"] },
+    continuation: object,
+  },
+  "orchestration.resume": { presetId: text, sessionId: text, requestId: text },
+  "orchestration.cancel": { presetId: text, sessionId: text },
+  "orchestration.undo": {
+    presetId: text,
+    sessionId: text,
+    changeSetId: text,
+    expectedRevision: text,
+  },
+  "orchestration.call.context": { presetId: text, sessionId: text, callId: text },
+  "orchestration.request.preview": { presetId: text, sessionId: text, requestId: text },
   "play.create": { name: text },
   "play.copy": { presetId: text },
   "play.save": { presetId: text, name: text, files: object },
+  "play.draft.discard": { presetId: text, expectedRevision: text },
   "play.rename": { presetId: text, name: text },
   "play.delete": { presetId: text },
   "play.enable": { presetId: text, enabled: boolean },
@@ -350,6 +372,7 @@ const recoveryMode = field(
 );
 const beforeRequired: Partial<Record<Command, readonly Check[]>> = {
   "world.revision.discard": [field("expectedRevision", text)],
+  "orchestration.resume": [recoveryMode],
   "setting-improvement.resume": [recoveryMode],
   "world.revision.resume": [recoveryMode],
   "play.chain.append": [
@@ -532,6 +555,7 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
   "play.save": [
     field("files", textFiles, "play.save.files must be Record<string,string>"),
     field("structure", object, "play.save.structure must be a structured map"),
+    field("expectedRevision", text),
   ],
   "play.workbench.read": [
     check(
@@ -680,6 +704,7 @@ const afterTurnNote: Partial<Record<Command, readonly Check[]>> = {
   "world.revision.preview": [workbenchPreview],
   "setting-improvement.status": [sessionId],
   "world.revision.status": [sessionId],
+  "orchestration.message": [continuation, freshSessionId, field("focusedEntryId", text)],
   "setting-improvement.message": [continuation, freshSessionId],
   "world.revision.message": [continuation, freshSessionId],
   "setting-improvement.rollback": [

@@ -26,7 +26,7 @@ export function registerConversationStream(
   }>("/api/runtime/v1/events", (request, reply) => {
     const { kind, id, sessionId } = request.query;
     if (
-      (kind !== "play" && kind !== "setting" && kind !== "revision") ||
+      (kind !== "play" && kind !== "setting" && kind !== "revision" && kind !== "orchestration") ||
       typeof id !== "string" ||
       !/^[A-Za-z0-9_-]{1,200}$/.test(id) ||
       (sessionId !== undefined &&

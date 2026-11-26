@@ -21,7 +21,7 @@ import type {
 import type { ModelHostAppendItem } from "../model/ModelHost.ts";
 
 type ToolItem = Extract<ModelHostAppendItem, { kind: "tool" }> & {
-  changes: V1SettingAuthoringDiff[];
+  changes?: V1SettingAuthoringDiff[];
 };
 type AuthoringHistory = ModelToolConversationState & {
   createdAt: number;
@@ -122,7 +122,7 @@ export function authoringConversationTurns<T extends AuthoringHistory>(
         call.result = {
           markdown: item.markdown,
           isError: item.isError === true,
-          changes: structuredClone((item as ToolItem).changes),
+          changes: structuredClone((item as ToolItem).changes ?? []),
           changeSetId: changeSetId(
             item as Extract<T["modelItems"][number], { kind: "tool" }>,
             index,

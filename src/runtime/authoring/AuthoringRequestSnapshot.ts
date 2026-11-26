@@ -50,7 +50,8 @@ export interface AuthoringRequestSnapshot {
   requestId: string;
   modelItemStart: number;
   bootstrap: PromptCompilation;
-  playPreset: PlayPresetBinding;
+  /** Present for conversations bootstrapped by the user’s author orchestration. */
+  playPreset?: PlayPresetBinding;
   preload?: AuthoringPreloadRecord;
   wireRequest?: ModelHostWireRequest;
   modelBinding?: ModelHostBinding;
@@ -89,6 +90,7 @@ export function validAuthoringRequests(
     activeRequestId: unknown;
     completedRequestIds: unknown;
     extended?: boolean;
+    independent?: boolean;
   },
 ): value is AuthoringRequestSnapshot[] {
   if (
@@ -184,7 +186,7 @@ export function validAuthoringRequests(
       ) ||
       !isUserItem(items[item.modelItemStart as number]) ||
       !validPrompt(item.bootstrap) ||
-      !isPlayPresetBinding(item.playPreset)
+      (item.playPreset === undefined ? session.independent !== true : !isPlayPresetBinding(item.playPreset))
     )
       return false;
     ids.add(item.requestId);

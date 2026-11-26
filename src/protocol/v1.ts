@@ -1,3 +1,4 @@
+import type { OrchestrationSessionRequest } from "./orchestrationSession.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 import type { ModelRetryEvidence } from "./modelRetry.ts";
 import type { ContentSelection } from "./sillyTavernContent.ts";
@@ -50,6 +51,7 @@ export interface V1Envelope {
 }
 
 export type V1Request =
+  | OrchestrationSessionRequest
   | { type: "world.revision.preview"; worldId: string; sessionId?: string }
   | {
       type: "setting-improvement.call.context";
@@ -189,7 +191,9 @@ export type V1Request =
       name: string;
       files: Record<string, string>;
       structure?: Record<string, unknown>;
+      expectedRevision?: string;
     }
+  | { type: "play.draft.discard"; presetId: string; expectedRevision: string }
   | { type: "play.rename"; presetId: string; name: string }
   | { type: "play.delete"; presetId: string }
   | { type: "play.enable"; presetId: string; enabled: boolean }

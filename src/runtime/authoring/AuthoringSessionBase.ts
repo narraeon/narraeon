@@ -40,7 +40,7 @@ type RequestPreviewBoundaries = ModelHostExchange["worldRevisionBoundaries"];
 interface AuthoringSessionTarget<Session> {
   name: string;
   inputError: new (message: string) => Error;
-  read: (sessionId: string) => Promise<Session>;
+  read: (sessionId: string, targetId: string) => Promise<Session>;
   assertOwner: (session: Session, targetId: string) => void;
   bindModelHost: () => Promise<ModelHost>;
   compilePreview: (
@@ -89,7 +89,7 @@ export class AuthoringSessionBase<
   }
 
   async read(targetId: string, sessionId: string): Promise<Session> {
-    const session = await this.#target.read(sessionId);
+    const session = await this.#target.read(sessionId, targetId);
     this.#target.assertOwner(session, targetId);
     return session;
   }
@@ -273,7 +273,7 @@ export function beginAuthoringRequest(
     modelBinding: structuredClone(host.binding()),
     modelItemStart: session.modelItems.length,
     bootstrap: compilation.bootstrap,
-    playPreset: structuredClone(compilation.playPreset),
+    ...(compilation.playPreset === undefined ? {} : { playPreset: structuredClone(compilation.playPreset) }),
     ...(compilation.modelPrompt === undefined
       ? {}
       : { modelPrompt: compilation.modelPrompt }),

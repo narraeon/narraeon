@@ -604,6 +604,23 @@ export class FileNativePromptCompiler {
         blocks: preloadBlocks,
       });
     }
+    return this.compileAuthoringMessages({
+      logicalMessages,
+      modelBinding: input.modelBinding,
+      tools: input.tools,
+      mergeConsecutiveMessages: input.playPreset.definition.mergeConsecutiveMessages ?? true,
+    });
+  }
+
+  /** Encode an isolated Runtime-authored conversation without loading world material. */
+  compileAuthoringMessages(input: {
+    logicalMessages: PromptCompilation["logicalMessages"];
+    modelBinding: FileNativePromptInput["modelBinding"];
+    tools: PromptCompilation["tools"];
+    mergeConsecutiveMessages: boolean;
+  }): PromptCompilation {
+    validateModel(input.modelBinding);
+    const logicalMessages = input.logicalMessages;
     const tools = structuredClone(input.tools);
     const toolStrategy =
       this.#toolStrategyOverride ??
@@ -620,7 +637,7 @@ export class FileNativePromptCompiler {
       {
         locale: this.#locale,
         mergeConsecutiveMessages:
-          input.playPreset.definition.mergeConsecutiveMessages ?? true,
+          input.mergeConsecutiveMessages,
       },
     );
     const stableText = cacheStableText(logicalMessages, provider);
