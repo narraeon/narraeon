@@ -26,6 +26,7 @@ const reads = new Set<V1Request["type"]>([
   "play.read",
   "play.export",
   "play.workbench.read",
+  "play.orchestration.preview",
   "play.sillytavern.inspect",
   "play.sillytavern.preview",
   "prompt.preview",

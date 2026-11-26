@@ -458,11 +458,20 @@ export class V1Runtime {
     switch (request.type) {
       case "workspace.read":
         return {
+          ...(request.scope === "orchestration"
+            ? { scope: request.scope }
+            : {}),
           preferences: await this.#preferences.view(),
-          contentPackages: await this.#content.listCurrentTreeContentPackages(),
+          contentPackages:
+            request.scope === "orchestration"
+              ? []
+              : await this.#content.listCurrentTreeContentPackages(),
           playPresets: await this.#playPresets.list(),
           model: await this.#models.view(),
-          worlds: await this.#worlds.listWorlds(),
+          worlds:
+            request.scope === "orchestration"
+              ? []
+              : await this.#worlds.listWorlds(),
           storageNotices: this.#storageNotices(),
         };
       case "preferences.read":

@@ -162,6 +162,12 @@ const requiredFields = {
     name: text,
   },
   "play.workbench.read": {},
+  "play.orchestration.preview": {
+    presetId: text,
+    revision: text,
+    surface: text,
+    gameplay: object,
+  },
   "prompt.preview": {
     packageId: text,
     playerInput: text,
@@ -535,6 +541,41 @@ const safeEventId = field("eventId", {
 });
 
 const playChecks: Partial<Record<Command, readonly Check[]>> = {
+  "workspace.read": [field("scope", { const: "orchestration" })],
+  "play.orchestration.preview": [
+    check(
+      exactFields({
+        presetId: text,
+        revision: text,
+        surface: { enum: ["play", "author"] },
+        gameplay: object,
+        authorTarget: { enum: ["setting", "world-revision"] },
+        connection: { enum: ["active", "none"] },
+        candidate: {
+          type: "object",
+          required: ["files"],
+          additionalProperties: false,
+          properties: { files: textFiles, structure: object },
+        },
+      }),
+      "play.orchestration.preview has invalid fields",
+    ),
+    (request) => {
+      try {
+        parseGameplay(request.gameplay);
+      } catch (cause) {
+        return {
+          message: "play.orchestration.preview.gameplay is invalid",
+          cause,
+        };
+      }
+    },
+    dependency(
+      (request) =>
+        request.surface === "play" && request.authorTarget !== undefined,
+      "play.orchestration.preview.authorTarget requires the author surface",
+    ),
+  ],
   "prompt.preview": [
     field("playPresetId", text),
     field("playPresetRevision", text),

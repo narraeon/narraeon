@@ -2,6 +2,7 @@ import type { OrchestrationSessionRequest } from "./orchestrationSession.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 import type { ModelRetryEvidence } from "./modelRetry.ts";
 import type { ContentSelection } from "./sillyTavernContent.ts";
+import type { OrchestrationPreviewInput } from "./orchestrationPreview.ts";
 import type { Gameplay, ResolutionScheme } from "./gameplay.ts";
 import type { ResolutionReceipt } from "./resolution.ts";
 import type { SaveProtagonistTemplateInput } from "./protagonistTemplates.ts";
@@ -82,7 +83,7 @@ export type V1Request =
       packageId: string;
       sessionId?: string;
     }
-  | { type: "workspace.read" }
+  | { type: "workspace.read"; scope?: "orchestration" }
   | { type: "preferences.read" }
   | {
       type: "preferences.save";
@@ -230,6 +231,7 @@ export type V1Request =
         structure?: Record<string, unknown>;
       };
     }
+  | ({ type: "play.orchestration.preview" } & OrchestrationPreviewInput)
   | {
       type: "prompt.preview";
       packageId: string;
