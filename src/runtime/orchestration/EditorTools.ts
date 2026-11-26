@@ -49,6 +49,7 @@ interface ToolResult {
 export interface OrchestrationEditorExtension {
   readonly tools: PromptCompilation["tools"];
   readonly provenanceSchema?: object;
+  readonly requiresSourceSnapshot?: true;
   summarize(
     presetId: string,
   ): Promise<Record<string, string | number> | undefined>;
