@@ -57,6 +57,7 @@ export interface OrchestrationEditorExtension {
   read(input: {
     presetId: string;
     sourceSnapshotId?: string | undefined;
+    locale?: AppLocale;
     call: ModelHostToolCall;
     evidence: readonly unknown[];
   }): Promise<{ data: unknown; evidence?: unknown }>;
@@ -102,6 +103,10 @@ export interface EditorSettlement {
 const surfaceProperty = { type: "string", enum: editorSurfaces };
 const textProperty = { type: "string" };
 const numberProperty = { type: "integer", minimum: 0 };
+const maxEntryReadLength = 16_384;
+const maxBatchReadEntries = 8;
+const maxBatchReadBytes = 64 * 1024;
+const defaultBatchEntryLength = 4096;
 
 function definition(
   name: string,
@@ -127,20 +132,27 @@ export function orchestrationEditorTools(
   return [
     definition(
       "orchestration_list",
-      "Read the draft revision, effective ordered entry identities, roles, scopes and current builtin catalog. No world or package access.",
+      "Read the draft revision and ordered entry identities, roles, and scopes with built-in summaries. Start here when looking for overlap. Listing does not grant edit authorization or access to worlds or packages.",
       { surface: surfaceProperty },
     ),
     definition(
       "orchestration_read",
-      "Read an entry in the exact draft revision before editing. Read all segments for a large body. Offsets count UTF-16 code units.",
+      "Precisely read one entry (entryId) or up to 8 explicit entries (entryIds) in the same surface and revision. Use summaries to shortlist before reading. Offset and limit apply to each entry and count UTF-16 code units. Continue a partial body using nextOffset, or independent single reads if offsets differ. Editing requires complete reads of each entry.",
       {
         surface: surfaceProperty,
         revision: textProperty,
         entryId: textProperty,
+        entryIds: {
+          type: "array",
+          items: textProperty,
+          minItems: 1,
+          maxItems: maxBatchReadEntries,
+          uniqueItems: true,
+        },
         offset: numberProperty,
-        limit: numberProperty,
+        limit: { type: "integer", minimum: 1, maximum: maxEntryReadLength },
       },
-      ["surface", "revision", "entryId"],
+      ["surface", "revision"],
     ),
     definition(
       "orchestration_preview",
@@ -264,6 +276,7 @@ export async function settleEditorTools(input: {
           const read = await input.extension.read({
             presetId: target.id,
             sourceSnapshotId: auth.sourceSnapshotId,
+            locale,
             call,
             evidence: auth.sourceEvidence,
           });
@@ -496,23 +509,72 @@ function read(
   const args = fields(raw, [
     "surface",
     "entryId",
+    "entryIds",
     "revision",
     "offset",
     "limit",
   ]);
   const surface = editorSurface(args.surface);
   assertRevision(args.revision, target.revision);
-  if (!validId(args.entryId)) throw new Error("Invalid entry ID");
-  const entryId = args.entryId;
-  const index = entries[surface].findIndex(({ id }) => id === entryId);
-  const entry = entries[surface][index];
+  const scope = {
+    surface,
+    entries: entries[surface],
+    catalog: promptCatalog(surface, locale),
+    worldLabel: worldName(locale),
+    revision: target.revision,
+  };
+  if (!Object.hasOwn(args, "entryIds"))
+    return readEntry(args.entryId, args, scope, auth);
+  if (Object.hasOwn(args, "entryId"))
+    throw new Error("Choose entryId or entryIds for this read");
+  const ids: unknown = args.entryIds;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.length > maxBatchReadEntries ||
+    new Set(ids).size !== ids.length
+  )
+    throw new Error(
+      `Read 1 to ${maxBatchReadEntries} distinct entry IDs in one batch`,
+    );
+
+  // Reads only grant evidence if the entire bounded response can be returned.
+  const candidate = { ...auth, reads: structuredClone(auth.reads) };
+  const range = {
+    offset: args.offset,
+    limit: args.limit ?? defaultBatchEntryLength,
+  };
+  const result = {
+    surface,
+    revision: target.revision,
+    entries: ids.map((id: unknown) => readEntry(id, range, scope, candidate)),
+  };
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > maxBatchReadBytes)
+    throw new Error(
+      "Batch read exceeds 64 KiB. Use fewer entry IDs or a smaller limit.",
+    );
+  auth.reads = candidate.reads;
+  return result;
+}
+
+function readEntry(
+  entryId: unknown,
+  args: Record<string, unknown>,
+  scope: {
+    surface: OrchestrationSurface;
+    entries: EditorEntries[OrchestrationSurface];
+    catalog: ReturnType<typeof promptCatalog>;
+    worldLabel: string;
+    revision: string;
+  },
+  auth: EditorAuthorization,
+) {
+  const { surface, entries, catalog, worldLabel, revision } = scope;
+  if (!validId(entryId)) throw new Error("Invalid entry ID");
+  const index = entries.findIndex(({ id }) => id === entryId);
+  const entry = entries[index];
   if (!entry) throw new Error("No such entry on the requested surface");
-  const details = editorEntry(
-    entry,
-    index,
-    promptCatalog(surface, locale),
-    worldName(locale),
-  );
+  const details = editorEntry(entry, index, catalog, worldLabel);
   const part = slice(details.text, args);
   let read = auth.reads.find(
     (item) => item.surface === surface && item.entryId === entryId,
@@ -525,7 +587,7 @@ function read(
   return {
     ...details,
     ...part,
-    revision: target.revision,
+    revision,
     completeForEditing: completelyRead(auth, surface, entryId),
     ...(entry.kind === "builtin" ? { builtin: entry.builtin } : {}),
   };
@@ -667,10 +729,10 @@ function slice(body: string, args: Record<string, unknown>) {
     typeof limit !== "number" ||
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
-    limit > 16384
+    limit > maxEntryReadLength
   )
     throw new Error(
-      "Invalid body range (maximum 16384 UTF-16 code units per call)",
+      `Invalid body range (maximum ${maxEntryReadLength} UTF-16 code units per entry)`,
     );
   const end = Math.min(body.length, offset + limit);
   return {
