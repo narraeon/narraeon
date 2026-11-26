@@ -252,6 +252,7 @@ export type V1Request =
       revision: string;
       surface: OrchestrationSurface;
       entryId: string;
+      target?: "current" | "draft";
     }
   | {
       type: "prompt.preview";

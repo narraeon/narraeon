@@ -377,7 +377,7 @@ export class OrchestrationEditorSession {
       isCurrentPreset: target.current,
       revision: target.revision,
       currentRevision: target.currentRevision,
-      hasSavedDraft: target.revision !== target.currentRevision,
+      hasSavedDraft: target.hasDraft,
       surface: input.surface,
       focusedEntryId: input.focusedEntryId ?? null,
       sillyTavernSource: source ?? null,
@@ -498,9 +498,7 @@ export class OrchestrationEditorSession {
             .filter(({ name }) => name === "orchestration_edit")
             .map(({ id }) => id),
           beforeManifest,
-          ...(target.provenance === undefined
-            ? {}
-            : { beforeProvenance: target.provenance }),
+          beforeProvenance: target.provenance ?? [],
           receipt: {
             id,
             requestId: request.requestId,

@@ -1,5 +1,13 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -9,6 +17,7 @@ import type {
   OrchestrationSessionRequest,
   V1OrchestrationView,
 } from "../../src/protocol/orchestrationSession.ts";
+import type { OrchestrationEntrySource } from "../../src/protocol/orchestrationProvenance.ts";
 import type {
   ModelHost,
   ModelHostBinding,
@@ -17,10 +26,19 @@ import type {
   ModelHostToolCall,
 } from "../../src/runtime/model/ModelHost.ts";
 import { EditorSessionStore } from "../../src/runtime/orchestration/EditorSessionStore.ts";
+import type { OrchestrationEditorExtension } from "../../src/runtime/orchestration/EditorTools.ts";
 import { OrchestrationEditorSession } from "../../src/runtime/orchestration/OrchestrationEditorSession.ts";
 import { FileNativePlayPresetStore } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import {
+  OrchestrationProvenanceStore,
+  provenanceVersion,
+} from "../../src/runtime/play/OrchestrationProvenanceStore.ts";
 import { orchestrationManifest } from "../../src/shared/application-preset-files.ts";
 import type { OrderedPlayPrompt } from "../../src/shared/ordered-play-prompts.ts";
+import {
+  readEditorEntries,
+  writeEditorEntries,
+} from "../../src/runtime/orchestration/EditorOperations.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -28,6 +46,351 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { force: true, recursive: true });
 });
+
+test("a source draft can coexist with an applied version containing identical files", async () => {
+  const { drafts, initial, presetId } = await setup();
+  const appliedFiles = withSourcePrompt(initial.files, "Original body.");
+  await drafts.save({ presetId, name: initial.name, files: appliedFiles });
+  const applied = await drafts.select(presetId);
+  const preceding = await drafts.save({
+    presetId,
+    name: initial.name,
+    files: withSourcePrompt(initial.files, "Changed body."),
+  });
+  const annotation = sourceAnnotation("Original body.");
+  await publishSourceDraft(drafts, presetId, appliedFiles, {
+    provenance: [{ ...annotation, value: annotation.source }],
+  });
+  const effective = await drafts.readEditorDraft(presetId);
+  expect(effective.files).toEqual(appliedFiles);
+  expect(effective.provenance).toEqual([annotation]);
+  expect(effective.revision).toBe(applied.preset.revision);
+  expect(effective.hasDraft).toBe(true);
+  expect(
+    await drafts.readOrchestrationProvenance(
+      presetId,
+      applied.preset.revision,
+      "current",
+    ),
+  ).toEqual([]);
+  expect(effective.currentRevision).toBe(applied.preset.revision);
+  const copied = await drafts.copy(presetId);
+  expect(
+    await drafts.readOrchestrationProvenance(
+      copied.preset.id,
+      copied.preset.revision,
+    ),
+  ).toEqual([annotation]);
+  expect(JSON.stringify(await drafts.exportPortable(presetId))).not.toContain(
+    annotation.source.snapshotId,
+  );
+  await publishSourceDraft(drafts, presetId, preceding.preset.draft!.files, {
+    restoreProvenance: [],
+  });
+  expect((await drafts.readEditorDraft(presetId)).provenance).toBeUndefined();
+});
+
+test("a repeated file revision restores both an explicit empty preimage and a different source", async () => {
+  const { drafts, initial, presetId, root } = await setup();
+  const files = withSourcePrompt(initial.files, "Original body.");
+  const original = sourceAnnotation("Original body.", "Original extraction");
+  await publishSourceDraft(drafts, presetId, files, {
+    provenance: [{ ...original, value: original.source }],
+  });
+  const first = await drafts.select(presetId);
+  const revision = first.preset.revision;
+  const alternate = sourceAnnotation("Original body.", "Later extraction");
+  await publishSourceDraft(drafts, presetId, files, {
+    provenance: [{ ...alternate, value: alternate.source }],
+  });
+  expect((await drafts.readEditorDraft(presetId)).provenance).toEqual([
+    alternate,
+  ]);
+  expect(
+    await drafts.readOrchestrationProvenance(presetId, revision, "current"),
+  ).toEqual([original]);
+
+  const reopened = new FileNativePlayPresetStore(root, { locale: () => "en" });
+  await reopened.initialize();
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision, "draft"),
+  ).toEqual([alternate]);
+  await publishSourceDraft(reopened, presetId, files, {
+    restoreProvenance: [],
+  });
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision, "draft"),
+  ).toEqual([]);
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision, "current"),
+  ).toEqual([original]);
+  await reopened.save({ presetId, name: initial.name, files });
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision, "draft"),
+  ).toEqual([]);
+  await reopened.discardDraft(presetId, revision);
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision),
+  ).toEqual([original]);
+
+  await publishSourceDraft(reopened, presetId, files, {
+    restoreProvenance: [alternate],
+  });
+  const sameFiles = await reopened.select(presetId);
+  expect(sameFiles.preset.revision).toBe(revision);
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision, "current"),
+  ).toEqual([alternate]);
+  await reopened.save({ presetId, name: initial.name, files: initial.files });
+  await reopened.select(presetId);
+  await publishSourceDraft(reopened, presetId, files, {
+    restoreProvenance: [alternate],
+  });
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision),
+  ).toEqual([alternate]);
+  await reopened.discardDraft(presetId, revision);
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, revision),
+  ).toEqual([original]);
+});
+
+test("an unpublished provenance variant cannot replace the current or historical source after failure or restart", async () => {
+  const { drafts, initial, presetId, root } = await setup();
+  const files = withSourcePrompt(initial.files, "Original body.");
+  const original = sourceAnnotation("Original body.", "Applied extraction");
+  await publishSourceDraft(drafts, presetId, files, {
+    restoreProvenance: [original],
+  });
+  const { preset } = await drafts.select(presetId);
+  const variant = sourceAnnotation("Original body.", "Unpublished extraction");
+  const library = join(root, "file-native-orchestrations.json");
+  const backup = join(root, "library-backup");
+  const sidecar = new OrchestrationProvenanceStore(root);
+  const sidecarDirectory = join(
+    root,
+    "orchestration-provenance",
+    createHash("sha256").update(presetId).digest("hex"),
+  );
+  const staged = `${preset.revision}.${provenanceVersion([variant])}.json`;
+  const originalWrite = sidecar.write.bind(sidecar);
+  const failLibrary = vi
+    .spyOn(OrchestrationProvenanceStore.prototype, "write")
+    .mockImplementationOnce(async (...args) => {
+      const created = await originalWrite(...args);
+      await rename(library, backup);
+      await mkdir(library);
+      return created;
+    });
+  try {
+    await expect(
+      publishSourceDraft(drafts, presetId, files, {
+        restoreProvenance: [variant],
+      }),
+    ).rejects.toThrow();
+    expect(await readdir(sidecarDirectory)).not.toContain(staged);
+  } finally {
+    failLibrary.mockRestore();
+    await rm(library, { recursive: true });
+    await rename(backup, library);
+  }
+  expect(
+    await drafts.readOrchestrationProvenance(presetId, preset.revision),
+  ).toEqual([original]);
+  await sidecar.write(presetId, preset.revision, provenanceVersion([variant]), [
+    variant,
+  ]);
+  expect(await readdir(sidecarDirectory)).toContain(staged);
+  const reopened = new FileNativePlayPresetStore(root, { locale: () => "en" });
+  await reopened.initialize();
+  expect(await readdir(sidecarDirectory)).not.toContain(staged);
+  expect(
+    await reopened.readOrchestrationProvenance(presetId, preset.revision),
+  ).toEqual([original]);
+  await publishSourceDraft(reopened, presetId, files, {
+    restoreProvenance: [variant],
+  });
+  expect(
+    await reopened.readOrchestrationProvenance(
+      presetId,
+      preset.revision,
+      "draft",
+    ),
+  ).toEqual([variant]);
+});
+
+test.each(["before", "after"] as const)(
+  "same-file provenance survives interruption %s the library commit and undo restores the prior draft",
+  async (interruption) => {
+    const f = await setup();
+    const { drafts, initial, presetId, root } = f;
+    const body = "Original body.";
+    const appliedFiles = withSourcePrompt(initial.files, body);
+    const draftFiles = withSourcePrompt(initial.files, "Previous draft.");
+    await drafts.save({ presetId, name: initial.name, files: appliedFiles });
+    const { preset: applied } = await drafts.select(presetId);
+    const { preset: saved } = await drafts.save({
+      presetId,
+      name: initial.name,
+      files: draftFiles,
+    });
+    const before = saved.draft!.revision;
+    const annotation = sourceAnnotation(body, "Journalled extraction");
+    const extension: OrchestrationEditorExtension = {
+      tools: [],
+      provenanceSchema: { type: "object" },
+      summarize: () => Promise.resolve(undefined),
+      read: () => Promise.reject(new Error("Unused fixture tool")),
+      validateProvenance: () => Promise.resolve(annotation.source),
+    };
+    const libraryPath = join(root, "file-native-orchestrations.json");
+    const beforeLibrary = await readFile(libraryPath, "utf8");
+    const original = drafts.publishEditorDraft.bind(drafts);
+    let prepared: { path: string; journal: string } | undefined;
+    vi.spyOn(drafts, "publishEditorDraft").mockImplementationOnce(
+      async (input) => {
+        const path = join(
+          f.sessionDirectory,
+          (await readdir(f.sessionDirectory)).find((name) =>
+            name.endsWith(".json"),
+          )!,
+        );
+        prepared = { path, journal: await readFile(path, "utf8") };
+        await original(input);
+      },
+    );
+    f.respond((request) => {
+      if (request.exchange === 1)
+        return reply(
+          "",
+          tool("read-existing", "orchestration_read", {
+            surface: "playPrompts",
+            revision: before,
+            entryId: annotation.entryId,
+          }),
+        );
+      if (request.exchange === 2)
+        return reply(
+          "",
+          edit("same-files", before, [
+            {
+              op: "update",
+              operationId: "attach-source",
+              entryId: annotation.entryId,
+              body,
+              provenance: {},
+            },
+          ]),
+        );
+      expect(toolReceipt(request, "same-files").data.revision).toBe(
+        applied.revision,
+      );
+      return reply("Draft saved.");
+    });
+    const changed = await f
+      .editor(drafts, extension)
+      .send(f.send("collision", before));
+    expect(changed.revision).toBe(applied.revision);
+    expect((await drafts.readEditorDraft(presetId)).provenance).toEqual([
+      annotation,
+    ]);
+    expect(changed.changes[0]!.afterRevision).toBe(applied.revision);
+    expect(prepared?.journal).toContain('"beforeProvenance":[]');
+    await writeFile(prepared!.path, prepared!.journal);
+    if (interruption === "before") await writeFile(libraryPath, beforeLibrary);
+    const reopened = new FileNativePlayPresetStore(root, {
+      locale: () => "en",
+    });
+    await reopened.initialize();
+    const editor = f.editor(reopened, extension);
+    expect(
+      (await editor.status(presetId, changed.sessionId)).draftRevision,
+    ).toBe(applied.revision);
+    expect(
+      await reopened.readOrchestrationProvenance(
+        presetId,
+        applied.revision,
+        "draft",
+      ),
+    ).toEqual([annotation]);
+    expect(
+      await reopened.readOrchestrationProvenance(
+        presetId,
+        applied.revision,
+        "current",
+      ),
+    ).toEqual([]);
+    const undone = (await editor.handle({
+      type: "orchestration.undo",
+      presetId,
+      sessionId: changed.sessionId,
+      changeSetId: changed.changes[0]!.id,
+      expectedRevision: applied.revision,
+    })) as V1OrchestrationView;
+    expect(undone.revision).toBe(before);
+    expect((await reopened.readEditorDraft(presetId)).files).toEqual(
+      draftFiles,
+    );
+    expect(
+      (await reopened.readEditorDraft(presetId)).provenance,
+    ).toBeUndefined();
+  },
+);
+
+function withSourcePrompt(files: Record<string, string>, body: string) {
+  const before = readEditorEntries(files);
+  const after = structuredClone(before);
+  after.playPrompts.push({
+    id: "source-example",
+    kind: "user",
+    name: "Source example",
+    body,
+    enabled: false,
+  });
+  return writeEditorEntries(files, before, after);
+}
+
+function sourceAnnotation(
+  body: string,
+  rationale = "Source example",
+): OrchestrationEntrySource {
+  return {
+    surface: "playPrompts",
+    entryId: "source-example",
+    source: {
+      snapshotId: "a".repeat(64),
+      groupId: "group",
+      fragments: [{ entryId: "source", name: "Source", offset: 0, end: 2 }],
+      rationale,
+      droppedConditions: [],
+      requiresReview: false,
+      extractedBodySha256: createHash("sha256").update(body).digest("hex"),
+    },
+  };
+}
+
+async function publishSourceDraft(
+  drafts: FileNativePlayPresetStore,
+  presetId: string,
+  files: Record<string, string>,
+  metadata: Pick<
+    Parameters<FileNativePlayPresetStore["publishEditorDraft"]>[0],
+    "provenance" | "restoreProvenance"
+  >,
+) {
+  const base = await drafts.readEditorDraft(presetId);
+  await drafts.publishEditorDraft({
+    presetId,
+    files,
+    expectedRevision: base.revision,
+    expectedEpoch: base.epoch,
+    expectedHead: base.head,
+    expectedCurrentRevision: base.currentRevision,
+    receiptId: `source-receipt:${randomUUID()}`,
+    nextHead: `source-head:${randomUUID()}`,
+    ...metadata,
+  });
+}
 
 const binding: ModelHostBinding = {
   provider: "chat_completions",
@@ -59,9 +422,13 @@ async function setup() {
       return respond(request);
     },
   };
-  const editor = () =>
+  const editor = (
+    editorDrafts = drafts,
+    extension?: OrchestrationEditorExtension,
+  ) =>
     new OrchestrationEditorSession({
-      drafts,
+      drafts: editorDrafts,
+      ...(extension === undefined ? {} : { extension }),
       store,
       bindModelHost: () => Promise.resolve(host),
       bindExistingModelHost: (saved) => {
