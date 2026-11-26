@@ -715,7 +715,7 @@ export function SettingImprovementPanel({
                 <h2>
                   {revisingWorld
                     ? uiText("手动编辑和 AI 共用一份修订")
-                    : uiText("和 AI 边聊边改")}
+                    : uiText("可以从一句故事点子开始")}
                 </h2>
                 <p>
                   {revisingWorld

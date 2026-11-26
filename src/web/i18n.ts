@@ -1710,7 +1710,7 @@ const settingImprovementEnglishMessages: Record<string, string> = {
   编辑这份文件: "Edit this file",
   "二进制资源不在文本预览中展开。":
     "Binary resources are not expanded in the text preview.",
-  "和 AI 边聊边改": "Discuss and edit with AI",
+  可以从一句故事点子开始: "You can start with a one-sentence story idea",
   "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。":
     "Successful tool changes write directly to the current content-package tree. Open files on the right to inspect or edit them manually.",
   "查看工具步骤文本（未进入最终回复）":
