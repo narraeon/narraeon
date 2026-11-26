@@ -14,6 +14,7 @@ import {
 } from "./preset-resource-editor.ts";
 import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
+import { OrchestrationEntryProvenance } from "./OrchestrationProvenance.tsx";
 import { OrchestrationConversationPanel } from "./OrchestrationConversationPanel.tsx";
 import type { ObserveConversation } from "./ConversationObserver.ts";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
@@ -1354,6 +1355,24 @@ export function PlayPresetScreen({
                         onChange={updateStructure}
                         onWrite={updateFileAtPath}
                         onFocusPrompt={focusPrompt}
+                        entryDetails={
+                          saved?.sillyTavernSource &&
+                          effectiveRevision !== undefined
+                            ? (entryId) => (
+                                <OrchestrationEntryProvenance
+                                  client={client}
+                                  presetId={draft.id}
+                                  revision={effectiveRevision}
+                                  surface={
+                                    workspaceView === "setting_improvement"
+                                      ? "authorPrompts"
+                                      : "playPrompts"
+                                  }
+                                  entryId={entryId}
+                                />
+                              )
+                            : undefined
+                        }
                         onResourceEdit={updateResources}
                         promptPreview={
                           saved && (

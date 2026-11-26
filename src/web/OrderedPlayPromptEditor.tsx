@@ -32,6 +32,7 @@ export function OrderedPlayPromptEditor({
   detail,
   onSelectPrompt,
   onFocusPrompt,
+  entryDetails,
   modelConnection,
   onEditModelConnection,
 }: {
@@ -43,6 +44,7 @@ export function OrderedPlayPromptEditor({
   authoring?: boolean;
   directory?: ReactNode;
   promptPreview?: ReactNode;
+  entryDetails?: ((entryId: string) => ReactNode) | undefined;
   detail?: ReactNode;
   onSelectPrompt?: () => void;
   onFocusPrompt?:
@@ -436,6 +438,7 @@ export function OrderedPlayPromptEditor({
                   </label>
                 )}
               </div>
+              {entryDetails?.(selected.id)}
               {isModelPrompt ? (
                 <>
                   <p>{modelConnection?.name ?? uiText("未启用模型连接")}</p>

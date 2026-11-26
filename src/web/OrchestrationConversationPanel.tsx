@@ -4,7 +4,6 @@ import {
   useEffectEvent,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import type {
   OrchestrationSurface,
@@ -36,6 +35,7 @@ import {
   ModelCallReasoning,
   ModelCallTools,
 } from "./ModelCallDetails.tsx";
+import { OrchestrationProvenance } from "./OrchestrationProvenance.tsx";
 import { RequestContextDetails } from "./PlayRequestContextDetails.tsx";
 import { RuntimeRequestError } from "./runtimeClient.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
@@ -84,7 +84,6 @@ interface OrchestrationConversationPanelProps {
   saveLocal: () => Promise<void>;
   discardLocal: () => void;
   refreshPreset: () => Promise<void>;
-  renderProvenance?: (value: unknown) => ReactNode;
 }
 
 function acknowledged(
@@ -113,7 +112,6 @@ export function OrchestrationConversationPanel({
   saveLocal,
   discardLocal,
   refreshPreset,
-  renderProvenance,
 }: OrchestrationConversationPanelProps) {
   const [restored] = useState(() => readOrchestrationPendingRequest(presetId));
   const [choice, choose] = useState<SessionChoice>(() => {
@@ -703,14 +701,14 @@ export function OrchestrationConversationPanel({
                       ),
                     )}
                   </dl>
-                  {renderProvenance &&
-                    receipt.provenance
-                      ?.filter((item) => item.entryId === entryId)
-                      .map((item) => (
-                        <div key={item.operationId}>
-                          {renderProvenance?.(item.value)}
-                        </div>
-                      ))}
+                  {receipt.provenance
+                    ?.filter((item) => item.entryId === entryId)
+                    .map((item) => (
+                      <OrchestrationProvenance
+                        key={item.operationId}
+                        record={item.value}
+                      />
+                    ))}
                   {before?.text !== after?.text && (
                     <UnifiedTextDiff
                       before={before?.text ?? null}

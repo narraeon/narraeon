@@ -46,6 +46,8 @@ const englishMessages: Record<string, string> = {
   尾部覆盖: "Turn-guide override",
   玩法限定: "Gameplay scope",
   已明确清空: "Explicitly cleared",
+  原样重试: "Retry original request",
+  新对话: "New conversation",
   从已保存草稿复制: "Copy saved draft to a new orchestration",
   导出已保存草稿: "Export saved draft",
   "已放弃尚未应用的编排草稿。": "Discarded the unapplied orchestration draft.",
