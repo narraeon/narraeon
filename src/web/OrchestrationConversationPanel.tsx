@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -56,11 +57,11 @@ type SessionChoice =
 type RequestConfirmation =
   | { kind: "delete"; sessionId: string }
   | { kind: "undo"; changeSetId: string; sessionId: string };
-type Projection = {
+interface Projection {
   selectedId: string | undefined;
   overview: V1OrchestrationOverview;
   selected: V1OrchestrationView | null;
-};
+}
 
 interface OrchestrationConversationPanelProps {
   client: {
@@ -135,7 +136,9 @@ export function OrchestrationConversationPanel({
   const [confirmation, setConfirmation] =
     useState<ConfirmationRequest<RequestConfirmation> | null>(null);
   const latestMessage = useRef(message);
-  latestMessage.current = message;
+  useLayoutEffect(() => {
+    latestMessage.current = message;
+  }, [message]);
   const commandActive = useRef(false);
   const livePanel = useRef(false);
   useEffect(() => {
@@ -162,9 +165,16 @@ export function OrchestrationConversationPanel({
     ]);
     return { selectedId, overview, selected: selected ?? overview.latest };
   }, [client, presetId, selectedId]);
+  const reconcileProjection = useRef<((value: Projection) => void) | null>(
+    null,
+  );
+  const applyProjection = useCallback((value: Projection) => {
+    setProjection(value);
+    reconcileProjection.current?.(value);
+  }, []);
   const { target, syncFailed, syncError } = useReadTarget(
     readProjection,
-    setProjection,
+    applyProjection,
   );
   useEffect(() => {
     void target.read();
@@ -237,22 +247,19 @@ export function OrchestrationConversationPanel({
     if (choice.kind === "new") choose({ kind: "session", id: view.sessionId });
   }
 
-  const completeObservedRequest = useEffectEvent(
-    (input: OrchestrationPendingRequest, view: V1OrchestrationView) => {
-      confirmReceipt(input, view);
-      setFailure(null);
-    },
-  );
-  useEffect(() => {
-    const pending = inFlight ?? uncertain;
-    if (pending !== null && projection !== null) {
-      const { selected, overview } = projection;
+  useLayoutEffect(() => {
+    reconcileProjection.current = ({ selected, overview }) => {
+      const pending = inFlight ?? uncertain;
+      if (pending === null) return;
       const matching = [selected, overview.latest].find((view) =>
         acknowledged(view, pending.requestId),
       );
-      if (matching) completeObservedRequest(pending, matching);
-    }
-  }, [inFlight, uncertain, projection]);
+      if (matching) {
+        confirmReceipt(pending, matching);
+        setFailure(null);
+      }
+    };
+  });
 
   async function dispatch(input: Send | Resume): Promise<void> {
     if (commandActive.current) return;
