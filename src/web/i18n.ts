@@ -1041,15 +1041,16 @@ const englishMessages: Record<string, string> = {
   模型已就绪: "Model ready",
   需要模型连接: "Model connection required",
   新建内容包: "Create content package",
-  从示例新建: "Create from sample",
-  从示例开始: "Start with a sample",
-  "正在创建示例…": "Creating sample…",
-  "从雨夜旅店的示例故事开始，也可以新建或导入自己的内容包。":
-    "Start with a rainy-night inn story, or create or import your own content package.",
+  从内置故事新建: "Create from a built-in story",
+  挑一个故事开玩: "Choose a story to play",
+  "正在准备故事…": "Preparing story…",
+  选择一个故事: "Choose a story",
+  "选好题材，读开场再创建世界。你也可以新建或导入自己的内容包。":
+    "Pick a genre and read the opening before creating a world. You can also create or import your own content package.",
   待修复: "Needs repair",
   "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
   打开并修复内容包中的问题: "Open and fix issues in this content package",
-  用清晰易读的文档搭好你的世界: "Start with clear, readable world files",
+  从一个故事开始: "Start with a story",
   "内容包由 opening.md、world 与 control 组成，可以从空白新建，也可以上传一份内容包 ZIP。":
     "A content package contains opening.md, world, and control. Create one from scratch or upload a content-package ZIP.",
   "导入 ZIP": "Import ZIP",

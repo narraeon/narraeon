@@ -15,6 +15,7 @@ import {
 } from "react";
 
 import { maxPortableContentArchiveBytes } from "../protocol/contentTree.ts";
+import type { SampleContentPackageId } from "../protocol/sampleContentPackages.ts";
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type { ModelConnectionLibraryView } from "../protocol/modelConnections.ts";
 import {
@@ -800,7 +801,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     }
   }
 
-  async function createSamplePackage(): Promise<void> {
+  async function createSamplePackage(
+    sampleId: SampleContentPackageId,
+  ): Promise<void> {
     if (workspace === null || samplePendingRef.current || importPending) return;
     samplePendingRef.current = true;
     setSamplePending(true);
@@ -809,6 +812,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         client.request<HomeContentPackage>({
           type: "content.create-sample",
           locale: workspace.preferences.locale,
+          sampleId,
         }),
       );
       acceptPackage(created);
@@ -816,8 +820,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         packageId: created.localId,
         templateId: "",
       });
-    } catch (error: unknown) {
-      report(error);
     } finally {
       samplePendingRef.current = false;
       setSamplePending(false);
@@ -1583,7 +1585,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               selectedPackageId: selected,
               samplePending,
               onCreatePackage: () => setPackageDialogOpen(true),
-              onCreateSamplePackage: () => void createSamplePackage(),
+              onCreateSamplePackage: createSamplePackage,
               onOpenPackage: (packageId) => void openPackage(packageId),
               onRenamePackage: (item, name) =>
                 renamePackage(name, item.localId),

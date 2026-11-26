@@ -148,7 +148,17 @@ test("a committed sample with a lost receipt appears once without navigating to 
     }
   });
   await page.goto("/#/");
-  await page.getByRole("button", { name: "从示例新建", exact: true }).click();
+  await page
+    .getByRole("button", { name: "从内置故事新建", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "雨灯旅店的一封信", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /^打开内容包：/u }),
   ).toHaveCount(before.contentPackages.length + 1);
@@ -273,7 +283,7 @@ test("first load retries once then offers a read-only recovery in the original p
   expect(reads).toBe(2);
   await page.getByRole("button", { name: /^(重新加载|Reload)$/u }).click();
   await expect(
-    page.getByRole("button", { name: "从示例新建", exact: true }),
+    page.getByRole("button", { name: "从内置故事新建", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(/^(暂时无法同步|Temporarily unable to sync)$/u),
@@ -310,10 +320,20 @@ test("failed recovery retains the homepage and selected import; manual recovery 
     mimeType: "application/zip",
     buffer: Buffer.from("unsubmitted draft"),
   });
-  await page.getByRole("button", { name: "从示例新建", exact: true }).click();
+  await page
+    .getByRole("button", { name: "从内置故事新建", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "雨灯旅店的一封信", exact: true })
+    .click();
   await expect(
     page.getByText(/^(暂时无法同步|Temporarily unable to sync)$/u),
   ).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /^打开内容包：/u }),
   ).toHaveCount(before.contentPackages.length);
@@ -426,14 +446,22 @@ test("overlapping page writes retain both commits when a newer receipt overtakes
   await page.goto("/#/");
   await page.getByLabel("界面语言").selectOption("en");
   await localePending.promise;
-  await page.getByRole("button", { name: "从示例新建", exact: true }).click();
+  await page
+    .getByRole("button", { name: "从内置故事新建", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "雨灯旅店的一封信", exact: true })
+    .click();
   await recoveryPending.promise;
   // The recovery snapshot already includes the sample but predates the locale commit.
   commitLocale.resolve();
-  await expect(
-    page.getByRole("button", { name: "Create from sample", exact: true }),
-  ).toBeVisible();
+  const storyPicker = page.getByRole("dialog", { name: "Choose a story" });
+  await expect(storyPicker).toBeVisible();
   releaseRecovery.resolve();
+  await storyPicker
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /^Open content package:/u }),
   ).toHaveCount(before.contentPackages.length + 1);

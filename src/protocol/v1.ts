@@ -20,6 +20,7 @@ import type {
   TestModelConnectionInput,
 } from "./modelConnections.ts";
 import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
+import type { SampleContentPackageId } from "./sampleContentPackages.ts";
 import type { ModelUsage } from "./modelUsage.ts";
 import type { FreshContextReason, PlayFailureKind } from "./playFailure.ts";
 import { isV1RequestType, validateV1Request } from "./v1RequestValidation.ts";
@@ -121,7 +122,11 @@ export type V1Request =
       packageId: string;
       scheme: ResolutionScheme;
     }
-  | { type: "content.create-sample"; locale: AppLocale }
+  | {
+      type: "content.create-sample";
+      locale: AppLocale;
+      sampleId?: SampleContentPackageId;
+    }
   | { type: "content.scripts.read"; packageId: string }
   | { type: "content.scripts.set"; packageId: string; enabled: boolean }
   | { type: "world.package-scripts.read"; worldId: string }

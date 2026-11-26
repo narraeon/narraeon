@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { appLocales } from "../../src/protocol/appPreferences.ts";
+import { sampleContentPackageIds } from "../../src/protocol/sampleContentPackages.ts";
 import type { RenderedPlayerView } from "../../src/protocol/playerViews.ts";
 import {
   parseV1Envelope,
@@ -28,7 +29,7 @@ afterEach(async () => {
   );
 });
 
-test("sample creation requires an explicit supported locale and no other parameters", () => {
+test("sample creation requires a supported locale and only allows an optional built-in story ID", () => {
   for (const locale of appLocales)
     expect(
       parseV1Envelope({
@@ -36,8 +37,17 @@ test("sample creation requires an explicit supported locale and no other paramet
         request: { type: "content.create-sample", locale },
       }).request,
     ).toEqual({ type: "content.create-sample", locale });
+  for (const sampleId of sampleContentPackageIds)
+    expect(
+      parseV1Envelope({
+        protocol: v1Protocol,
+        request: { type: "content.create-sample", locale: "en", sampleId },
+      }).request,
+    ).toEqual({ type: "content.create-sample", locale: "en", sampleId });
   for (const fields of [
     {},
+    { locale: "en", story: "missing-reel" },
+    { locale: "en", sampleId: null },
     { locale: "fr" },
     { locale: null },
     { locale: "" },
