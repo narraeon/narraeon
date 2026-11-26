@@ -72,6 +72,7 @@ export function sillyTavernEditorSource(
   }
 
   return {
+    requiresSourceSnapshot: true,
     tools: [
       {
         name: "sillytavern_source_list",

@@ -260,7 +260,7 @@ export class OrchestrationEditorSession {
         );
       const modelPrompt = host.modelPrompt?.();
       const source = await this.#services.extension?.summarize(target.id);
-      const bootstrap = await this.#compile(target, input, host, source);
+      const bootstrap = this.#compile(target, input, host, source);
       session ??= initialSession(target, bootstrap, host, requestId);
       session.authorization = authorization(target);
       if (typeof source?.snapshotId === "string")
@@ -358,12 +358,12 @@ export class OrchestrationEditorSession {
     return this.#authoring.observeProgress(status);
   }
 
-  async #compile(
+  #compile(
     target: OrchestrationDraftTarget,
     input: Message,
     host: ModelHost,
     source?: Record<string, string | number>,
-  ): Promise<PromptCompilation> {
+  ): PromptCompilation {
     const locale = this.#services.locale();
     const modelPrompt = host.modelPrompt?.();
     const system = orchestrationEditorSystem(locale);
@@ -403,10 +403,16 @@ export class OrchestrationEditorSession {
         ],
       },
     ];
+    const extension = this.#services.extension;
+    const availableExtension =
+      extension?.requiresSourceSnapshot &&
+      typeof source?.snapshotId !== "string"
+        ? undefined
+        : extension;
     return new FileNativePromptCompiler({ locale }).compileAuthoringMessages({
       logicalMessages,
       modelBinding: host.binding(),
-      tools: orchestrationEditorTools(this.#services.extension),
+      tools: orchestrationEditorTools(availableExtension),
       mergeConsecutiveMessages: false,
     });
   }
