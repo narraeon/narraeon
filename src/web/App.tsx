@@ -74,6 +74,7 @@ import {
 } from "./WorkspaceLocation.ts";
 
 interface Workspace {
+  scope?: "orchestration";
   preferences: AppPreferences;
   contentPackages: HomeContentPackage[];
   playPresets: PlayPresetLibrary;
@@ -108,6 +109,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const workspaceReceiptVersion = useRef(0);
+  const workspaceReadScope = useRef<"full" | undefined>(undefined);
+  const workspaceHasInstances = useRef(false);
   const currentWorkspace = useEffectEvent(() => workspace);
 
   const [screen, setScreen] = useState<Screen>("home");
@@ -465,11 +468,32 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     syncError: workspaceSyncError,
   } = useReadTarget(
     useCallback(
-      () => client.request<Workspace>({ type: "workspace.read" }),
+      () =>
+        client.request<Workspace>({
+          type: "workspace.read",
+          ...(workspaceReadScope.current !== "full" &&
+          parseWorkspaceHash(window.location.hash)?.screen === "plays"
+            ? { scope: "orchestration" }
+            : {}),
+        }),
       [client],
     ),
     useCallback((next: Workspace) => {
       setWebLocale(next.preferences.locale);
+      if (next.scope === "orchestration") {
+        setWorkspace((current) =>
+          current === null
+            ? next
+            : {
+                ...next,
+                contentPackages: current.contentPackages,
+                worlds: current.worlds,
+              },
+        );
+        setNotice("");
+        return;
+      }
+      workspaceHasInstances.current = true;
       setWorkspace(next);
       setSelected((current) => {
         const location = locationRef.current;
@@ -1151,6 +1175,31 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   function performNavigation(next: Screen, discard = false): void {
     packageOpenRequest.current += 1;
+    if (
+      !workspaceHasInstances.current &&
+      (next === "content" || next === "create" || next === "preview")
+    ) {
+      workspaceReadScope.current = "full";
+      const version = packageOpenRequest.current;
+      void workspaceTarget
+        .recover()
+        .then((loaded) => {
+          if (loaded?.scope === "orchestration") return;
+          if (loaded !== null && packageOpenRequest.current === version) {
+            if (next === "content") {
+              const packageId = loaded.contentPackages[0]?.localId;
+              if (packageId === undefined) setPackageDialogOpen(true);
+              else void openPackage(packageId);
+            } else if (next === "create") {
+              switchLocation({ screen: "create" });
+            } else openPromptPreview();
+          }
+        })
+        .finally(() => {
+          workspaceReadScope.current = undefined;
+        });
+      return;
+    }
     if (next === "content") {
       if (selectedPackage === undefined) setPackageDialogOpen(true);
       else if (discard)
@@ -1200,8 +1249,27 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       return;
     }
     if (workspace === null) return;
-    restoreAddress(workspace, { entry: destination, discard: true });
-    if (locationRef.current.screen !== "home") void refresh().catch(report);
+    if (
+      workspaceHasInstances.current ||
+      parseWorkspaceHash(destination.hash)?.screen === "plays"
+    ) {
+      restoreAddress(workspace, { entry: destination, discard: true });
+      if (locationRef.current.screen !== "home") void refresh().catch(report);
+      return;
+    }
+    // A direct workbench visit has no package/world index. Load the destination
+    // before validating a browser entry that has just passed the leave guard.
+    const version = ++packageOpenRequest.current;
+    void workspaceTarget.read().then((loaded) => {
+      if (
+        loaded !== null &&
+        version === packageOpenRequest.current &&
+        sameBrowserWorkspaceEntry(destination, readBrowserWorkspaceEntry())
+      )
+        restoreAddress(loaded, { entry: destination, discard: true });
+      else if (version === packageOpenRequest.current)
+        cancelBrowserNavigation(destination);
+    });
   }
 
   // Async preset actions retain this instance even after a later page mounts.
@@ -1503,19 +1571,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               updateWorkspace((current) => ({ ...current, playPresets }));
             }}
             onNavigationProtectionChange={setPlayPresetNavigation}
-            renderPromptPreview={(target) => (
-              <PromptPreviewScreen
-                key={`${target.presetId}:${target.revision}`}
-                embedded
-                client={client}
-                packages={workspace.contentPackages}
-                initialPackageId={selected}
-                playPresets={workspace.playPresets}
-                model={workspace.model}
-                onPackageSelect={setSelected}
-                playPresetTarget={target}
-              />
-            )}
           />
         )}
         {screen === "model" && (

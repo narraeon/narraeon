@@ -716,3 +716,42 @@
 .play-preset-screen .ordered-play-content > label:has(input) button {
   margin-left: 8px;
 }
+
+.orchestration-preview {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  padding-block: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.orchestration-preview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.orchestration-preview-controls label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.orchestration-preview-results {
+  min-width: 0;
+}
+
+.orchestration-preview h4,
+.orchestration-preview h5,
+.orchestration-preview p {
+  margin-block: 0.3rem;
+}
+
+.orchestration-preview-results > details {
+  margin-block: 0.45rem;
+}
+
+.orchestration-preview-results pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

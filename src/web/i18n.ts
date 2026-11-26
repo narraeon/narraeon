@@ -7,6 +7,62 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  编排预览: "Orchestration preview",
+  "此条目尚未产生消息。": "This entry does not emit a message.",
+  "按当前编排展开可确定的提示词。世界与创作目标只显示占位。":
+    "See the prompts determined by this orchestration. World content and authoring targets appear as placeholders.",
+  预览版本: "Preview version",
+  当前版本: "Current version",
+  已保存草稿: "Saved draft",
+  未保存候选: "Unsaved candidate",
+  预览玩法: "Preview gameplay",
+  "跑团 · d20": "Tabletop · d20",
+  "跑团 · d100": "Tabletop · d100",
+  "跑团 · 混乱袋": "Tabletop · Chaos bag",
+  创作目标: "Authoring target",
+  连接条件: "Connection",
+  无连接: "No connection",
+  生成编排预览: "Generate orchestration preview",
+  "表单和原文均有修改。保留其中一种修改后，即可预览未保存版本。":
+    "Both the form and source changed. Keep one set of edits to preview the unsaved version.",
+  预览结果: "Preview result",
+  协议顺序检查: "Protocol order check",
+  未检查: "Not checked",
+  顺序检查通过: "Role order is compatible",
+  顺序取决于实际载入的材料: "Role order depends on loaded material",
+  "System 必须排在 User 和 Assistant 之前":
+    "System must come before User and Assistant",
+  发送角色与顺序: "Message roles and order",
+  "实际材料会影响消息分组。":
+    "Loaded material can change how messages are grouped.",
+  条件性: "Conditional",
+  已知的本轮提示行: "Known turn-guide lines",
+  超出单行建议长度: "Above the recommended line length",
+  "已知行已超出建议数量（{lines} 行，每行建议 {chars} 字符）。":
+    "Known lines exceed the recommendation of {lines} lines and {chars} characters per line.",
+  "建议最多 {lines} 行，每行 {chars} 字符。总数还取决于世界和玩家提供的行。":
+    "The recommended limit is {lines} lines at {chars} characters each. World and player lines can increase the total.",
+  全部编排条目: "All orchestration entries",
+  与已应用版本比较: "Compare with applied version",
+  与该方案的当前版本比较: "Compare with this orchestration’s current version",
+  "相邻同角色合并设置已修改。":
+    "The setting for merging adjacent messages of the same role changed.",
+  "此表面的编排一致。": "The orchestration for this surface is unchanged.",
+  修改前: "Before",
+  修改后: "After",
+  此玩法不适用: "Excluded for this gameplay",
+  "已启用的世界指令在此前缀位置展开，顺序来自世界框架。":
+    "Enabled world instructions enter the prefix at this position, in world-frame order.",
+  "全新上下文通过初始工具回执载入框架材料。追加沿用已载入的材料。":
+    "A fresh context loads frame materials in the initial tool result. An append reuses the loaded material.",
+  "世界框架的尾部行在对应位置加入每次游玩的本轮提示。":
+    "The world frame adds its lines to the turn guide at this position on every play request.",
+  "玩家本轮临时要求如有填写，会成为本轮提示的最后一行。":
+    "When supplied, the player’s request for this turn becomes the final turn-guide line.",
+  "设定完善使用内容包身份与当前树。世界修订使用世界身份与独占期。创作工具与结算、创作建议、未来游玩参考随目标切换。":
+    "Setting improvement uses the content-package identity and current tree. World revision uses the world identity and exclusive epoch. Authoring tools and settlement, authoring guidance, and future play reference vary by target.",
+  "有完整预载材料时，Runtime 会在作者提示块后加入一条 System 消息。":
+    "When preload material is available, Runtime adds a System message after the authoring prompts.",
   暂时无法同步: "Temporarily unable to sync",
   重新加载: "Reload",
   页面出错了: "Something went wrong",

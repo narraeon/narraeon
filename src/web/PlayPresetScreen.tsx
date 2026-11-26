@@ -14,6 +14,7 @@ import {
 import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
+import { OrchestrationPreviewPanel } from "./OrchestrationPreviewPanel.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
 import { SillyTavernImport } from "./SillyTavernImport.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
@@ -41,7 +42,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 
 import type { V1Request } from "../protocol/v1.ts";
@@ -310,7 +310,6 @@ export function PlayPresetScreen({
   onNavigationProtectionChange,
   initialSelectedId,
   onSelectionChange,
-  renderPromptPreview,
   modelConnection,
   onEditModelConnection,
 }: {
@@ -325,10 +324,6 @@ export function PlayPresetScreen({
   onSelectionChange?: (presetId: string) => void;
   modelConnection?: ModelConnectionView | undefined;
   onEditModelConnection?: () => void;
-  renderPromptPreview?: (target: {
-    presetId: string;
-    revision: string;
-  }) => ReactNode;
 }): React.JSX.Element {
   const [library, setLibrary] = useState(initialLibrary);
   const libraryMenu = useRef<HTMLDetailsElement>(null);
@@ -1217,21 +1212,41 @@ export function PlayPresetScreen({
                     onWrite={updateFileAtPath}
                     onResourceEdit={updateResources}
                     promptPreview={
-                      <details className="preset-draft-preview">
-                        <summary>{uiText("发送给 AI 的内容预览")}</summary>
-                        {dirty ? (
-                          <p>
-                            {uiText(
-                              "请先保存当前修改；这里预览的是已保存且校验通过的编排方案，不包含未保存修改。",
-                            )}
-                          </p>
-                        ) : (
-                          renderPromptPreview?.({
-                            presetId: draft.id,
-                            revision: draft.revision,
-                          })
-                        )}
-                      </details>
+                      saved && (
+                        <OrchestrationPreviewPanel
+                          key={draft.id}
+                          client={client}
+                          presetId={draft.id}
+                          currentRevision={saved.revision}
+                          draftRevision={saved.draft?.revision}
+                          candidateBaseRevision={draft.revision}
+                          candidate={
+                            contentDirty && !structuralConflict
+                              ? {
+                                  files: draft.files,
+                                  ...(!rawStructuralDirty &&
+                                  structuredDirty &&
+                                  draft.structure !== undefined
+                                    ? {
+                                        structure:
+                                          draft.structure as unknown as Record<
+                                            string,
+                                            unknown
+                                          >,
+                                      }
+                                    : {}),
+                                }
+                              : undefined
+                          }
+                          candidateConflict={structuralConflict}
+                          surface={
+                            workspaceView === "setting_improvement"
+                              ? "author"
+                              : "play"
+                          }
+                          connection={modelConnection}
+                        />
+                      )
                     }
                     preview={(requestId, output) =>
                       requestId && output ? (

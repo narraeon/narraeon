@@ -379,7 +379,11 @@ for (const embedded of [false, true])
     let release!: () => void;
     const held = Promise.withResolvers<void>();
     await page.route("**/api/runtime/v1", async (route) => {
-      if (input(route).type !== "prompt.preview") return route.continue();
+      if (
+        input(route).type !==
+        (embedded ? "play.orchestration.preview" : "prompt.preview")
+      )
+        return route.continue();
       reads++;
       if (reads === 1) {
         const response = await route.fetch();
@@ -399,22 +403,24 @@ for (const embedded of [false, true])
         .locator("summary")
         .filter({ hasText: /^发送给 AI 的内容预览$/u })
         .click();
-    const preview = page.locator(".prompt-preview-screen");
-    await preview
-      .getByRole("button", { name: "生成真实预览", exact: true })
-      .click();
+    const preview = page.locator(
+      embedded ? ".orchestration-preview" : ".prompt-preview-screen",
+    );
+    const generate = embedded ? "生成编排预览" : "生成真实预览";
+    const resultTitle = embedded ? "预览结果" : "编译通过";
+    await preview.getByRole("button", { name: generate, exact: true }).click();
     await held.promise;
-    await preview
-      .getByLabel("预览玩家输入")
-      .fill("保留当前预览输入，不采用旧回包。");
+    if (embedded) await preview.getByLabel("预览玩法").selectOption("d20");
+    else
+      await preview
+        .getByLabel("预览玩家输入")
+        .fill("保留当前预览输入，不采用旧回包。");
     release();
     await expect(
-      preview.getByRole("heading", { name: "编译通过", exact: true }),
+      preview.getByRole("heading", { name: resultTitle, exact: true }),
     ).toHaveCount(0);
     offline = true;
-    await preview
-      .getByRole("button", { name: "生成真实预览", exact: true })
-      .click();
+    await preview.getByRole("button", { name: generate, exact: true }).click();
     await expect(
       preview.getByText("暂时无法同步", { exact: true }),
     ).toBeVisible();
@@ -424,11 +430,14 @@ for (const embedded of [false, true])
       .getByRole("button", { name: "重新加载", exact: true })
       .click();
     await expect(
-      preview.getByRole("heading", { name: "编译通过", exact: true }),
+      preview.getByRole("heading", { name: resultTitle, exact: true }),
     ).toBeVisible();
-    await expect(preview.getByLabel("预览玩家输入")).toHaveValue(
-      "保留当前预览输入，不采用旧回包。",
-    );
+    if (embedded)
+      await expect(preview.getByLabel("预览玩法")).toHaveValue("d20");
+    else
+      await expect(preview.getByLabel("预览玩家输入")).toHaveValue(
+        "保留当前预览输入，不采用旧回包。",
+      );
     expect(reads).toBe(4);
   });
 

@@ -95,14 +95,17 @@ for (const locale of ["zh-CN", "en"] as const) {
       })
       .click();
     const preview = page.getByRole("region", {
-      name: t("全新上下文会发送什么", "What a new context sends"),
+      name: t("编排预览", "Orchestration preview"),
     });
-    await expect(preview.locator(".prompt-preview-lede")).toHaveText(
-      t(
-        "仅预览最终提示词，不调用模型，也不会改动世界进度。",
-        "Preview only — no model calls and no changes to your world.",
+    await expect(
+      preview.getByText(
+        t(
+          "按当前编排展开可确定的提示词。世界与创作目标只显示占位。",
+          "See the prompts determined by this orchestration. World content and authoring targets appear as placeholders.",
+        ),
+        { exact: true },
       ),
-    );
+    ).toBeVisible();
     for (const connectionId of connectionIds.reverse())
       await runtime(page, { type: "model.delete", connectionId });
   });
