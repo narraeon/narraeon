@@ -23,7 +23,6 @@ import {
   capturedProviderOperation,
   modelDiagnosticContext,
   providerCapture,
-  trace,
 } from "./ProviderDiagnostics.ts";
 import {
   continuationError,
@@ -387,7 +386,7 @@ function sumInputTokens(
 }
 
 export async function exchangeAnthropic(
-  { connection, fetchImplementation, failureLog }: ProviderDispatch,
+  { connection, fetchImplementation, failureLog, trace }: ProviderDispatch,
   request: ModelHostExchange,
   observer?: ModelHostExchangeObserver,
 ): Promise<ModelHostResponse> {
@@ -395,7 +394,7 @@ export async function exchangeAnthropic(
   const signal = observer?.signal;
   const body = anthropicRequestBody(connection, request);
   const bodyJson = JSON.stringify(body);
-  await trace("anthropic_request", body);
+  await trace?.("anthropic_request", body);
   const url = providerUrl(connection);
   const capture = providerCapture(
     failureLog,
@@ -418,7 +417,7 @@ export async function exchangeAnthropic(
       "Anthropic Messages",
     );
     if (!received.ok)
-      throw await providerError(received, connection.apiKey, capture);
+      throw await providerError(received, connection.apiKey, capture, trace);
     const response = observe(received);
     if (isProviderEventStream(response)) {
       const streamed = await providerStreamResult(
@@ -428,7 +427,7 @@ export async function exchangeAnthropic(
         signal,
       );
       capture?.setReasoning(streamed.reasoningContent);
-      await trace("anthropic_response", streamed);
+      await trace?.("anthropic_response", streamed);
       return {
         ...(streamed.text === "" ? {} : { text: streamed.text }),
         ...(streamed.reasoningContent === ""
@@ -497,7 +496,7 @@ export async function exchangeAnthropic(
         "Return a valid Anthropic Messages assistant response. Each tool call needs an ID, a name and valid arguments.",
         "请返回有效的 Anthropic Messages assistant 响应。每个工具调用都需要 ID、名称和有效参数。",
       );
-    await trace("anthropic_response", payload);
+    await trace?.("anthropic_response", payload);
     const reasoningContent = content
       .filter(
         (item): item is { type: "thinking"; thinking: string } =>

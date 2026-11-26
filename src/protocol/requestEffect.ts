@@ -7,6 +7,7 @@ const reads = new Set<V1Request["type"]>([
   "protagonist-templates.read",
   "model.read",
   "model.models",
+  "model.test",
   "content.read",
   "content.scripts.read",
   "content.export",

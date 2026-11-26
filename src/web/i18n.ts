@@ -1107,6 +1107,38 @@ const englishMessages: Record<string, string> = {
   "选择后会填入模型 ID，也可以手动输入。":
     "Selecting a model fills in the model ID. You can also enter it manually.",
   从端点拉取模型: "Fetch models from endpoint",
+  "试发会用当前表单向模型发送一条短消息，服务商可能计费。":
+    "The test sends one short message using this form. Your provider may charge for it.",
+  试发一条消息: "Send a test message",
+  "正在试发…": "Sending test message…",
+  "试发成功，已收到模型回复。": "Test succeeded. The model returned a reply.",
+  "模型只返回了推理，试发没有收到正文。":
+    "The model returned reasoning only. The test received no reply text.",
+  "试发没有收到模型正文。": "The test received no reply text.",
+  "试发达到输出上限，未能确认模型正文。":
+    "The test reached its output limit without confirming any reply text.",
+  "服务商要求继续请求，试发只发送了一次。":
+    "The provider requested a continuation. The test sent a single request.",
+  "试发超时，未能确认模型回复。":
+    "The test timed out before a model reply could be confirmed.",
+  "无法试发。请检查端点、模型、鉴权和请求参数。":
+    "Could not send the test. Check the endpoint, model, authentication, and request settings.",
+  "当前思考预算超过试发上限，请降低预算或调整思考模式后再试。":
+    "The thinking budget exceeds the test limit. Lower it or adjust the thinking mode and try again.",
+  "服务商拒绝了鉴权。请检查 API Key 和模型访问权限。":
+    "The provider rejected authentication. Check the API key and model access.",
+  "服务商找不到请求的端点或模型。请检查 Base URL 和模型 ID。":
+    "The provider could not find the endpoint or model. Check the Base URL and model ID.",
+  "服务商拒绝了请求。请检查端点、模型 ID 和请求参数。":
+    "The provider rejected the request. Check the endpoint, model ID, and request parameters.",
+  "服务商要求付费或余额不足（HTTP 402）。":
+    "The provider requires payment or the balance is insufficient (HTTP 402).",
+  "服务商拒绝了请求（HTTP 429）。请检查速率限制、额度或余额。":
+    "The provider rejected the request (HTTP 429). Check rate limits, quota, or balance.",
+  "端点要求重定向。请填写最终服务地址再试发。":
+    "The endpoint redirected the request. Enter the final service address and try again.",
+  "无法确认试发结果。请检查端点和服务状态。":
+    "Could not confirm the test result. Check the endpoint and service status.",
   "可在模型 ID 输入框中选择已拉取结果。":
     "Fetched results can be selected in the Model ID field.",
   "真实 context window": "Actual context window",

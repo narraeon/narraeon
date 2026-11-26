@@ -17,6 +17,7 @@ import type {
   ListProviderModelsInput,
   ModelProviderKind,
   SaveModelConnectionInput,
+  TestModelConnectionInput,
 } from "./modelConnections.ts";
 import type { AppLocale, AppReadingPreferences } from "./appPreferences.ts";
 import type { ModelUsage } from "./modelUsage.ts";
@@ -113,6 +114,7 @@ export type V1Request =
   | { type: "model.select"; connectionId: string }
   | { type: "model.delete"; connectionId: string }
   | ({ type: "model.models" } & ListProviderModelsInput)
+  | { type: "model.test"; connection: TestModelConnectionInput }
   | { type: "content.create"; gameplay?: Gameplay }
   | {
       type: "content.gameplay.set";

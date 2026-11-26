@@ -461,7 +461,7 @@ export class V1Runtime {
     if (hasCommandPrefix(request, "content"))
       return handleContentCommand(request, this.#content, this.#locale);
     if (hasCommandPrefix(request, "model"))
-      return handleModelCommand(request, this.#models);
+      return handleModelCommand(request, this.#models, this.#locale);
     switch (request.type) {
       case "workspace.read":
         return {

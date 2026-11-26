@@ -4,6 +4,7 @@ import type { CommandFor } from "./Command.ts";
 export function handleModelCommand(
   request: CommandFor<"model">,
   models: ModelConnectionStore,
+  locale: AppLocale,
 ): unknown {
   switch (request.type) {
     case "model.read":
@@ -18,5 +19,8 @@ export function handleModelCommand(
       return models.delete(request.connectionId);
     case "model.models":
       return models.listModels(request);
+    case "model.test":
+      return models.test(request.connection, locale);
   }
 }
+import type { AppLocale } from "../../protocol/appPreferences.ts";

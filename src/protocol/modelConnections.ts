@@ -485,3 +485,27 @@ export interface ListProviderModelsInput {
   authMode?: ModelConnectionAuthMode;
   apiKey?: string;
 }
+
+export type TestModelConnectionInput = Omit<
+  SaveModelConnectionInput,
+  "name" | "presetId" | "modelPrompt"
+>;
+
+export interface TestModelConnectionResult {
+  outcome:
+    | "success"
+    | "reasoning_only"
+    | "no_text"
+    | "output_limit"
+    | "continuation_required"
+    | "timeout"
+    | "invalid_settings"
+    | "thinking_budget_too_large"
+    | "authentication"
+    | "not_found"
+    | "parameters"
+    | "quota"
+    | "rate_limit"
+    | "redirect"
+    | "failed";
+}

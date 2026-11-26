@@ -34,6 +34,8 @@ import {
   type ModelReasoningEffort,
   type ModelReasoningSummary,
   type ModelThinkingMode,
+  type TestModelConnectionInput,
+  type TestModelConnectionResult,
 } from "../protocol/modelConnections.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
 
@@ -60,6 +62,52 @@ interface ConnectionForm {
   assistantPrefillMode: ModelAssistantPrefillMode;
   contextWindowTokens: string;
   maxOutputTokens: string;
+}
+
+const modelTestMessages: Record<TestModelConnectionResult["outcome"], string> =
+  {
+    success: "试发成功，已收到模型回复。",
+    reasoning_only: "模型只返回了推理，试发没有收到正文。",
+    no_text: "试发没有收到模型正文。",
+    output_limit: "试发达到输出上限，未能确认模型正文。",
+    continuation_required: "服务商要求继续请求，试发只发送了一次。",
+    timeout: "试发超时，未能确认模型回复。",
+    invalid_settings: "无法试发。请检查端点、模型、鉴权和请求参数。",
+    thinking_budget_too_large:
+      "当前思考预算超过试发上限，请降低预算或调整思考模式后再试。",
+    authentication: "服务商拒绝了鉴权。请检查 API Key 和模型访问权限。",
+    not_found: "服务商找不到请求的端点或模型。请检查 Base URL 和模型 ID。",
+    parameters: "服务商拒绝了请求。请检查端点、模型 ID 和请求参数。",
+    quota: "服务商要求付费或余额不足（HTTP 402）。",
+    rate_limit: "服务商拒绝了请求（HTTP 429）。请检查速率限制、额度或余额。",
+    redirect: "端点要求重定向。请填写最终服务地址再试发。",
+    failed: "无法确认试发结果。请检查端点和服务状态。",
+  };
+
+function requestSettings(form: ConnectionForm): TestModelConnectionInput {
+  return {
+    provider: form.provider,
+    dialect: form.dialect,
+    baseUrl: form.baseUrl,
+    ...(form.authMode === "none" ? { authMode: form.authMode } : {}),
+    ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
+    modelId: form.modelId,
+    reasoningEffort: form.reasoningEffort,
+    reasoningSummary: form.reasoningSummary,
+    thinkingMode: form.thinkingMode,
+    ...responsesConnectionCapabilities(form.provider, form.dialect, form),
+    ...(form.provider === "anthropic_messages"
+      ? { anthropicPromptCacheTtl: form.anthropicPromptCacheTtl }
+      : {}),
+    supportsAllowedTools: form.supportsAllowedTools,
+    assistantPrefillMode: form.assistantPrefillMode,
+    thinkingBudgetTokens:
+      form.thinkingMode === "enabled"
+        ? Number(form.thinkingBudgetTokens)
+        : null,
+    contextWindowTokens: Number(form.contextWindowTokens),
+    maxOutputTokens: Number(form.maxOutputTokens),
+  };
 }
 
 function emptyConnectionForm(): ConnectionForm {
@@ -119,6 +167,9 @@ export function ModelConnectionScreen({
       : formFor(initiallyActive),
   );
   const [models, setModels] = useState<string[]>([]);
+  const [testOutcome, setTestOutcome] = useState<
+    TestModelConnectionResult["outcome"] | null
+  >(null);
   const localPending = useState<string | null>(null);
   const [pending, setPending] = pendingState ?? localPending;
   const [dirty, setDirty] = useState(false);
@@ -225,6 +276,7 @@ export function ModelConnectionScreen({
     next: Partial<ConnectionForm>,
     invalidateModels = false,
   ): void {
+    setTestOutcome(null);
     setForm((current) => {
       const updated = { ...current, ...next };
       if (
@@ -293,6 +345,7 @@ export function ModelConnectionScreen({
 
   function edit(connection: ModelConnectionView): void {
     setForm(formFor(connection));
+    setTestOutcome(null);
     setModels([]);
     setDirty(false);
     onNotice("");
@@ -300,6 +353,7 @@ export function ModelConnectionScreen({
 
   function startNew(): void {
     setForm(emptyConnectionForm());
+    setTestOutcome(null);
     setModels([]);
     setDirty(false);
     onNotice("");
@@ -315,45 +369,20 @@ export function ModelConnectionScreen({
       }
       return;
     }
-    const thinkingBudgetTokens =
-      form.thinkingMode === "enabled"
-        ? Number(form.thinkingBudgetTokens)
-        : null;
-    const maxOutputTokens = Number(form.maxOutputTokens);
+    const settings = requestSettings(form);
     setPending("save");
     try {
       const next = await target.command(() =>
         client.request<ModelConnectionLibraryView>({
           type: "model.save",
           connection: {
+            ...settings,
             ...(form.connectionId === null
               ? {}
               : { connectionId: form.connectionId }),
             name: form.name,
             presetId: form.presetId,
-            provider: form.provider,
-            dialect: form.dialect,
-            baseUrl: form.baseUrl,
-            ...(form.authMode === "none" ? { authMode: form.authMode } : {}),
-            ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
-            modelId: form.modelId,
             modelPrompt: form.modelPrompt,
-            reasoningEffort: form.reasoningEffort,
-            reasoningSummary: form.reasoningSummary,
-            thinkingMode: form.thinkingMode,
-            ...responsesConnectionCapabilities(
-              form.provider,
-              form.dialect,
-              form,
-            ),
-            ...(form.provider === "anthropic_messages"
-              ? { anthropicPromptCacheTtl: form.anthropicPromptCacheTtl }
-              : {}),
-            supportsAllowedTools: form.supportsAllowedTools,
-            assistantPrefillMode: form.assistantPrefillMode,
-            thinkingBudgetTokens,
-            contextWindowTokens: Number(form.contextWindowTokens),
-            maxOutputTokens,
           },
         }),
       );
@@ -376,8 +405,8 @@ export function ModelConnectionScreen({
           effort: form.reasoningEffort,
           summary: form.reasoningSummary,
           thinking: form.thinkingMode,
-          thinkingBudgetTokens,
-          maxOutputTokens,
+          thinkingBudgetTokens: settings.thinkingBudgetTokens ?? null,
+          maxOutputTokens: settings.maxOutputTokens,
         }) !== null
       ) {
         options.open = true;
@@ -529,6 +558,28 @@ export function ModelConnectionScreen({
       );
     } catch (error: unknown) {
       onNotice(errorMessage(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function sendTestMessage(): Promise<void> {
+    if (pending !== null) return;
+    setPending("test");
+    setTestOutcome(null);
+    try {
+      const { outcome } = await client.request<TestModelConnectionResult>({
+        type: "model.test",
+        connection: {
+          ...requestSettings(form),
+          ...(form.connectionId === null || !form.reuseSavedApiKey
+            ? {}
+            : { connectionId: form.connectionId }),
+        },
+      });
+      setTestOutcome(outcome);
+    } catch {
+      setTestOutcome("failed");
     } finally {
       setPending(null);
     }
@@ -1240,11 +1291,27 @@ export function ModelConnectionScreen({
               {googleReasoningWarning}
             </p>
           )}
+          <p className="field-note" id="model-test-note">
+            {uiText("试发会用当前表单向模型发送一条短消息，服务商可能计费。")}
+          </p>
           <div className="form-actions">
             <button disabled={pending !== null} type="submit">
               {pending === "save"
                 ? uiText("正在保存…")
                 : uiText("保存模型连接并启用")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              aria-describedby="model-test-note"
+              disabled={
+                form.baseUrl.trim() === "" ||
+                form.modelId.trim() === "" ||
+                (credentialsMustBeEntered && form.apiKey.trim() === "")
+              }
+              onClick={() => void sendTestMessage()}
+            >
+              {uiText("试发一条消息")}
             </button>
             {dirty && form.connectionId !== null && (
               <button
@@ -1271,6 +1338,13 @@ export function ModelConnectionScreen({
                 {uiText("重置新配置")}
               </button>
             )}
+          </div>
+          <div className="field-note" role="status">
+            {pending === "test"
+              ? uiText("正在试发…")
+              : testOutcome === null
+                ? null
+                : uiText(modelTestMessages[testOutcome])}
           </div>
         </form>
 

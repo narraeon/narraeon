@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   anthropicConnectionCacheSettings,
   hasCLIProxyThinkingSuffix,
@@ -33,6 +34,8 @@ import {
   type ModelReasoningSummary,
   type ModelThinkingMode,
   type SaveModelConnectionInput,
+  type TestModelConnectionInput,
+  type TestModelConnectionResult,
 } from "../../protocol/modelConnections.ts";
 import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import {
@@ -44,6 +47,7 @@ import {
   type ModelHostBinding,
 } from "./ModelHost.ts";
 import { fetchModelService } from "./fetchModelService.ts";
+import { testModelConnection } from "./ModelConnectionTest.ts";
 import {
   providerRejectionText,
   readProviderRejectionBody,
@@ -237,6 +241,39 @@ export class ModelConnectionStore {
     throw new ModelHostBindingMismatchError(
       "No saved model connection matches this setting-improvement conversation",
     );
+  }
+
+  async test(
+    input: TestModelConnectionInput,
+    locale: AppLocale,
+  ): Promise<TestModelConnectionResult> {
+    await this.#mutationTail;
+    const existing =
+      input.connectionId === undefined
+        ? undefined
+        : (await this.#readDocument()).connections.find(
+            ({ id }) => id === input.connectionId,
+          );
+    if (input.connectionId !== undefined && existing === undefined)
+      return { outcome: "invalid_settings" };
+    let connection: FileNativeModelConnection;
+    try {
+      connection = toBinding({
+        id: existing?.id ?? "",
+        ...normalizeSaveInput(
+          {
+            ...input,
+            name: "Connection test",
+            presetId: "custom",
+            modelPrompt: "",
+          },
+          existing,
+        ),
+      });
+    } catch {
+      return { outcome: "invalid_settings" };
+    }
+    return testModelConnection(connection, locale, this.#fetch);
   }
 
   async listModels(

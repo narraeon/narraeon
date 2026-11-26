@@ -20,7 +20,7 @@ import {
   RetryableModelFailure,
   retryAfterMs,
 } from "./ModelRetry.ts";
-import { trace } from "./ProviderDiagnostics.ts";
+import type { trace } from "./ProviderDiagnostics.ts";
 import {
   providerRejectionText,
   readProviderRejectionBody,
@@ -46,12 +46,13 @@ export async function providerError(
   response: Response,
   apiKey: string,
   capture: AiExchangeCapture | undefined,
+  traceProvider: ProviderDispatch["trace"],
 ): Promise<Error> {
   const body = await readProviderRejectionBody(response);
   const contentType = response.headers.get("content-type");
   const diagnostic = providerRejectionText(body ?? "", apiKey, contentType);
   const statusText = providerRejectionText(response.statusText, apiKey, null);
-  await trace("provider_error", {
+  await traceProvider?.("provider_error", {
     status: response.status,
     statusText,
     body: diagnostic,
@@ -205,6 +206,8 @@ export interface ProviderDispatch {
   connection: ResolvedFileNativeModelConnection;
   fetchImplementation: typeof fetch;
   failureLog: AiFailureRecorder | undefined;
+  trace: typeof trace | undefined;
+  singleRequest: boolean;
 }
 
 export function bearerProviderHeaders(apiKey: string | undefined) {
