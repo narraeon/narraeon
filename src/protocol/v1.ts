@@ -49,6 +49,13 @@ export interface V1Envelope {
   request: V1Request;
 }
 
+interface SillyTavernPresetSelection {
+  source: string;
+  groupId?: string;
+  selected: string[];
+  name: string;
+}
+
 export type V1Request =
   | { type: "world.revision.preview"; worldId: string; sessionId?: string }
   | {
@@ -209,12 +216,16 @@ export type V1Request =
       selection: ContentSelection;
     }
   | { type: "play.sillytavern.inspect"; source: string; groupId?: string }
+  | ({ type: "play.sillytavern.preview" } & SillyTavernPresetSelection)
+  | ({
+      type: "play.sillytavern.import";
+      operationId?: string;
+    } & SillyTavernPresetSelection)
+  | { type: "play.sillytavern.source.read"; presetId: string }
   | {
-      type: "play.sillytavern.preview" | "play.sillytavern.import";
+      type: "play.sillytavern.source.associate";
+      presetId: string;
       source: string;
-      groupId?: string;
-      selected: string[];
-      name: string;
     }
   | {
       type: "play.workbench.read";

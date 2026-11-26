@@ -71,6 +71,19 @@ import {
 } from "../../shared/play-preset-prompt-roles.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import { v1Protocol, v1RuntimeRequestBodyLimit } from "../../protocol/v1.ts";
+import {
+  prepareSillyTavernPresetImport,
+  sillyTavernImportReportPath,
+} from "../../shared/sillytavern-preset.ts";
+import type {
+  SillyTavernSource,
+  SillyTavernSourceSnapshot,
+} from "../../shared/sillytavern-source.ts";
+import {
+  readLegacySillyTavernReport,
+  sillyTavernSnapshotFingerprint,
+  SillyTavernSourceStore,
+} from "./SillyTavernSourceStore.ts";
 export type PlayPresetArtifactStrategy =
   "append" | "replace" | "upsert" | "transient" | "hidden";
 
@@ -455,6 +468,7 @@ export interface FileNativePlayPresetView {
   validation: PlayPresetValidation;
   enabled: boolean;
   scriptsEnabled: boolean;
+  sillyTavernSource?: true;
   structure?: PlayPresetStructuredEditor;
   draft?: {
     revision: string;
@@ -492,6 +506,7 @@ export class FileNativePlayPresetError extends RuntimeDomainError {
                 "play.select",
                 "play.export",
                 "play.import",
+                "play.sillytavern.source.read",
               ],
             },
           },
@@ -582,12 +597,17 @@ interface StoredPreset {
   scriptsEnabled: boolean;
   /** Runtime-owned seed that may track the selected application locale. */
   builtinDefault?: true;
+  sillyTavernSource?: true;
 }
 
 interface StoredDocument {
   schemaVersion: 1;
   currentPresetId: string;
   presets: StoredPreset[];
+  sillyTavernImports?: Record<
+    string,
+    { presetId: string; fingerprint: string }
+  >;
 }
 
 const defaultLimits: PortableContentTreeLimits =
@@ -596,6 +616,7 @@ const legacyManifest = "preset.yaml";
 const legacyLibraryFilename = "file-native-play-presets.json";
 const orchestrationLibraryFilename = "file-native-orchestrations.json";
 const revisionPattern = /^rev-[0-9a-f]{64}$/u;
+const sourceDigestPattern = /^[0-9a-f]{64}$/u;
 const namePattern = /^[^\r\n]{1,160}$/u;
 export const maxPlayPresetFollowups = 16;
 const defaultMaxArtifactBytes = 32_768;
@@ -612,6 +633,7 @@ export class FileNativePlayPresetStore {
   readonly #root: string;
   readonly #limits: PortableContentTreeLimits;
   readonly #locale: () => AppLocale;
+  readonly #sillyTavernSources: SillyTavernSourceStore;
   #tail: Promise<void> = Promise.resolve();
   #opening: Promise<StoredDocument> | undefined;
   /**
@@ -630,6 +652,7 @@ export class FileNativePlayPresetStore {
     this.#root = root;
     this.#path = join(root, orchestrationLibraryFilename);
     this.#legacyPath = join(root, legacyLibraryFilename);
+    this.#sillyTavernSources = new SillyTavernSourceStore(root);
     this.#limits = {
       ...defaultLimits,
       ...options.limits,
@@ -646,6 +669,7 @@ export class FileNativePlayPresetStore {
       const document = await this.#read();
       if (this.#synchronizeBuiltinDefault(document))
         await this.#write(document);
+      await this.#removeOrphanSources(document);
     });
   }
 
@@ -705,8 +729,10 @@ export class FileNativePlayPresetStore {
         );
       const stored = this.#stored(randomUUID(), source.name, files);
       stored.scriptsEnabled = source.scriptsEnabled;
+      const snapshot = await this.#sillyTavernSources.read(source.id);
+      if (snapshot !== undefined) stored.sillyTavernSource = true;
       document.presets.push(stored);
-      await this.#write(document);
+      await this.#publishWithSource(document, stored.id, snapshot);
       return {
         currentPresetId: document.currentPresetId,
         preset: this.#view(stored),
@@ -955,6 +981,8 @@ export class FileNativePlayPresetStore {
       const restored = document.presets.some(({ enabled }) => enabled)
         ? document
         : this.#defaultDocument();
+      if (document.sillyTavernImports !== undefined)
+        restored.sillyTavernImports = document.sillyTavernImports;
       if (
         restored.presets.every(
           ({ id: kept }) => kept !== restored.currentPresetId,
@@ -964,6 +992,7 @@ export class FileNativePlayPresetStore {
           ({ enabled }) => enabled,
         )!.id;
       await this.#write(restored);
+      await this.#removeOrphanSources(restored);
       return { currentPresetId: restored.currentPresetId, deleted: true };
     });
   }
@@ -1044,6 +1073,159 @@ export class FileNativePlayPresetStore {
         preset: this.#view(stored),
       };
     });
+  }
+
+  async importSillyTavern(input: {
+    name: string;
+    files: Record<string, string>;
+    snapshot: SillyTavernSourceSnapshot;
+    operationId?: string;
+  }): Promise<{ currentPresetId: string; preset: FileNativePlayPresetView }> {
+    assertCurrentOrchestration(input.files, this.#limits, this.#locale());
+    return this.#change(async () => {
+      const document = await this.#read();
+      const name = normalizeName(input.name);
+      const receipt =
+        input.operationId === undefined
+          ? undefined
+          : {
+              id: createHash("sha256").update(input.operationId).digest("hex"),
+              fingerprint: createHash("sha256")
+                .update(
+                  JSON.stringify([
+                    name,
+                    sillyTavernSnapshotFingerprint(input.snapshot),
+                  ]),
+                )
+                .digest("hex"),
+            };
+      const existing =
+        receipt === undefined
+          ? undefined
+          : document.sillyTavernImports?.[receipt.id];
+      if (existing !== undefined) {
+        if (existing.fingerprint !== receipt!.fingerprint)
+          throw new FileNativePlayPresetError(
+            "import_operation_conflict",
+            "This SillyTavern import operation was already used with a different selection",
+          );
+        // A receipt stays valid when its copy has been deliberately deleted.
+        // findStored rejects a delayed retry rather than recreating that copy.
+        return {
+          currentPresetId: document.currentPresetId,
+          preset: this.#view(findStored(document, existing.presetId)),
+        };
+      }
+      const stored = this.#stored(randomUUID(), name, input.files);
+      stored.scriptsEnabled = false;
+      stored.sillyTavernSource = true;
+      if (receipt !== undefined) {
+        const receipts = (document.sillyTavernImports ??= {});
+        receipts[receipt.id] = {
+          presetId: stored.id,
+          fingerprint: receipt.fingerprint,
+        };
+      }
+      const preset = this.#view(stored);
+      document.presets.push(stored);
+      await this.#publishWithSource(document, stored.id, input.snapshot);
+      return { currentPresetId: document.currentPresetId, preset };
+    });
+  }
+
+  async readSillyTavernSource(presetId: string): Promise<SillyTavernSource> {
+    return this.#change(async () => {
+      const stored = findStored(await this.#read(), presetId);
+      const snapshot = await this.#sillyTavernSources.read(presetId);
+      if (snapshot !== undefined) return { kind: "snapshot", snapshot };
+      const original = this.#legacySillyTavernSource(stored);
+      if (original === undefined) return { kind: "none" };
+      const { groupId, report } = original.report;
+      return {
+        kind: "legacy",
+        ...(groupId === undefined ? {} : { groupId }),
+        report,
+      };
+    });
+  }
+
+  async associateSillyTavernSource(
+    presetId: string,
+    source: string,
+  ): Promise<SillyTavernSource> {
+    return this.#change(async () => {
+      const stored = findStored(await this.#read(), presetId);
+      const original = this.#legacySillyTavernSource(stored);
+      const mismatch = () =>
+        new FileNativePlayPresetError(
+          "sillytavern_source_mismatch",
+          "The file does not match this orchestration’s original SillyTavern import",
+        );
+      if (original === undefined) throw mismatch();
+      const { report, files } = original;
+      const { snapshot, conversion } = prepareSillyTavernPresetImport(source, {
+        groupId: report.groupId,
+        selected: report.prompts.map(({ sourceId }) => sourceId),
+        name: stored.name,
+        locale: this.#locale(),
+      });
+      const candidate = readLegacySillyTavernReport(conversion.files);
+      if (
+        candidate?.groupId !== report.groupId ||
+        !isDeepStrictEqual(candidate?.prompts, report.prompts)
+      )
+        throw mismatch();
+      const parsed = parsePlayPresetFiles(files, this.#limits);
+      if (parsed.kind !== "valid") throw mismatch();
+      const originalPrompts = new Map(
+        parsed.definition.playPrompts?.flatMap((entry) =>
+          entry.kind === "user" ? [[entry.id, entry.body] as const] : [],
+        ),
+      );
+      if (
+        snapshot.entries.some(
+          ({ content, targetEntryId }) =>
+            targetEntryId !== undefined &&
+            originalPrompts.get(targetEntryId) !== content,
+        )
+      )
+        throw mismatch();
+      const existing = await this.#sillyTavernSources.read(presetId);
+      if (existing === undefined)
+        await this.#sillyTavernSources.save(presetId, snapshot);
+      else if (!isDeepStrictEqual(existing, snapshot)) throw mismatch();
+      return { kind: "snapshot", snapshot };
+    });
+  }
+
+  #legacySillyTavernSource(stored: StoredPreset) {
+    for (const files of Object.values(stored.revisions)) {
+      const report = readLegacySillyTavernReport(files);
+      if (report !== undefined) return { report, files };
+    }
+  }
+
+  async #publishWithSource(
+    document: StoredDocument,
+    presetId: string,
+    snapshot: SillyTavernSourceSnapshot | undefined,
+  ): Promise<void> {
+    if (snapshot === undefined) return this.#write(document);
+    await this.#sillyTavernSources.save(presetId, snapshot);
+    try {
+      await this.#write(document);
+    } catch (error) {
+      await this.#sillyTavernSources.delete(presetId).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async #removeOrphanSources(document: StoredDocument): Promise<void> {
+    // The committed library makes orphaned sources unreachable. Startup
+    // retries cleanup after an interrupted publication or deletion.
+    await this.#sillyTavernSources
+      .removeOrphans(document.presets.map(({ id }) => id))
+      .catch(() => undefined);
   }
 
   async #change<T>(work: () => Promise<T>): Promise<T> {
@@ -1248,6 +1430,12 @@ export class FileNativePlayPresetStore {
       ...editorProjection(files, this.#limits, this.#locale()),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
+      ...(stored.sillyTavernSource ||
+      Object.values(stored.revisions).some((revision) =>
+        Object.hasOwn(revision, sillyTavernImportReportPath),
+      )
+        ? { sillyTavernSource: true as const }
+        : {}),
     };
     if (stored.draftRevision !== undefined) {
       const draftFiles = stored.revisions[stored.draftRevision];
@@ -1276,6 +1464,7 @@ export class FileNativePlayPresetStore {
         schemaVersion: document.schemaVersion,
         currentOrchestrationId: document.currentPresetId,
         orchestrations: document.presets,
+        sillyTavernImports: document.sillyTavernImports,
       },
       null,
       2,
@@ -3480,7 +3669,11 @@ function parseStoredDocument(
   const libraryKey = source === "legacy" ? "presets" : "orchestrations";
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["schemaVersion", selectionKey, libraryKey]) ||
+    !hasExactKeys(
+      value,
+      ["schemaVersion", selectionKey, libraryKey],
+      ["sillyTavernImports"],
+    ) ||
     value.schemaVersion !== 1
   )
     throw new FileNativePlayPresetError(
@@ -3513,7 +3706,7 @@ function parseStoredDocument(
           "enabled",
           "scriptsEnabled",
         ],
-        ["draftRevision", "builtinDefault"],
+        ["draftRevision", "builtinDefault", "sillyTavernSource"],
       ) ||
       typeof raw.id !== "string" ||
       typeof raw.name !== "string" ||
@@ -3527,6 +3720,7 @@ function parseStoredDocument(
       raw.name.includes(String.fromCharCode(0)) ||
       typeof raw.enabled !== "boolean" ||
       typeof raw.scriptsEnabled !== "boolean" ||
+      (raw.sillyTavernSource !== undefined && raw.sillyTavernSource !== true) ||
       (raw.builtinDefault !== undefined && raw.builtinDefault !== true)
     )
       throw new FileNativePlayPresetError(
@@ -3597,6 +3791,9 @@ function parseStoredDocument(
       enabled: raw.enabled,
       scriptsEnabled: raw.scriptsEnabled,
       ...(raw.builtinDefault === true ? { builtinDefault: true as const } : {}),
+      ...(raw.sillyTavernSource === true
+        ? { sillyTavernSource: true as const }
+        : {}),
       ...(raw.draftRevision === undefined
         ? {}
         : { draftRevision: raw.draftRevision }),
@@ -3613,7 +3810,39 @@ function parseStoredDocument(
       "store_invalid",
       "Current orchestration cannot be a disabled identity",
     );
-  return { schemaVersion: 1, currentPresetId: selected, presets };
+  const document: StoredDocument = {
+    schemaVersion: 1,
+    currentPresetId: selected,
+    presets,
+  };
+  if (value.sillyTavernImports !== undefined) {
+    const operations = value.sillyTavernImports;
+    if (!isRecord(operations))
+      throw new FileNativePlayPresetError(
+        "store_invalid",
+        "SillyTavern import receipts are invalid",
+      );
+    document.sillyTavernImports = {};
+    for (const [operation, receipt] of Object.entries(operations)) {
+      if (
+        !sourceDigestPattern.test(operation) ||
+        !isRecord(receipt) ||
+        !hasExactKeys(receipt, ["presetId", "fingerprint"]) ||
+        typeof receipt.presetId !== "string" ||
+        typeof receipt.fingerprint !== "string" ||
+        !sourceDigestPattern.test(receipt.fingerprint)
+      )
+        throw new FileNativePlayPresetError(
+          "store_invalid",
+          "SillyTavern import receipt is invalid",
+        );
+      document.sillyTavernImports[operation] = {
+        presetId: receipt.presetId,
+        fingerprint: receipt.fingerprint,
+      };
+    }
+  }
+  return document;
 }
 
 function findStored(document: StoredDocument, id: string): StoredPreset {

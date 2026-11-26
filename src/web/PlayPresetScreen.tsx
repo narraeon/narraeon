@@ -16,6 +16,8 @@ import "./preset-workbench.css";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
 import { SillyTavernImport } from "./SillyTavernImport.tsx";
+import { SillyTavernSource } from "./SillyTavernSource.tsx";
+import type { OrchestrationAiWorkbenchDraft } from "./orchestration-ai-workbench.ts";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import {
   ConfirmationDialog,
@@ -202,6 +204,7 @@ export interface PlayPresetStructuredEditor {
 }
 
 export interface PlayPresetScreenPreset {
+  sillyTavernSource?: true;
   id: string;
   name: string;
   revision: string;
@@ -313,6 +316,9 @@ export function PlayPresetScreen({
   renderPromptPreview,
   modelConnection,
   onEditModelConnection,
+  aiEditing,
+  onAiEditingChange,
+  onConfigureAiModel,
 }: {
   client: PlayPresetClient;
   initialLibrary: PlayPresetScreenLibrary;
@@ -325,6 +331,9 @@ export function PlayPresetScreen({
   onSelectionChange?: (presetId: string) => void;
   modelConnection?: ModelConnectionView | undefined;
   onEditModelConnection?: () => void;
+  aiEditing?: OrchestrationAiWorkbenchDraft | null;
+  onAiEditingChange?: (draft: OrchestrationAiWorkbenchDraft | null) => void;
+  onConfigureAiModel?: () => void;
   renderPromptPreview?: (target: {
     presetId: string;
     revision: string;
@@ -912,13 +921,20 @@ export function PlayPresetScreen({
                   <SillyTavernImport
                     client={client}
                     disabled={pending || dirty}
+                    canStartAiEditing={onAiEditingChange !== undefined}
                     onFailure={() => target.recover()}
                     librarySync={{
                       failed: syncFailed,
                       onRead: () => void target.recover(),
                     }}
-                    onImported={(receipt) => {
+                    onImported={(receipt, startAiEditing) => {
                       acceptPreset(receipt);
+                      setWorkspaceView("call_chain");
+                      if (startAiEditing)
+                        onAiEditingChange?.({
+                          presetId: receipt.preset.id,
+                          message: "",
+                        });
                       setFeedback({
                         kind: "status",
                         text: uiText(
@@ -1192,6 +1208,47 @@ export function PlayPresetScreen({
                   </span>
                 </div>
               </header>
+
+              {aiEditing?.presetId === draft.id && (
+                <section
+                  className="orchestration-ai-draft"
+                  aria-label={uiText("编排方案 AI 编辑")}
+                >
+                  <div>
+                    <h4>{uiText("编排方案 AI 编辑")}</h4>
+                    <button
+                      type="button"
+                      onClick={() => onAiEditingChange?.(null)}
+                    >
+                      {uiText("关闭")}
+                    </button>
+                  </div>
+                  <label>
+                    {uiText("给编排助手的消息")}
+                    <textarea
+                      value={aiEditing.message}
+                      onChange={(event) =>
+                        onAiEditingChange?.({
+                          ...aiEditing,
+                          message: event.currentTarget.value,
+                        })
+                      }
+                    />
+                  </label>
+                  {modelConnection === undefined && (
+                    <button type="button" onClick={onConfigureAiModel}>
+                      {uiText("配置模型")}
+                    </button>
+                  )}
+                </section>
+              )}
+              {saved?.sillyTavernSource && (
+                <SillyTavernSource
+                  key={draft.id}
+                  client={client}
+                  presetId={draft.id}
+                />
+              )}
 
               {saved?.structure?.migrationNotice && (
                 <p className="workspace-feedback" role="status">

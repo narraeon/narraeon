@@ -1,7 +1,7 @@
 import { V1ProtocolError } from "../../protocol/v1.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
-  convertSillyTavernPreset,
+  prepareSillyTavernPresetImport,
   inspectSillyTavernPreset,
 } from "../../shared/sillytavern-preset.ts";
 import type { ContentWorkspace } from "../content/ContentWorkspace.ts";
@@ -92,9 +92,14 @@ export class PlayCommands {
         };
       case "play.import":
         return this.#services.playPresets.importPortable(request);
+      case "play.sillytavern.source.read":
+        return this.#services.playPresets.readSillyTavernSource(
+          request.presetId,
+        );
       case "play.sillytavern.inspect":
       case "play.sillytavern.preview":
-      case "play.sillytavern.import": {
+      case "play.sillytavern.import":
+      case "play.sillytavern.source.associate": {
         // Do not trust the browser to enforce the import limit or supply
         // already-converted files. Preview and import both parse from source.
         if (Buffer.byteLength(request.source, "utf8") > 2 * 1024 * 1024)
@@ -103,7 +108,8 @@ export class PlayCommands {
             "SillyTavern source exceeds the size limit",
           );
         if (
-          request.type !== "play.sillytavern.inspect" &&
+          (request.type === "play.sillytavern.preview" ||
+            request.type === "play.sillytavern.import") &&
           (request.selected.length > 4096 ||
             request.selected.reduce(
               (bytes, id) => bytes + Buffer.byteLength(id, "utf8"),
@@ -118,21 +124,33 @@ export class PlayCommands {
         try {
           if (request.type === "play.sillytavern.inspect")
             return inspectSillyTavernPreset(request.source, request.groupId);
-          const converted = convertSillyTavernPreset(request.source, {
-            groupId: request.groupId,
-            selected: request.selected,
-            name: request.name,
-            locale: this.#services.locale(),
-          });
+          if (request.type === "play.sillytavern.source.associate")
+            return await this.#services.playPresets.associateSillyTavernSource(
+              request.presetId,
+              request.source,
+            );
+          const { conversion, snapshot } = prepareSillyTavernPresetImport(
+            request.source,
+            {
+              groupId: request.groupId,
+              selected: request.selected,
+              name: request.name,
+              locale: this.#services.locale(),
+            },
+          );
           if (request.type === "play.sillytavern.preview") {
-            const parsed = parsePlayPresetFiles(converted.files);
+            const parsed = parsePlayPresetFiles(conversion.files);
             if (parsed.kind === "invalid") throw parsed.error;
             toPlayPresetStructuredEditor(parsed.definition);
-            return converted;
+            return conversion;
           }
-          return await this.#services.playPresets.importPortable({
+          return await this.#services.playPresets.importSillyTavern({
             name: request.name,
-            files: converted.files,
+            files: conversion.files,
+            snapshot,
+            ...(request.operationId === undefined
+              ? {}
+              : { operationId: request.operationId }),
           });
         } catch (error) {
           if (error instanceof V1ProtocolError) throw error;
