@@ -27,7 +27,7 @@ import {
   isResponseRecord,
   unreadableResponse,
 } from "./RuntimeResponse.ts";
-import { readAfterCommit } from "./RequestOutcome.ts";
+import { hasUnconfirmedOutcome, readAfterCommit } from "./RequestOutcome.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import {
@@ -261,6 +261,11 @@ export function WorldPage({
     initialComposerDraft?.turnNote ?? "",
   );
   const [pendingAction, setPending] = useState<PendingAction | null>(null);
+  const forkAttempt = useRef<{
+    operationId: string;
+    worldId: string;
+    sourceHead: string;
+  } | null>(null);
   const [earlierTimelineLoading, setEarlierTimelineLoading] = useState(false);
   const pending =
     pendingAction ?? (earlierTimelineLoading ? "timeline-page" : null);
@@ -1446,20 +1451,28 @@ export function WorldPage({
     }
   }
   async function deriveWorld(sourceHead = world?.head): Promise<void> {
-    if (world === null) return;
-    if (sourceHead === undefined) return;
+    if (world === null || sourceHead === undefined || pending !== null) return;
+    const previous = forkAttempt.current;
+    const operationId =
+      previous?.worldId === world.worldId && previous.sourceHead === sourceHead
+        ? previous.operationId
+        : createClientId("derive");
+    forkAttempt.current = { operationId, worldId: world.worldId, sourceHead };
+    setFeedback(null);
     setPending("derive");
     try {
       const derived = await worldTarget.command(() =>
         requestRuntime<{ world: { worldId: string } }>(client, {
           type: "world.derive",
-          operationId: createClientId("derive"),
+          operationId,
           sourceWorldId: world.worldId,
           sourceHead,
         }),
       );
+      forkAttempt.current = null;
       await readAfterCommit(() => onOpenWorld(derived.world.worldId));
     } catch (reason: unknown) {
+      if (!hasUnconfirmedOutcome(reason)) forkAttempt.current = null;
       await onRecoverWorkspace?.();
       setFeedback({ kind: "error", text: errorMessage(reason) });
       setPending(null);

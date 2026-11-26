@@ -1,4 +1,10 @@
 import { getWebLocale } from "./i18n.ts";
+import { RuntimeRequestError } from "./RuntimeResponse.ts";
+
+/** Only a Runtime rejection can rule out publication when there is no receipt. */
+export function hasUnconfirmedOutcome(error: unknown): boolean {
+  return error instanceof RuntimeRequestError && error.kind !== "runtime";
+}
 
 /** The command has a receipt. Only the subsequent view update failed. */
 export class ProjectionRefreshError extends Error {

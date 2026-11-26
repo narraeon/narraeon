@@ -132,7 +132,7 @@ export type V1Request =
       /** The `treeRevision` the draft was opened from; a stale base is rejected with `content_conflict`. */
       baseTreeRevision: string;
     }
-  | { type: "content.copy"; packageId: string }
+  | { type: "content.copy"; packageId: string; operationId?: string }
   | { type: "content.delete"; packageId: string }
   | { type: "content.rename"; packageId: string; name: string }
   | {

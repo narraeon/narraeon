@@ -116,14 +116,14 @@ describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
       packageId: first.localId,
     });
     expect(copied.localId).not.toBe(first.localId);
-    expect(copied.title).toBe("My inn");
+    expect(copied.title).toBe("My inn · Copy");
     expect(copied.files).toEqual(edited);
 
     const exported = await request<{ base64: string; fileName: string }>(
       runtime,
       { type: "content.export", packageId: copied.localId },
     );
-    expect(exported.fileName).toBe("My-inn.zip");
+    expect(exported.fileName).toBe("My-inn-Copy.zip");
     const imported = await request<EditableContentPackageDetail>(runtime, {
       type: "content.import",
       archiveBase64: exported.base64,

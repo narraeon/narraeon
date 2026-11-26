@@ -1187,6 +1187,7 @@ export class PlayCallChain {
     sourceWorldId: string;
     sourceHead: string;
     hostPresetId: string;
+    locale?: AppLocale;
     targetDataRoot?: string;
     targetName?: string;
     publish?: false;

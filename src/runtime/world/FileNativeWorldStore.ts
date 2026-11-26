@@ -19,7 +19,14 @@ import {
 } from "../extension/WorldExtensionControls.ts";
 import type { WorldExtensionChoice } from "../../protocol/worldExtensions.ts";
 import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
-import type { AppLocale } from "../../protocol/appPreferences.ts";
+import {
+  defaultAppLocale,
+  type AppLocale,
+} from "../../protocol/appPreferences.ts";
+import {
+  derivedDisplayName,
+  localDisplayNameLimit,
+} from "../DerivedDisplayName.ts";
 import {
   assertSameGameplay,
   gameplayPath,
@@ -307,6 +314,7 @@ export interface FileNativeWorldDerivationInput {
   sourceWorldId: string;
   sourceHead: string;
   hostPresetId: string;
+  locale?: AppLocale;
   targetDataRoot?: string;
   targetName?: string;
   /** An unpublished closure, outside the world's library. */
@@ -469,10 +477,7 @@ export class FileNativeWorldStore {
   }
 
   async listWorlds(): Promise<FileNativeWorldSummary[]> {
-    await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
-    const entries = (
-      await readdir(this.#worldsRoot, { withFileTypes: true })
-    ).filter((entry) => entry.isDirectory() && !entry.name.startsWith("."));
+    const entries = await this.#listWorldDirectories();
     const worlds: FileNativeWorldSummary[] = [];
     // Bound concurrent shell/head/cache reads even in a large workspace.
     for (let offset = 0; offset < entries.length; offset += 16) {
@@ -492,6 +497,34 @@ export class FileNativeWorldStore {
       );
     }
     return worlds.sort(compareWorldActivity);
+  }
+
+  async #listWorldDirectories() {
+    await mkdir(this.#worldsRoot, { recursive: true, mode: 0o700 });
+    return (await readdir(this.#worldsRoot, { withFileTypes: true })).filter(
+      (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+    );
+  }
+
+  async #listWorldTitles(): Promise<string[]> {
+    const entries = await this.#listWorldDirectories();
+    const titles: string[] = [];
+    for (let offset = 0; offset < entries.length; offset += 16) {
+      const batch = await Promise.all(
+        entries.slice(offset, offset + 16).map(async (entry) => {
+          const root = join(this.#worldsRoot, entry.name);
+          try {
+            return await readWorldTitleAt(root, await readPublicationAt(root));
+          } catch (error: unknown) {
+            // A concurrently deleted world no longer occupies a title.
+            if (isNodeError(error) && error.code === "ENOENT") return null;
+            throw error;
+          }
+        }),
+      );
+      for (const title of batch) if (title !== null) titles.push(title);
+    }
+    return titles;
   }
 
   /** Explicit full-history read; independent of page and model projections. */
@@ -1549,10 +1582,7 @@ export class FileNativeWorldStore {
     }> => {
       const sourceRoot = join(this.#worldsRoot, input.sourceWorldId);
       const sourcePublication = await readPublicationAt(sourceRoot);
-      const sourceSummary = await readWorldSummaryAt(
-        sourceRoot,
-        sourcePublication,
-      );
+      const sourceTitle = await readWorldTitleAt(sourceRoot, sourcePublication);
       const sourceAuthority = new WorldLedgerAuthority(sourceRoot);
       const sourceHead =
         input.sourceHead === "current"
@@ -1646,23 +1676,39 @@ export class FileNativeWorldStore {
           await writeJson(join(staging, "runtime", "archive-import.json"), {
             schemaVersion: 1,
           });
-        const publication: Publication = {
-          schemaVersion: 1,
-          worldId,
-          title: input.targetName ?? derivedWorldName(sourceSummary.title),
-          parentEndpoint: "genesis",
-          operationId: input.operationId,
-          sourceFingerprint: requestFingerprint,
-        };
-        await writeJson(join(staging, publicationFile), publication);
         await updateWorldActivity(
           staging,
           sourceHead,
           selected.history,
           Date.now(),
         );
-        forgetLedger(finalRoot);
-        await rename(staging, finalRoot);
+        const publish = async (title: string): Promise<Publication> => {
+          const publication: Publication = {
+            schemaVersion: 1,
+            worldId,
+            title,
+            parentEndpoint: "genesis",
+            operationId: input.operationId,
+            sourceFingerprint: requestFingerprint,
+          };
+          await writeJson(join(staging, publicationFile), publication);
+          forgetLedger(finalRoot);
+          await rename(staging, finalRoot);
+          return publication;
+        };
+        const defaultTitle = (titles: string[]) =>
+          derivedDisplayName(
+            sourceTitle,
+            "fork",
+            input.locale ?? defaultAppLocale,
+            titles,
+          );
+        const publication =
+          input.targetName !== undefined || input.publish === false
+            ? await publish(input.targetName ?? defaultTitle([]))
+            : await target.operations.withForkPublication(async () =>
+                publish(defaultTitle(await target.#listWorldTitles())),
+              );
         return {
           outcome: "derived",
           world: await readWorldSummaryAt(finalRoot, publication),
@@ -3097,17 +3143,13 @@ function controlGameplayFiles(
   return files.map((file) => ({ ...file, path: `control/${file.path}` }));
 }
 
-const worldNamePattern = /^[^\r\n]{1,160}$/u;
+const worldNamePattern = new RegExp(
+  `^[^\\r\\n]{1,${localDisplayNameLimit}}$`,
+  "u",
+);
 
 function validWorldName(name: string): boolean {
   return worldNamePattern.test(name);
-}
-
-function derivedWorldName(sourceName: string): string {
-  const suffix = " (fork)";
-  return `${Array.from(sourceName)
-    .slice(0, 160 - Array.from(suffix).length)
-    .join("")}${suffix}`;
 }
 
 function derivationRequestFingerprint(
