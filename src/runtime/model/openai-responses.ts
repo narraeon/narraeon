@@ -35,7 +35,6 @@ import {
   capturedProviderOperation,
   modelDiagnosticContext,
   providerCapture,
-  trace,
 } from "./ProviderDiagnostics.ts";
 import {
   continuationError,
@@ -410,13 +409,13 @@ export function validResponsesOutput(value: unknown): value is unknown[] {
 }
 
 export async function exchangeResponses(
-  { connection, fetchImplementation, failureLog }: ProviderDispatch,
+  { connection, fetchImplementation, failureLog, trace }: ProviderDispatch,
   request: ModelHostExchange,
   observer?: ModelHostExchangeObserver,
 ): Promise<ModelHostResponse> {
   const signal = observer?.signal;
   const body = responsesRequestBody(responsesRequestInput(connection, request));
-  await trace("responses_request", body);
+  await trace?.("responses_request", body);
   const bodyJson = JSON.stringify(body);
   const url = providerUrl(connection);
   const capture = providerCapture(
@@ -440,7 +439,7 @@ export async function exchangeResponses(
       "OpenAI Responses",
     );
     if (!received.ok)
-      throw await providerError(received, connection.apiKey, capture);
+      throw await providerError(received, connection.apiKey, capture, trace);
     const response = observe(received);
     const payload = isProviderEventStream(response)
       ? await providerStreamResult(
@@ -450,7 +449,7 @@ export async function exchangeResponses(
           signal,
         )
       : await providerJson(response, "Responses API");
-    await trace("responses_response", payload);
+    await trace?.("responses_response", payload);
     if (!isRecord(payload) || !Array.isArray(payload.output))
       throw unknownProviderResponse("Responses API");
     if (

@@ -250,19 +250,31 @@ export class FileNativeModelHost implements ModelHost {
     });
   }
 
+  /** A connection test uses the adapters without retries, continuation or local traces. */
+  exchangeOnce(
+    request: ModelHostExchange,
+    observer: ModelHostExchangeObserver,
+  ): Promise<ModelHostResponse> {
+    return this.#exchange(request, observer, undefined, true);
+  }
+
   async #exchange(
     request: ModelHostExchange,
     observer?: ModelHostExchangeObserver,
     deadline?: number,
+    singleRequest = false,
   ): Promise<ModelHostResponse> {
     assertExchangeCompatibility(this.#connection, request);
-    await trace("model_host_exchange", modelHostTrace(request));
+    if (!singleRequest)
+      await trace("model_host_exchange", modelHostTrace(request));
     const signal = observer?.signal;
     if (signalWasAborted(signal)) throw cancelledModelRequest();
     const dispatch = {
       connection: this.#connection,
       fetchImplementation: this.#fetch,
-      failureLog: this.#failureLog,
+      failureLog: singleRequest ? undefined : this.#failureLog,
+      trace: singleRequest ? undefined : trace,
+      singleRequest,
     };
     try {
       return await providers[this.#connection.provider].exchange(

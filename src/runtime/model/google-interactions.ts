@@ -597,7 +597,12 @@ export async function exchangeGoogle(
 }
 
 async function googleWithinDeadline(
-  { connection, fetchImplementation, failureLog }: ProviderDispatch,
+  {
+    connection,
+    fetchImplementation,
+    failureLog,
+    singleRequest,
+  }: ProviderDispatch,
   request: ModelHostExchange,
   onDelta: ModelHostDeltaSink | undefined,
   signal: AbortSignal,
@@ -732,6 +737,10 @@ async function googleWithinDeadline(
               : "interrupted";
           void report(hop);
           if (payload.status === "requires_continuation") {
+            if (singleRequest)
+              throw new ModelHostOutcomeUnknownError(
+                "Google Interactions requested a continuation after the connection test",
+              );
             if (signal.aborted) throw cancelledModelRequest();
             if (
               typeof payload.continuationToken !== "string" ||

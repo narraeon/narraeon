@@ -42,6 +42,7 @@ const requiredFields = {
   "model.select": { connectionId: text },
   "model.delete": { connectionId: text },
   "model.models": { provider: text, baseUrl: text },
+  "model.test": { connection: object },
   "content.create-sample": { locale: text },
   "content.scripts.read": { packageId: text },
   "content.scripts.set": { packageId: text, enabled: boolean },

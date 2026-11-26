@@ -24,7 +24,6 @@ import {
   capturedProviderOperation,
   modelDiagnosticContext,
   providerCapture,
-  trace,
 } from "./ProviderDiagnostics.ts";
 import {
   continuationError,
@@ -291,7 +290,7 @@ function normalizeChatUsage(value: unknown): ModelHostUsage {
 }
 
 export async function exchangeChat(
-  { connection, fetchImplementation, failureLog }: ProviderDispatch,
+  { connection, fetchImplementation, failureLog, trace }: ProviderDispatch,
   request: ModelHostExchange,
   observer?: ModelHostExchangeObserver,
 ): Promise<ModelHostResponse> {
@@ -300,7 +299,7 @@ export async function exchangeChat(
   const url = providerUrl(connection);
   const body = chatRequestBody(connection, request, url);
   const bodyJson = JSON.stringify(body);
-  await trace("chat_request", body);
+  await trace?.("chat_request", body);
   const capture = providerCapture(
     failureLog,
     connection.provider,
@@ -322,7 +321,7 @@ export async function exchangeChat(
       "Chat Completions",
     );
     if (!received.ok)
-      throw await providerError(received, connection.apiKey, capture);
+      throw await providerError(received, connection.apiKey, capture, trace);
     const response = observe(received);
     if (isProviderEventStream(response)) {
       const streamed = await providerStreamResult(
@@ -332,7 +331,7 @@ export async function exchangeChat(
         signal,
       );
       capture?.setReasoning(streamed.reasoningContent);
-      await trace("chat_response", streamed);
+      await trace?.("chat_response", streamed);
       return {
         ...(streamed.content === "" ? {} : { text: streamed.content }),
         ...(streamed.reasoningContent === ""
@@ -386,7 +385,7 @@ export async function exchangeChat(
         completion_tokens_details?: { reasoning_tokens?: number };
       };
     };
-    await trace("chat_response", payload);
+    await trace?.("chat_response", payload);
     const message = payload.choices?.[0]?.message;
     const finishReason = payload.choices?.[0]?.finish_reason;
     if (
