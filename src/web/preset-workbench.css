@@ -751,7 +751,42 @@
   margin-block: 0.45rem;
 }
 
-.orchestration-preview-results pre {
+.st-selection-actions,
+.orchestration-ai-draft > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.orchestration-ai-draft,
+.sillytavern-source {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.orchestration-ai-draft h4 {
+  margin: 0;
+}
+
+.orchestration-ai-draft label {
+  display: grid;
+  gap: 0.25rem;
+  margin-block: 0.5rem;
+}
+
+.sillytavern-source-entries {
+  padding-inline-start: 1.5rem;
+}
+
+.sillytavern-source-entries li {
+  margin-block: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.orchestration-preview-results pre,
+.sillytavern-source pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

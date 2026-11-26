@@ -59,6 +59,7 @@ import {
   useAuthoringWorkspace,
 } from "./useAuthoringWorkspace.ts";
 import { WorldPage, type WorldComposerDraft } from "./WorldPage.tsx";
+import type { OrchestrationAiWorkbenchDraft } from "./orchestration-ai-workbench.ts";
 import {
   idleWorkspaceNavigation,
   parseWorkspaceHash,
@@ -103,6 +104,7 @@ interface ModelSettingsVisit {
   origin: BrowserWorkspaceEntry;
   settings: BrowserWorkspaceEntry;
   worldDraft?: WorldComposerDraft;
+  orchestration?: true;
 }
 
 export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
@@ -120,6 +122,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [leaveConfirmation, setLeaveConfirmation] =
     useState<ConfirmationRequest<null> | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [orchestrationAiEditing, setOrchestrationAiEditing] =
+    useState<OrchestrationAiWorkbenchDraft | null>(null);
   const [presetPageVersion, setPresetPageVersion] = useState(0);
   const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
@@ -958,7 +962,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     openModelSetup();
   }
 
-  function openModelSetup(): void {
+  function openModelSetup(fromOrchestration = false): void {
     const origin = readBrowserWorkspaceEntry();
     const current = locationRef.current;
     if (origin.hash !== workspaceHash(current)) return;
@@ -971,6 +975,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         settings,
         ...(current.screen === "world" && draft?.worldId === current.worldId
           ? { worldDraft: draft }
+          : {}),
+        ...(fromOrchestration && current.screen === "plays"
+          ? { orchestration: true }
           : {}),
       };
   }
@@ -1546,6 +1553,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             initialLibrary={workspace.playPresets}
             modelConnection={activeModel}
             onEditModelConnection={() => navigate("model")}
+            aiEditing={orchestrationAiEditing}
+            onAiEditingChange={setOrchestrationAiEditing}
+            onConfigureAiModel={() => {
+              if (screen === "plays" && !navigationLocked) openModelSetup(true);
+            }}
             initialSelectedId={selectedPresetId}
             onSelectionChange={(presetId) => {
               if (
@@ -1581,6 +1593,15 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               ? {}
               : {
                   onReturnToWorld: () =>
+                    returnToBrowserWorkspaceEntry(
+                      modelVisit.origin,
+                      modelVisit.settings,
+                    ),
+                })}
+            {...(modelVisit?.orchestration === undefined
+              ? {}
+              : {
+                  onReturnToOrchestration: () =>
                     returnToBrowserWorkspaceEntry(
                       modelVisit.origin,
                       modelVisit.settings,

@@ -10,6 +10,10 @@ import {
   type OrderedPlayPrompt,
 } from "./ordered-play-prompts.ts";
 import { customizePromptArrangement } from "./prompt-arrangement.ts";
+import type { SillyTavernSourceSnapshot } from "./sillytavern-source.ts";
+
+export const sillyTavernImportReportPath =
+  "assets/sillytavern-import-report.json";
 
 export type SillyTavernReason =
   | "missing_builtin"
@@ -208,8 +212,8 @@ function parse(
       optional(value[key], "number", `${path}.${key}`);
     if (
       value.position !== undefined &&
-      typeof value.position !== "number" &&
-      typeof value.position !== "string"
+      typeof value.position !== "string" &&
+      (typeof value.position !== "number" || !Number.isFinite(value.position))
     )
       fail(`${path}.position`, "expected string or number");
     if (
@@ -267,7 +271,8 @@ function parse(
         fail(path, "unknown group field");
       if (
         (typeof value.character_id !== "string" &&
-          typeof value.character_id !== "number") ||
+          (typeof value.character_id !== "number" ||
+            !Number.isFinite(value.character_id))) ||
         String(value.character_id).length === 0
       )
         fail(`${path}.character_id`, "expected character identifier");
@@ -446,20 +451,29 @@ export function inspectSillyTavernPreset(
 
 export function convertSillyTavernPreset(
   raw: string,
-  options: {
-    groupId?: string | undefined;
-    selected: string[];
-    name: string;
-    locale: AppLocale;
-  },
+  options: SillyTavernConversionOptions,
 ): SillyTavernConversion {
+  return prepareSillyTavernPresetImport(raw, options).conversion;
+}
+
+interface SillyTavernConversionOptions {
+  groupId?: string | undefined;
+  selected: string[];
+  name: string;
+  locale: AppLocale;
+}
+
+export function prepareSillyTavernPresetImport(
+  raw: string,
+  options: SillyTavernConversionOptions,
+): { conversion: SillyTavernConversion; snapshot: SillyTavernSourceSnapshot } {
   const { inspection, selected } = parse(raw, options.groupId);
   if (!selected) fail("$.prompt_order", "choose a character group");
+  const selection = new Set(options.selected);
+  const available = new Set(inspection.prompts.map(({ id }) => id));
   if (
-    new Set(options.selected).size !== options.selected.length ||
-    options.selected.some(
-      (id) => !inspection.prompts.some((item) => item.id === id),
-    )
+    selection.size !== options.selected.length ||
+    options.selected.some((id) => !available.has(id))
   )
     fail("selection", "invalid selection");
   const catalog = builtinPlayPrompts(options.locale);
@@ -480,7 +494,7 @@ export function convertSillyTavernPreset(
   );
   const targetIds = new Map<string, string>();
   for (const item of inspection.prompts) {
-    const chosen = options.selected.includes(item.id);
+    const chosen = selection.has(item.id);
     report.push({
       code: "prompt_selection",
       path: item.path,
@@ -543,12 +557,21 @@ export function convertSillyTavernPreset(
     mounts: [],
     extensions: [],
   });
-  files["assets/sillytavern-import-report.json"] = JSON.stringify(
+  const chosenPaths = new Set(
+    inspection.prompts
+      .filter(({ id }) => selection.has(id))
+      .map(({ path }) => path),
+  );
+  const chosenDiagnosticPaths = new Set(chosenPaths);
+  for (const item of inspection.prompts)
+    if (selection.has(item.id))
+      for (const path of item.unsupportedPaths) chosenDiagnosticPaths.add(path);
+  files[sillyTavernImportReportPath] = JSON.stringify(
     {
       format: "narraeon.sillytavern-import/v1",
       sourceGroupId: inspection.selectedGroupId,
       prompts: inspection.prompts.flatMap((item, index) =>
-        options.selected.includes(item.id)
+        selection.has(item.id)
           ? [
               {
                 sourceId: item.id,
@@ -578,30 +601,79 @@ export function convertSillyTavernPreset(
       report: report.filter(
         (item) =>
           item.code === "ignored_setting" ||
-          (item.name !== undefined &&
-            inspection.prompts.some(
-              (prompt) =>
-                options.selected.includes(prompt.id) &&
-                (item.path === prompt.path ||
-                  item.path.startsWith(`${prompt.path}.`)),
-            )),
+          (item.name !== undefined && chosenDiagnosticPaths.has(item.path)),
       ),
     },
     null,
     2,
   );
+  const snapshot: SillyTavernSourceSnapshot = {
+    version: 1,
+    groupId: inspection.selectedGroupId ?? "manager",
+    entries: inspection.prompts.flatMap((item, index) => {
+      const selected = selection.has(item.id);
+      if (!item.ordered && !selected) return [];
+      const targetEntryId = targetIds.get(item.id);
+      return [
+        {
+          id: item.id,
+          path: item.path,
+          name: item.name,
+          ordered: item.ordered,
+          ...(item.ordered ? { order: index } : {}),
+          selected,
+          ...(item.enabled === undefined ? {} : { enabled: item.enabled }),
+          marker: item.marker,
+          missing: item.missing,
+          ...(selected &&
+          !item.marker &&
+          !item.missing &&
+          item.content !== undefined
+            ? { content: item.content }
+            : {}),
+          ...(item.role === undefined ? {} : { role: item.role }),
+          ...(item.injectionPosition === undefined
+            ? {}
+            : { injectionPosition: item.injectionPosition }),
+          ...(item.injectionDepth === undefined
+            ? {}
+            : { injectionDepth: item.injectionDepth }),
+          ...(item.injectionOrder === undefined
+            ? {}
+            : { injectionOrder: item.injectionOrder }),
+          ...(item.triggers === undefined ? {} : { triggers: item.triggers }),
+          macros: selected && !item.marker && !item.missing ? item.macros : [],
+          ...(item.forbidOverrides === undefined
+            ? {}
+            : { forbidOverrides: item.forbidOverrides }),
+          ...(item.systemPrompt === undefined
+            ? {}
+            : { systemPrompt: item.systemPrompt }),
+          ...(item.extension === undefined
+            ? {}
+            : { extension: item.extension }),
+          ...(item.position === undefined ? {} : { position: item.position }),
+          reasons: item.reasons,
+          ...(targetEntryId === undefined ? {} : { targetEntryId }),
+        },
+      ];
+    }),
+  };
   return {
-    files,
-    report,
-    target: entries.map((entry) => ({
-      name:
-        entry.kind === "user"
-          ? entry.name
-          : entry.kind === "builtin"
-            ? catalog.find((item) => item.id === entry.builtin)!.name
-            : "World",
-      kind: entry.kind,
-      enabled: entry.kind === "world" || entry.enabled,
-    })),
+    snapshot,
+    conversion: {
+      files,
+      report,
+      target: entries.map((entry) => ({
+        name:
+          entry.kind === "user"
+            ? entry.name
+            : entry.kind === "builtin"
+              ? catalog.find((item) => item.id === entry.builtin)!.name
+              : "World",
+        kind: entry.kind,
+        enabled: entry.kind === "world" || entry.enabled,
+      })),
+    },
   };
 }

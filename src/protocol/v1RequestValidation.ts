@@ -139,6 +139,8 @@ const requiredFields = {
     selected: array,
     name: text,
   },
+  "play.sillytavern.source.read": { presetId: text },
+  "play.sillytavern.source.associate": { presetId: text, source: text },
   "play.workbench.read": {},
   "play.orchestration.preview": {
     presetId: text,
@@ -500,14 +502,15 @@ const contentChecks: Partial<Record<Command, readonly Check[]>> = {
 };
 
 const textFiles = { type: "object", additionalProperties: string };
+const playSillyTavernFields = {
+  source: string,
+  groupId: text,
+  selected: { type: "array", items: text },
+  name: text,
+};
 const playSillyTavernSelection = [
   check(
-    exactFields({
-      source: string,
-      groupId: text,
-      selected: { type: "array", items: text },
-      name: text,
-    }),
+    exactFields(playSillyTavernFields),
     (_request, command) => `${command} has invalid fields`,
   ),
 ];
@@ -605,7 +608,27 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
     ),
   ],
   "play.sillytavern.preview": playSillyTavernSelection,
-  "play.sillytavern.import": playSillyTavernSelection,
+  "play.sillytavern.import": [
+    check(
+      exactFields({
+        ...playSillyTavernFields,
+        operationId: { ...text, maxLength: 160 },
+      }),
+      "play.sillytavern.import has invalid fields",
+    ),
+  ],
+  "play.sillytavern.source.read": [
+    check(
+      exactFields({ presetId: text }),
+      "play.sillytavern.source.read has invalid fields",
+    ),
+  ],
+  "play.sillytavern.source.associate": [
+    check(
+      exactFields({ presetId: text, source: string }),
+      "play.sillytavern.source.associate has invalid fields",
+    ),
+  ],
   "play.import": [
     field("files", {
       type: "array",

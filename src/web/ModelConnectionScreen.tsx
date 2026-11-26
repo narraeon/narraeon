@@ -95,6 +95,7 @@ export function ModelConnectionScreen({
   onLibraryChange,
   onConnectionActivated,
   onReturnToWorld,
+  onReturnToOrchestration,
   onNotice,
   onDirtyChange,
   pendingState,
@@ -104,6 +105,7 @@ export function ModelConnectionScreen({
   onLibraryChange: (library: ModelConnectionLibraryView) => void;
   onConnectionActivated?: () => void;
   onReturnToWorld?: () => void;
+  onReturnToOrchestration?: () => void;
   onNotice: (notice: string) => void;
   onDirtyChange: (dirty: boolean) => void;
   pendingState?: [string | null, (next: string | null) => void];
@@ -551,6 +553,16 @@ export function ModelConnectionScreen({
               disabled={dirty && pending !== null}
             >
               {uiText("返回世界")}
+            </button>
+          )}
+          {onReturnToOrchestration !== undefined && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onReturnToOrchestration}
+              disabled={dirty && pending !== null}
+            >
+              {uiText("返回编排方案")}
             </button>
           )}
         </div>
