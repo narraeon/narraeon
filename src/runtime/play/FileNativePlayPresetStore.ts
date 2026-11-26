@@ -44,14 +44,7 @@ import {
   retiredBuiltinReplacements,
 } from "../../shared/prompt-arrangement.ts";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -92,7 +85,10 @@ import {
   isOrchestrationProvenanceRecord,
   type OrchestrationEntrySource,
 } from "../../protocol/orchestrationProvenance.ts";
-import { OrchestrationProvenanceStore } from "./OrchestrationProvenanceStore.ts";
+import {
+  OrchestrationProvenanceStore,
+  provenanceVersion,
+} from "./OrchestrationProvenanceStore.ts";
 import {
   readLegacySillyTavernReport,
   sillyTavernSnapshotFingerprint,
@@ -612,6 +608,8 @@ interface StoredPreset {
   currentRevision: string;
   revisions: Record<string, Record<string, string>>;
   draftRevision?: string;
+  currentProvenance?: string;
+  draftProvenance?: string;
   /** Rotates when drafts are discarded or applied. */
   draftEpoch?: string;
   draftHead?: string;
@@ -633,10 +631,22 @@ export interface OrchestrationDraftTarget {
   epoch: string;
   head: string;
   current: boolean;
+  hasDraft: boolean;
   files: Record<string, string>;
   currentFiles: Record<string, string>;
   editorReceipt?: string;
   provenance?: OrchestrationEntrySource[];
+}
+
+interface DraftSourceAnnotation {
+  surface: OrchestrationSurface | undefined;
+  entryId: string;
+  value: unknown;
+}
+
+interface DraftProvenance {
+  version?: string | undefined;
+  rows?: OrchestrationEntrySource[];
 }
 
 export class OrchestrationDraftConflict extends RuntimeDomainError {
@@ -812,10 +822,15 @@ export class FileNativePlayPresetStore {
         }
       }
       document.presets.push(stored);
-      const provenance = await this.#orchestrationProvenance.read(
+      const rows = await this.#orchestrationProvenance.read(
         id,
         sourceRevision,
+        effectiveProvenance(source),
       );
+      const provenance =
+        rows.length === 0 ? {} : { version: provenanceVersion(rows), rows };
+      if (provenance.version !== undefined)
+        stored.currentProvenance = provenance.version;
       await this.#publishWithProvenance(
         stored.id,
         stored.currentRevision,
@@ -849,17 +864,14 @@ export class FileNativePlayPresetStore {
       const name = normalizeName(input.name);
       if (revision !== previousRevision || name !== stored.name)
         stored.draftHead = randomUUID();
-      const provenance = !(await this.#hasRevision(stored, revision))
-        ? await this.#carryProvenance(
-            stored.id,
-            previousRevision,
-            stored.revisions[previousRevision]!,
-            files,
-            "manual",
-          )
-        : [];
+      const provenance = await this.#draftProvenance(
+        stored,
+        revision,
+        files,
+        "manual",
+      );
       stored.name = name;
-      setDraft(stored, revision, files);
+      setDraft(stored, revision, files, provenance.version);
       await this.#publishWithProvenance(stored.id, revision, provenance, () =>
         this.#write(document),
       );
@@ -871,26 +883,32 @@ export class FileNativePlayPresetStore {
   }
 
   async readEditorDraft(id: string): Promise<OrchestrationDraftTarget> {
-    await this.#tail;
-    const document = await this.#read();
-    const preset = findStored(document, id);
-    const revision = preset.draftRevision ?? preset.currentRevision;
-    const provenance = await this.#orchestrationProvenance.read(id, revision);
-    return {
-      id,
-      name: preset.name,
-      revision,
-      currentRevision: preset.currentRevision,
-      epoch: preset.draftEpoch ?? "",
-      head: preset.draftHead ?? "",
-      current: document.currentPresetId === id,
-      files: cloneFiles(preset.revisions[revision]!),
-      currentFiles: cloneFiles(preset.revisions[preset.currentRevision]!),
-      ...(provenance.length === 0 ? {} : { provenance }),
-      ...(preset.editorReceipt === undefined
-        ? {}
-        : { editorReceipt: preset.editorReceipt }),
-    };
+    return this.#change(async () => {
+      const document = await this.#read();
+      const preset = findStored(document, id);
+      const revision = preset.draftRevision ?? preset.currentRevision;
+      const provenance = await this.#orchestrationProvenance.read(
+        id,
+        revision,
+        effectiveProvenance(preset),
+      );
+      return {
+        id,
+        name: preset.name,
+        revision,
+        currentRevision: preset.currentRevision,
+        epoch: preset.draftEpoch ?? "",
+        head: preset.draftHead ?? "",
+        current: document.currentPresetId === id,
+        hasDraft: preset.draftRevision !== undefined,
+        files: cloneFiles(preset.revisions[revision]!),
+        currentFiles: cloneFiles(preset.revisions[preset.currentRevision]!),
+        ...(provenance.length === 0 ? {} : { provenance }),
+        ...(preset.editorReceipt === undefined
+          ? {}
+          : { editorReceipt: preset.editorReceipt }),
+      };
+    });
   }
 
   /** Publish a validated prompt-only draft, with its session journal's identity. */
@@ -903,11 +921,7 @@ export class FileNativePlayPresetStore {
     files: Record<string, string>;
     receiptId: string;
     nextHead: string;
-    provenance?: {
-      surface: OrchestrationSurface | undefined;
-      entryId: string;
-      value: unknown;
-    }[];
+    provenance?: DraftSourceAnnotation[];
     restoreProvenance?: OrchestrationEntrySource[];
   }): Promise<void> {
     await this.#change(async () => {
@@ -961,18 +975,15 @@ export class FileNativePlayPresetStore {
       }
       delete stored.builtinDefault;
       const revision = revisionForFiles(files, this.#limits);
-      const provenance = (await this.#hasRevision(stored, revision))
-        ? []
-        : (input.restoreProvenance ??
-          (await this.#carryProvenance(
-            stored.id,
-            input.expectedRevision,
-            previous,
-            files,
-            "assistant",
-            input.provenance,
-          )));
-      setDraft(stored, revision, files);
+      const provenance = await this.#draftProvenance(
+        stored,
+        revision,
+        files,
+        "assistant",
+        input.provenance,
+        input.restoreProvenance,
+      );
+      setDraft(stored, revision, files, provenance.version);
       stored.editorReceipt = input.receiptId;
       stored.draftHead = input.nextHead;
       await this.#publishWithProvenance(stored.id, revision, provenance, () =>
@@ -990,9 +1001,13 @@ export class FileNativePlayPresetStore {
       const stored = findStored(document, id);
       assertExpectedDraft(stored, expectedRevision);
       if (stored.draftRevision !== undefined) {
-        if (stored.draftRevision !== stored.legacySillyTavernRevision)
+        if (
+          stored.draftRevision !== stored.currentRevision &&
+          stored.draftRevision !== stored.legacySillyTavernRevision
+        )
           delete stored.revisions[stored.draftRevision];
         delete stored.draftRevision;
+        delete stored.draftProvenance;
       }
       stored.draftEpoch = randomUUID();
       delete stored.draftHead;
@@ -1098,8 +1113,18 @@ export class FileNativePlayPresetStore {
           `Draft cannot be applied: ${candidateValidation.message}`,
         );
       if (stored.draftRevision !== undefined) {
+        await this.#archiveRevision(
+          stored.id,
+          stored.currentRevision,
+          stored.revisions[stored.currentRevision]!,
+          stored.currentProvenance,
+        );
         stored.currentRevision = stored.draftRevision;
+        if (stored.draftProvenance === undefined)
+          delete stored.currentProvenance;
+        else stored.currentProvenance = stored.draftProvenance;
         delete stored.draftRevision;
+        delete stored.draftProvenance;
         stored.draftEpoch = randomUUID();
         delete stored.draftHead;
       }
@@ -1470,33 +1495,99 @@ export class FileNativePlayPresetStore {
   async readOrchestrationProvenance(
     presetId: string,
     revision: string,
+    target?: "current" | "draft",
   ): Promise<OrchestrationEntrySource[]> {
     return this.#change(async () => {
       const stored = findStored(await this.#read(), presetId);
-      if (!(await this.#hasRevision(stored, revision)))
+      const selected =
+        target === undefined
+          ? await this.#knownProvenance(stored, revision)
+          : target === "current" && stored.currentRevision === revision
+            ? { version: stored.currentProvenance }
+            : target === "draft" && stored.draftRevision === revision
+              ? { version: stored.draftProvenance }
+              : undefined;
+      if (selected === undefined)
         throw new FileNativePlayPresetError(
           "revision_not_found",
           "The requested orchestration revision was not found",
         );
-      return this.#orchestrationProvenance.read(presetId, revision);
+      return this.#orchestrationProvenance.read(
+        presetId,
+        revision,
+        selected.version,
+      );
     });
   }
 
+  async #knownProvenance(stored: StoredPreset, revision: string) {
+    if (stored.draftRevision === revision)
+      return { version: stored.draftProvenance };
+    if (stored.currentRevision === revision)
+      return { version: stored.currentProvenance };
+    if (Object.hasOwn(stored.revisions, revision))
+      return { version: undefined };
+    const archived = await this.#readArchive(stored.id, revision);
+    if (archived !== undefined) return { version: archived.provenance };
+  }
+
+  async #draftProvenance(
+    stored: StoredPreset,
+    revision: string,
+    files: Record<string, string>,
+    modified: "manual" | "assistant",
+    annotations: DraftSourceAnnotation[] = [],
+    restored?: OrchestrationEntrySource[],
+  ): Promise<DraftProvenance> {
+    const known = await this.#knownProvenance(stored, revision);
+    const explicit =
+      restored !== undefined ||
+      annotations.some(
+        ({ surface, value }) =>
+          surface !== undefined && isOrchestrationProvenanceRecord(value),
+      );
+    if (known !== undefined && !explicit) return known;
+    const rows =
+      restored ??
+      (await this.#carryProvenance(stored, files, modified, annotations));
+    if (known !== undefined) {
+      const existing = await this.#orchestrationProvenance.read(
+        stored.id,
+        revision,
+        known.version,
+      );
+      if (isDeepStrictEqual(existing, rows)) return known;
+      // A restore can match the applied version even when an identical-byte
+      // draft exposes different provenance. Reuse that exact prior version.
+      if (
+        stored.currentRevision === revision &&
+        known.version !== stored.currentProvenance &&
+        isDeepStrictEqual(
+          await this.#orchestrationProvenance.read(
+            stored.id,
+            revision,
+            stored.currentProvenance,
+          ),
+          rows,
+        )
+      )
+        return { version: stored.currentProvenance };
+    }
+    if (rows.length === 0 && !explicit) return {};
+    return { version: provenanceVersion(rows), rows };
+  }
+
   async #carryProvenance(
-    presetId: string,
-    previousRevision: string,
-    previousFiles: Record<string, string>,
+    stored: StoredPreset,
     nextFiles: Record<string, string>,
     modified: "manual" | "assistant",
-    changes: {
-      surface: OrchestrationSurface | undefined;
-      entryId: string;
-      value: unknown;
-    }[] = [],
+    changes: DraftSourceAnnotation[],
   ): Promise<OrchestrationEntrySource[]> {
+    const previousRevision = stored.draftRevision ?? stored.currentRevision;
     const previous = await this.#orchestrationProvenance.read(
-      presetId,
+      stored.id,
       previousRevision,
+      effectiveProvenance(stored),
     );
     const rows = new Map(
       previous.map((item) => [`${item.surface}:${item.entryId}`, item]),
@@ -1507,7 +1598,10 @@ export class FileNativePlayPresetStore {
     if (rows.size === 0) return [];
     const next = parsePlayPresetFiles(nextFiles, this.#limits);
     if (next.kind === "invalid") return [...rows.values()];
-    const old = parsePlayPresetFiles(previousFiles, this.#limits);
+    const old = parsePlayPresetFiles(
+      stored.revisions[previousRevision]!,
+      this.#limits,
+    );
     return [...rows.values()].flatMap((item) => {
       const entry = next.definition[item.surface]?.find(
         ({ id }) => id === item.entryId,
@@ -1537,57 +1631,52 @@ export class FileNativePlayPresetStore {
   async #publishWithProvenance(
     presetId: string,
     revision: string,
-    provenance: OrchestrationEntrySource[],
+    { version, rows }: DraftProvenance,
     publish: () => Promise<void>,
   ): Promise<void> {
-    if (provenance.length === 0) return publish();
-    await this.#orchestrationProvenance.write(presetId, revision, provenance);
+    if (version === undefined || rows === undefined) return publish();
+    const created = await this.#orchestrationProvenance.write(
+      presetId,
+      revision,
+      version,
+      rows,
+    );
     try {
       await publish();
     } catch (error) {
-      await this.#orchestrationProvenance
-        .remove(presetId, revision)
-        .catch(() => undefined);
+      if (created)
+        await this.#orchestrationProvenance
+          .remove(presetId, revision, version)
+          .catch(() => undefined);
       throw error;
     }
   }
 
   async #removeOrphanProvenance(document: StoredDocument): Promise<void> {
     try {
-      const live = await Promise.all(
-        document.presets.map(async (preset) => {
-          let archive: string[] = [];
-          try {
-            archive = await readdir(this.#archivePath(preset.id));
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          }
-          return {
-            id: preset.id,
-            revisions: [
-              ...Object.keys(preset.revisions),
-              ...archive
-                .filter(
-                  (name) =>
-                    name.endsWith(".json") &&
-                    revisionPattern.test(name.slice(0, -5)),
-                )
-                .map((name) => name.slice(0, -5)),
-            ],
-          };
-        }),
+      await this.#orchestrationProvenance.removeOrphans(
+        document.presets.map((preset) => ({
+          id: preset.id,
+          active: [
+            {
+              revision: preset.currentRevision,
+              version: preset.currentProvenance,
+            },
+            ...(preset.draftRevision === undefined
+              ? []
+              : [
+                  {
+                    revision: preset.draftRevision,
+                    version: preset.draftProvenance,
+                  },
+                ]),
+          ],
+        })),
+        (id, revision) => this.#readArchive(id, revision),
       );
-      await this.#orchestrationProvenance.removeOrphans(live);
     } catch {
       // Records outside the live library stay unreachable. Startup retries cleanup.
     }
-  }
-
-  async #hasRevision(stored: StoredPreset, revision: string): Promise<boolean> {
-    return (
-      Object.hasOwn(stored.revisions, revision) ||
-      (await this.#readArchivedRevision(stored.id, revision)) !== undefined
-    );
   }
 
   async associateSillyTavernSource(
@@ -1938,12 +2027,32 @@ export class FileNativePlayPresetStore {
     id: string,
     revision: string,
   ): Promise<Record<string, string> | undefined> {
+    return (await this.#readArchive(id, revision))?.files;
+  }
+
+  async #readArchive(
+    id: string,
+    revision: string,
+  ): Promise<
+    | {
+        files: Record<string, string>;
+        provenance?: string;
+      }
+    | undefined
+  > {
     if (!revisionPattern.test(revision)) return undefined;
     try {
-      const files: unknown = JSON.parse(
+      const raw: unknown = JSON.parse(
         await readFile(this.#archivePath(id, revision), "utf8"),
       );
+      const wrapped = isRecord(raw) && raw.schemaVersion === 1;
+      const files = wrapped ? raw.files : raw;
+      const provenance = wrapped ? raw.provenance : undefined;
       if (
+        (wrapped &&
+          (!hasExactKeys(raw, ["schemaVersion", "files", "provenance"]) ||
+            typeof provenance !== "string" ||
+            !sourceDigestPattern.test(provenance))) ||
         !isRecord(files) ||
         Object.values(files).some((value) => typeof value !== "string") ||
         revisionForFiles(files as Record<string, string>, this.#limits) !==
@@ -1953,10 +2062,39 @@ export class FileNativePlayPresetStore {
           "store_invalid",
           "Archived orchestration revision does not match its identity",
         );
-      return files as Record<string, string>;
+      return {
+        files: files as Record<string, string>,
+        ...(typeof provenance === "string" ? { provenance } : {}),
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
+    }
+  }
+
+  async #archiveRevision(
+    id: string,
+    revision: string,
+    files: Record<string, string>,
+    provenance?: string,
+  ): Promise<void> {
+    if ((await this.#readArchive(id, revision)) !== undefined) return;
+    await mkdir(this.#archivePath(id), { mode: 0o700, recursive: true });
+    const path = this.#archivePath(id, revision);
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(
+        temporary,
+        JSON.stringify(
+          provenance === undefined
+            ? files
+            : { schemaVersion: 1, files, provenance },
+        ),
+        { mode: 0o600, flag: "wx" },
+      );
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
     }
   }
 
@@ -1967,25 +2105,7 @@ export class FileNativePlayPresetStore {
         revision === preset.draftRevision
       )
         continue;
-      const path = this.#archivePath(preset.id, revision);
-      if (
-        (await this.#readArchivedRevision(preset.id, revision)) === undefined
-      ) {
-        await mkdir(this.#archivePath(preset.id), {
-          mode: 0o700,
-          recursive: true,
-        });
-        const temporary = `${path}.${randomUUID()}.tmp`;
-        try {
-          await writeFile(temporary, JSON.stringify(files), {
-            mode: 0o600,
-            flag: "wx",
-          });
-          await rename(temporary, path);
-        } finally {
-          await rm(temporary, { force: true });
-        }
-      }
+      await this.#archiveRevision(preset.id, revision, files);
       delete preset.revisions[revision];
     }
   }
@@ -4252,6 +4372,8 @@ function parseStoredDocument(
         ],
         [
           "draftRevision",
+          "currentProvenance",
+          "draftProvenance",
           "builtinDefault",
           "draftEpoch",
           "draftHead",
@@ -4272,6 +4394,13 @@ function parseStoredDocument(
       raw.name.includes(String.fromCharCode(0)) ||
       typeof raw.enabled !== "boolean" ||
       typeof raw.scriptsEnabled !== "boolean" ||
+      (raw.currentProvenance !== undefined &&
+        (typeof raw.currentProvenance !== "string" ||
+          !sourceDigestPattern.test(raw.currentProvenance))) ||
+      (raw.draftProvenance !== undefined &&
+        (raw.draftRevision === undefined ||
+          typeof raw.draftProvenance !== "string" ||
+          !sourceDigestPattern.test(raw.draftProvenance))) ||
       (raw.sillyTavernSource !== undefined && raw.sillyTavernSource !== true) ||
       (raw.legacySillyTavernRevision !== undefined &&
         (typeof raw.legacySillyTavernRevision !== "string" ||
@@ -4335,7 +4464,8 @@ function parseStoredDocument(
       (typeof raw.draftRevision !== "string" ||
         !revisionPattern.test(raw.draftRevision) ||
         revisions[raw.draftRevision] === undefined ||
-        raw.draftRevision === raw.currentRevision)
+        (raw.draftRevision === raw.currentRevision &&
+          raw.draftProvenance === raw.currentProvenance))
     )
       throw new FileNativePlayPresetError(
         "store_invalid",
@@ -4363,6 +4493,12 @@ function parseStoredDocument(
       ...(raw.draftRevision === undefined
         ? {}
         : { draftRevision: raw.draftRevision }),
+      ...(raw.currentProvenance === undefined
+        ? {}
+        : { currentProvenance: raw.currentProvenance }),
+      ...(raw.draftProvenance === undefined
+        ? {}
+        : { draftProvenance: raw.draftProvenance }),
     };
   });
   const current = presets.find(({ id }) => id === selected);
@@ -4466,16 +4602,33 @@ function setDraft(
   stored: StoredPreset,
   revision: string,
   files: Record<string, string>,
+  provenance: string | undefined,
 ): void {
   if (
     stored.draftRevision !== undefined &&
     stored.draftRevision !== revision &&
+    stored.draftRevision !== stored.currentRevision &&
     stored.draftRevision !== stored.legacySillyTavernRevision
   )
     delete stored.revisions[stored.draftRevision];
   stored.revisions[revision] = cloneFiles(files);
-  if (revision === stored.currentRevision) delete stored.draftRevision;
-  else stored.draftRevision = revision;
+  if (
+    revision === stored.currentRevision &&
+    provenance === stored.currentProvenance
+  ) {
+    delete stored.draftRevision;
+    delete stored.draftProvenance;
+  } else {
+    stored.draftRevision = revision;
+    if (provenance === undefined) delete stored.draftProvenance;
+    else stored.draftProvenance = provenance;
+  }
+}
+
+function effectiveProvenance(stored: StoredPreset): string | undefined {
+  return stored.draftRevision === undefined
+    ? stored.currentProvenance
+    : stored.draftProvenance;
 }
 
 function assertReadonlyPromptsRetained(

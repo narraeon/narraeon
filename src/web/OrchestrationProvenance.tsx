@@ -67,15 +67,16 @@ interface EntryProps {
   revision: string;
   surface: OrchestrationSurface;
   entryId: string;
+  version: "current" | "draft";
 }
 
 export function OrchestrationEntryProvenance(
   props: EntryProps,
 ): React.JSX.Element {
-  const { presetId, revision, surface, entryId } = props;
+  const { presetId, revision, surface, entryId, version } = props;
   return (
     <SavedEntryProvenance
-      key={JSON.stringify([presetId, revision, surface, entryId])}
+      key={JSON.stringify([presetId, revision, surface, entryId, version])}
       {...props}
     />
   );
@@ -87,6 +88,7 @@ function SavedEntryProvenance({
   revision,
   surface,
   entryId,
+  version,
 }: EntryProps): React.JSX.Element {
   const [record, setRecord] = useState<OrchestrationEntrySource | null>(null);
   const { target, syncFailed } = useReadTarget(
@@ -98,8 +100,9 @@ function SavedEntryProvenance({
           revision,
           surface,
           entryId,
+          target: version,
         }),
-      [client, presetId, revision, surface, entryId],
+      [client, presetId, revision, surface, entryId, version],
     ),
     setRecord,
   );

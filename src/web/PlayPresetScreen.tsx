@@ -1404,6 +1404,11 @@ export function PlayPresetScreen({
                                   client={client}
                                   presetId={draft.id}
                                   revision={effectiveRevision}
+                                  version={
+                                    saved.draft === undefined
+                                      ? "current"
+                                      : "draft"
+                                  }
                                   surface={
                                     workspaceView === "setting_improvement"
                                       ? "authorPrompts"

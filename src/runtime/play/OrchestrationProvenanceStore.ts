@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  link,
   mkdir,
   readdir,
   readFile,
-  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -14,7 +14,13 @@ import {
 } from "../../protocol/orchestrationProvenance.ts";
 
 const directoryPattern = /^[0-9a-f]{64}$/u;
-const revisionFile = /^rev-([0-9a-f]{64})\.json(?:\.[0-9a-f-]{36}\.tmp)?$/u;
+const versionPattern = /^[0-9a-f]{64}$/u;
+const revisionFile =
+  /^(rev-[0-9a-f]{64})(?:\.[0-9a-f]{64})?\.json(?:\.[0-9a-f-]{36}\.tmp)?$/u;
+
+export function provenanceVersion(source: OrchestrationEntrySource[]): string {
+  return createHash("sha256").update(JSON.stringify(source)).digest("hex");
+}
 
 /** Local metadata. The orchestration library decides which revisions exist. */
 export class OrchestrationProvenanceStore {
@@ -27,16 +33,21 @@ export class OrchestrationProvenanceStore {
   async read(
     presetId: string,
     revision: string,
+    version?: string,
   ): Promise<OrchestrationEntrySource[]> {
     let raw: string;
     try {
-      raw = await readFile(this.#path(presetId, revision), "utf8");
+      raw = await readFile(this.#path(presetId, revision, version), "utf8");
     } catch (error) {
-      if (missing(error)) return [];
+      if (missing(error) && version === undefined) return [];
       throw error;
     }
     const value: unknown = JSON.parse(raw);
-    if (!Array.isArray(value) || !value.every(isEntry))
+    if (
+      !Array.isArray(value) ||
+      !value.every(isEntry) ||
+      (version !== undefined && provenanceVersion(value) !== version)
+    )
       throw new Error("The local orchestration provenance could not be read");
     return value;
   }
@@ -44,35 +55,59 @@ export class OrchestrationProvenanceStore {
   async write(
     presetId: string,
     revision: string,
+    version: string,
     source: OrchestrationEntrySource[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const directory = join(this.#root, presetDirectory(presetId));
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    const path = this.#path(presetId, revision);
+    const path = this.#path(presetId, revision, version);
     const temporary = `${path}.${randomUUID()}.tmp`;
     try {
       await writeFile(temporary, JSON.stringify(source), {
         flag: "wx",
         mode: 0o600,
       });
-      await rename(temporary, path);
+      // Atomically publish a new immutable variant without replacing a live one.
+      await link(temporary, path);
+      return true;
     } catch (error) {
-      await rm(temporary, { force: true }).catch(() => undefined);
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        await this.read(presetId, revision, version);
+        return false;
+      }
       throw error;
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 
-  async remove(presetId: string, revision: string): Promise<void> {
-    await rm(this.#path(presetId, revision), { force: true });
+  async remove(
+    presetId: string,
+    revision: string,
+    version: string,
+  ): Promise<void> {
+    await rm(this.#path(presetId, revision, version), { force: true });
   }
 
   async removeOrphans(
-    presets: { id: string; revisions: string[] }[],
+    presets: {
+      id: string;
+      active: { revision: string; version?: string | undefined }[];
+    }[],
+    archive: (
+      presetId: string,
+      revision: string,
+    ) => Promise<{ provenance?: string } | undefined>,
   ): Promise<void> {
     const live = new Map(
-      presets.map(({ id, revisions }) => [
+      presets.map(({ id, active }) => [
         presetDirectory(id),
-        new Set(revisions.map((revision) => `${revision}.json`)),
+        {
+          active: new Set(
+            active.map(({ revision, version }) => filename(revision, version)),
+          ),
+          id,
+        },
       ]),
     );
     for (const directory of await names(this.#root)) {
@@ -83,17 +118,46 @@ export class OrchestrationProvenanceStore {
         await rm(path, { force: true, recursive: true });
         continue;
       }
-      for (const filename of await names(path))
-        if (revisionFile.test(filename) && !revisions.has(filename))
-          await rm(join(path, filename), { force: true });
+      const retained = new Map<string, string | undefined>();
+      for (const name of await names(path)) {
+        const match = revisionFile.exec(name);
+        if (match === null || revisions.active.has(name)) continue;
+        if (!name.endsWith(".tmp")) {
+          const revision = match[1]!;
+          if (!retained.has(revision)) {
+            const stored = await archive(revisions.id, revision);
+            retained.set(
+              revision,
+              stored === undefined
+                ? undefined
+                : filename(revision, stored.provenance),
+            );
+          }
+          if (retained.get(revision) === name) continue;
+        }
+        await rm(join(path, name), { force: true });
+      }
     }
   }
 
-  #path(presetId: string, revision: string): string {
-    if (!/^rev-[0-9a-f]{64}$/u.test(revision))
+  #path(presetId: string, revision: string, version?: string): string {
+    if (
+      !/^rev-[0-9a-f]{64}$/u.test(revision) ||
+      (version !== undefined && !versionPattern.test(version))
+    )
       throw new Error("Invalid orchestration revision");
-    return join(this.#root, presetDirectory(presetId), `${revision}.json`);
+    return join(
+      this.#root,
+      presetDirectory(presetId),
+      filename(revision, version),
+    );
   }
+}
+
+function filename(revision: string, version?: string): string {
+  return version === undefined
+    ? `${revision}.json`
+    : `${revision}.${version}.json`;
 }
 
 function presetDirectory(presetId: string): string {

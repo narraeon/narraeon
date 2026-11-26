@@ -181,6 +181,7 @@ export class PlayCommands {
             await this.#services.playPresets.readOrchestrationProvenance(
               request.presetId,
               request.revision,
+              request.target,
             )
           ).find(
             ({ surface, entryId }) =>

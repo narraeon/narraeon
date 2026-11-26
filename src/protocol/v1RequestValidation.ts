@@ -674,6 +674,7 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
         revision: { type: "string", pattern: "^rev-[a-f0-9]{64}$" },
         surface: { enum: ["playPrompts", "authorPrompts"] },
         entryId: text,
+        target: { enum: ["current", "draft"] },
       }),
       "play.orchestration.provenance.read has invalid fields",
     ),
