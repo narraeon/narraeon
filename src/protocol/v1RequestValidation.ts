@@ -2,6 +2,7 @@ import { Ajv, type SchemaObject, type ValidateFunction } from "ajv";
 
 import { appLocales, isAppReadingPreferences } from "./appPreferences.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
+import { sampleContentPackageIds } from "./sampleContentPackages.ts";
 import { parseGameplay, resolutionSchemes } from "./gameplay.ts";
 import type { V1Request } from "./v1.ts";
 
@@ -467,8 +468,11 @@ const contentChecks: Partial<Record<Command, readonly Check[]>> = {
   ],
   "content.create-sample": [
     check(
-      exactFields({ locale: { enum: appLocales } }),
-      "content.create-sample.locale must be en or zh-CN, with no extra fields",
+      exactFields({
+        locale: { enum: appLocales },
+        sampleId: { enum: sampleContentPackageIds },
+      }),
+      "content.create-sample requires a supported locale and an optional built-in story ID",
     ),
   ],
   "content.create": [

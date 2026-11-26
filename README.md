@@ -108,7 +108,7 @@ node dist/node/cli/main.js web
 ## First-time setup
 
 1. **Choose the interface language.** Use the language selector in the header. The choice is saved locally. It changes the interface and Runtime-owned default prompts, but it does not rewrite content or custom prompts you have already saved.
-2. **Prepare a content package.** Create a blank package or import a ZIP. A content package is a world template, not a live save. Its main surfaces are:
+2. **Prepare a content package.** Choose **Choose a story to play** or **Create from a built-in story** to browse built-in stories by genre. Select one to preview its opening and create a world. You can also create a blank package or import a ZIP. A content package is a world template, not a live save. Its main surfaces are:
 
    ```text
    opening.md                 first prose the player reads

@@ -36,7 +36,10 @@ for (const locale of appLocales) {
       );
       expect(response.ok()).toBe(true);
       await page.reload();
-      await button(t("从示例开始", "Start with a sample")).click();
+      await button(t("挑一个故事开玩", "Choose a story to play")).click();
+      await button(
+        t("雨灯旅店的一封信", "A Letter at the Rain Lantern Inn"),
+      ).click();
       await button(t("编辑这份内容包", "Refine this content package")).click();
 
       async function checkFiles(scope: "content" | "revision"): Promise<void> {

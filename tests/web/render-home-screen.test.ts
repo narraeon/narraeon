@@ -110,9 +110,13 @@ describe("世界工作区主页", () => {
     expect(screen.getByText(/雾港来信\.zip/u)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "导入 ZIP" }));
     expect(onImportPackage).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: "从示例开始" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "从示例新建" }));
-    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "挑一个故事开玩" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "从内置故事新建" }));
+    expect(onCreateSamplePackage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "消失的母带" }));
+    expect(onCreateSamplePackage).toHaveBeenCalledExactlyOnceWith(
+      "missing-reel",
+    );
   });
 
   test("为空工作区说明起步路径并阻止未选择 ZIP 时导入", () => {
@@ -153,10 +157,13 @@ describe("世界工作区主页", () => {
     );
 
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
-    expect(screen.getByText("用清晰易读的文档搭好你的世界")).toBeTruthy();
+    expect(screen.getByText("从一个故事开始")).toBeTruthy();
     expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "从示例开始" }));
-    expect(onCreateSamplePackage).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "挑一个故事开玩" }));
+    expect(screen.getByRole("dialog", { name: "选择一个故事" })).toBeTruthy();
+    expect(onCreateSamplePackage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "配置模型连接" }));
     expect(onConfigureModel).toHaveBeenCalledOnce();
     expect(

@@ -26,7 +26,10 @@ export async function handleContentCommand(
         request.scheme,
       );
     case "content.create-sample":
-      return content.createSampleContentPackage(request.locale);
+      return content.createSampleContentPackage(
+        request.locale,
+        request.sampleId,
+      );
     case "content.scripts.read":
       return content.packageScriptPermissions(request.packageId);
     case "content.scripts.set":
