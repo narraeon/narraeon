@@ -1054,6 +1054,8 @@ export type V1PlayCallChainStreamFrame =
   | {
       kind: "error";
       message: string;
+      code?: V1ProtocolError["code"];
+      details?: Readonly<Record<string, unknown>>;
     };
 
 export interface V1ProtocolErrorOptions extends ErrorOptions {
@@ -1072,7 +1074,8 @@ export class V1ProtocolError extends Error {
     | "content_conflict"
     | "orchestration_conflict"
     | "inconsistent_materialization"
-    | "model_protocol_mismatch";
+    | "model_protocol_mismatch"
+    | "prompt_role_order_unsupported";
   readonly details: Readonly<Record<string, unknown>> | undefined;
   readonly httpStatus: 400 | 409;
 

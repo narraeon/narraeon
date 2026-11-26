@@ -16,6 +16,7 @@ import {
   type ProviderKind,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { WorldDocumentStore } from "../../src/runtime/world/WorldDocumentStore.ts";
 import { validPromptCompilation } from "../../src/runtime/prompt/PromptCompilationCodec.ts";
 import type {
   OrderedPlayPrompt,
@@ -227,8 +228,20 @@ test.each([false, true])(
     binding.definition.playPrompts!.push(
       prompt("LATE_SYSTEM_SOURCE", "system"),
     );
-    request.bootstrap = compile(binding, "google_interactions");
-    expect(() => host.previewRequest(request)).toThrow(/LATE_SYSTEM_SOURCE/);
+    const previouslyFrozen = compile(binding, "chat_completions");
+    request.bootstrap = {
+      ...previouslyFrozen,
+      provider: {
+        ...previouslyFrozen.provider,
+        protocol: "google_interactions",
+      },
+    };
+    expect(() => host.previewRequest(request)).toThrow(
+      expect.objectContaining({
+        code: "prompt_role_order_unsupported",
+        message: expect.stringContaining("LATE_SYSTEM_SOURCE") as unknown,
+      }),
+    );
   },
 );
 
@@ -615,6 +628,123 @@ test("Anthropic reports unsupported interleaved System prompts without silently 
     role: "system",
   });
 });
+
+test.each(["anthropic_messages", "google_interactions"] as const)(
+  "%s identifies the orchestration entry behind a production play ordering rejection",
+  async (provider) => {
+    const { binding } = await fixture();
+    binding.definition.playPrompts!.push(prompt("LATE_SYSTEM", "system"));
+    expect(() => compile(binding, provider)).toThrow(
+      expect.objectContaining({
+        code: "prompt_role_order_unsupported",
+        details: {
+          provider,
+          orchestration: {
+            id: binding.id,
+            revision: binding.revision,
+            surface: "playPrompts",
+            entryId: "LATE_SYSTEM",
+          },
+        },
+      }),
+    );
+  },
+);
+
+test("Google play moves world material to preload before checking actual request order", async () => {
+  const { binding } = await fixture();
+  const prompts = binding.definition.playPrompts!;
+  const world = prompts.findIndex(({ kind }) => kind === "world");
+  prompts.push(...prompts.splice(world, 1));
+  const input = createMinimalFileNativePreviewInput({
+    provider: "google_interactions",
+    modelId: "test",
+    contextWindowTokens: 32000,
+    maxOutputTokens: 2000,
+    playerInput: "",
+    playerInputPlacement: "append",
+  });
+  input.world.documentSnapshot = WorldDocumentStore.open({
+    layout: "world_state",
+    files: input.world.documentSnapshot.files.map(({ path, contents }) => ({
+      path,
+      contents:
+        path === "control/frame.yaml"
+          ? contents.replace(
+              /instructions:\n[^]+?(?=context:)/u,
+              "instructions: []\n",
+            )
+          : contents,
+    })),
+  });
+  const compiler = new FileNativePromptCompiler();
+  expect(
+    compiler
+      .compilePlayPreset(input, binding)
+      .bootstrap.provider.messages.at(-1)?.role,
+  ).toBe("system");
+  const { bootstrap } = compiler.compilePlayCallChain(input, binding);
+  expect(bootstrap.provider.messages.at(-1)?.role).toBe("user");
+  expect(bootstrap.provider.preload?.markdown).toContain("@current-situation");
+});
+
+test.each(["anthropic_messages", "google_interactions"] as const)(
+  "%s locates an authored System joined to the Runtime preload, and falls back for a preload alone",
+  async (provider) => {
+    const { binding } = await fixture();
+    const authorPrompts = binding.definition.authorPrompts!;
+    authorPrompts.push(prompt("AUTHOR_USER", "user"));
+    binding.definition.mergeConsecutiveMessages = true;
+    const compiler = new FileNativePromptCompiler();
+    const base = {
+      gameplay: { mode: "interactive-fiction" as const },
+      playPreset: binding,
+      modelBinding: {
+        provider,
+        modelId: "test",
+        contextWindowTokens: 32000,
+        maxOutputTokens: 2000,
+      },
+      tools: [],
+      preload: [{ source: "fixture:preload", markdown: "Preloaded material" }],
+    };
+    const compileBoth = [
+      () =>
+        compiler.compileSettingImprovement({
+          ...base,
+          contentPackageTitle: "Package",
+        }),
+      () => compiler.compileWorldRevision({ ...base, worldTitle: "World" }),
+    ];
+    const target = {
+      id: binding.id,
+      revision: binding.revision,
+      surface: "authorPrompts",
+    };
+    for (const compileAuthor of compileBoth)
+      expect(compileAuthor).toThrow(
+        expect.objectContaining({
+          code: "prompt_role_order_unsupported",
+          details: { provider, orchestration: target },
+        }),
+      );
+
+    authorPrompts.push(
+      prompt("FIRST_LATE_SYSTEM", "system"),
+      prompt("SECOND_LATE_SYSTEM", "system"),
+    );
+    for (const compileAuthor of compileBoth)
+      expect(compileAuthor).toThrow(
+        expect.objectContaining({
+          code: "prompt_role_order_unsupported",
+          details: {
+            provider,
+            orchestration: { ...target, entryId: "FIRST_LATE_SYSTEM" },
+          },
+        }),
+      );
+  },
+);
 
 test.each([
   { path: ["mergeConsecutiveMessages"], value: "yes" },

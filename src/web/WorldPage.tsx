@@ -113,6 +113,13 @@ import {
 } from "./ProtagonistCustomization.ts";
 import { PlayRunProgress } from "./PlayRunProgress.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
+import type { PromptRoleOrderTarget } from "../protocol/promptRoleOrder.ts";
+import type { OrchestrationSurface } from "../protocol/orchestrationSession.ts";
+import {
+  modelSendRecovery,
+  promptRoleOrderRule,
+  type ModelSendRecovery,
+} from "./ModelSendRecovery.ts";
 import {
   createPlayRunProgress,
   progressFromCallChain,
@@ -176,6 +183,7 @@ export function WorldPage({
   onBack,
   showWorkspaceBack = true,
   onConfigureModel,
+  onViewPromptOrder,
   initialComposerDraft,
   onComposerDraftChange,
   onRenameWorld,
@@ -195,6 +203,9 @@ export function WorldPage({
   onBack: () => void;
   showWorkspaceBack?: boolean;
   onConfigureModel: () => void;
+  onViewPromptOrder?:
+    | ((surface: OrchestrationSurface, target?: PromptRoleOrderTarget) => void)
+    | undefined;
   initialComposerDraft?: WorldComposerDraft | null;
   onComposerDraftChange?: (draft: WorldComposerDraft) => void;
   onRenameWorld: (name: string) => Promise<void>;
@@ -254,6 +265,8 @@ export function WorldPage({
   const pending =
     pendingAction ?? (earlierTimelineLoading ? "timeline-page" : null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [playRequestRecovery, setPlayRequestRecovery] =
+    useState<ModelSendRecovery | null>(null);
   const [supersededFailure, setSupersededFailure] = useState<{
     worldId: string;
     chainId: string;
@@ -891,6 +904,7 @@ export function WorldPage({
     )
       return;
     setRegenerationFallback(null);
+    setPlayRequestRecovery(null);
     playSubmissionInFlight.current = true;
     consumeCheckpointPreference();
     const chainId = fresh ? createClientId("play-chain") : activeChainId;
@@ -991,9 +1005,13 @@ export function WorldPage({
       if (outcome.kind === "cancelled") {
         setFeedback({ kind: "status", text: uiText("模型生成已取消。") });
       } else if (outcome.kind === "unconfirmed") {
+        const recovery = modelSendRecovery(outcome.error);
         const message = errorMessage(outcome.error);
 
-        if (outcome.retryRejected) {
+        if (recovery !== null) {
+          setPlayRequestRecovery(recovery);
+          setFeedback(null);
+        } else if (outcome.retryRejected) {
           setRetryRejection(message);
           setFeedback(null);
         } else {
@@ -1721,6 +1739,8 @@ export function WorldPage({
   }
 
   function openFreshComposer(): void {
+    if (playRequestRecovery?.kind === "protocol_mismatch")
+      setPlayRequestRecovery(null);
     setManualFreshContext(true);
     composerTextareaRef.current?.focus();
   }
@@ -1783,6 +1803,10 @@ export function WorldPage({
         loading={authoring.loading}
         conversation={conversation}
         conversationActions={authoringConversationActions(revisionWorkspace)}
+        onViewPromptOrder={
+          onViewPromptOrder &&
+          ((target) => onViewPromptOrder("authorPrompts", target))
+        }
         notice={authoring.notice}
         contentEditor={{
           mode: "world-revision",
@@ -2256,7 +2280,27 @@ export function WorldPage({
                 />
               </div>
             )}
-            {modelProtocolMismatch && playIdle ? (
+            {playRequestRecovery?.kind === "prompt_role_order" && playIdle ? (
+              <div className="play-call-failure" role="alert">
+                <p>{promptRoleOrderRule()}</p>
+                {onViewPromptOrder && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onViewPromptOrder(
+                        "playPrompts",
+                        playRequestRecovery.target,
+                      )
+                    }
+                  >
+                    {uiText("查看编排")}
+                  </button>
+                )}
+              </div>
+            ) : null}
+            {(modelProtocolMismatch ||
+              playRequestRecovery?.kind === "protocol_mismatch") &&
+            playIdle ? (
               <div className="play-call-failure" role="status">
                 <p>
                   {uiText(

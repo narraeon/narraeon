@@ -445,7 +445,18 @@ function sendPlayCallChainStream(
         { err: error, runtimeRequestType: runtimeRequest.type },
         "play call stream failed",
       );
-      send({ kind: "error", message });
+      send({
+        kind: "error",
+        message,
+        ...(error instanceof V1ProtocolError
+          ? {
+              code: error.code,
+              ...(error.details === undefined
+                ? {}
+                : { details: error.details }),
+            }
+          : {}),
+      });
     })
     .finally(() => {
       if (!stream.destroyed && !stream.writableEnded) stream.end();

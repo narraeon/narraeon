@@ -1,7 +1,7 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import { builtinAuthorPrompts } from "../shared/ordered-author-prompts.ts";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
   orderedPromptScope,
@@ -27,6 +27,7 @@ export function OrderedPlayPromptEditor({
   onMergeConsecutiveMessagesChange,
   migrationNotice,
   authoring = false,
+  initialPromptId,
   directory,
   promptPreview,
   detail,
@@ -42,6 +43,7 @@ export function OrderedPlayPromptEditor({
   onChange: (entries: OrderedPlayPrompt[]) => void;
   migrationNotice?: string;
   authoring?: boolean;
+  initialPromptId?: string | null | undefined;
   directory?: ReactNode;
   promptPreview?: ReactNode;
   entryDetails?: ((entryId: string) => ReactNode) | undefined;
@@ -53,14 +55,24 @@ export function OrderedPlayPromptEditor({
     Pick<ModelConnectionView, "name" | "modelPrompt"> | undefined;
   onEditModelConnection?: (() => void) | undefined;
 }) {
-  const [selectedId, setSelectedId] = useState(entries[0]?.id);
+  const [selectedId, setSelectedId] = useState(initialPromptId);
+  const initialEntryButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const button = initialEntryButton.current;
+    if (button === null) return;
+    button.focus({ preventScroll: true });
+    button.scrollIntoView?.({ block: "nearest" });
+  }, []);
   const [dragged, setDragged] = useState<string>();
   const locale = getWebLocale();
   const catalog: BuiltinPlayPrompt[] = authoring
     ? builtinAuthorPrompts(locale, "setting")
     : builtinPlayPrompts(locale);
   const selected =
-    entries.find((entry) => entry.id === selectedId) ?? entries[0];
+    selectedId === undefined
+      ? entries[0]
+      : (entries.find((entry) => entry.id === selectedId) ??
+        (initialPromptId === undefined ? entries[0] : undefined));
   const builtinOf = (entry: OrderedPlayPrompt | undefined) =>
     entry?.kind === "builtin"
       ? catalog.find((item) => item.id === entry.builtin)
@@ -264,6 +276,11 @@ export function OrderedPlayPromptEditor({
               >
                 <button
                   type="button"
+                  ref={
+                    entry.id === initialPromptId
+                      ? initialEntryButton
+                      : undefined
+                  }
                   aria-pressed={!detail && entry.id === selected?.id}
                   onClick={() => {
                     setSelectedId(entry.id);

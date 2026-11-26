@@ -2340,6 +2340,14 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   "用新对话继续（保留故事进度）":
     "Continue in a new chat (keep story progress)",
   "选择新对话（保留故事进度）": "Choose a new chat (keep story progress)",
+  "当前模型协议与此对话不同。切回兼容连接即可继续，或开启新对话并保留已保存的创作工作。":
+    "The selected model protocol differs from this conversation. Switch back to a compatible connection to continue, or start a new chat and keep your saved work.",
+  "选择新对话（保留已保存的创作工作）": "Choose a new chat (keep saved work)",
+  "当前协议要求所有 System 提示排在第一条 User 或 Assistant 提示之前。":
+    "The current protocol requires every System prompt to come before the first User or Assistant prompt.",
+  查看编排: "View orchestration",
+  "此诊断没有记录本次请求的编排方案。":
+    "The diagnostic did not record which orchestration produced the request.",
   "依据冻结 bootstrap 与已提交工具读取记录；不会把“世界里有这份文档”误写成“AI 已读”。":
     "Based on the frozen bootstrap and committed tool-read records. A document existing in the world is never presented as proof that the model read it.",
   保留这条调用链已经看到的内容: "Keep what this call chain has already seen",

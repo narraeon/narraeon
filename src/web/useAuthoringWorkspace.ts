@@ -42,6 +42,7 @@ export function useAuthoringWorkspace(
         state.target?.latest?.sessionId ??
         (kind === "setting" ? (history[0]?.sessionId ?? null) : null),
       requestFailure: state.requestFailure,
+      requestRecovery: state.requestRecovery,
       syncFailed: state.syncFailed,
       syncError: state.syncError,
       now: state.now,

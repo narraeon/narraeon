@@ -24,6 +24,11 @@ import {
 import { AuthoringPromptPreview } from "./AuthoringPromptPreview.tsx";
 import { createClientId } from "./ClientId.ts";
 import { ModelRecoveryActions } from "./ModelRecoveryActions.tsx";
+import type { PromptRoleOrderTarget } from "../protocol/promptRoleOrder.ts";
+import {
+  promptRoleOrderRule,
+  type ModelSendRecovery,
+} from "./ModelSendRecovery.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
@@ -86,6 +91,7 @@ interface SettingImprovementPanelProps {
     history: V1SettingImprovementHistoryItem[];
     latestSessionId: string | null;
     requestFailure: string | null;
+    requestRecovery?: ModelSendRecovery | null;
     syncFailed?: boolean;
     syncError?: unknown;
     now: number;
@@ -124,6 +130,7 @@ interface SettingImprovementPanelProps {
     ) => Promise<V1SettingImprovementRollbackResult>;
   };
   onConfigureModel: () => void;
+  onViewPromptOrder?: ((target?: PromptRoleOrderTarget) => void) | undefined;
   onBack: () => void;
   showWorkspaceBack?: boolean;
   backLabel?: string;
@@ -163,6 +170,7 @@ export function SettingImprovementPanel({
     history,
     latestSessionId,
     requestFailure,
+    requestRecovery,
     syncFailed = false,
     syncError,
     now,
@@ -184,6 +192,7 @@ export function SettingImprovementPanel({
     onRollbackFile,
   },
   onConfigureModel,
+  onViewPromptOrder,
   onBack,
   showWorkspaceBack = true,
   backLabel,
@@ -310,8 +319,9 @@ export function SettingImprovementPanel({
     setUnconfirmedDraft(null);
     if (message === unconfirmedDraft.text) setMessage("");
   }
-  function openFreshComposer(): void {
-    if (unconfirmedDraft?.text === message) setMessage("");
+  function openFreshComposer(options?: { keepMessage: true }): void {
+    if (!options?.keepMessage && unconfirmedDraft?.text === message)
+      setMessage("");
     setUnconfirmedDraft(null);
     setLeftRailOpen(false);
     onFreshContext();
@@ -1008,7 +1018,39 @@ export function SettingImprovementPanel({
               ) : null}
               {requestFailure !== null ? (
                 <div className="setting-conversation-failure" role="alert">
-                  {requestFailure}
+                  {requestRecovery?.kind === "protocol_mismatch" ? (
+                    <>
+                      <p>
+                        {uiText(
+                          "当前模型协议与此对话不同。切回兼容连接即可继续，或开启新对话并保留已保存的创作工作。",
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={loading || interactionLocked}
+                        onClick={() => openFreshComposer({ keepMessage: true })}
+                      >
+                        {uiText("选择新对话（保留已保存的创作工作）")}
+                      </button>
+                    </>
+                  ) : requestRecovery?.kind === "prompt_role_order" ? (
+                    <>
+                      <p>{promptRoleOrderRule()}</p>
+                      {onViewPromptOrder && (
+                        <button
+                          type="button"
+                          disabled={loading || interactionLocked}
+                          onClick={() =>
+                            onViewPromptOrder(requestRecovery.target)
+                          }
+                        >
+                          {uiText("查看编排")}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    requestFailure
+                  )}
                 </div>
               ) : null}
               {view === null ? null : (

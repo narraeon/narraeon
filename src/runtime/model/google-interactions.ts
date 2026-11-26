@@ -4,6 +4,7 @@ import {
   leadingSystemOrder,
   renderPromptDeltaMessage,
 } from "../prompt/FileNativePromptCompiler.ts";
+import { PromptRoleOrderError } from "../prompt/PromptRoleOrderError.ts";
 import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
 import type { AiExchangeCapture } from "./AiFailureLog.ts";
 import { continuationPrompt } from "./AssistantPrefill.ts";
@@ -219,10 +220,13 @@ function googleRequestBody(
   for (const [index, message] of messages.entries()) {
     if (index === bootstrapPrefixEnd(request.bootstrap)) appendPreload();
     if (message.role === "system") {
-      if (conversationStarted)
-        throw new Error(
-          `Google Interactions cannot encode System message ${index + 1} after User/Assistant${googleLateSystemSource(request) ? `: ${googleLateSystemSource(request)}` : ""}`,
+      if (conversationStarted) {
+        const source = googleLateSystemSource(request);
+        throw new PromptRoleOrderError(
+          { provider: "google_interactions" },
+          `Google Interactions cannot encode System message ${index + 1} after User/Assistant${source ? `: ${source}` : ""}`,
         );
+      }
       system.push(contentText(message.content));
     } else {
       conversationStarted = true;

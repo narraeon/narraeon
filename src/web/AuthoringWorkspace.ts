@@ -8,6 +8,10 @@ import { RuntimeRequestError } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
 import { ReadTarget } from "./ReadTarget.ts";
 import { uiText } from "./i18n.ts";
+import {
+  modelSendRecovery,
+  type ModelSendRecovery,
+} from "./ModelSendRecovery.ts";
 import type { ObserveConversation } from "./ConversationObserver.ts";
 import {
   AuthoringConflictError,
@@ -34,6 +38,7 @@ export interface AuthoringWorkspaceState {
   savingFiles: boolean;
   applying: boolean;
   requestFailure: string | null;
+  requestRecovery: ModelSendRecovery | null;
   syncFailed: boolean;
   syncError: unknown;
   notice: string;
@@ -61,6 +66,7 @@ export class AuthoringWorkspace {
     savingFiles: false,
     applying: false,
     requestFailure: null,
+    requestRecovery: null,
     syncFailed: false,
     syncError: undefined,
     notice: "",
@@ -112,6 +118,9 @@ export class AuthoringWorkspace {
   };
   private update(patch: Partial<AuthoringWorkspaceState>): void {
     const next = { ...this.state, ...patch };
+    // Recovery belongs to the last command failure, not to the conversation.
+    if ("requestFailure" in patch)
+      next.requestRecovery = patch.requestRecovery ?? null;
     if (this.active && next.view?.runStatus === "running") {
       if (this.timer === undefined) {
         next.now = Date.now();
@@ -486,11 +495,12 @@ export class AuthoringWorkspace {
     } catch (error) {
       if (!valid()) return;
       const warning = errorMessage(error);
+      const requestRecovery = modelSendRecovery(error);
       this.unconfirmedRequest =
         error instanceof RuntimeRequestError && error.protocolCode === undefined
           ? { id: requestId, sessionId, warning }
           : null;
-      this.update({ requestFailure: warning });
+      this.update({ requestFailure: warning, requestRecovery });
       await this.recoverCommand(valid);
       if (!valid()) return;
       const candidate = this.state.view;
@@ -502,7 +512,7 @@ export class AuthoringWorkspace {
         !confirmsAuthoringRequest(candidate, requestId)
       ) {
         // A refusal still has a reason even if a partial operation was published.
-        this.update({ requestFailure: warning });
+        this.update({ requestFailure: warning, requestRecovery });
         throw error;
       }
       this.unconfirmedRequest = null;

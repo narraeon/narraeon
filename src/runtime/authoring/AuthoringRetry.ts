@@ -13,6 +13,7 @@ import type {
   ModelHostExchange,
 } from "../model/ModelHost.ts";
 import type { ModelToolConversationState } from "./ModelToolConversation.ts";
+import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 
 type RetryState = ModelToolConversationState;
 
@@ -182,10 +183,13 @@ export function assertCompatibleAuthoring(
   items: readonly ModelHostAppendItem[],
   host: ModelHost,
 ): void {
-  if (
-    binding.provider !== host.binding().provider ||
-    !validAuthoringNativeContinuation(items, host.binding().provider)
-  )
+  const selectedProtocol = host.binding().provider;
+  if (binding.provider !== selectedProtocol)
+    throw new RuntimeDomainError(
+      "The selected model protocol is incompatible with this conversation; switch back or start a fresh model context.",
+      { receipt: { code: "model_protocol_mismatch" } },
+    );
+  if (!validAuthoringNativeContinuation(items, selectedProtocol))
     throw new Error(
       "The selected model protocol is incompatible with this conversation; switch back or start a fresh model context.",
     );

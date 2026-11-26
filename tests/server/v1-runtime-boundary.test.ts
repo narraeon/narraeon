@@ -15,6 +15,7 @@ import { afterEach, expect, test } from "vitest";
 
 import {
   v1Protocol,
+  V1ProtocolError,
   type V1PlayCallChainStreamFrame,
   type V1PlayCallChainView,
   type V1Request,
@@ -506,6 +507,68 @@ test("生产 HTTP 边界把 Provider 文本增量作为 NDJSON 调用链流直�
     "snapshot",
   ]);
   expect(frames.at(-1)).toMatchObject({ kind: "snapshot", final: true });
+});
+
+test("游玩 NDJSON 拒绝帧保留 Runtime 编排诊断", async () => {
+  const root = await mkdtemp(join(tmpdir(), "narraeon-v1-play-order-"));
+  roots.push(root);
+  await writeFile(join(root, "index.html"), "<!doctype html>");
+  const details = {
+    provider: "google_interactions",
+    orchestration: {
+      id: "preset-one",
+      revision: "revision-one",
+      surface: "playPrompts",
+      entryId: "late-system",
+    },
+  };
+  const error = new V1ProtocolError(
+    "prompt_role_order_unsupported",
+    "Order rejected",
+    { details },
+  );
+  const runtime = {
+    handle: () => Promise.reject(error),
+  } as unknown as V1Runtime;
+  const server = await createServer({
+    runtime,
+    staticRoot: root,
+    port: 4317,
+    logger: false,
+  });
+  try {
+    const response = await server.inject({
+      authority: "127.0.0.1:4317",
+      method: "POST",
+      url: "/api/runtime/v1",
+      headers: {
+        accept: "application/x-ndjson",
+        "content-type": "application/json",
+      },
+      payload: {
+        protocol: v1Protocol,
+        request: {
+          type: "play.chain.start",
+          worldId: "world-one",
+          chainId: "chain-one",
+          exchangeId: "exchange-one",
+          playerText: "The player speaks.",
+        },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      protocol: v1Protocol,
+      frame: {
+        kind: "error",
+        message: error.message,
+        code: error.code,
+        details,
+      },
+    });
+  } finally {
+    await server.close();
+  }
 });
 
 test("模型流仍在等待时，独立的精确取消请求可以终止本轮并返回最终快照", async () => {

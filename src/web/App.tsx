@@ -52,6 +52,8 @@ import {
 } from "./HomeScreen.tsx";
 import { ModelConnectionScreen } from "./ModelConnectionScreen.tsx";
 import { PlayPresetScreen } from "./PlayPresetScreen.tsx";
+import type { OrchestrationSurface } from "../protocol/orchestrationSession.ts";
+import type { PromptRoleOrderTarget } from "../protocol/promptRoleOrder.ts";
 import { PromptPreviewScreen } from "./PromptPreviewScreen.tsx";
 import { SettingImprovementPanel } from "./SettingImprovementPanel.tsx";
 import {
@@ -126,6 +128,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [leaveConfirmation, setLeaveConfirmation] =
     useState<ConfirmationRequest<null> | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [promptOrderNavigation, setPromptOrderNavigation] = useState<{
+    id: string;
+    surface: OrchestrationSurface;
+    target: PromptRoleOrderTarget | undefined;
+  } | null>(null);
   const [orchestrationAiEditing, setOrchestrationAiEditing] =
     useState<OrchestrationAiWorkbenchDraft | null>(
       readOrchestrationAiWorkbench,
@@ -245,6 +252,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     packageRetryEntry.current = null;
     setPackageSyncFailed(false);
     if (previous.screen !== next.screen) presetPageInstanceRef.current += 1;
+    if (next.screen !== "plays") setPromptOrderNavigation(null);
     if (workspaceHash(previous) !== hash) {
       setRestoredWorldDraft(
         next.screen === "world" &&
@@ -1191,6 +1199,46 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     else performNavigation(next);
   }
 
+  function openPromptOrder(
+    surface: OrchestrationSurface,
+    target?: PromptRoleOrderTarget,
+  ): void {
+    if (navigationBusy || creatingWorldRef.current) return;
+    const source = locationRef.current;
+    void client
+      .request<PlayPresetLibrary>({ type: "play.read" })
+      .then((library) => {
+        if (
+          source !== locationRef.current ||
+          navigationProtection.current.busy ||
+          creatingWorldRef.current
+        )
+          return;
+        const id = target?.id ?? library.currentPresetId;
+        if (!library.presets.some((preset) => preset.id === id)) {
+          setNotice(uiText("找不到该编排方案。"));
+          return;
+        }
+        const open = () => {
+          if (source !== locationRef.current) return;
+          updateWorkspace((current) => ({ ...current, playPresets: library }));
+          setPromptOrderNavigation({ id, surface, target });
+          setOrchestrationAiEditing(null);
+          switchLocation(
+            target === undefined
+              ? { screen: "plays" }
+              : { screen: "plays", presetId: id },
+          );
+        };
+        if (navigationProtection.current.dirty)
+          askToLeave({ kind: "program", navigate: open });
+        else open();
+      })
+      .catch((error: unknown) => {
+        if (source === locationRef.current) report(error);
+      });
+  }
+
   function performNavigation(next: Screen, discard = false): void {
     packageOpenRequest.current += 1;
     if (
@@ -1308,6 +1356,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         activeModelProtocol={activeModel?.provider}
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
+        onViewPromptOrder={openPromptOrder}
         onProtagonistCustomizationFinished={clearNewProtagonist}
         initialComposerDraft={
           restoredWorldDraft?.worldId === worldId ? restoredWorldDraft : null
@@ -1356,6 +1405,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onCreateWorld={() => void createWorld()}
         onNavigationProtectionChange={setChildNavigation}
         conversation={conversation}
+        onViewPromptOrder={(target) => openPromptOrder("authorPrompts", target)}
         conversationActions={authoringConversationActions(
           authoringWorkspace,
           () => setNotice(""),
@@ -1570,6 +1620,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               if (screen === "plays" && !navigationLocked) openModelSetup(true);
             }}
             initialSelectedId={selectedPresetId}
+            promptOrderNavigation={promptOrderNavigation}
             onSelectionChange={(presetId) => {
               if (
                 locationRef.current.screen !== "plays" ||
@@ -1577,6 +1628,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 presetPageInstanceRef.current !== presetPageInstance
               )
                 return;
+              if (presetId !== promptOrderNavigation?.id)
+                setPromptOrderNavigation(null);
               switchLocation(
                 { screen: "plays", ...(presetId ? { presetId } : {}) },
                 "replace",

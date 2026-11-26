@@ -34,6 +34,8 @@ import {
   type TurnGuideLine,
 } from "../../shared/turn-guide.ts";
 import { parseOrderedPlayPrompts } from "../play/OrderedPlayPrompts.ts";
+import type { PromptRoleOrderTarget } from "../../protocol/promptRoleOrder.ts";
+import { PromptRoleOrderError } from "./PromptRoleOrderError.ts";
 import { withModelPrompt } from "../../shared/prompt-arrangement.ts";
 import { parseRestrictedYamlDocument } from "../../shared/restricted-yaml.ts";
 import { renderWorldYamlSource } from "../world/WorldYamlRendering.ts";
@@ -537,6 +539,11 @@ export class FileNativePromptCompiler {
       logicalMessages,
       modelBinding: input.modelBinding,
       tools: input.tools,
+      orchestration: {
+        id: input.playPreset.id,
+        revision: input.playPreset.revision,
+        surface: "authorPrompts",
+      },
       mergeConsecutiveMessages:
         input.playPreset.definition.mergeConsecutiveMessages ?? true,
     });
@@ -548,6 +555,7 @@ export class FileNativePromptCompiler {
     modelBinding: FileNativePromptInput["modelBinding"];
     tools: PromptCompilation["tools"];
     mergeConsecutiveMessages: boolean;
+    orchestration?: PromptRoleOrderTarget;
   }): PromptCompilation {
     validateModel(input.modelBinding);
     const logicalMessages = input.logicalMessages;
@@ -567,6 +575,8 @@ export class FileNativePromptCompiler {
       {
         locale: this.#locale,
         mergeConsecutiveMessages: input.mergeConsecutiveMessages,
+        orchestration: input.orchestration,
+        checkGoogleOrder: true,
       },
     );
     const stableText = cacheStableText(logicalMessages, provider);
@@ -891,6 +901,12 @@ export class FileNativePromptCompiler {
             locale: this.#locale,
             mergeConsecutiveMessages:
               binding.definition.mergeConsecutiveMessages ?? true,
+            orchestration: {
+              id: binding.id,
+              revision: binding.revision,
+              surface: "playPrompts",
+            },
+            checkGoogleOrder: true,
           },
     );
     provider.preload =
@@ -1105,6 +1121,11 @@ export class FileNativePromptCompiler {
         locale: this.#locale,
         mergeConsecutiveMessages:
           binding.definition.mergeConsecutiveMessages ?? true,
+        orchestration: {
+          id: binding.id,
+          revision: binding.revision,
+          surface: "playPrompts",
+        },
       },
     );
     return {
@@ -3459,7 +3480,12 @@ function mapProvider(
   provider: ProviderKind,
   messages: PromptCompilation["logicalMessages"],
   cacheStrategy: ModelPromptCacheStrategy,
-  ordered?: { locale: AppLocale; mergeConsecutiveMessages: boolean },
+  ordered?: {
+    locale: AppLocale;
+    mergeConsecutiveMessages: boolean;
+    orchestration?: PromptRoleOrderTarget | undefined;
+    checkGoogleOrder?: boolean;
+  },
 ): PromptCompilation["provider"] {
   if (ordered !== undefined) {
     const { locale, mergeConsecutiveMessages } = ordered;
@@ -3522,13 +3548,39 @@ function mapProvider(
     const players = messages
       .filter((message) => message.role === "player_input")
       .map((message) => ({ role: "user" as const, content: message.markdown }));
+    const { split, conflicts } = leadingSystemOrder(encodedMessages);
+    if (
+      conflicts.length > 0 &&
+      (provider === "anthropic_messages" ||
+        (provider === "google_interactions" && ordered.checkGoogleOrder))
+    ) {
+      const { orchestration } = ordered;
+      const logicalOrder = messages.flatMap((message) =>
+        message.role === "player_input"
+          ? []
+          : [{ message, role: message.messageRole ?? "system" }],
+      );
+      const entryId = leadingSystemOrder(logicalOrder).conflicts.find(
+        ({ message }) =>
+          message.promptId !== undefined &&
+          !(
+            orchestration?.surface === "authorPrompts" &&
+            message.role === "world_context"
+          ),
+      )?.message.promptId;
+      throw new PromptRoleOrderError({
+        provider,
+        ...(orchestration === undefined
+          ? {}
+          : {
+              orchestration: {
+                ...orchestration,
+                ...(entryId === undefined ? {} : { entryId }),
+              },
+            }),
+      });
+    }
     if (provider === "anthropic_messages") {
-      const { split, conflicts } = leadingSystemOrder(encodedMessages);
-      if (conflicts.length > 0)
-        throw new PromptCompilationError(
-          "prompt_role_order_unsupported",
-          "Anthropic: place all System prompts before User/Assistant prompts. / 请将所有 System 提示放在 User/Assistant 提示之前。",
-        );
       if (cacheStrategy === "explicit_anthropic_blocks") {
         const last = encodedMessages.at(-1)?.blocks.at(-1);
         if (last) last.cache_control = { type: "ephemeral" };

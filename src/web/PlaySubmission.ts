@@ -3,7 +3,7 @@ import type {
   V1PlayTimelinePage,
   V1Request,
 } from "../protocol/v1.ts";
-import { RuntimeRequestError } from "./RuntimeResponse.ts";
+import { modelSendRecovery } from "./ModelSendRecovery.ts";
 
 export type PlayCommand = Extract<
   V1Request,
@@ -138,10 +138,7 @@ export async function submitPlay<T extends WorldProjection>(
         command.playerText.trim() === "" &&
         sameChain &&
         observed?.status === "interrupted" &&
-        !(
-          sendError instanceof RuntimeRequestError &&
-          sendError.protocolCode === "model_protocol_mismatch"
-        ),
+        modelSendRecovery(sendError) === null,
     };
   } else if (
     state.lastCancelled === true ||

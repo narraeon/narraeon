@@ -1,4 +1,7 @@
 import { RuntimeRequestError } from "./runtimeClient.ts";
+import type { PromptRoleOrderTarget } from "../protocol/promptRoleOrder.ts";
+import type { OrchestrationSurface } from "../protocol/orchestrationSession.ts";
+import { promptRoleOrderRule } from "./ModelSendRecovery.ts";
 import {
   idleWorkspaceNavigation,
   type WorkspaceNavigationProtection,
@@ -318,6 +321,7 @@ export function PlayPresetScreen({
   onLibraryChange,
   onNavigationProtectionChange,
   initialSelectedId,
+  promptOrderNavigation,
   onSelectionChange,
   modelConnection,
   onEditModelConnection,
@@ -333,6 +337,11 @@ export function PlayPresetScreen({
     protection: WorkspaceNavigationProtection,
   ) => void;
   initialSelectedId?: string;
+  promptOrderNavigation?: {
+    id: string;
+    surface: OrchestrationSurface;
+    target: PromptRoleOrderTarget | undefined;
+  } | null;
   onSelectionChange?: (presetId: string) => void;
   modelConnection?: ModelConnectionView | undefined;
   onEditModelConnection?: () => void;
@@ -369,8 +378,11 @@ export function PlayPresetScreen({
   const [draftBase, setDraftBase] = useState(draft);
   const [newName, setNewName] = useState("");
   const [newFilePath, setNewFilePath] = useState("");
-  const [workspaceView, setWorkspaceView] =
-    useState<PlayPresetWorkspaceView>("call_chain");
+  const [workspaceView, setWorkspaceView] = useState<PlayPresetWorkspaceView>(
+    promptOrderNavigation?.surface === "authorPrompts"
+      ? "setting_improvement"
+      : "call_chain",
+  );
   const [pending, setPending] = useState(false);
   const [aiPane, setAiPane] = useState<"editor" | "conversation" | "changes">(
     "conversation",
@@ -408,6 +420,19 @@ export function PlayPresetScreen({
   const savedEditable = draftBase;
   const aiPanelOpen = draft !== null && aiEditing?.presetId === draft.id;
   const effectiveRevision = saved?.draft?.revision ?? saved?.revision;
+  const orderNavigation =
+    promptOrderNavigation?.id === draft?.id &&
+    (promptOrderNavigation?.surface === "authorPrompts"
+      ? workspaceView === "setting_improvement"
+      : workspaceView === "call_chain")
+      ? promptOrderNavigation
+      : undefined;
+  const diagnosedEntryId = orderNavigation
+    ? orderNavigation.target?.revision === effectiveRevision &&
+      orderNavigation.target?.surface === orderNavigation.surface
+      ? (orderNavigation.target?.entryId ?? null)
+      : null
+    : undefined;
   const savedDraftChanged =
     effectiveRevision !== undefined &&
     draftBase !== null &&
@@ -1386,11 +1411,20 @@ export function PlayPresetScreen({
                       role="tabpanel"
                       aria-labelledby={`play-preset-tab-${workspaceView}`}
                     >
+                      {orderNavigation && (
+                        <p className="workspace-feedback" role="status">
+                          {promptRoleOrderRule()}
+                          {orderNavigation.target === undefined && (
+                            <> {uiText("此诊断没有记录本次请求的编排方案。")}</>
+                          )}
+                        </p>
+                      )}
                       <PresetWorkbenchEditor
                         key={`${draft.id}:${workspaceView}`}
                         structure={draft.structure}
                         files={draft.files}
                         authoring={workspaceView === "setting_improvement"}
+                        initialPromptId={diagnosedEntryId}
                         modelConnection={modelConnection}
                         onEditModelConnection={onEditModelConnection}
                         onChange={updateStructure}

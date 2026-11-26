@@ -27,6 +27,7 @@ export function PresetWorkbenchEditor({
   structure,
   files,
   authoring,
+  initialPromptId,
   onChange,
   onWrite,
   onResourceEdit,
@@ -40,6 +41,7 @@ export function PresetWorkbenchEditor({
   structure: PlayPresetStructuredEditor;
   files: Record<string, string>;
   authoring: boolean;
+  initialPromptId?: string | null | undefined;
   onChange: (
     update: (s: PlayPresetStructuredEditor) => PlayPresetStructuredEditor,
   ) => void;
@@ -662,6 +664,7 @@ export function PresetWorkbenchEditor({
         (authoring ? structure.authorPrompts : structure.playPrompts) ?? []
       }
       authoring={authoring}
+      initialPromptId={initialPromptId}
       modelConnection={modelConnection}
       onEditModelConnection={onEditModelConnection}
       onChange={(entries) =>
