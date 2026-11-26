@@ -20,6 +20,15 @@ const text = { type: "string", minLength: 1 };
 const offsetSchema = { type: "integer", minimum: 0 };
 const maxBodySize = 8192;
 const maxDirectorySize = 60;
+const englishNumberWords =
+  "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth";
+const numberWord = `(?:${englishNumberWords})`;
+const englishTurnInterval = new RegExp(
+  String.raw`\bevery\s+(?:other|[0-9]+(?:,[0-9]{3})*(?:st|nd|rd|th)?|${numberWord}(?:[-\s]+(?:and[-\s]+)?${numberWord}){0,5})\s+(?:turns?|rounds?)\b`,
+  "iu",
+);
+const chineseTurnInterval =
+  /每(?:隔|逢)?\s*[零〇一二两兩三四五六七八九十百千万萬\d０-９]+\s*(?:个|個)?\s*(?:轮|輪|回合)/u;
 const fragmentFields = {
   entryId: text,
   offset: offsetSchema,
@@ -272,7 +281,7 @@ export function sillyTavernEditorSource(
         throw new Error(
           "Supply source fragments, a rationale and the dropped conditions",
         );
-      let requiresReview = args.droppedConditions.length > 0;
+      const detected = new Map<string, string[]>();
       const fragments = args.fragments.map((raw: unknown) => {
         const ref = fields(raw, Object.keys(fragmentFields));
         const entry = snapshot.entries.find(({ id }) => id === ref.entryId);
@@ -290,20 +299,30 @@ export function sillyTavernEditorSource(
           !wasRead(evidence, { snapshotId, entryId: entry.id, offset, end })
         )
           throw new Error("Read every cited source fragment before editing");
-        if (conditions(entry).length > 0) requiresReview = true;
+        if (!detected.has(entry.id)) {
+          const details = conditionDetails(entry, snapshotId, evidence);
+          if (details.length > 0) detected.set(entry.id, details);
+        }
         return { entryId: entry.id, name: entry.name, offset, end };
       });
-      if (requiresReview && args.droppedConditions.length === 0)
+      if (detected.size > 0 && args.droppedConditions.length === 0) {
+        const summary = [...detected]
+          .map(
+            ([entryId, details]) =>
+              `${JSON.stringify(entryId)}: ${details.join(", ")}`,
+          )
+          .join("; ");
         throw new Error(
-          "Describe the source conditions that cannot be preserved by this extraction",
+          `Describe the source conditions that cannot be preserved by this extraction. Detected conditions: ${summary}`,
         );
+      }
       const provenance: OrchestrationProvenanceRecord = {
         snapshotId,
         groupId: snapshot.groupId,
         fragments,
         rationale: args.rationale.trim(),
         droppedConditions: args.droppedConditions.map((item) => item.trim()),
-        requiresReview,
+        requiresReview: detected.size > 0 || args.droppedConditions.length > 0,
         extractedBodySha256: createHash("sha256")
           .update(operation.body)
           .digest("hex"),
@@ -334,7 +353,8 @@ export function sillyTavernEditorSource(
           (isOrchestrationProvenanceRecord(nextSource) &&
             nextSource.requiresReview) ||
           ((currentSource?.requiresReview === true ||
-            (original !== undefined && conditions(original).length > 0)) &&
+            (original !== undefined &&
+              conditions(original).codes.length > 0)) &&
             (!entry.before?.enabled ||
               entry.before.text !== entry.after.text ||
               entry.before.turnGuide !== entry.after.turnGuide))
@@ -361,7 +381,7 @@ function directoryEntry(entry: SillyTavernSourceEntry) {
     readableLength: entry.content?.length ?? null,
     targetEntryId: entry.targetEntryId ?? null,
     diagnostics: entry.reasons,
-    originalConditions: conditions(entry),
+    originalConditions: conditions(entry).codes,
     injectionPosition: entry.injectionPosition ?? null,
     injectionDepth: entry.injectionDepth ?? null,
     injectionOrder: entry.injectionOrder ?? null,
@@ -370,18 +390,39 @@ function directoryEntry(entry: SillyTavernSourceEntry) {
   };
 }
 
-function conditions(entry: SillyTavernSourceEntry): string[] {
-  const result: string[] = entry.reasons.filter(
+function conditions(entry: SillyTavernSourceEntry) {
+  const codes: string[] = entry.reasons.filter(
     (reason) => reason !== "marker" && reason !== "missing_builtin",
   );
-  if (
-    entry.content !== undefined &&
-    /\bevery\s+(?:\d+|[a-z]+)\s+(?:turns?|rounds?)\b|每(?:隔|逢)?\s*[一二两三四五六七八九十百\d]+\s*(?:轮|回合)/iu.test(
-      entry.content,
-    )
-  )
-    result.push("turn_interval");
-  return result;
+  const content = entry.content ?? "";
+  const interval =
+    englishTurnInterval.exec(content) ?? chineseTurnInterval.exec(content);
+  if (interval !== null) codes.push("turn_interval");
+  return { codes, interval };
+}
+
+function conditionDetails(
+  entry: SillyTavernSourceEntry,
+  snapshotId: string,
+  evidence: readonly unknown[],
+): string[] {
+  const { codes, interval } = conditions(entry);
+  if (interval === null) return codes;
+  const offset = interval.index;
+  const end = offset + interval[0].length;
+  // Check the full entry for lost conditions, while only quoting body text
+  // already returned to the model by its ordered source reads.
+  const detail = wasRead(evidence, {
+    snapshotId,
+    entryId: entry.id,
+    offset,
+    end,
+  })
+    ? JSON.stringify(interval[0].replace(/\s+/gu, " ").slice(0, 120))
+    : `UTF-16 offsets ${offset}–${end}`;
+  return codes.map((code) =>
+    code === "turn_interval" ? `${code} (${detail})` : code,
+  );
 }
 
 function sourcePosition(
