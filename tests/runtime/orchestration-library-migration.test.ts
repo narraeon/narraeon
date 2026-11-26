@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,7 +124,20 @@ test("released v3 keeps current and draft policies, post-requests, panels, permi
   for (const record of (JSON.parse(fixture.library) as ReleasedLibrary)
     .presets) {
     const migrated = orchestrations.find(({ id }) => id === record.id)!;
-    expect(migrated.revisions).toMatchObject(record.revisions);
+    expect(Object.keys(migrated.revisions).length).toBeLessThanOrEqual(2);
+    for (const [revision, files] of Object.entries(record.revisions)) {
+      const owner = createHash("sha256").update(record.id).digest("hex");
+      const archived = join(
+        root,
+        "orchestration-revisions",
+        owner,
+        `${revision}.json`,
+      );
+      const retained: unknown =
+        migrated.revisions[revision] ??
+        JSON.parse(await fs.readFile(archived, "utf8"));
+      expect(retained).toEqual(files);
+    }
   }
 
   const bytes = await fs.readFile(newPath);
@@ -157,33 +171,38 @@ test("a failed publication leaves the release intact and the next startup migrat
   const newPath = join(root, filename);
   await fs.writeFile(oldPath, fixture.library);
   const { rename } = await vi.importActual<typeof fs>("node:fs/promises");
+  let interrupted = false;
   const publish = vi
     .mocked(fs.rename)
     .mockClear()
-    .mockImplementationOnce(async (source, destination) => {
-      expect(destination).toBe(newPath);
+    .mockImplementation(async (source, destination) => {
+      if (destination !== newPath || interrupted)
+        return rename(source, destination);
+      interrupted = true;
       expect(JSON.parse(await fs.readFile(source, "utf8"))).toMatchObject({
         currentOrchestrationId: fixture.presetId,
       });
       expect(await fs.readFile(oldPath, "utf8")).toBe(fixture.library);
       throw new Error("Interrupted before atomic publication");
     });
+  const primaryRenames = () =>
+    publish.mock.calls.filter(([, destination]) => destination === newPath);
   await expect(
     new FileNativePlayPresetStore(root).initialize(),
   ).rejects.toThrow("Interrupted before atomic publication");
-  expect(publish).toHaveBeenCalledOnce();
-  expect(await fs.readdir(root)).toEqual([oldFilename]);
+  expect(primaryRenames()).toHaveLength(1);
+  await expect(fs.access(newPath)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await fs.readFile(oldPath, "utf8")).toBe(fixture.library);
 
-  // A hard process exit can leave a sibling staging file. Only the final path is the marker.
+  // A hard process exit may leave archival preimages and a sibling staging
+  // file. Only the final primary library name is the publication marker.
   await fs.writeFile(newPath + ".interrupted.tmp", "incomplete");
-  publish.mockImplementation(rename);
   const cold = new FileNativePlayPresetStore(root);
   await cold.initialize();
-  expect(publish).toHaveBeenCalledTimes(2);
+  expect(primaryRenames()).toHaveLength(2);
   expect((await cold.list()).currentPresetId).toBe(fixture.presetId);
   await new FileNativePlayPresetStore(root).initialize();
-  expect(publish).toHaveBeenCalledTimes(2);
+  expect(primaryRenames()).toHaveLength(2);
 });
 
 test.each([

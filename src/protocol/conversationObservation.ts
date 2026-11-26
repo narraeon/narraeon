@@ -8,7 +8,11 @@ import type {
 
 export type ConversationTarget =
   | { kind: "play"; id: string }
-  | { kind: "setting" | "revision" | "orchestration"; id: string; sessionId?: string };
+  | {
+      kind: "setting" | "revision" | "orchestration";
+      id: string;
+      sessionId?: string;
+    };
 
 export type ConversationState =
   | {

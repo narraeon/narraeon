@@ -537,7 +537,8 @@ export class FileNativePromptCompiler {
       logicalMessages,
       modelBinding: input.modelBinding,
       tools: input.tools,
-      mergeConsecutiveMessages: input.playPreset.definition.mergeConsecutiveMessages ?? true,
+      mergeConsecutiveMessages:
+        input.playPreset.definition.mergeConsecutiveMessages ?? true,
     });
   }
 
@@ -565,8 +566,7 @@ export class FileNativePromptCompiler {
       cacheStrategy,
       {
         locale: this.#locale,
-        mergeConsecutiveMessages:
-          input.mergeConsecutiveMessages,
+        mergeConsecutiveMessages: input.mergeConsecutiveMessages,
       },
     );
     const stableText = cacheStableText(logicalMessages, provider);

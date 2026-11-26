@@ -186,7 +186,9 @@ export function validAuthoringRequests(
       ) ||
       !isUserItem(items[item.modelItemStart as number]) ||
       !validPrompt(item.bootstrap) ||
-      (item.playPreset === undefined ? session.independent !== true : !isPlayPresetBinding(item.playPreset))
+      (item.playPreset === undefined
+        ? session.independent !== true
+        : !isPlayPresetBinding(item.playPreset))
     )
       return false;
     ids.add(item.requestId);

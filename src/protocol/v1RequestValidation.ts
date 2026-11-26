@@ -126,8 +126,16 @@ const requiredFields = {
     changeSetId: text,
     expectedRevision: text,
   },
-  "orchestration.call.context": { presetId: text, sessionId: text, callId: text },
-  "orchestration.request.preview": { presetId: text, sessionId: text, requestId: text },
+  "orchestration.call.context": {
+    presetId: text,
+    sessionId: text,
+    callId: text,
+  },
+  "orchestration.request.preview": {
+    presetId: text,
+    sessionId: text,
+    requestId: text,
+  },
   "play.create": { name: text },
   "play.copy": { presetId: text },
   "play.save": { presetId: text, name: text, files: object },
@@ -768,7 +776,11 @@ const afterTurnNote: Partial<Record<Command, readonly Check[]>> = {
   "world.revision.preview": [workbenchPreview],
   "setting-improvement.status": [sessionId],
   "world.revision.status": [sessionId],
-  "orchestration.message": [continuation, freshSessionId, field("focusedEntryId", text)],
+  "orchestration.message": [
+    continuation,
+    freshSessionId,
+    field("focusedEntryId", text),
+  ],
   "setting-improvement.message": [continuation, freshSessionId],
   "world.revision.message": [continuation, freshSessionId],
   "setting-improvement.rollback": [

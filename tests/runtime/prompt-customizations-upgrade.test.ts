@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,8 +81,20 @@ test("v0.7.10 current and draft convert once without changing historical revisio
     const after = converted.orchestrations.find(
       (p: { id: string }) => p.id === before.id,
     );
-    for (const [revision, files] of Object.entries(before.revisions))
-      expect(after!.revisions[revision]).toEqual(files);
+    expect(Object.keys(after!.revisions).length).toBeLessThanOrEqual(2);
+    for (const [revision, files] of Object.entries(before.revisions)) {
+      const owner = createHash("sha256").update(before.id).digest("hex");
+      const archived = join(
+        root,
+        "orchestration-revisions",
+        owner,
+        `${revision}.json`,
+      );
+      const retained: unknown =
+        after!.revisions[revision] ??
+        JSON.parse(await readFile(archived, "utf8"));
+      expect(retained).toEqual(files);
+    }
   }
   const bytes = await readFile(newPath, "utf8");
   await new FileNativePlayPresetStore(root).initialize();
