@@ -4,6 +4,7 @@ import { isAbsolute, win32 } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { FileNativeSettingImprovementStore } from "../setting/FileNativeSettingImprovementStore.ts";
 
+import type { SampleContentPackageId } from "../../protocol/sampleContentPackages.ts";
 import { portableContentTreePathKey } from "../../protocol/contentTree.ts";
 import {
   fictionGameplay,
@@ -137,8 +138,11 @@ export class ContentWorkspace {
     });
   }
 
-  createSampleContentPackage(locale: AppLocale) {
-    const sample = sampleContentPackageForLocale(locale);
+  createSampleContentPackage(
+    locale: AppLocale,
+    sampleId?: SampleContentPackageId,
+  ) {
+    const sample = sampleContentPackageForLocale(locale, sampleId);
     return this.#currentTreeLibrary.createPackage(sample);
   }
 

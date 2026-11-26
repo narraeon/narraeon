@@ -72,16 +72,21 @@ test.each(appLocales)(
       createElement(App, { client: { request } as unknown as RuntimeClient }),
     );
     const button = await screen.findByRole("button", {
-      name: locale === "zh-CN" ? "从示例新建" : "Create from sample",
+      name:
+        locale === "zh-CN" ? "从内置故事新建" : "Create from a built-in story",
     });
     fireEvent.click(button);
-    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(true));
-    fireEvent.click(button);
+    const story = screen.getByRole("button", { name: sample.title });
+    fireEvent.click(story);
+    await waitFor(() => expect(story.hasAttribute("disabled")).toBe(true));
+    fireEvent.click(story);
     expect(
       request.mock.calls.filter(
         ([input]) => input.type === "content.create-sample",
       ),
-    ).toEqual([[{ type: "content.create-sample", locale }]]);
+    ).toEqual([
+      [{ type: "content.create-sample", locale, sampleId: "rainy-inn" }],
+    ]);
     expect(
       screen
         .getByRole("button", {
@@ -143,12 +148,14 @@ test("a failed sample request reports the error and lets the player retry from t
   render(
     createElement(App, { client: { request } as unknown as RuntimeClient }),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "从示例开始" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "挑一个故事开玩" }),
+  );
+  const story = screen.getByRole("button", { name: "消失的母带" });
+  fireEvent.click(story);
   expect(await screen.findByText("Could not save sample")).toBeTruthy();
-  expect(
-    screen.getByRole("button", { name: "从示例开始" }).hasAttribute("disabled"),
-  ).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "从示例开始" }));
+  expect(story.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(story);
   await waitFor(() =>
     expect(
       request.mock.calls.filter(
@@ -194,7 +201,12 @@ test("a lost sample receipt rereads the home without navigating to a same-name p
   render(
     createElement(App, { client: { request } as unknown as RuntimeClient }),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "从示例新建" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "从内置故事新建" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: sample.title }));
+  await screen.findByText("lost reply");
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
   await waitFor(() =>
     expect(
       screen.getAllByRole("button", { name: `打开内容包：${sample.title}` }),
