@@ -1170,9 +1170,21 @@ export class FileNativePlayPresetStore {
         locale: this.#locale(),
       });
       const candidate = readLegacySillyTavernReport(conversion.files);
+      // Built-in additions changed the converter's st-N numbering. Match the
+      // source fields independently and reuse this import's original targets.
+      const sourceFields = (prompts: typeof report.prompts) =>
+        prompts.map((prompt) => {
+          const fields = { ...prompt };
+          delete fields.targetId;
+          return fields;
+        });
       if (
-        candidate?.groupId !== report.groupId ||
-        !isDeepStrictEqual(candidate?.prompts, report.prompts)
+        candidate === undefined ||
+        candidate.groupId !== report.groupId ||
+        !isDeepStrictEqual(
+          sourceFields(candidate.prompts),
+          sourceFields(report.prompts),
+        )
       )
         throw mismatch();
       const parsed = parsePlayPresetFiles(files, this.#limits);
@@ -1182,14 +1194,19 @@ export class FileNativePlayPresetStore {
           entry.kind === "user" ? [[entry.id, entry.body] as const] : [],
         ),
       );
-      if (
-        snapshot.entries.some(
-          ({ content, targetEntryId }) =>
-            targetEntryId !== undefined &&
-            originalPrompts.get(targetEntryId) !== content,
+      const originalTargets = new Map(
+        report.prompts.map(({ sourceId, targetId }) => [sourceId, targetId]),
+      );
+      for (const entry of snapshot.entries) {
+        if (entry.content === undefined) continue;
+        const targetId = originalTargets.get(entry.id);
+        if (
+          targetId === undefined ||
+          originalPrompts.get(targetId) !== entry.content
         )
-      )
-        throw mismatch();
+          throw mismatch();
+        entry.targetEntryId = targetId;
+      }
       const existing = await this.#sillyTavernSources.read(presetId);
       if (existing === undefined)
         await this.#sillyTavernSources.save(presetId, snapshot);
