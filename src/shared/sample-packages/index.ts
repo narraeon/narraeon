@@ -5,12 +5,16 @@ import type { ContentTreeFile } from "../../protocol/v1.ts";
 import { sampleStoryDescription } from "./catalog.ts";
 import { lastProofEnglish } from "./last-proof-en.ts";
 import { lastProofChinese } from "./last-proof-zh.ts";
+import { lostSignalEnglish } from "./lost-signal-en.ts";
+import { lostSignalChinese } from "./lost-signal-zh.ts";
 import { missingReelEnglish } from "./missing-reel-en.ts";
 import { missingReelChinese } from "./missing-reel-zh.ts";
 import { rainyInnEnglish } from "./rainy-inn-en.ts";
 import { rainyInnChinese } from "./rainy-inn-zh.ts";
 import { screeningNightEnglish } from "./screening-night-en.ts";
 import { screeningNightChinese } from "./screening-night-zh.ts";
+import { tideVaultEnglish } from "./tide-vault-en.ts";
+import { tideVaultChinese } from "./tide-vault-zh.ts";
 
 export interface SampleContentPackage {
   title: string;
@@ -25,6 +29,8 @@ const stories = {
     "zh-CN": screeningNightChinese,
   },
   "last-proof": { en: lastProofEnglish, "zh-CN": lastProofChinese },
+  "tide-vault": { en: tideVaultEnglish, "zh-CN": tideVaultChinese },
+  "lost-signal": { en: lostSignalEnglish, "zh-CN": lostSignalChinese },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, readonly ContentTreeFile[]>

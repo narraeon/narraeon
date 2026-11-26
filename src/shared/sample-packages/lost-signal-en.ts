@@ -129,6 +129,6 @@ Two crews are encountering the same sky from different experiences. Let each ask
 
 Em wants a conversation and a safe place to talk things over. A radio exchange, a dark berth, a dry tether, or other arrangements are viable by agreement. Let the players invent ways to share information with consent and agree on a release signal before physical contact. The waiting craft has time to deliberate. Use the shared power socket to make arrangements concrete when it is relevant. Record actual permissions, promises, and changes to the berth or the ship in their owners’ documents. The contact can grow into mutual aid, cautious separation, or a joint investigation. An explanation for the crossing can develop from later observations; no revelation or ending is required before anyone can talk.
 `,
-    ["outer-berth", "morrow-crossing"],
+    ["em-arlen", "outer-berth", "morrow-crossing"],
   ),
 ];

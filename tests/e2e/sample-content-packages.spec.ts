@@ -72,10 +72,21 @@ for (const locale of appLocales) {
               "content.create-sample",
         );
         await start.click();
-        await page
+        const choices = page
           .getByRole("dialog")
-          .getByRole("button", { name: sample.title, exact: true })
-          .click();
+          .getByRole("list")
+          .getByRole("button");
+        await expect(choices).toHaveCount(6);
+        await expect(choices.first()).toHaveAccessibleName(sample.title);
+        await expect(choices.nth(1)).toHaveAccessibleName(
+          chinese ? "潮退后的遗迹" : "The Vault at Ebb Tide",
+        );
+        await expect(choices.nth(3)).toHaveAccessibleName(
+          chinese ? "末灯在听" : "Last Light Listening",
+        );
+        if (chinese)
+          await expect(choices.nth(3)).toBeInViewport({ ratio: 0.75 });
+        await choices.first().click();
         expect(
           ((await creation).postDataJSON() as { request: V1Request }).request,
         ).toEqual({
@@ -233,13 +244,13 @@ const playableStories = [
       genre: "Detective",
       action: "I ask Noel what he saw away from the sign-in desk.",
       reply: "Noel turns the sign-in sheet face down before he speaks.",
-      context: "TS-017",
+      context: ["TS-017"],
     },
     "zh-CN": {
       genre: "侦探破案",
       action: "我问罗安离开签到桌时亲眼看见了什么。",
       reply: "罗安开口前，把签到表翻了个面。",
-      context: "TS-017",
+      context: ["TS-017"],
     },
   },
   {
@@ -249,13 +260,13 @@ const playableStories = [
       action:
         "I offer to help Hana test the captions and ask Mina to hold off on the announcement.",
       reply: "Hana shifts the laptop toward the dry end of the bench.",
-      context: "The club has forty-six registrations.",
+      context: ["The club has forty-six registrations."],
     },
     "zh-CN": {
       genre: "校园生活",
       action: "我想帮韩夏先试字幕，请米娜暂缓发通知。",
       reply: "韩夏把笔记本往长凳干的那边挪了挪。",
-      context: "报名四十六人",
+      context: ["报名四十六人"],
     },
   },
   {
@@ -266,13 +277,65 @@ const playableStories = [
         "I offer to check the names but tell Lin I need to go home before noodles.",
       reply:
         "Lin passes you the folded proof and says they'll see you upstairs.",
-      context: "The two invitations are open and can be answered separately.",
+      context: ["The two invitations are open and can be answered separately."],
     },
     "zh-CN": {
       genre: "都市恋爱",
       action: "我愿意帮赵林核对署名，不过说我今晚没空去吃面。",
       reply: "赵林把对折的印样递过来，说那就在楼里见。",
-      context: "帮忙试印和一起吃面是两件可以分别回答的事。",
+      context: ["帮忙试印和一起吃面是两件可以分别回答的事。"],
+    },
+  },
+  {
+    id: "tide-vault",
+    en: {
+      genre: "Fantasy exploration",
+      action:
+        "I ask Ivo to watch the tide marks while Sera and I inspect the nearest rope fixing.",
+      reply:
+        "Ivo turns his lamp so you can see the dark notch below the bronze bird.",
+      context: [
+        "Awaiting a response:",
+        "thirty-five minutes from this low water",
+        "twenty-four-meter rope",
+      ],
+    },
+    "zh-CN": {
+      genre: "奇幻探险",
+      action: "我请伊沃留意水痕，和塞拉检查最近能固定绳子的地方。",
+      reply: "伊沃把灯朝铜鸟下方的深槽斜了斜，好让你看清水位。",
+      context: [
+        "待回应:",
+        "通常有约三十五分钟能从拱门步行撤出",
+        "二十四米长的好绳",
+      ],
+    },
+  },
+  {
+    id: "lost-signal",
+    en: {
+      genre: "Science-fiction first contact",
+      action:
+        "I offer to pulse our lights in a new order and ask what a manual tether would mean to them.",
+      reply:
+        "Em proposes a pattern of her own, then asks who would be free to release the tether.",
+      context: [
+        "Open channel:",
+        "A crew member stays at the ship controls",
+        "about six hours of elapsed time",
+        "wants a chance to cross-check a local reading in return",
+      ],
+    },
+    "zh-CN": {
+      genre: "科幻首次接触",
+      action: "我提议按一个新顺序闪灯，再问对方愿意接受怎样的手动系缆条件。",
+      reply: "埃姆提了一个闪灯顺序，又问双方谁能解开系缆。",
+      context: [
+        "通话中:",
+        "共同的脱离信号",
+        "航路中断后过了约六小时",
+        "想换取一项能自己核对的站方读数",
+      ],
     },
   },
 ] as const;
@@ -452,7 +515,8 @@ for (const locale of appLocales) {
           .map(({ content }) => content ?? "")
           .join("\n");
         expect(dispatched.split(opening)).toHaveLength(2);
-        expect(dispatched).toContain(strings.context);
+        for (const material of strings.context)
+          expect(dispatched).toContain(material);
         expect(dispatched).toContain(strings.action);
         if (story.id === "missing-reel") {
           expect(dispatched).toContain("@service-corridor");
