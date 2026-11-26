@@ -408,9 +408,14 @@ test("Runtime scope and preview do not access instances, dispatch or save revisi
         mergeConsecutiveMessagesChanged: true,
       },
     });
-    expect(candidate.comparison.changes).toContainEqual(
-      expect.objectContaining({ identity: "entry:before-world" }),
+    const before = candidate.comparison.changes.find(
+      ({ identity }) => identity === "entry:before-world",
     );
+    expect(before?.after?.markdown).toBe("Content before-world");
+    const after = candidate.comparison.changes.find(
+      ({ identity }) => identity === "entry:after-world",
+    );
+    expect(after?.after?.configuredMarkdown).toBe("  Content after-world  ");
     expect(await request({ type: "play.read" })).toEqual(library.playPresets);
     const saved = await request<{
       preset: FileNativePlayPresetLibrary["presets"][number];

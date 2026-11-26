@@ -231,7 +231,7 @@ const editFields = {
   entryId: {
     type: "string",
     description:
-      "Stable block identity. For create, choose a new unique identity.",
+      "Stable ID of the edit target, including the entry to move. Completely read an existing target in an earlier response. For create, choose a new unique ID.",
   },
   op: {
     type: "string",
@@ -259,11 +259,13 @@ const editFields = {
   gameplay: { type: "string", enum: ["tabletop", "all"] },
   beforeId: {
     type: "string",
-    description: "Anchor identity. Use beforeId OR afterId.",
+    description:
+      "Place the entry immediately before this same-surface anchor. Use one anchor. Positioning alone requires no anchor read.",
   },
   afterId: {
     type: "string",
-    description: "Anchor identity. Use beforeId OR afterId.",
+    description:
+      "Place the entry immediately after this same-surface anchor. Use one anchor. Positioning alone requires no anchor read.",
   },
 };
 

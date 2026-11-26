@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
+import { parseDocument } from "yaml";
 import type { CompiledOrchestrationPreview } from "../../src/protocol/orchestrationPreview.ts";
 import type { AppLocale } from "../../src/protocol/appPreferences.ts";
 import type {
@@ -34,7 +35,10 @@ import {
   provenanceVersion,
 } from "../../src/runtime/play/OrchestrationProvenanceStore.ts";
 import { orchestrationManifest } from "../../src/shared/application-preset-files.ts";
-import type { OrderedPlayPrompt } from "../../src/shared/ordered-play-prompts.ts";
+import {
+  builtinPlayPrompts,
+  type OrderedPlayPrompt,
+} from "../../src/shared/ordered-play-prompts.ts";
 import {
   readEditorEntries,
   writeEditorEntries,
@@ -765,6 +769,277 @@ test("writes require an earlier complete read and reject a full batch atomically
   expect(stored).not.toHaveProperty("builtinDefault");
   expect((await f.editor().send(f.send("safe-batch"))).changes).toHaveLength(1);
   expect(f.requests).toHaveLength(5);
+});
+
+test("the model catalog combines effective ordering with builtin defaults on either surface", async () => {
+  const f = await setup();
+  const catalog = builtinPlayPrompts("en");
+  const facts = catalog.find(({ id }) => id === "play.facts")!;
+  const tabletopDefault = catalog.find(
+    ({ id }) => id === "play.tabletop",
+  )!.turnGuide!;
+  const manifest = parseDocument(f.initial.files[orchestrationManifest]!);
+  manifest.set("playPrompts", {
+    overrides: [
+      {
+        builtin: "play.facts",
+        id: "facts-anchor",
+        enabled: false,
+        messageRole: "assistant",
+        turnGuide: "",
+      },
+      { builtin: "play.tabletop", turnGuide: tabletopDefault },
+    ],
+  });
+  manifest.delete("authorPrompts");
+  const { preset } = await f.drafts.importPortable({
+    name: "Sparse arrangements",
+    files: { ...f.initial.files, [orchestrationManifest]: manifest.toString() },
+  });
+  const { id: presetId, revision } = preset;
+  f.respond((request) =>
+    request.exchange === 1
+      ? reply(
+          "",
+          tool("both", "orchestration_list", {}),
+          tool("author", "orchestration_list", { surface: "authorPrompts" }),
+        )
+      : reply("Read-only catalog consultation."),
+  );
+  const view = await f.editor().send({
+    ...f.send("combined-catalog", revision),
+    presetId,
+  });
+  const request = f.requests.at(-1)!;
+  const { data } = toolReceipt<{
+    revision: string;
+    currentRevision: string;
+    surfaces: {
+      surface: string;
+      entries: { id: string; builtin?: string }[];
+    }[];
+  }>(request, "both");
+  const [play, author] = data.surfaces;
+  expect(data.currentRevision).toBe(revision);
+  expect(data.revision).toBe(revision);
+  expect(data.surfaces.map(({ surface }) => surface)).toEqual([
+    "playPrompts",
+    "authorPrompts",
+  ]);
+  expect(toolReceipt(request, "author").data.surfaces).toEqual([author]);
+  expect(play).not.toHaveProperty("catalog");
+  expect(author).not.toHaveProperty("catalog");
+  expect(play!.entries.map(({ id }) => id)).toEqual(
+    readEditorEntries(preset.files).playPrompts.map(({ id }) => id),
+  );
+  expect(author!.entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "author.tabletop",
+        gameplay: "tabletop",
+      }),
+      expect.objectContaining({
+        id: "author.model-prompt",
+        dynamic: "model-prompt",
+      }),
+    ]),
+  );
+  expect(
+    play!.entries.find(({ builtin }) => builtin === "play.facts"),
+  ).toMatchObject({
+    id: "facts-anchor",
+    enabled: false,
+    defaultEnabled: true,
+    messageRole: "assistant",
+    authorSummary: facts.authorSummary,
+    turnGuideOverride: "",
+    defaultTurnGuide: facts.turnGuide,
+  });
+  const tabletop = play!.entries.find(({ id }) => id === "play.tabletop");
+  expect(tabletop).toMatchObject({
+    gameplay: "tabletop",
+    turnGuideOverride: tabletopDefault,
+    defaultTurnGuide: tabletopDefault,
+  });
+  expect(tabletop).not.toHaveProperty("builtin");
+  expect(tabletop).not.toHaveProperty("defaultEnabled");
+  expect(tabletop).not.toHaveProperty("required");
+  const inherited = play!.entries.find(
+    ({ id }) => id === "play.agency-default",
+  );
+  expect(inherited).toHaveProperty("defaultTurnGuide", expect.any(String));
+  expect(inherited).not.toHaveProperty("turnGuideOverride");
+  expect(view.changes).toEqual([]);
+});
+
+test("model previews report equal-length saved text changes without exposing either side's prose", async () => {
+  const f = await setup();
+  const before = readEditorEntries(f.initial.files);
+  const applied = structuredClone(before);
+  const body = (word: string) => `${word} ${"原文不进入回执。".repeat(256)}`;
+  const prompt = (
+    id: string,
+    text: string,
+    options: { enabled?: boolean; gameplay?: "tabletop" } = {},
+  ): OrderedPlayPrompt => ({
+    id,
+    kind: "user",
+    name: id,
+    enabled: true,
+    body: text,
+    ...options,
+  });
+  applied.playPrompts.push(
+    prompt("cadence", "Dry humor"),
+    prompt("inactive", body("SEALED_BASE"), { enabled: false }),
+    prompt("tabletop", body("SCOPED_BASE"), { gameplay: "tabletop" }),
+    prompt("retired", "Unchanged source"),
+    prompt("space", " Two spaces"),
+  );
+  applied.authorPrompts = applied.authorPrompts.map((entry) =>
+    entry.kind === "builtin" && entry.builtin === "author.play-reference"
+      ? { ...entry, enabled: true }
+      : entry,
+  );
+  const appliedFiles = writeEditorEntries(f.initial.files, before, applied);
+  await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: appliedFiles,
+  });
+  const current = (await f.drafts.select(f.presetId)).preset.revision;
+  const candidate = structuredClone(applied);
+  candidate.playPrompts = candidate.playPrompts.map((entry) => {
+    if (entry.kind !== "user") return entry;
+    switch (entry.id) {
+      case "cadence":
+        return { ...entry, body: "Dry beats" };
+      case "inactive":
+        return { ...entry, body: body("SEALED_NEXT") };
+      case "tabletop":
+        return { ...entry, body: body("SCOPED_NEXT") };
+      case "retired":
+        return { ...entry, enabled: false };
+      case "space":
+        return { ...entry, body: "Two spaces " };
+      default:
+        return entry;
+    }
+  });
+  const saved = await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: writeEditorEntries(appliedFiles, applied, candidate),
+  });
+  const revision = saved.preset.draft!.revision;
+  const play = { surface: "playPrompts", revision };
+  f.respond((request) => {
+    if (request.exchange === 1)
+      return reply(
+        "",
+        tool("play", "orchestration_preview", play),
+        tool("author", "orchestration_preview", {
+          surface: "authorPrompts",
+          revision,
+          authorTarget: "world-revision",
+        }),
+      );
+    if (request.exchange === 2)
+      return reply(
+        "",
+        edit("unread-move", revision, [
+          {
+            op: "move",
+            operationId: "move-unread",
+            entryId: "cadence",
+            afterId: "inactive",
+          },
+        ]),
+        tool("read-full", "orchestration_read", {
+          ...play,
+          entryIds: ["cadence", "inactive"],
+        }),
+      );
+    expect(toolReceipt(request, "unread-move").data.error).toContain(
+      "Read the complete current entry cadence",
+    );
+    expect(toolReceipt(request, "read-full").data.entries).toMatchObject([
+      { id: "cadence", text: "Dry beats", completeForEditing: true },
+      { id: "inactive", text: body("SEALED_NEXT"), completeForEditing: true },
+    ]);
+    return reply("Preview and complete reads are available.");
+  });
+  const view = await f.editor().send(f.send("compact-preview", revision));
+  const request = f.requests[1]!;
+  type ModelPreview = Pick<
+    CompiledOrchestrationPreview,
+    "turnGuide" | "authorTarget" | "placeholders"
+  > & {
+    entries: { id: string; builtin?: string; markdown?: string }[];
+    comparison: { changes: { identity: string; bodyChanged?: true }[] };
+  };
+  const { data } = toolReceipt<ModelPreview>(request, "play");
+  expect(
+    /configuredMarkdown|SEALED_|SCOPED_|Dry humor|Dry beats|Unchanged source/u.test(
+      JSON.stringify(data),
+    ),
+  ).toBe(false);
+  expect(data.entries.find(({ id }) => id === "tabletop")).toEqual({
+    id: "tabletop",
+    enabled: true,
+    applies: false,
+    messageRole: "system",
+    gameplay: "tabletop",
+  });
+  expect(data).toMatchObject({
+    revision,
+    messageOrder: "conditional",
+    protocol: { status: "compatible", provider: "chat_completions" },
+    comparison: {
+      baseRevision: current,
+      selectedRevision: revision,
+    },
+  });
+  expect(
+    data.placeholders.find(({ kind }) => kind === "world-instructions"),
+  ).toHaveProperty("timing", "prefix");
+  const changedBodies = [
+    ["cadence", "Dry beats".length],
+    ["inactive", body("SEALED_NEXT").length],
+    ["tabletop", body("SCOPED_NEXT").length],
+    ["space", "Two spaces ".length],
+  ] as const;
+  for (const [id, bodyLength] of changedBodies)
+    expect(data.comparison.changes).toContainEqual({
+      identity: `entry:${id}`,
+      bodyChanged: true,
+      before: { id, bodyLength },
+      after: { id, bodyLength },
+    });
+  expect(data.comparison.changes).toContainEqual({
+    identity: "entry:retired",
+    before: { id: "retired", enabled: true },
+    after: { id: "retired", enabled: false },
+  });
+  const author = toolReceipt<ModelPreview>(request, "author").data;
+  expect(author.authorTarget).toBe("world-revision");
+  expect(
+    author.entries.find(({ builtin }) => builtin === "author.play-reference")
+      ?.markdown,
+  ).toContain("Dry beats");
+  expect(author.turnGuide).toBeUndefined();
+  expect(author.comparison.changes).toContainEqual(
+    expect.objectContaining({
+      identity: "builtin:author.play-reference",
+      bodyChanged: true,
+    }),
+  );
+  expect(JSON.stringify(author.comparison)).not.toMatch(
+    /configuredMarkdown|Dry humor|Dry beats/u,
+  );
+  expect(JSON.stringify(author)).not.toMatch(/SEALED_|SCOPED_/u);
+  expect(view.changes).toEqual([]);
+  expect((await f.drafts.bindCurrent()).revision).toBe(current);
 });
 
 test("a front insertion keeps the persisted and model receipts proportional to the actual edit", async () => {

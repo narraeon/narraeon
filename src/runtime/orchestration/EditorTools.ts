@@ -1,9 +1,11 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { parseGameplay } from "../../protocol/gameplay.ts";
+import type { OrchestrationPreviewEntry } from "../../protocol/orchestrationPreview.ts";
 import type {
   OrchestrationSurface,
   V1OrchestrationChangeSet,
 } from "../../protocol/orchestrationSession.ts";
+import { defaultEnabledBuiltin } from "../../shared/ordered-play-prompts.ts";
 import type {
   ModelConnectionPrompt,
   ModelHostBinding,
@@ -132,7 +134,7 @@ export function orchestrationEditorTools(
   return [
     definition(
       "orchestration_list",
-      "Read the draft revision and ordered entry identities, roles, and scopes with built-in summaries. Start here when looking for overlap. Listing does not grant edit authorization or access to worlds or packages.",
+      "Read effective and applied revisions plus ordered prompt summaries. Omit surface for both playPrompts and authorPrompts. For advice, start with summaries and read bodies as needed. For kind=builtin, omitted builtin and defaultEnabled equal id and enabled respectively. A missing turnGuideOverride inherits defaultTurnGuide; an empty string clears it. Use entry IDs for draft tools and builtin IDs for default references. Listing grants no edit authorization.",
       { surface: surfaceProperty },
     ),
     definition(
@@ -156,7 +158,7 @@ export function orchestrationEditorTools(
     ),
     definition(
       "orchestration_preview",
-      "Compile a read-only structural preview and compare with the applied revision. World and author materials remain placeholders.",
+      "Check one surface's compiled order, roles, gameplay scope, and protocol diagnostics against the applied revision. Preview authorPrompts to see the enabled future-play reference for the chosen authorTarget and gameplay. World and author materials remain placeholders. Use orchestration_read for saved bodies.",
       {
         surface: surfaceProperty,
         revision: textProperty,
@@ -186,7 +188,7 @@ export function orchestrationEditorTools(
     ...(extension?.tools ?? []),
     definition(
       "orchestration_edit",
-      "Publish one validated draft batch on one surface. Read existing entries completely first. Use create/update/move/delete or replace_builtin to change replaceable builtin prefix text. Do not apply a draft with a tool.",
+      "Publish one validated draft batch on one surface. Use replace_builtin for changes to replaceable builtin prefix text. The author applies the draft.",
       {
         surface: surfaceProperty,
         expectedRevision: textProperty,
@@ -471,29 +473,44 @@ function list(
       return {
         surface,
         entries: entries[surface].map((entry, index) => {
-          const { text, ...summary } = editorEntry(
-            entry,
-            index,
-            catalog,
-            worldName(locale),
-          );
-          const builtin =
-            entry.kind === "builtin"
-              ? catalog.find(({ id }) => id === entry.builtin)
-              : undefined;
+          const {
+            id,
+            kind,
+            name,
+            enabled,
+            messageRole,
+            text,
+            turnGuide,
+            gameplay,
+          } = editorEntry(entry, index, catalog, worldName(locale));
+          const summary = {
+            id,
+            kind,
+            name,
+            enabled,
+            messageRole,
+            bodyLength: text.length,
+            gameplay: gameplay ?? undefined,
+          };
+          if (entry.kind !== "builtin")
+            return { ...summary, turnGuide: turnGuide ?? undefined };
+          const builtin = catalog.find(({ id }) => id === entry.builtin)!;
+          const defaultEnabled = defaultEnabledBuiltin(builtin, catalog);
           return {
             ...summary,
-            bodyLength: text.length,
-            builtin: builtin?.id,
-            group: builtin?.group,
-            required: builtin?.required,
-            dynamic: builtin?.dynamic,
+            builtin: builtin.id === id ? undefined : builtin.id,
+            category: builtin.category,
+            group: builtin.group,
+            required: builtin.required || undefined,
+            dynamic: builtin.dynamic,
+            authorSummary: builtin.authorSummary,
+            defaultEnabled:
+              defaultEnabled === enabled ? undefined : defaultEnabled,
+            messageRoleOverride: entry.messageRole,
+            defaultTurnGuide: builtin.turnGuide,
+            turnGuideOverride: entry.turnGuide,
           };
         }),
-        catalog: catalog.map(({ body, ...entry }) => ({
-          ...entry,
-          bodyLength: body.length,
-        })),
       };
     }),
   };
@@ -623,6 +640,7 @@ function preview(
       surface,
       gameplay,
       locale,
+      includeExactSavedText: true,
       ...(args.authorTarget === undefined
         ? {}
         : { authorTarget: args.authorTarget as "setting" | "world-revision" }),
@@ -632,33 +650,93 @@ function preview(
       },
     });
   const selected = compile(target.files, target.revision);
-  const comparison = compareOrchestrationPreviews(
-    compile(target.currentFiles, target.currentRevision),
-    selected,
-  );
-  // Full bodies can be read by stable identity. Keep the generated future-play
-  // reference here because it is itself a compiler output, not a stored block.
-  const project = ({
-    markdown,
-    ...entry
-  }: (typeof selected.entries)[number]) => ({
-    ...entry,
-    ...(entry.builtin === "author.play-reference" && markdown !== undefined
-      ? { markdown: slice(markdown, { limit: 16384 }).text }
-      : { bodyLength: markdown?.length }),
-  });
+  const current =
+    target.currentRevision === target.revision
+      ? selected
+      : compile(target.currentFiles, target.currentRevision);
+  const comparison = compareOrchestrationPreviews(current, selected);
   return {
     ...selected,
-    entries: selected.entries.map(project),
+    entries: selected.entries.map((entry) => {
+      const structure = {
+        id: entry.id,
+        enabled: entry.enabled,
+        applies: entry.applies,
+        messageRole: entry.messageRole,
+        gameplay: entry.gameplay,
+      };
+      // The generated reference is compiler output, not a saved prompt. Keep
+      // it on the selected author preview, where it can be consulted directly.
+      if (
+        entry.builtin !== "author.play-reference" ||
+        entry.markdown === undefined
+      )
+        return structure;
+      const reference = slice(entry.markdown, { limit: maxEntryReadLength });
+      return {
+        ...structure,
+        builtin: entry.builtin,
+        markdown: reference.text,
+        ...(reference.nextOffset === null ? {} : { referenceTruncated: true }),
+      };
+    }),
     comparison: {
       ...comparison,
-      changes: comparison.changes.map(({ identity, before, after }) => ({
-        identity,
-        before: before === undefined ? null : project(before),
-        after: after === undefined ? null : project(after),
-      })),
+      changes: comparison.changes.map(({ identity, before, after }) => {
+        const bodyChanged = previewBodyChanged(before, after);
+        return {
+          identity,
+          before: previewChangeSide(before, after, bodyChanged),
+          after: previewChangeSide(after, before, bodyChanged),
+          ...(bodyChanged ? { bodyChanged: true } : {}),
+        };
+      }),
     },
   };
+}
+
+const previewChangeFields = [
+  "name",
+  "kind",
+  "position",
+  "enabled",
+  "applies",
+  "messageRole",
+  "gameplay",
+  "configuredTurnGuide",
+] as const;
+
+function previewChangeSide(
+  entry: OrchestrationPreviewEntry | undefined,
+  other: OrchestrationPreviewEntry | undefined,
+  bodyChanged: boolean,
+) {
+  if (entry === undefined) return null;
+  return {
+    id: entry.id,
+    ...Object.fromEntries(
+      previewChangeFields
+        .filter((field) => entry[field] !== other?.[field])
+        .map((field) => [field, entry[field] ?? null]),
+    ),
+    ...(bodyChanged
+      ? { bodyLength: (entry.configuredMarkdown ?? entry.markdown)?.length }
+      : {}),
+  };
+}
+
+function previewBodyChanged(
+  before: OrchestrationPreviewEntry | undefined,
+  after: OrchestrationPreviewEntry | undefined,
+): boolean {
+  if (before === undefined || after === undefined) return false;
+  if (before.kind === "user" || before.kind === "tail")
+    return before.configuredMarkdown !== after.configuredMarkdown;
+  return (
+    before.markdown !== undefined &&
+    after.markdown !== undefined &&
+    before.markdown !== after.markdown
+  );
 }
 
 function promptBinding(

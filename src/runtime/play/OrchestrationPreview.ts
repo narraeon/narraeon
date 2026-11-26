@@ -41,6 +41,8 @@ interface CompileInput {
   surface: OrchestrationSurface;
   gameplay: Gameplay;
   authorTarget?: OrchestrationAuthorTarget;
+  /** Retain exact saved user text for comparisons before projecting a receipt. */
+  includeExactSavedText?: boolean;
   connection?: {
     provider: ModelProviderKind;
     modelPrompt?: ModelConnectionPrompt | undefined;
@@ -203,16 +205,20 @@ export function compileOrchestrationPreview(
       (entry.kind === "builtin"
         ? `builtin:${entry.builtin}`
         : `preset:prompt/${entry.id}`);
-    const configuredMarkdown =
+    let configuredMarkdown: string | undefined;
+    if (
+      (entry.kind === "user" || entry.kind === "tail") &&
+      (input.includeExactSavedText ||
+        (entry.kind === "user" && message === undefined))
+    )
+      configuredMarkdown = entry.body;
+    else if (
       message === undefined &&
-      (entry.kind === "user" ||
-        (builtin !== undefined &&
-          builtin.dynamic === undefined &&
-          rowPlaceholders.length === 0))
-        ? entry.kind === "user"
-          ? entry.body
-          : builtin!.body
-        : undefined;
+      builtin !== undefined &&
+      builtin.dynamic === undefined &&
+      rowPlaceholders.length === 0
+    )
+      configuredMarkdown = builtin.body;
     const scope = orderedPromptScope(
       entry,
       builtin === undefined ? [] : [builtin],
