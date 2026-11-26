@@ -641,3 +641,173 @@ test("the 64-step pause and interruption resume frozen requests, while a fresh s
     "NEW prompt",
   );
 });
+
+test("one orchestration_read batch supports paging and grants complete reads per entry from a prior response", async () => {
+  const f = await setup();
+  const revision = f.initial.revision;
+  const surface = "playPrompts";
+  const prose = "play.prose";
+  const ending = "play.ending";
+  const unread = "play.npc";
+  const read = (id: string, args: object) =>
+    tool(id, "orchestration_read", { surface, revision, ...args });
+  const disable = (id: string) => ({
+    op: "update",
+    operationId: `disable-${id}`,
+    entryId: id,
+    enabled: false,
+  });
+
+  f.respond((request) => {
+    switch (request.exchange) {
+      case undefined:
+        throw new Error("Missing exchange index");
+      case 1:
+        return reply(
+          "",
+          read("partial", { entryIds: [prose, ending], limit: 16 }),
+          read("invalid", { entryIds: [unread, "missing-block"] }),
+        );
+      case 2: {
+        expect(toolReceipt(request, "partial").data).toMatchObject({
+          entries: [prose, ending].map((entryId) => ({
+            id: entryId,
+            offset: 0,
+            end: 16,
+            nextOffset: 16,
+            completeForEditing: false,
+          })),
+        });
+        expect(toolReceipt(request, "invalid").isError).toBe(true);
+        return reply(
+          "",
+          read("remainder", { entryId: prose, offset: 16 }),
+          edit("same-response", revision, [disable(prose)]),
+        );
+      }
+      case 3:
+        expect(toolReceipt(request, "remainder").data).toMatchObject({
+          id: prose,
+          completeForEditing: true,
+          nextOffset: null,
+        });
+        expect(toolReceipt(request, "same-response").data.error).toContain(
+          "Read the complete current entry",
+        );
+        return reply(
+          "",
+          edit("invalid-batch-grant", revision, [disable(unread)]),
+          read("finish-batch", { entryIds: [ending, prose] }),
+        );
+      case 4:
+        expect(
+          toolReceipt(request, "invalid-batch-grant").data.error,
+        ).toContain("Read the complete current entry");
+        expect(toolReceipt(request, "finish-batch").data).toMatchObject({
+          entries: [ending, prose].map((entryId) => ({
+            id: entryId,
+            completeForEditing: true,
+            nextOffset: null,
+          })),
+        });
+        return reply(
+          "",
+          edit("accepted", revision, [disable(prose), disable(ending)]),
+        );
+      default:
+        expect(toolReceipt(request, "accepted").data.status).toBe(
+          "draft_saved",
+        );
+        return reply("Saved two individually read entries.");
+    }
+  });
+  const outcome = await f.editor().send(f.send("batch-paging"));
+  expect(outcome.runStatus, outcome.lastFailure ?? undefined).toBe("ready");
+  expect(outcome.changes).toHaveLength(1);
+  expect(outcome.changes[0]?.entries.map(({ entryId }) => entryId)).toEqual([
+    prose,
+    ending,
+  ]);
+});
+
+test("an oversized or invalid batch never grants edit authorization", async () => {
+  const f = await setup();
+  const surface = "playPrompts";
+  const structure = f.initial.structure!;
+  const ids = ["large-one", "large-two", "large-three", "large-four"];
+  for (const id of ids)
+    structure.playPrompts!.push({
+      id,
+      kind: "user",
+      name: id,
+      body: "界".repeat(16_384),
+      enabled: true,
+    });
+  const saved = await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: f.initial.files,
+    expectedRevision: f.initial.revision,
+    structure,
+  });
+  const revision = saved.preset.draft!.revision;
+  const read = (id: string, args: object) =>
+    tool(id, "orchestration_read", { surface, revision, ...args });
+
+  f.respond((request) => {
+    switch (request.exchange) {
+      case undefined:
+        throw new Error("Missing exchange index");
+      case 1:
+        return reply(
+          "",
+          read("oversized", { entryIds: ids, limit: 16_384 }),
+          read("too-many", {
+            entryIds: Array.from({ length: 9 }, (_, i) => `entry-${i}`),
+          }),
+          read("ambiguous", { entryId: ids[0], entryIds: ids }),
+          read("wrong-revision", {
+            entryIds: ids,
+            revision: f.initial.revision,
+          }),
+          read("invalid-offset", { entryIds: ids, offset: 16_385 }),
+        );
+      case 2:
+        expect(toolReceipt(request, "oversized").data.error).toContain(
+          "64 KiB",
+        );
+        expect(toolReceipt(request, "too-many").data.error).toContain(
+          "1 to 8 distinct",
+        );
+        expect(toolReceipt(request, "ambiguous").data.error).toContain(
+          "Choose entryId or entryIds",
+        );
+        expect(toolReceipt(request, "wrong-revision").data.error).toContain(
+          "revision changed",
+        );
+        expect(toolReceipt(request, "invalid-offset").data.error).toContain(
+          "Invalid body range",
+        );
+        return reply(
+          "",
+          edit("no-read-grant", revision, [
+            {
+              op: "update",
+              operationId: "unearned-write",
+              entryId: ids[0],
+              enabled: false,
+            },
+          ]),
+        );
+      default:
+        expect(toolReceipt(request, "no-read-grant").data.error).toContain(
+          "Read the complete current entry",
+        );
+        return reply("The draft was not touched.");
+    }
+  });
+  const outcome = await f.editor().send(f.send("batch-bounds", revision));
+  expect(outcome.runStatus, outcome.lastFailure ?? undefined).toBe("ready");
+  expect(outcome.changes).toEqual([]);
+  expect(outcome.revision).toBe(revision);
+});

@@ -202,18 +202,18 @@ test("scoped source receipts, condition review and revision provenance round tri
           groupId: "100001",
           snapshotId,
           nextOffset: null,
-          maintenanceGuidance: expect.arrayContaining([
-            {
-              id: "play.ownership",
-              enabled: false,
-              purpose: expect.any(String) as unknown,
-            },
-            {
-              id: "play.checkpoint-policy",
-              enabled: false,
-              purpose: expect.any(String) as unknown,
-            },
-          ]) as unknown,
+          maintenanceGuidance: expect.arrayContaining(
+            ["play.ownership", "play.checkpoint-policy"].map(
+              (id) =>
+                expect.objectContaining({
+                  id,
+                  entryId: id,
+                  enabled: false,
+                  purpose: expect.any(String) as unknown,
+                  summary: expect.any(String) as unknown,
+                }) as unknown,
+            ),
+          ) as unknown,
           entries: expect.arrayContaining(
             [
               {
@@ -234,6 +234,9 @@ test("scoped source receipts, condition review and revision provenance round tri
         expect(directory.positionNote).toContain("every main dispatch");
         expect(directory.maintenanceNote).toContain(
           "does not remove Runtime state tools",
+        );
+        expect(directory.maintenanceNote).toContain(
+          "Compare the maintenance scope and summaries first",
         );
         for (const id of [
           "instance-tool",

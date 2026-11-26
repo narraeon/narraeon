@@ -7,6 +7,7 @@ import type {
   SillyTavernSourceEntry,
   SillyTavernSourceSnapshot,
 } from "../../shared/sillytavern-source.ts";
+import { builtinPlayPrompts } from "../../shared/ordered-play-prompts.ts";
 import { scanVariables } from "../../shared/sillytavern-variables.ts";
 import {
   parsePlayPresetFiles,
@@ -77,7 +78,7 @@ export function sillyTavernEditorSource(
       {
         name: "sillytavern_source_list",
         description:
-          "Read a paged source directory for the current orchestration only. It includes complete order markers, source enablement and selection, compatibility and effective maintenance guidance. No original prompt bodies are returned.",
+          "Read a paged source directory with markers, selection, compatibility and maintenance summaries for the current orchestration. Start with those summaries, then read only suspected overlaps or missing details. No original prompt bodies are returned.",
         inputSchema: {
           type: "object",
           properties: {
@@ -143,7 +144,7 @@ export function sillyTavernEditorSource(
         markerCount: snapshot.entries.filter(({ marker }) => marker).length,
       };
     },
-    async read({ presetId, sourceSnapshotId, call }) {
+    async read({ presetId, sourceSnapshotId, call, locale = "en" }) {
       const { snapshot, snapshotId } = await authorizedSnapshot(
         presetId,
         sourceSnapshotId,
@@ -155,6 +156,7 @@ export function sillyTavernEditorSource(
         const parsed = parsePlayPresetFiles(target.files);
         const play =
           parsed.kind === "valid" ? parsed.definition.playPrompts : undefined;
+        const catalog = builtinPlayPrompts(locale);
         return {
           data: {
             kind: "sillytavern_source_directory",
@@ -173,18 +175,22 @@ export function sillyTavernEditorSource(
                   enabledPlayEntries: play
                     .filter((item) => item.kind === "world" || item.enabled)
                     .map(({ id }) => id),
-                  maintenanceGuidance: guidance.map(([id, purpose]) => ({
-                    id,
-                    enabled: play.some(
-                      (entry) =>
-                        entry.kind === "builtin" &&
-                        entry.builtin === id &&
-                        entry.enabled,
-                    ),
-                    purpose,
-                  })),
+                  maintenanceGuidance: guidance.map(([id, purpose]) => {
+                    const entry = play.find(
+                      (item) => item.kind === "builtin" && item.builtin === id,
+                    );
+                    return {
+                      id,
+                      entryId: entry?.id ?? null,
+                      enabled: entry?.kind === "builtin" && entry.enabled,
+                      purpose,
+                      summary:
+                        catalog.find((builtin) => builtin.id === id)
+                          ?.authorSummary ?? purpose,
+                    };
+                  }),
                   maintenanceNote:
-                    "These entries guide behavior; disabling them does not remove Runtime state tools. Compare enabled prompts and built-in bodies for overlap before suggesting a change.",
+                    "Disabling guidance does not remove Runtime state tools. Compare the maintenance scope and summaries first. Only read full entries if needed to resolve overlap or uncertainty. Pass their entry IDs together to orchestration_read at effectiveRevision.",
                 }),
           },
         };
