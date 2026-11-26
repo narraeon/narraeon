@@ -1,4 +1,12 @@
-import { useCallback, useId, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { V1Request } from "../protocol/v1.ts";
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { fictionGameplay, type Gameplay } from "../protocol/gameplay.ts";
@@ -11,11 +19,17 @@ import type {
   OrchestrationSurface,
 } from "../protocol/orchestrationPreview.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { RuntimeRequestError } from "./runtimeClient.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { useReadTarget } from "./useReadTarget.ts";
 
 type Version = "current" | "draft" | "candidate";
+type PreviewRequest = Extract<
+  V1Request,
+  { type: "play.orchestration.preview" }
+>;
+
+const selectionDelayMs = 120;
+const candidateDelayMs = 400;
 
 const placeholderText: Record<OrchestrationPlaceholderKind, string> = {
   "world-instructions": "已启用的世界指令在此前缀位置展开，顺序来自世界框架。",
@@ -51,6 +65,8 @@ export function OrchestrationPreviewPanel({
   connection: ModelConnectionView | undefined;
 }): React.JSX.Element {
   const titleId = useId();
+  const disclosure = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
   const [version, setVersion] = useState<Version>();
   const [gameplay, setGameplay] = useState<Gameplay>(fictionGameplay);
   const [authorTarget, setAuthorTarget] =
@@ -60,7 +76,6 @@ export function OrchestrationPreviewPanel({
     context: object;
     value: OrchestrationPreviewResult;
   }>();
-  const [pendingContext, setPendingContext] = useState<object>();
   const selectedVersion =
     version === "current" ||
     (version === "draft" && draftRevision !== undefined) ||
@@ -71,60 +86,110 @@ export function OrchestrationPreviewPanel({
         : draftRevision !== undefined
           ? "draft"
           : "current";
-  const query: V1Request = {
-    type: "play.orchestration.preview",
+  const revision =
+    selectedVersion === "candidate"
+      ? candidateBaseRevision
+      : selectedVersion === "draft"
+        ? draftRevision!
+        : currentRevision;
+  // Use the underlying draft references so sibling workbench renders do not
+  // restart the preview or serialize the entire candidate on every keypress.
+  const files = selectedVersion === "candidate" ? candidate?.files : undefined;
+  const structure =
+    selectedVersion === "candidate" ? candidate?.structure : undefined;
+  const targetAssumption = surface === "author" ? authorTarget : undefined;
+  const checkedConnection = ignoreConnection ? undefined : connection;
+  const locale = getWebLocale();
+  const context = useMemo(() => {
+    if (!open) return null;
+    const query: PreviewRequest = {
+      type: "play.orchestration.preview",
+      presetId,
+      revision,
+      ...(files === undefined
+        ? {}
+        : {
+            candidate: {
+              files,
+              ...(structure === undefined ? {} : { structure }),
+            },
+          }),
+      surface,
+      gameplay,
+      ...(targetAssumption === undefined
+        ? {}
+        : { authorTarget: targetAssumption }),
+      connection: ignoreConnection ? "none" : "active",
+    };
+    return { query, currentRevision, checkedConnection, locale };
+  }, [
+    open,
     presetId,
-    revision:
-      selectedVersion === "candidate"
-        ? candidateBaseRevision
-        : selectedVersion === "draft"
-          ? draftRevision!
-          : currentRevision,
-    ...(selectedVersion === "candidate" && candidate !== undefined
-      ? { candidate }
-      : {}),
+    revision,
+    files,
+    structure,
     surface,
     gameplay,
-    ...(surface === "author" ? { authorTarget } : {}),
-    connection: ignoreConnection ? "none" : "active",
-  };
-  const contextKey = JSON.stringify({
-    query,
+    targetAssumption,
+    ignoreConnection,
     currentRevision,
-    connection,
-    locale: getWebLocale(),
-  });
-  const [context, setContext] = useState({ key: contextKey });
-  if (context.key !== contextKey) setContext({ key: contextKey });
+    checkedConnection,
+    locale,
+  ]);
+  const active = useRef<typeof context>(null);
+  const inFlight = useRef<Promise<OrchestrationPreviewResult> | null>(null);
+  useLayoutEffect(() => {
+    active.current = context;
+    return () => {
+      active.current = null;
+    };
+  }, [context]);
+
   const { target, syncFailed, syncError } = useReadTarget(
+    useCallback(async () => {
+      // A new selection may queue behind a slow read. On release only the
+      // latest visible context can dispatch, regardless of how many changed.
+      const prior = inFlight.current;
+      if (prior !== null) await prior.catch(() => undefined);
+      if (
+        context === null ||
+        active.current !== context ||
+        !disclosure.current?.open
+      )
+        return null;
+      const request = client.request<OrchestrationPreviewResult>(context.query);
+      inFlight.current = request;
+      try {
+        return await request;
+      } finally {
+        inFlight.current = null;
+      }
+    }, [client, context]),
     useCallback(
-      () =>
-        client.request<OrchestrationPreviewResult>(
-          (JSON.parse(context.key) as { query: V1Request }).query,
-        ),
-      [client, context],
-    ),
-    useCallback(
-      (value: OrchestrationPreviewResult) => setResult({ context, value }),
+      (value: OrchestrationPreviewResult | null) => {
+        if (value !== null && context !== null && active.current === context)
+          setResult({ context, value });
+      },
       [context],
     ),
   );
+  useEffect(() => {
+    if (context === null) return;
+    const delay =
+      context.query.candidate === undefined
+        ? selectionDelayMs
+        : candidateDelayMs;
+    const timer = setTimeout(() => void target.read(), delay);
+    return () => clearTimeout(timer);
+  }, [context, target]);
+
   const preview = result?.context === context ? result.value : undefined;
-  const pending = pendingContext === context;
-
-  async function generate(recover = false): Promise<void> {
-    setPendingContext(context);
-    try {
-      await (recover ? target.recover() : target.read());
-    } finally {
-      setPendingContext((current) =>
-        current === context ? undefined : current,
-      );
-    }
-  }
-
   return (
-    <details className="preset-draft-preview">
+    <details
+      className="preset-draft-preview"
+      ref={disclosure}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>{uiText("发送给 AI 的内容预览")}</summary>
       <section className="orchestration-preview" aria-labelledby={titleId}>
         <h4 id={titleId}>{uiText("编排预览")}</h4>
@@ -194,13 +259,6 @@ export function OrchestrationPreviewPanel({
               </select>
             </label>
           )}
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => void generate()}
-          >
-            {uiText(pending ? "正在生成预览…" : "生成编排预览")}
-          </button>
         </div>
         {candidateConflict && (
           <p>
@@ -209,14 +267,16 @@ export function OrchestrationPreviewPanel({
             )}
           </p>
         )}
-        {syncFailed &&
-          pendingContext !== context &&
-          (syncError instanceof RuntimeRequestError &&
-          syncError.kind === "runtime" ? (
-            <p role="alert">{syncError.message}</p>
-          ) : (
-            <SyncNotice failed onRead={() => void generate(true)} />
-          ))}
+        {open && preview === undefined && !syncFailed && (
+          <p role="status">{uiText("正在生成预览…")}</p>
+        )}
+        {open && (
+          <SyncNotice
+            failed={syncFailed}
+            reason={syncError}
+            onRead={() => void target.recover()}
+          />
+        )}
         {preview !== undefined && <PreviewResult result={preview} />}
       </section>
     </details>

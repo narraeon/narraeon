@@ -412,7 +412,7 @@ export function OrchestrationConversationPanel({
           <h4>{uiText("编排方案 AI 编辑")}</h4>
           <p>
             {presetName} ·{" "}
-            {uiText(surface === "playPrompts" ? "游玩" : "设定完善")}
+            {uiText(surface === "playPrompts" ? "游玩" : "设定完善与世界修订")}
             {focusedEntryName && <> · {focusedEntryName}</>}
           </p>
         </div>
@@ -678,7 +678,9 @@ export function OrchestrationConversationPanel({
                 <details key={`${entrySurface}:${entryId}`}>
                   <summary>
                     {uiText(
-                      entrySurface === "playPrompts" ? "游玩" : "设定完善",
+                      entrySurface === "playPrompts"
+                        ? "游玩"
+                        : "设定完善与世界修订",
                     )}{" "}
                     · {after?.name ?? before?.name ?? entryId}
                   </summary>

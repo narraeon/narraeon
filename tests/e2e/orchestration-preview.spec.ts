@@ -16,14 +16,20 @@ test("empty workspace previews unsaved and saved changes without accessing insta
     .filter({ hasText: /^发送给 AI 的内容预览$/u });
   await drawer.click();
   const panel = page.getByRole("region", { name: "编排预览", exact: true });
-  const generate = panel.getByRole("button", {
-    name: "生成编排预览",
-    exact: true,
-  });
-  await generate.click();
   await expect(panel.getByRole("status")).toHaveText("协议顺序检查 · 未检查");
   await expect(panel.getByText("动态占位", { exact: true })).toBeVisible();
 
+  const response = page.waitForResponse((reply) => {
+    const body = reply.request().postDataJSON() as {
+      request?: V1Request;
+    } | null;
+    return (
+      body?.request?.type === "play.orchestration.preview" &&
+      Object.values(body.request.candidate?.structure ?? {}).some((value) =>
+        JSON.stringify(value).includes("独立编排预览未保存正文"),
+      )
+    );
+  });
   await page.getByRole("button", { name: "新增提示词", exact: true }).click();
   await page
     .getByLabel("提示词正文", { exact: true })
@@ -32,13 +38,6 @@ test("empty workspace previews unsaved and saved changes without accessing insta
   await expect(
     panel.getByRole("combobox", { name: "预览版本", exact: true }),
   ).toHaveValue("candidate");
-  const response = page.waitForResponse((reply) => {
-    const body = reply.request().postDataJSON() as {
-      request?: V1Request;
-    } | null;
-    return body?.request?.type === "play.orchestration.preview";
-  });
-  await generate.click();
   const candidate = (
     (await (await response).json()) as { result: OrchestrationPreviewResult }
   ).result;
@@ -57,14 +56,12 @@ test("empty workspace previews unsaved and saved changes without accessing insta
   await expect(
     panel.getByRole("combobox", { name: "预览版本", exact: true }),
   ).toHaveValue("draft");
-  await generate.click();
   await expect(
     panel.getByText(candidate.selected.revision, { exact: true }),
   ).toBeVisible();
   await panel
     .getByRole("combobox", { name: "预览版本", exact: true })
     .selectOption("current");
-  await generate.click();
   await expect(
     panel.getByText("此表面的编排一致。", { exact: true }),
   ).toBeVisible();
@@ -107,6 +104,19 @@ test("author preview switches targets in English with existing instances kept ou
     packageId: pack.localId,
     operationId: "orchestration-preview-test",
   });
+  await request(page, {
+    type: "model.save",
+    connection: {
+      name: "Local preview connection",
+      presetId: "custom",
+      provider: "chat_completions",
+      baseUrl: "http://127.0.0.1:9/v1",
+      apiKey: "unused",
+      modelId: "preview-fixture",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 4096,
+    },
+  });
   const seen = observe(page);
   await page.goto("/#/orchestrations");
   await page.getByRole("tab", { name: "Setting improvement" }).click();
@@ -118,13 +128,8 @@ test("author preview switches targets in English with existing instances kept ou
     name: "Orchestration preview",
     exact: true,
   });
-  const generate = panel.getByRole("button", {
-    name: "Generate orchestration preview",
-    exact: true,
-  });
-  await generate.click();
   await expect(panel.getByRole("status")).toHaveText(
-    "Protocol order check · Not checked",
+    "Protocol order check · Role order is compatible · chat_completions",
   );
   await expect(
     panel.getByText("content-package:title", { exact: true }).first(),
@@ -135,7 +140,13 @@ test("author preview switches targets in English with existing instances kept ou
   await panel
     .getByRole("combobox", { name: "Preview gameplay", exact: true })
     .selectOption("d100");
-  await generate.click();
+  await panel
+    .getByRole("combobox", { name: "Connection", exact: true })
+    .selectOption("none");
+  await expect(panel.getByRole("status")).toHaveText(
+    "Protocol order check · Not checked",
+  );
+
   await expect(
     panel.getByText("world-revision:title", { exact: true }).first(),
   ).toBeVisible();
@@ -158,6 +169,101 @@ test("author preview switches targets in English with existing instances kept ou
       gameplay: { mode: "tabletop", scheme: "d100" },
     },
   ]);
+});
+
+test("an open preview queues latest conditions and coalesces typing without reading while closed", async ({
+  page,
+}) => {
+  await request(page, { type: "preferences.save", locale: "zh-CN" });
+  await page.clock.install();
+  const reads: Extract<V1Request, { type: "play.orchestration.preview" }>[] =
+    [];
+  const first = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const finalInFlight = Promise.withResolvers<void>();
+  const failAfterClosing = Promise.withResolvers<void>();
+  await page.route("**/api/runtime/v1", async (route) => {
+    const { request: command } = route.request().postDataJSON() as {
+      request: V1Request;
+    };
+    if (command.type !== "play.orchestration.preview") return route.continue();
+    reads.push(command);
+    if (reads.length === 4) {
+      finalInFlight.resolve();
+      await failAfterClosing.promise;
+      return route.abort("failed");
+    }
+    if (reads.length !== 1) return route.continue();
+    const response = await route.fetch();
+    first.resolve();
+    await finish.promise;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto("/#/orchestrations");
+    const drawer = page
+      .locator("summary")
+      .filter({ hasText: /^发送给 AI 的内容预览$/u });
+    const panel = page.getByRole("region", { name: "编排预览", exact: true });
+    await expect(drawer).toBeVisible();
+    await page.clock.runFor(1000);
+    expect(reads).toHaveLength(0);
+    await drawer.click();
+    await page.clock.runFor(250);
+    await first.promise;
+    const gameplay = panel.getByRole("combobox", {
+      name: "预览玩法",
+      exact: true,
+    });
+    for (const scheme of ["d20", "d100", "bag"]) {
+      await gameplay.selectOption(scheme);
+      await page.clock.runFor(250);
+    }
+    expect(reads).toHaveLength(1);
+    await expect(
+      panel.getByRole("heading", { name: "预览结果", exact: true }),
+    ).toHaveCount(0);
+    finish.resolve();
+    await expect(
+      panel.getByRole("heading", { name: "预览结果", exact: true }),
+    ).toBeVisible();
+    expect(reads).toHaveLength(2);
+    expect(reads[1]?.gameplay).toEqual({ mode: "tabletop", scheme: "bag" });
+
+    await drawer.click();
+    await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+    const prompt = page.getByRole("textbox", {
+      name: "提示词正文",
+      exact: true,
+    });
+    await prompt.fill("候选内容起点");
+    await page.clock.runFor(1500);
+    expect(reads).toHaveLength(2);
+    await drawer.click();
+    for (const contents of ["候选内容一", "候选内容二", "最后一次的候选内容"]) {
+      await prompt.fill(contents);
+      await page.clock.runFor(140);
+    }
+    expect(reads).toHaveLength(2);
+    await page.clock.runFor(420);
+    await expect(
+      panel.getByRole("heading", { name: "预览结果", exact: true }),
+    ).toBeVisible();
+    expect(reads).toHaveLength(3);
+    expect(JSON.stringify(reads[2]?.candidate)).toContain("最后一次的候选内容");
+    expect(JSON.stringify(reads[2]?.candidate)).not.toContain("候选内容二");
+
+    await gameplay.selectOption("d100");
+    await page.clock.runFor(500);
+    await finalInFlight.promise;
+    await drawer.click();
+    failAfterClosing.resolve();
+    await page.clock.runFor(1500);
+    expect(reads).toHaveLength(4);
+  } finally {
+    finish.resolve();
+    failAfterClosing.resolve();
+  }
 });
 
 function observe(page: Page): V1Request[] {
