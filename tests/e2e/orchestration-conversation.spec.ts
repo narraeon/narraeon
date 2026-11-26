@@ -180,9 +180,9 @@ test("orchestration chat retains concurrent local edits and restores durable bat
     await page
       .getByRole("button", { name: "导出已保存草稿", exact: true })
       .click();
-    expect(
-      await readFile((await (await downloaded).path())!, "utf8"),
-    ).toContain("browser-ai-fixture");
+    expect(await readFile(await (await downloaded).path(), "utf8")).toContain(
+      "browser-ai-fixture",
+    );
     await page
       .getByRole("button", { name: "从已保存草稿复制", exact: true })
       .click();
@@ -250,7 +250,7 @@ test("AI editing switches to the author surface on mobile and opens saved reques
   await page.setViewportSize({ width: 390, height: 844 });
   await runtime(page, { type: "preferences.save", locale: "en" });
   const sent: Wire[] = [];
-  const provider = await fixtureProvider(async (wire) => {
+  const provider = await fixtureProvider((wire) => {
     sent.push(wire);
     return { content: "Inspect both surfaces before changing prose style." };
   });
@@ -441,7 +441,7 @@ test("source conditions appear in the AI batch and on the exact saved prompt rev
   const end = snapshot.snapshot.entries.find(({ id }) => id === "schedule")!
     .content!.length;
   let calls = 0;
-  const provider = await fixtureProvider(async () => {
+  const provider = await fixtureProvider(() => {
     calls++;
     if (calls === 1)
       return toolCall("read-source", "sillytavern_source_read", {
@@ -555,17 +555,22 @@ function toolCall(id: string, name: string, args: object) {
 }
 
 async function fixtureProvider(
-  reply: (wire: Wire, raw: string) => Promise<object>,
+  reply: (wire: Wire, raw: string) => object | Promise<object>,
 ) {
-  const server = createServer(async (request, response) => {
-    request.setEncoding("utf8");
-    let body = "";
-    for await (const chunk of request) body += String(chunk);
-    const delta = await reply(JSON.parse(body) as Wire, body);
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\ndata: [DONE]\n\n`,
-    );
+  const server = createServer((request, response) => {
+    void (async () => {
+      request.setEncoding("utf8");
+      let body = "";
+      for await (const chunk of request) body += String(chunk);
+      const delta = await reply(JSON.parse(body) as Wire, body);
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\ndata: [DONE]\n\n`,
+      );
+    })().catch(() => {
+      response.writeHead(500);
+      response.end("Fixture provider failed");
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
