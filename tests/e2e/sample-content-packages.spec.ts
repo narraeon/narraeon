@@ -9,7 +9,11 @@ import {
 } from "../support/runtimeServer.ts";
 import { appLocales } from "../../src/protocol/appPreferences.ts";
 import type { RenderedPlayerView } from "../../src/protocol/playerViews.ts";
-import type { V1PlayTimelinePage, V1Request } from "../../src/protocol/v1.ts";
+import type {
+  ContentTreeFile,
+  V1PlayTimelinePage,
+  V1Request,
+} from "../../src/protocol/v1.ts";
 import type { EditableContentPackageDetail } from "../../src/runtime/content/ContentWorkspace.ts";
 import { sampleContentPackageForLocale } from "../../src/shared/sample-packages/index.ts";
 
@@ -243,7 +247,7 @@ const playableStories = [
     en: {
       genre: "Campus life",
       action:
-        "I offer to help Hana test the captions and ask Mina to pend the announcement.",
+        "I offer to help Hana test the captions and ask Mina to hold off on the announcement.",
       reply: "Hana shifts the laptop toward the dry end of the bench.",
       context: "The club has forty-six registrations.",
     },
@@ -450,6 +454,10 @@ for (const locale of appLocales) {
         expect(dispatched.split(opening)).toHaveLength(2);
         expect(dispatched).toContain(strings.context);
         expect(dispatched).toContain(strings.action);
+        if (story.id === "missing-reel") {
+          expect(dispatched).toContain("@service-corridor");
+          expect(dispatched).toContain("@reading-room");
+        }
 
         await page
           .getByRole("button", {
@@ -510,27 +518,16 @@ for (const locale of appLocales) {
                 ?.contents,
           )
           .toBe(revised);
-        const afterEdit = await readWorld();
-        expect(afterEdit.playTimeline.items[0]).toMatchObject({
-          kind: "genesis",
-          exactText: opening,
+        const history = await runtime<ContentTreeFile[]>(page, {
+          type: "world.surface.read",
+          worldId,
+          surface: "history",
         });
-        expect(
-          afterEdit.playTimeline.items.filter(
-            (item) =>
-              item.kind === "event" &&
-              item.event.kind === "player" &&
-              item.event.text === strings.action,
-          ),
-        ).toHaveLength(1);
-        expect(
-          afterEdit.playTimeline.items.filter(
-            (item) =>
-              item.kind === "event" &&
-              item.event.kind === "assistant" &&
-              item.event.text === strings.reply,
-          ),
-        ).toHaveLength(1);
+        expect(history.map(({ contents }) => contents)).toEqual([
+          opening,
+          strings.action,
+          strings.reply,
+        ]);
       } finally {
         if (provider.listening) {
           await new Promise<void>((resolve) => provider.close(() => resolve()));
