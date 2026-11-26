@@ -127,7 +127,11 @@ test("a localized orchestration refresh keeps the open prompt and saves its edit
   expect(refreshedPreset?.name).toBe(preset.name);
   expect(refreshedPreset?.draft).toBeUndefined();
 
+  const localizedSave = observePresetSave(page, preset.id);
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  expect((await localizedSave).expectedRevision).toBe(
+    refreshedPreset?.revision,
+  );
   await expect(
     page.getByText("Orchestration saved.", { exact: true }),
   ).toBeVisible();
@@ -139,6 +143,45 @@ test("a localized orchestration refresh keeps the open prompt and saves its edit
   expect(Object.values(savedPreset?.draft?.files ?? {}).join("\n")).toContain(
     "Preserve the lantern's light.",
   );
+  expect(savedPreset?.draft?.structure?.name).toBe("System recommended");
+
+  await prompt.fill("My next unsaved edit.");
+  const peer = await page.context().newPage();
+  try {
+    const durable = savedPreset!.draft!;
+    const peerSave = await runtime<{
+      preset: FileNativePlayPresetLibrary["presets"][number];
+    }>(peer, {
+      type: "play.save",
+      presetId: preset.id,
+      name: "Another author's name",
+      files: {
+        ...durable.files,
+        "prompts/peer.md": "The other author's saved edit.",
+      },
+      expectedRevision: durable.revision,
+    });
+    expect(peerSave.preset.draft?.revision).not.toBe(durable.revision);
+
+    await switchLanguage(page, "zh-CN");
+    await expect(prompt).toHaveValue("My next unsaved edit.");
+    const staleSave = observePresetSave(page, preset.id);
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    expect((await staleSave).expectedRevision).toBe(durable.revision);
+    await expect(
+      page.getByText("编排草稿已更新。请核对最新草稿后再试。", { exact: true }),
+    ).toBeVisible();
+    await expect(prompt).toHaveValue("My next unsaved edit.");
+    const library = await runtime<FileNativePlayPresetLibrary>(page, {
+      type: "play.read",
+    });
+    expect(library.presets.find(({ id }) => id === preset.id)).toMatchObject({
+      name: "Another author's name",
+      draft: { revision: peerSave.preset.draft?.revision },
+    });
+  } finally {
+    await peer.close();
+  }
 });
 
 test("language changes keep the selected follow-up output, renderer, and preview draft", async ({
@@ -321,6 +364,26 @@ function languagePicker(page: Page) {
   return page.getByRole("combobox", {
     name: /^(界面语言|Interface language)$/u,
   });
+}
+
+async function observePresetSave(
+  page: Page,
+  presetId: string,
+): Promise<Extract<V1Request, { type: "play.save" }>> {
+  const request = await page.waitForRequest((outgoing) => {
+    if (
+      !outgoing.url().endsWith("/api/runtime/v1") ||
+      outgoing.method() !== "POST"
+    )
+      return false;
+    const { request } = outgoing.postDataJSON() as { request: V1Request };
+    return request.type === "play.save" && request.presetId === presetId;
+  });
+  return (
+    request.postDataJSON() as {
+      request: Extract<V1Request, { type: "play.save" }>;
+    }
+  ).request;
 }
 
 async function switchLanguage(page: Page, locale: "en" | "zh-CN") {

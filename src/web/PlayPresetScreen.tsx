@@ -209,6 +209,7 @@ export interface PlayPresetStructuredEditor {
 
 export interface PlayPresetScreenPreset {
   sillyTavernSource?: true;
+  localeSeedAlternatives?: string[];
   id: string;
   name: string;
   revision: string;
@@ -529,7 +530,46 @@ export function PlayPresetScreen({
     onLibraryChange(next);
     if (preserveDraft && dirty) {
       const updated = next.presets.find(({ id }) => id === draft?.id);
-      if (updated !== undefined)
+      if (
+        updated !== undefined &&
+        draftBase?.localeSeedAlternatives?.includes(updated.revision) &&
+        updated.localeSeedAlternatives?.includes(draftBase.revision)
+      ) {
+        // Both receipts describe editions of the same untouched application
+        // seed. Adopt its new baseline while retaining authored file changes.
+        const localized = toEditablePreset(updated);
+        setDraftBase(localized);
+        setDraft((current) => {
+          if (current === null) return null;
+          const files = { ...localized.files };
+          for (const path of new Set([
+            ...Object.keys(draftBase.files),
+            ...Object.keys(current.files),
+          ])) {
+            if (current.files[path] === draftBase.files[path]) continue;
+            if (current.files[path] === undefined) delete files[path];
+            else files[path] = current.files[path];
+          }
+          const rebased = {
+            ...localized,
+            files,
+            name: nameDirty ? current.name : localized.name,
+            ...(current.resourceError === undefined
+              ? {}
+              : { resourceError: current.resourceError }),
+          };
+          if (structuredDirty && current.structure !== undefined) {
+            rebased.structure = {
+              ...current.structure,
+              name:
+                current.structure.name === draftBase.structure?.name
+                  ? (localized.structure?.name ?? current.structure.name)
+                  : current.structure.name,
+            };
+          }
+          return rebased;
+        });
+      } else if (updated !== undefined) {
         setDraft((current) =>
           current === null
             ? null
@@ -539,6 +579,7 @@ export function PlayPresetScreen({
                 scriptsEnabled: updated.scriptsEnabled === true,
               },
         );
+      }
       return;
     }
     setSelectedId(selected?.id ?? "");

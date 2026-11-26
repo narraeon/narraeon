@@ -63,6 +63,7 @@ import {
   type PortableContentTreeLimits,
 } from "../../protocol/contentTree.ts";
 import {
+  appLocales,
   defaultAppLocale,
   type AppLocale,
 } from "../../protocol/appPreferences.ts";
@@ -481,6 +482,8 @@ export interface FileNativePlayPresetView {
   validation: PlayPresetValidation;
   enabled: boolean;
   scriptsEnabled: boolean;
+  /** Other locale releases of the same uncustomized application seed. */
+  localeSeedAlternatives?: string[];
   sillyTavernSource?: true;
   structure?: PlayPresetStructuredEditor;
   draft?: {
@@ -676,6 +679,9 @@ const namePattern = /^[^\r\n]{1,160}$/u;
 export const maxPlayPresetFollowups = 16;
 const defaultMaxArtifactBytes = 32_768;
 const maxArtifactBytesCeiling = 1_048_576;
+const localeSeedRevisions = appLocales.map((locale) =>
+  revisionForFiles(defaultPlayPresetFilesForLocale(locale), defaultLimits),
+);
 
 /**
  * File-native local library for play presets. Revisions are retained in the
@@ -1884,6 +1890,15 @@ export class FileNativePlayPresetStore {
       ...editorProjection(files, this.#limits, this.#locale()),
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
+      ...(stored.builtinDefault === true &&
+      stored.draftRevision === undefined &&
+      localeSeedRevisions.includes(stored.currentRevision)
+        ? {
+            localeSeedAlternatives: localeSeedRevisions.filter(
+              (revision) => revision !== stored.currentRevision,
+            ),
+          }
+        : {}),
       ...(stored.sillyTavernSource ||
       stored.legacySillyTavernRevision !== undefined ||
       Object.values(stored.revisions).some((revision) =>

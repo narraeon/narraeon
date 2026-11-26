@@ -87,7 +87,14 @@ test("orchestration chat retains concurrent local edits and restores durable bat
     ).toBeVisible();
     expect((await library(page)).presets[0]?.draft).toBeUndefined();
     expect(requests).toHaveLength(1);
-    expect(JSON.stringify(requests[0])).toContain("未来游玩参考");
+    expect(
+      requests[0]?.messages.some(
+        ({ role, content }) =>
+          role === "system" &&
+          typeof content === "string" &&
+          content.includes("author.play-reference"),
+      ),
+    ).toBe(true);
 
     const peer = await page.context().newPage();
     await peer.goto(`/#/orchestrations/${preset.id}`);
