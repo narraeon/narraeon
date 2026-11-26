@@ -15,16 +15,20 @@ import { sillyTavernSnapshotFingerprint } from "../../src/runtime/play/SillyTave
 import { createRuntime } from "../../src/server/createRuntime.ts";
 import type { SillyTavernSource } from "../../src/shared/sillytavern-source.ts";
 
-type ToolCall = { id: string; name: string; args: unknown };
-type ProviderMessage = {
+interface ToolCall {
+  id: string;
+  name: string;
+  args: unknown;
+}
+interface ProviderMessage {
   role: string;
   content?: string | null;
   tool_call_id?: string;
-};
-type ProviderRequest = {
+}
+interface ProviderRequest {
   messages: ProviderMessage[];
   tools: { function: { name: string } }[];
-};
+}
 
 const importType = "play.sillytavern.import";
 const provenanceType = "play.orchestration.provenance.read";
@@ -202,14 +206,14 @@ test("scoped source receipts, condition review and revision provenance round tri
             {
               id: "play.ownership",
               enabled: false,
-              purpose: expect.any(String),
+              purpose: expect.any(String) as unknown,
             },
             {
               id: "play.checkpoint-policy",
               enabled: false,
-              purpose: expect.any(String),
+              purpose: expect.any(String) as unknown,
             },
-          ]),
+          ]) as unknown,
           entries: expect.arrayContaining(
             [
               {
@@ -224,8 +228,8 @@ test("scoped source receipts, condition review and revision provenance round tri
                 readableLength: null,
                 selected: false,
               },
-            ].map((item) => expect.objectContaining(item)),
-          ),
+            ].map((item) => expect.objectContaining(item) as unknown),
+          ) as unknown,
         });
         expect(directory.positionNote).toContain("every main dispatch");
         expect(directory.maintenanceNote).toContain(
@@ -250,7 +254,7 @@ test("scoped source receipts, condition review and revision provenance round tri
             originalConditions: expect.arrayContaining([
               "turn_interval",
               "trigger",
-            ]),
+            ]) as unknown,
           },
           position: { previous: { entryId: "chatHistory", marker: true } },
         });
@@ -270,7 +274,7 @@ test("scoped source receipts, condition review and revision provenance round tri
                 declarationsInSelection: 0,
                 externalOrUnknown: true,
               }),
-            ]),
+            ]) as unknown,
           },
         });
         expect(
@@ -336,7 +340,8 @@ test("scoped source receipts, condition review and revision provenance round tri
       surface,
       continuation: { kind: "fresh_context" },
     });
-    if (providerFailure !== undefined) throw providerFailure;
+    if (providerFailure !== undefined)
+      throw new Error("Fixture provider failed", { cause: providerFailure });
     expect(captured).toHaveLength(5);
     for (const request of captured)
       expect(JSON.stringify(request)).not.toMatch(
@@ -369,7 +374,9 @@ test("scoped source receipts, condition review and revision provenance round tri
       fragments: [
         { ...cite("schedule"), name: "Conditional after-history review" },
       ],
-      droppedConditions: expect.arrayContaining(["Every three turns"]),
+      droppedConditions: expect.arrayContaining([
+        "Every three turns",
+      ]) as unknown,
     });
     expect(original?.source.modified).toBeUndefined();
     expect(
@@ -432,7 +439,8 @@ test("scoped source receipts, condition review and revision provenance round tri
       surface,
       continuation: { kind: "continue_context", sessionId: authored.sessionId },
     });
-    if (providerFailure !== undefined) throw providerFailure;
+    if (providerFailure !== undefined)
+      throw new Error("Fixture provider failed", { cause: providerFailure });
     expect(captured).toHaveLength(8);
     expect(refined.changes).toHaveLength(2);
     expect(
