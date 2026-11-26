@@ -95,7 +95,7 @@ test("scoped source receipts, condition review and revision provenance round tri
       });
     let runtime = await openRuntime();
     const send = async <T = unknown>(request: V1Request) =>
-      (await runtime.handle(request)) as T;
+      (await runtime.handle(request)).result as T;
     await send({ type: "preferences.save", locale: "en" });
     await send({
       type: "model.save",
