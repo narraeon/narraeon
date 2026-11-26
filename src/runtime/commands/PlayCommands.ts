@@ -1,3 +1,4 @@
+import type { OrchestrationEditorSession } from "../orchestration/OrchestrationEditorSession.ts";
 import { previewOrchestration } from "../play/OrchestrationPreview.ts";
 import { V1ProtocolError } from "../../protocol/v1.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
@@ -35,6 +36,10 @@ import { readPlayTimeline, readingCurrentEndpoint } from "./CommandQueries.ts";
 import type { CommandFor } from "./Command.ts";
 
 interface PlayCommandsServices {
+  orchestrationSessions: Pick<
+    OrchestrationEditorSession,
+    "discardDraft" | "deletePreset"
+  >;
   worlds: FileNativeWorldStore;
   content: ContentWorkspace;
   models: ModelConnectionStore;
@@ -66,13 +71,20 @@ export class PlayCommands {
         return this.#services.playPresets.copy(request.presetId);
       case "play.save":
         return this.#services.playPresets.save(request);
+      case "play.draft.discard":
+        return this.#services.orchestrationSessions.discardDraft(
+          request.presetId,
+          request.expectedRevision,
+        );
       case "play.rename":
         return this.#services.playPresets.rename(
           request.presetId,
           request.name,
         );
       case "play.delete":
-        return this.#services.playPresets.delete(request.presetId);
+        return this.#services.orchestrationSessions.deletePreset(
+          request.presetId,
+        );
       case "play.enable":
         return this.#services.playPresets.setEnabled(
           request.presetId,

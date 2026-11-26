@@ -1059,6 +1059,7 @@ export class V1ProtocolError extends Error {
     | "endpoint_discarded"
     | "endpoint_read_conflict"
     | "content_conflict"
+    | "orchestration_conflict"
     | "inconsistent_materialization"
     | "model_protocol_mismatch";
   readonly details: Readonly<Record<string, unknown>> | undefined;
@@ -1076,7 +1077,8 @@ export class V1ProtocolError extends Error {
     this.httpStatus =
       code === "endpoint_discarded" ||
       code === "endpoint_read_conflict" ||
-      code === "content_conflict"
+      code === "content_conflict" ||
+      code === "orchestration_conflict"
         ? 409
         : 400;
   }

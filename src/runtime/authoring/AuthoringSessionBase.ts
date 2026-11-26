@@ -273,7 +273,9 @@ export function beginAuthoringRequest(
     modelBinding: structuredClone(host.binding()),
     modelItemStart: session.modelItems.length,
     bootstrap: compilation.bootstrap,
-    ...(compilation.playPreset === undefined ? {} : { playPreset: structuredClone(compilation.playPreset) }),
+    ...(compilation.playPreset === undefined
+      ? {}
+      : { playPreset: structuredClone(compilation.playPreset) }),
     ...(compilation.modelPrompt === undefined
       ? {}
       : { modelPrompt: compilation.modelPrompt }),

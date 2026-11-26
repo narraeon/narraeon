@@ -12,7 +12,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-for (const kind of ["play", "setting", "revision"] as const) {
+for (const kind of ["play", "setting", "revision", "orchestration"] as const) {
   test(`${kind}: real SSE socket survives task changes and reconnects from a snapshot`, async () => {
     const changes = new ConversationChanges();
     let revision = "initial";
@@ -21,7 +21,17 @@ for (const kind of ["play", "setting", "revision"] as const) {
         await Promise.resolve();
         return target.kind === "play"
           ? { kind: "play", value: null }
-          : { kind: target.kind, value: { revision, selected: null } };
+          : target.kind === "orchestration"
+            ? {
+                kind: target.kind,
+                value: {
+                  revision,
+                  draftRevision: "draft",
+                  currentRevision: "applied",
+                  selected: null,
+                },
+              }
+            : { kind: target.kind, value: { revision, selected: null } };
       },
     );
     const server = Fastify();

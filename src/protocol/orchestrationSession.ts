@@ -12,7 +12,10 @@ export type OrchestrationSurface = "playPrompts" | "authorPrompts";
 export type OrchestrationSessionRequest =
   | { type: "orchestration.overview"; presetId: string }
   | {
-      type: "orchestration.session.read" | "orchestration.session.delete" | "orchestration.cancel";
+      type:
+        | "orchestration.session.read"
+        | "orchestration.session.delete"
+        | "orchestration.cancel";
       presetId: string;
       sessionId: string;
     }
@@ -111,5 +114,8 @@ export interface V1OrchestrationStatus {
   /** The effective draft version, including when there is no unapplied draft. */
   draftRevision: string;
   currentRevision: string;
-  selected: Pick<V1OrchestrationView, "sessionId" | "runStatus" | "progress"> | null;
+  selected: Pick<
+    V1OrchestrationView,
+    "sessionId" | "runStatus" | "progress"
+  > | null;
 }

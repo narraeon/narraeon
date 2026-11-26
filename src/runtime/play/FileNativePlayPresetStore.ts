@@ -611,6 +611,7 @@ interface StoredPreset {
   /** Runtime-owned seed that may track the selected application locale. */
   builtinDefault?: true;
   sillyTavernSource?: true;
+  legacySillyTavernRevision?: string;
 }
 
 export interface OrchestrationDraftTarget {
@@ -627,13 +628,21 @@ export interface OrchestrationDraftTarget {
 }
 
 export class OrchestrationDraftConflict extends RuntimeDomainError {
-  constructor(target: Pick<OrchestrationDraftTarget, "revision" | "currentRevision">) {
-    super("The orchestration draft changed. Review the current draft before trying again.", {
-      receipt: {
-        code: "operation_conflict",
-        details: { revision: target.revision, currentRevision: target.currentRevision },
+  constructor(
+    target: Pick<OrchestrationDraftTarget, "revision" | "currentRevision">,
+  ) {
+    super(
+      "The orchestration draft changed. Review the current draft before trying again.",
+      {
+        receipt: {
+          code: "orchestration_conflict",
+          details: {
+            revision: target.revision,
+            currentRevision: target.currentRevision,
+          },
+        },
       },
-    });
+    );
   }
 }
 
@@ -707,9 +716,15 @@ export class FileNativePlayPresetStore {
     await this.#change(async () => {
       const document = await this.#read();
       const changed = this.#synchronizeBuiltinDefault(document);
-      if (changed || document.presets.some(({ revisions, draftRevision }) =>
-        Object.keys(revisions).length > (draftRevision === undefined ? 1 : 2)
-      )) await this.#write(document);
+      if (
+        changed ||
+        document.presets.some(
+          ({ revisions, draftRevision }) =>
+            Object.keys(revisions).length >
+            (draftRevision === undefined ? 1 : 2),
+        )
+      )
+        await this.#write(document);
       await this.#removeOrphanSources(document);
       await this.#removeOrphanProvenance(document);
     });
@@ -774,10 +789,24 @@ export class FileNativePlayPresetStore {
       stored.scriptsEnabled = source.scriptsEnabled;
       const snapshot = await this.#sillyTavernSources.read(source.id);
       if (snapshot !== undefined) stored.sillyTavernSource = true;
+      else {
+        const legacy = await this.#legacySillyTavernSource(source);
+        if (legacy !== undefined) {
+          stored.legacySillyTavernRevision = legacy.revision;
+          stored.revisions[legacy.revision] = legacy.files;
+        }
+      }
       document.presets.push(stored);
-      const provenance = await this.#orchestrationProvenance.read(id, sourceRevision);
-      await this.#publishWithProvenance(stored.id, stored.currentRevision, provenance,
-        () => this.#publishWithSource(document, stored.id, snapshot));
+      const provenance = await this.#orchestrationProvenance.read(
+        id,
+        sourceRevision,
+      );
+      await this.#publishWithProvenance(
+        stored.id,
+        stored.currentRevision,
+        provenance,
+        () => this.#publishWithSource(document, stored.id, snapshot),
+      );
       return {
         currentPresetId: document.currentPresetId,
         preset: this.#view(stored),
@@ -805,12 +834,21 @@ export class FileNativePlayPresetStore {
       const name = normalizeName(input.name);
       if (revision !== previousRevision || name !== stored.name)
         stored.draftHead = randomUUID();
-      const provenance = stored.revisions[revision] === undefined
-        ? await this.#carryProvenance(stored.id, previousRevision, stored.revisions[previousRevision]!, files, "manual")
-        : [];
+      const provenance =
+        stored.revisions[revision] === undefined
+          ? await this.#carryProvenance(
+              stored.id,
+              previousRevision,
+              stored.revisions[previousRevision]!,
+              files,
+              "manual",
+            )
+          : [];
       stored.name = name;
       setDraft(stored, revision, files);
-      await this.#publishWithProvenance(stored.id, revision, provenance, () => this.#write(document));
+      await this.#publishWithProvenance(stored.id, revision, provenance, () =>
+        this.#write(document),
+      );
       return {
         currentPresetId: document.currentPresetId,
         preset: this.#view(stored),
@@ -833,7 +871,9 @@ export class FileNativePlayPresetStore {
       current: document.currentPresetId === id,
       files: cloneFiles(preset.revisions[revision]!),
       currentFiles: cloneFiles(preset.revisions[preset.currentRevision]!),
-      ...(preset.editorReceipt === undefined ? {} : { editorReceipt: preset.editorReceipt }),
+      ...(preset.editorReceipt === undefined
+        ? {}
+        : { editorReceipt: preset.editorReceipt }),
     };
   }
 
@@ -847,47 +887,95 @@ export class FileNativePlayPresetStore {
     files: Record<string, string>;
     receiptId: string;
     nextHead: string;
-    provenance?: { surface: OrchestrationSurface | undefined; entryId: string; value: unknown }[];
+    provenance?: {
+      surface: OrchestrationSurface | undefined;
+      entryId: string;
+      value: unknown;
+    }[];
     restoreProvenance?: true;
   }): Promise<void> {
     await this.#change(async () => {
       const document = await this.#read();
       const stored = findStored(document, input.presetId);
       if (stored.editorReceipt === input.receiptId) return;
-      assertExpectedDraft(stored, input.expectedRevision, input.expectedEpoch, input.expectedCurrentRevision, input.expectedHead);
+      assertExpectedDraft(
+        stored,
+        input.expectedRevision,
+        input.expectedEpoch,
+        input.expectedCurrentRevision,
+        input.expectedHead,
+      );
       const previous = stored.revisions[input.expectedRevision]!;
       const files = { ...previous };
       // This publication port cannot edit the call chain, resources or script grants.
       if (typeof input.files[orchestrationManifest] !== "string")
         throw new Error("The orchestration manifest is missing");
       files[orchestrationManifest] = input.files[orchestrationManifest];
-      const next = assertCurrentOrchestration(files, this.#limits, this.#locale());
-      const current = parsePlayPresetFiles(stored.revisions[stored.currentRevision]!, this.#limits);
+      const next = assertCurrentOrchestration(
+        files,
+        this.#limits,
+        this.#locale(),
+      );
+      const previousDefinition = assertCurrentOrchestration(
+        previous,
+        this.#limits,
+        this.#locale(),
+      );
+      if (
+        !isDeepStrictEqual(
+          nonPromptDefinition(previousDefinition),
+          nonPromptDefinition(next),
+        )
+      )
+        throw new Error(
+          "The orchestration editor can change only ordered prompts",
+        );
+      const current = parsePlayPresetFiles(
+        stored.revisions[stored.currentRevision]!,
+        this.#limits,
+      );
       if (current.kind === "valid") {
         const before = toPlayPresetStructuredEditor(current.definition);
         const after = toPlayPresetStructuredEditor(next);
         for (const surface of ["playPrompts", "authorPrompts"] as const)
-          assertReadonlyPromptsRetained(before[surface] ?? [], after[surface] ?? []);
+          assertReadonlyPromptsRetained(
+            before[surface] ?? [],
+            after[surface] ?? [],
+          );
       }
       delete stored.builtinDefault;
       const revision = revisionForFiles(files, this.#limits);
-      const provenance = stored.revisions[revision] === undefined && !input.restoreProvenance
-        ? await this.#carryProvenance(stored.id, input.expectedRevision, previous, files, "assistant", input.provenance)
-        : [];
+      const provenance =
+        stored.revisions[revision] === undefined && !input.restoreProvenance
+          ? await this.#carryProvenance(
+              stored.id,
+              input.expectedRevision,
+              previous,
+              files,
+              "assistant",
+              input.provenance,
+            )
+          : [];
       setDraft(stored, revision, files);
       stored.editorReceipt = input.receiptId;
       stored.draftHead = input.nextHead;
-      await this.#publishWithProvenance(stored.id, revision, provenance, () => this.#write(document));
+      await this.#publishWithProvenance(stored.id, revision, provenance, () =>
+        this.#write(document),
+      );
     });
   }
 
-  async discardDraft(id: string, expectedRevision: string): Promise<FileNativePlayPresetLibrary> {
+  async discardDraft(
+    id: string,
+    expectedRevision: string,
+  ): Promise<FileNativePlayPresetLibrary> {
     return this.#change(async () => {
       const document = await this.#read();
       const stored = findStored(document, id);
       assertExpectedDraft(stored, expectedRevision);
       if (stored.draftRevision !== undefined) {
-        delete stored.revisions[stored.draftRevision];
+        if (stored.draftRevision !== stored.legacySillyTavernRevision)
+          delete stored.revisions[stored.draftRevision];
         delete stored.draftRevision;
       }
       stored.draftEpoch = randomUUID();
@@ -1085,8 +1173,9 @@ export class FileNativePlayPresetStore {
     stored: StoredPreset,
     revision: string,
   ): Promise<Record<string, string>> {
-    const files = stored.revisions[revision] ??
-      await this.#readArchivedRevision(stored.id, revision);
+    const files =
+      stored.revisions[revision] ??
+      (await this.#readArchivedRevision(stored.id, revision));
     if (files === undefined)
       throw new FileNativePlayPresetError(
         "revision_not_found",
@@ -1351,7 +1440,7 @@ export class FileNativePlayPresetStore {
       const stored = findStored(await this.#read(), presetId);
       const snapshot = await this.#sillyTavernSources.read(presetId);
       if (snapshot !== undefined) return { kind: "snapshot", snapshot };
-      const original = this.#legacySillyTavernSource(stored);
+      const original = await this.#legacySillyTavernSource(stored);
       if (original === undefined) return { kind: "none" };
       const { groupId, report } = original.report;
       return {
@@ -1362,11 +1451,17 @@ export class FileNativePlayPresetStore {
     });
   }
 
-  async readOrchestrationProvenance(presetId: string, revision: string): Promise<OrchestrationEntrySource[]> {
+  async readOrchestrationProvenance(
+    presetId: string,
+    revision: string,
+  ): Promise<OrchestrationEntrySource[]> {
     return this.#change(async () => {
       const stored = findStored(await this.#read(), presetId);
       if (!Object.hasOwn(stored.revisions, revision))
-        throw new FileNativePlayPresetError("revision_not_found", "The requested orchestration revision was not found");
+        throw new FileNativePlayPresetError(
+          "revision_not_found",
+          "The requested orchestration revision was not found",
+        );
       return this.#orchestrationProvenance.read(presetId, revision);
     });
   }
@@ -1377,10 +1472,19 @@ export class FileNativePlayPresetStore {
     previousFiles: Record<string, string>,
     nextFiles: Record<string, string>,
     modified: "manual" | "assistant",
-    changes: { surface: OrchestrationSurface | undefined; entryId: string; value: unknown }[] = [],
+    changes: {
+      surface: OrchestrationSurface | undefined;
+      entryId: string;
+      value: unknown;
+    }[] = [],
   ): Promise<OrchestrationEntrySource[]> {
-    const previous = await this.#orchestrationProvenance.read(presetId, previousRevision);
-    const rows = new Map(previous.map((item) => [`${item.surface}:${item.entryId}`, item]));
+    const previous = await this.#orchestrationProvenance.read(
+      presetId,
+      previousRevision,
+    );
+    const rows = new Map(
+      previous.map((item) => [`${item.surface}:${item.entryId}`, item]),
+    );
     for (const { surface, entryId, value } of changes)
       if (surface !== undefined && isOrchestrationProvenanceRecord(value))
         rows.set(`${surface}:${entryId}`, { surface, entryId, source: value });
@@ -1389,13 +1493,26 @@ export class FileNativePlayPresetStore {
     if (next.kind === "invalid") return [...rows.values()];
     const old = parsePlayPresetFiles(previousFiles, this.#limits);
     return [...rows.values()].flatMap((item) => {
-      const entry = next.definition[item.surface]?.find(({ id }) => id === item.entryId);
-      if (entry === undefined || (entry.kind !== "user" && entry.kind !== "tail")) return [];
-      const before = old.kind === "valid" ? old.definition[item.surface]?.find(({ id }) => id === item.entryId) : undefined;
+      const entry = next.definition[item.surface]?.find(
+        ({ id }) => id === item.entryId,
+      );
+      if (
+        entry === undefined ||
+        (entry.kind !== "user" && entry.kind !== "tail")
+      )
+        return [];
+      const before =
+        old.kind === "valid"
+          ? old.definition[item.surface]?.find(({ id }) => id === item.entryId)
+          : undefined;
       const source = { ...item.source };
       const bodyHash = createHash("sha256").update(entry.body).digest("hex");
       if (bodyHash === source.extractedBodySha256) delete source.modified;
-      else if (before === undefined || !("body" in before) || before.body !== entry.body)
+      else if (
+        before === undefined ||
+        !("body" in before) ||
+        before.body !== entry.body
+      )
         source.modified = modified;
       return [{ ...item, source }];
     });
@@ -1412,13 +1529,17 @@ export class FileNativePlayPresetStore {
     try {
       await publish();
     } catch (error) {
-      await this.#orchestrationProvenance.remove(presetId, revision).catch(() => undefined);
+      await this.#orchestrationProvenance
+        .remove(presetId, revision)
+        .catch(() => undefined);
       throw error;
     }
   }
 
   async #removeOrphanProvenance(document: StoredDocument): Promise<void> {
-    await this.#orchestrationProvenance.removeOrphans(document.presets).catch(() => undefined);
+    await this.#orchestrationProvenance
+      .removeOrphans(document.presets)
+      .catch(() => undefined);
   }
 
   async associateSillyTavernSource(
@@ -1427,7 +1548,7 @@ export class FileNativePlayPresetStore {
   ): Promise<SillyTavernSource> {
     return this.#change(async () => {
       const stored = findStored(await this.#read(), presetId);
-      const original = this.#legacySillyTavernSource(stored);
+      const original = await this.#legacySillyTavernSource(stored);
       const mismatch = () =>
         new FileNativePlayPresetError(
           "sillytavern_source_mismatch",
@@ -1487,11 +1608,13 @@ export class FileNativePlayPresetStore {
     });
   }
 
-  #legacySillyTavernSource(stored: StoredPreset) {
-    for (const files of Object.values(stored.revisions)) {
-      const report = readLegacySillyTavernReport(files);
-      if (report !== undefined) return { report, files };
-    }
+  async #legacySillyTavernSource(stored: StoredPreset) {
+    const revision =
+      stored.legacySillyTavernRevision ?? originalLegacySourceRevision(stored);
+    if (revision === undefined) return undefined;
+    const files = await this.#revisionFiles(stored, revision);
+    const report = readLegacySillyTavernReport(files);
+    if (report !== undefined) return { report, files, revision };
   }
 
   async #publishWithSource(
@@ -1720,6 +1843,7 @@ export class FileNativePlayPresetStore {
       enabled: stored.enabled,
       scriptsEnabled: stored.scriptsEnabled,
       ...(stored.sillyTavernSource ||
+      stored.legacySillyTavernRevision !== undefined ||
       Object.values(stored.revisions).some((revision) =>
         Object.hasOwn(revision, sillyTavernImportReportPath),
       )
@@ -1743,17 +1867,35 @@ export class FileNativePlayPresetStore {
   }
 
   #archivePath(id: string, revision?: string): string {
-    const directory = join(this.#root, "orchestration-revisions", createHash("sha256").update(id).digest("hex"));
-    return revision === undefined ? directory : join(directory, `${revision}.json`);
+    const directory = join(
+      this.#root,
+      "orchestration-revisions",
+      createHash("sha256").update(id).digest("hex"),
+    );
+    return revision === undefined
+      ? directory
+      : join(directory, `${revision}.json`);
   }
 
-  async #readArchivedRevision(id: string, revision: string): Promise<Record<string, string> | undefined> {
+  async #readArchivedRevision(
+    id: string,
+    revision: string,
+  ): Promise<Record<string, string> | undefined> {
     if (!revisionPattern.test(revision)) return undefined;
     try {
-      const files: unknown = JSON.parse(await readFile(this.#archivePath(id, revision), "utf8"));
-      if (!isRecord(files) || Object.values(files).some((value) => typeof value !== "string") ||
-          revisionForFiles(files as Record<string, string>, this.#limits) !== revision)
-        throw new FileNativePlayPresetError("store_invalid", "Archived orchestration revision does not match its identity");
+      const files: unknown = JSON.parse(
+        await readFile(this.#archivePath(id, revision), "utf8"),
+      );
+      if (
+        !isRecord(files) ||
+        Object.values(files).some((value) => typeof value !== "string") ||
+        revisionForFiles(files as Record<string, string>, this.#limits) !==
+          revision
+      )
+        throw new FileNativePlayPresetError(
+          "store_invalid",
+          "Archived orchestration revision does not match its identity",
+        );
       return files as Record<string, string>;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -1763,13 +1905,25 @@ export class FileNativePlayPresetStore {
 
   async #archiveHistoricRevisions(preset: StoredPreset): Promise<void> {
     for (const [revision, files] of Object.entries(preset.revisions)) {
-      if (revision === preset.currentRevision || revision === preset.draftRevision) continue;
+      if (
+        revision === preset.currentRevision ||
+        revision === preset.draftRevision
+      )
+        continue;
       const path = this.#archivePath(preset.id, revision);
-      if (await this.#readArchivedRevision(preset.id, revision) === undefined) {
-        await mkdir(this.#archivePath(preset.id), { mode: 0o700, recursive: true });
+      if (
+        (await this.#readArchivedRevision(preset.id, revision)) === undefined
+      ) {
+        await mkdir(this.#archivePath(preset.id), {
+          mode: 0o700,
+          recursive: true,
+        });
         const temporary = `${path}.${randomUUID()}.tmp`;
         try {
-          await writeFile(temporary, JSON.stringify(files), { mode: 0o600, flag: "wx" });
+          await writeFile(temporary, JSON.stringify(files), {
+            mode: 0o600,
+            flag: "wx",
+          });
           await rename(temporary, path);
         } finally {
           await rm(temporary, { force: true });
@@ -1783,7 +1937,13 @@ export class FileNativePlayPresetStore {
     document: StoredDocument,
     options?: { verify: true },
   ): Promise<void> {
-    for (const preset of document.presets) await this.#archiveHistoricRevisions(preset);
+    for (const preset of document.presets) {
+      if (preset.legacySillyTavernRevision === undefined) {
+        const revision = originalLegacySourceRevision(preset);
+        if (revision !== undefined) preset.legacySillyTavernRevision = revision;
+      }
+      await this.#archiveHistoricRevisions(preset);
+    }
     await mkdir(this.#root, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.${randomUUID()}.tmp`;
     const raw = `${JSON.stringify(
@@ -4033,7 +4193,15 @@ function parseStoredDocument(
           "enabled",
           "scriptsEnabled",
         ],
-        ["draftRevision", "builtinDefault", "draftEpoch", "draftHead", "editorReceipt", "sillyTavernSource"],
+        [
+          "draftRevision",
+          "builtinDefault",
+          "draftEpoch",
+          "draftHead",
+          "editorReceipt",
+          "sillyTavernSource",
+          "legacySillyTavernRevision",
+        ],
       ) ||
       typeof raw.id !== "string" ||
       typeof raw.name !== "string" ||
@@ -4048,6 +4216,9 @@ function parseStoredDocument(
       typeof raw.enabled !== "boolean" ||
       typeof raw.scriptsEnabled !== "boolean" ||
       (raw.sillyTavernSource !== undefined && raw.sillyTavernSource !== true) ||
+      (raw.legacySillyTavernRevision !== undefined &&
+        (typeof raw.legacySillyTavernRevision !== "string" ||
+          !revisionPattern.test(raw.legacySillyTavernRevision))) ||
       (raw.builtinDefault !== undefined && raw.builtinDefault !== true) ||
       (raw.draftEpoch !== undefined && typeof raw.draftEpoch !== "string") ||
       (raw.draftHead !== undefined && typeof raw.draftHead !== "string") ||
@@ -4122,8 +4293,13 @@ function parseStoredDocument(
       scriptsEnabled: raw.scriptsEnabled,
       ...(raw.draftEpoch === undefined ? {} : { draftEpoch: raw.draftEpoch }),
       ...(raw.draftHead === undefined ? {} : { draftHead: raw.draftHead }),
-      ...(raw.editorReceipt === undefined ? {} : { editorReceipt: raw.editorReceipt }),
+      ...(raw.editorReceipt === undefined
+        ? {}
+        : { editorReceipt: raw.editorReceipt }),
       ...(raw.builtinDefault === true ? { builtinDefault: true as const } : {}),
+      ...(raw.legacySillyTavernRevision === undefined
+        ? {}
+        : { legacySillyTavernRevision: raw.legacySillyTavernRevision }),
       ...(raw.sillyTavernSource === true
         ? { sillyTavernSource: true as const }
         : {}),
@@ -4188,6 +4364,25 @@ function findStored(document: StoredDocument, id: string): StoredPreset {
   return preset;
 }
 
+function originalLegacySourceRevision(
+  stored: StoredPreset,
+): string | undefined {
+  return Object.entries(stored.revisions).find(
+    ([, files]) => readLegacySillyTavernReport(files) !== undefined,
+  )?.[0];
+}
+
+function nonPromptDefinition(definition: PlayPresetDefinition) {
+  return Object.fromEntries(
+    Object.entries(definition).filter(
+      ([field]) =>
+        field !== "files" &&
+        field !== "playPrompts" &&
+        field !== "authorPrompts",
+    ),
+  );
+}
+
 function assertExpectedDraft(
   stored: StoredPreset,
   expectedRevision: string,
@@ -4196,15 +4391,30 @@ function assertExpectedDraft(
   expectedHead?: string,
 ): void {
   const revision = stored.draftRevision ?? stored.currentRevision;
-  if (revision !== expectedRevision ||
-      (expectedEpoch !== undefined && expectedEpoch !== (stored.draftEpoch ?? "")) ||
-      (expectedCurrentRevision !== undefined && expectedCurrentRevision !== stored.currentRevision) ||
-      (expectedHead !== undefined && expectedHead !== (stored.draftHead ?? "")))
-    throw new OrchestrationDraftConflict({ revision, currentRevision: stored.currentRevision });
+  if (
+    revision !== expectedRevision ||
+    (expectedEpoch !== undefined &&
+      expectedEpoch !== (stored.draftEpoch ?? "")) ||
+    (expectedCurrentRevision !== undefined &&
+      expectedCurrentRevision !== stored.currentRevision) ||
+    (expectedHead !== undefined && expectedHead !== (stored.draftHead ?? ""))
+  )
+    throw new OrchestrationDraftConflict({
+      revision,
+      currentRevision: stored.currentRevision,
+    });
 }
 
-function setDraft(stored: StoredPreset, revision: string, files: Record<string, string>): void {
-  if (stored.draftRevision !== undefined && stored.draftRevision !== revision)
+function setDraft(
+  stored: StoredPreset,
+  revision: string,
+  files: Record<string, string>,
+): void {
+  if (
+    stored.draftRevision !== undefined &&
+    stored.draftRevision !== revision &&
+    stored.draftRevision !== stored.legacySillyTavernRevision
+  )
     delete stored.revisions[stored.draftRevision];
   stored.revisions[revision] = cloneFiles(files);
   if (revision === stored.currentRevision) delete stored.draftRevision;

@@ -133,7 +133,9 @@ export class V1Runtime {
       ...generation,
       changed: (presetId, durable) =>
         this.#conversationChanges.publish(`orchestration:${presetId}`, durable),
-      store: new EditorSessionStore(join(input.configRoot, "orchestration-sessions")),
+      store: new EditorSessionStore(
+        join(input.configRoot, "orchestration-sessions"),
+      ),
       drafts: this.#playPresets,
       locale: () => this.#locale,
       bindModelHost: () => this.#modelHost(),
@@ -252,6 +254,7 @@ export class V1Runtime {
       locale: () => this.#locale,
     });
     this.#playCommands = new PlayCommands({
+      orchestrationSessions: this.#orchestration,
       worlds: this.#worlds,
       content: this.#content,
       models: this.#models,
@@ -299,9 +302,15 @@ export class V1Runtime {
       if (mayChangeUserState(request.type)) {
         if ("packageId" in request)
           this.#conversationChanges.publish(`setting:${request.packageId}`);
-        if ("presetId" in request && typeof request.presetId === "string" &&
-            (request.type.startsWith("orchestration.") || request.type.startsWith("play.")))
-          this.#conversationChanges.publish(`orchestration:${request.presetId}`);
+        if (
+          "presetId" in request &&
+          typeof request.presetId === "string" &&
+          (request.type.startsWith("orchestration.") ||
+            request.type.startsWith("play."))
+        )
+          this.#conversationChanges.publish(
+            `orchestration:${request.presetId}`,
+          );
         if ("worldId" in request) {
           this.#conversationChanges.publish(`play:${request.worldId}`);
           this.#conversationChanges.publish(`revision:${request.worldId}`);
@@ -409,9 +418,10 @@ export class V1Runtime {
       case "orchestration":
         return {
           kind: "orchestration",
-          value: previous?.kind === "orchestration"
-            ? this.#orchestration.observeProgress(previous.value)
-            : await this.#orchestration.status(target.id, target.sessionId),
+          value:
+            previous?.kind === "orchestration"
+              ? this.#orchestration.observeProgress(previous.value)
+              : await this.#orchestration.status(target.id, target.sessionId),
         };
       case "revision":
         return {
@@ -430,10 +440,6 @@ export class V1Runtime {
   ): Promise<unknown> {
     if (hasCommandPrefix(request, "orchestration"))
       return this.#orchestration.handle(request);
-    if (request.type === "play.draft.discard")
-      return this.#orchestration.discardDraft(request.presetId, request.expectedRevision);
-    if (request.type === "play.delete")
-      return this.#orchestration.deletePreset(request.presetId);
     if (
       hasCommandPrefix(request, "setting-improvement") ||
       hasCommandPrefix(request, "world.revision")
