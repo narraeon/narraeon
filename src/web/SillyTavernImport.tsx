@@ -8,85 +8,16 @@ import { readScripts } from "./sillytavern-scripts.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { RuntimeRequestError } from "./RuntimeResponse.ts";
+import { browserUUID } from "./browser-uuid.ts";
+import {
+  explainSillyTavernDiagnostic,
+  sillyTavernErrorMessage,
+} from "./sillytavern-labels.ts";
 
 import type {
   SillyTavernInspection,
   SillyTavernConversion,
-  SillyTavernDiagnosticCode,
-  SillyTavernDiagnosticResult,
-  SillyTavernSettingCategory,
 } from "../shared/sillytavern-preset.ts";
-
-type ExplanationCode =
-  | SillyTavernDiagnosticCode
-  | SillyTavernDiagnosticResult
-  | SillyTavernSettingCategory
-  | SillyTavernConversion["target"][number]["kind"];
-function explanation(code: ExplanationCode): string {
-  const messages: Record<ExplanationCode, string> = {
-    missing_builtin: uiText("源文件未携带此内建定义。"),
-    marker: uiText("动态材料占位，无静态正文。"),
-    unsupported_macro: uiText("包含不支持的宏，保留原文并停用。"),
-    depth_injection: uiText("历史深度插入不能等价迁移，保留原文并停用。"),
-    trigger: uiText("生成触发条件不能等价迁移，保留原文并停用。"),
-    overrides: uiText(
-      "main/jailbreak 未禁止覆盖时，角色卡的 system_prompt/post_history_instructions 可替换正文；这与发送角色或变量重复赋值无关。保留原文并停用。",
-    ),
-    unsupported_fields: uiText("包含不支持的字段，保留原文并停用。"),
-    unsupported_field: uiText("不支持的字段"),
-    prompt_selection: uiText("提示选择结果"),
-    not_selected: uiText("未选择"),
-    enabled: uiText("已导入并启用"),
-    model: uiText("模型（未迁移）"),
-    generation: uiText("生成设置（未迁移）"),
-    unplaced: uiText("未编排提示选中后会保留为停用项。"),
-    ignored_setting: uiText("设置未迁移"),
-    connection: uiText("连接或凭据（未迁移）"),
-    sampling: uiText("采样与生成（未迁移）"),
-    extension: uiText("扩展（未迁移）"),
-    ignored: uiText("已忽略"),
-    disabled: uiText("已保留并停用"),
-    not_imported: uiText("未导入"),
-    user: uiText("导入的用户提示"),
-    builtin: uiText("Narraeon 系统提示"),
-    world: uiText("Narraeon 世界占位"),
-    tail: uiText("尾部提示"),
-  };
-  return messages[code];
-}
-
-function errorMessage(message: string): string {
-  const translations: Record<string, string> = {
-    st_invalid_json: uiText("JSON 格式无效"),
-    st_legacy_prompt_format_is_unsupported: uiText("不支持旧版提示格式"),
-    st_unsupported_preset_format: uiText("不支持此 SillyTavern 预设格式"),
-    st_expected_object: uiText("需要对象"),
-    st_expected_array: uiText("需要数组"),
-    st_expected_string: uiText("需要字符串"),
-    st_expected_boolean: uiText("需要布尔值"),
-    st_expected_number: uiText("需要数字"),
-    st_expected_nonempty_string: uiText("需要非空字符串"),
-    st_duplicate_identifier: uiText("提示身份重复"),
-    st_expected_string_or_number: uiText("需要字符串或数字"),
-    st_expected_string_array: uiText("需要字符串数组"),
-    st_expected_prompt_content: uiText("需要提示正文"),
-    st_unsupported_role: uiText("不支持此角色"),
-    st_duplicate_order_identifier: uiText("顺序中身份重复"),
-    st_unknown_prompt_reference: uiText("顺序引用了未知提示"),
-    st_unknown_order_field: uiText("顺序中包含未知字段"),
-    st_unknown_group_field: uiText("顺序组包含未知字段"),
-    st_expected_character_identifier: uiText("需要角色组身份"),
-    st_duplicate_character_group: uiText("角色组身份重复"),
-    st_unknown_group: uiText("未知顺序组"),
-    st_choose_a_character_group: uiText("请选择顺序组"),
-    st_invalid_selection: uiText("选择无效"),
-    "SillyTavern source exceeds the size limit": uiText("源文件超过大小限制"),
-  };
-  const match = /^(.*): (.+) \[(st_[a-z_]+)\]$/u.exec(message);
-  if (match)
-    return `${match[1]}: ${translations[match[3]!] ?? match[2]} [${match[3]}]`;
-  return translations[message] ?? message;
-}
 
 function settingPurpose(path: string): string {
   const purposes: Record<string, string> = {
@@ -122,12 +53,14 @@ export function SillyTavernImport({
   client,
   disabled,
   onImported,
+  canStartAiEditing,
   onFailure,
   librarySync,
 }: {
   client: { request<T = unknown>(request: V1Request): Promise<T> };
   disabled: boolean;
-  onImported: (receipt: PlayPresetReceipt) => void;
+  onImported: (receipt: PlayPresetReceipt, startAiEditing: boolean) => void;
+  canStartAiEditing: boolean;
   onFailure?: () => Promise<unknown>;
   librarySync?: { failed: boolean; onRead: () => void };
 }): React.JSX.Element {
@@ -150,6 +83,9 @@ export function SillyTavernImport({
   const [visibleScripts, setVisibleScripts] = useState(100);
   const [error, setError] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
+  const operation = useRef<{ query: string; id: string } | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     if (source !== undefined && dialog.current && !dialog.current.open)
@@ -165,7 +101,7 @@ export function SillyTavernImport({
       await onFailure?.();
       setError(
         cause instanceof Error
-          ? errorMessage(cause.message)
+          ? sillyTavernErrorMessage(cause.message)
           : uiText("导入失败"),
       );
     } finally {
@@ -190,7 +126,7 @@ export function SillyTavernImport({
       setActiveScript(undefined);
       setShowSettings(false);
       setShowResult(false);
-      setSelected([]);
+      setSelected(sourceEnabledSelection(result));
       setPreview(undefined);
     }, []),
   );
@@ -206,6 +142,8 @@ export function SillyTavernImport({
   }, [inspectionTarget, inspectionQuery]);
   function inspect(input: string, groupId?: string): void {
     setReading(true);
+    setPreview(undefined);
+    setShowResult(false);
     const next = JSON.stringify({
       type: "play.sillytavern.inspect",
       source: input,
@@ -216,6 +154,7 @@ export function SillyTavernImport({
     else setInspectionQuery(next);
   }
   function cancel(): void {
+    operation.current = undefined;
     setActive(undefined);
     setShowResult(false);
     setSource(undefined);
@@ -371,6 +310,22 @@ export function SillyTavernImport({
       setReading(false);
     }
   }
+  function importCopy(startAiEditing: boolean): void {
+    const operationId =
+      operation.current?.query === conversionQuery
+        ? operation.current.id
+        : browserUUID();
+    operation.current = { query: conversionQuery, id: operationId };
+    void run(async () => {
+      const result = await client.request<PlayPresetReceipt>({
+        type: "play.sillytavern.import",
+        ...request(),
+        operationId,
+      });
+      cancel();
+      onImported(result, startAiEditing);
+    });
+  }
   return (
     <>
       <label className="play-preset-import-control">
@@ -442,7 +397,7 @@ export function SillyTavernImport({
               reason instanceof RuntimeRequestError &&
               reason.kind === "runtime" ? (
                 <p key={index} role="alert">
-                  {errorMessage(reason.message)}
+                  {sillyTavernErrorMessage(reason.message)}
                 </p>
               ) : null,
             )}
@@ -473,7 +428,9 @@ export function SillyTavernImport({
                           if (id) inspect(source, id);
                         }}
                       >
-                        <option value="">{uiText("请选择顺序组")}</option>
+                        <option value="" disabled>
+                          {uiText("请选择顺序组")}
+                        </option>
                         {inspection.groups.map((group) => (
                           <option key={group.id} value={group.id}>
                             {group.label}
@@ -489,6 +446,31 @@ export function SillyTavernImport({
                       className="import-browser-list"
                       aria-label={uiText("来源目录")}
                     >
+                      <div className="st-selection-actions">
+                        <button
+                          type="button"
+                          disabled={
+                            busy ||
+                            !inspection.prompts.some(({ ordered }) => ordered)
+                          }
+                          onClick={() => {
+                            setSelected(sourceEnabledSelection(inspection));
+                            setPreview(undefined);
+                          }}
+                        >
+                          {uiText("选择源中已启用项")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || selected.length === 0}
+                          onClick={() => {
+                            setSelected([]);
+                            setPreview(undefined);
+                          }}
+                        >
+                          {uiText("清空选择")}
+                        </button>
+                      </div>
                       {[true, false].map((ordered) => (
                         <section key={String(ordered)}>
                           <h3>
@@ -692,7 +674,9 @@ export function SillyTavernImport({
                                 </p>
                               )}
                               {prompt.reasons.map((reason) => (
-                                <p key={reason}>{explanation(reason)}</p>
+                                <p key={reason}>
+                                  {explainSillyTavernDiagnostic(reason)}
+                                </p>
                               ))}
                             </details>
                           </article>
@@ -756,7 +740,8 @@ export function SillyTavernImport({
                           <ul>
                             {inspection.settings.map((setting) => (
                               <li key={setting.path}>
-                                {setting.path} — {explanation(setting.category)}
+                                {setting.path} —{" "}
+                                {explainSillyTavernDiagnostic(setting.category)}
                                 {setting.value !== undefined && (
                                   <>
                                     {" "}
@@ -848,11 +833,34 @@ export function SillyTavernImport({
                     <button type="button" onClick={() => setShowResult(false)}>
                       {uiText("返回来源")}
                     </button>
+                    <details>
+                      <summary>{uiText("来源选择")}</summary>
+                      <ol aria-label={uiText("源顺序")}>
+                        {inspection.prompts.map((prompt) => (
+                          <li key={prompt.id}>
+                            {prompt.name} · {uiText("源启用状态")}{" "}
+                            {prompt.enabled === undefined
+                              ? "—"
+                              : uiText(
+                                  prompt.enabled ? "已启用" : "已停用",
+                                )}{" "}
+                            ·{" "}
+                            {uiText(
+                              selected.includes(prompt.id)
+                                ? "已选择"
+                                : "未选择",
+                            )}
+                            {!prompt.ordered && ` · ${uiText("未编排提示")}`}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
                     <h3>{uiText("目标编排方案")}</h3>
                     <ul>
                       {preview.target.map((item, index) => (
                         <li key={index}>
-                          {item.name} — {explanation(item.kind)} —{" "}
+                          {item.name} —{" "}
+                          {explainSillyTavernDiagnostic(item.kind)} —{" "}
                           {item.enabled ? uiText("启用") : uiText("停用")}
                         </li>
                       ))}
@@ -862,7 +870,8 @@ export function SillyTavernImport({
                       {preview.report.map((item, index) => (
                         <li key={index}>
                           {item.code} · {item.path} {item.name} —{" "}
-                          {explanation(item.code)} — {explanation(item.result)}
+                          {explainSillyTavernDiagnostic(item.code)} —{" "}
+                          {explainSillyTavernDiagnostic(item.result)}
                         </li>
                       ))}
                     </ul>
@@ -885,23 +894,24 @@ export function SillyTavernImport({
                     {uiText("转换预览")}
                   </button>
                   {showResult && preview && (
-                    <button
-                      type="button"
-                      disabled={busy || disabled}
-                      onClick={() =>
-                        void run(async () => {
-                          const result =
-                            await client.request<PlayPresetReceipt>({
-                              type: "play.sillytavern.import",
-                              ...request(),
-                            });
-                          cancel();
-                          onImported(result);
-                        })
-                      }
-                    >
-                      {uiText("导入独立副本")}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy || disabled}
+                        onClick={() => importCopy(false)}
+                      >
+                        {uiText("导入独立副本")}
+                      </button>
+                      {canStartAiEditing && (
+                        <button
+                          type="button"
+                          disabled={busy || disabled}
+                          onClick={() => importCopy(true)}
+                        >
+                          {uiText("导入并用 AI 整理")}
+                        </button>
+                      )}
+                    </>
                   )}
                   <button type="button" disabled={busy} onClick={cancel}>
                     {uiText("取消")}
@@ -914,4 +924,10 @@ export function SillyTavernImport({
         )}
     </>
   );
+}
+
+function sourceEnabledSelection(inspection: SillyTavernInspection): string[] {
+  return inspection.prompts
+    .filter(({ ordered, enabled }) => ordered && enabled === true)
+    .map(({ id }) => id);
 }

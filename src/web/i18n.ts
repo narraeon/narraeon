@@ -563,6 +563,21 @@ const englishMessages: Record<string, string> = {
   目标编排方案: "Target orchestration",
   兼容报告: "Compatibility report",
   导入独立副本: "Import independent copy",
+  "导入并用 AI 整理": "Import and organize with AI",
+  选择源中已启用项: "Select enabled source prompts",
+  来源选择: "Source selection",
+  清空选择: "Clear selection",
+  "SillyTavern 来源": "SillyTavern source",
+  "此编排方案保留了旧版导入报告。选择匹配的源文件以恢复原文和顺序。":
+    "This orchestration has an older import report. Choose the matching source file to restore the original text and order.",
+  "重新关联 SillyTavern 源文件": "Reconnect SillyTavern source file",
+  "这个文件与原先导入的 SillyTavern 预设不匹配。":
+    "This file does not match the original SillyTavern import.",
+  注入位置: "Injection position",
+  注入深度: "Injection depth",
+  "编排方案 AI 编辑": "AI orchestration editing",
+  给编排助手的消息: "Message to the orchestration assistant",
+  返回编排方案: "Back to orchestration",
   "已从 SillyTavern 预设导入独立编排方案，JavaScript 默认关闭。":
     "Imported an independent orchestration from the SillyTavern preset; JavaScript is disabled by default.",
   导入编排方案: "Import orchestration",

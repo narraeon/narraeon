@@ -441,14 +441,14 @@ for (const embedded of [false, true])
     expect(reads).toBe(4);
   });
 
-test("SillyTavern inspection can recover in its dialog and a lost import response retains the source without replay", async ({
+test("SillyTavern inspection recovers and an explicit retry after a lost import receipt opens the single published copy", async ({
   page,
 }) => {
   const before = await runtime<PlayPresetScreenLibrary>(page, {
     type: "play.read",
   });
   let inspections = 0;
-  let imports = 0;
+  const imports: (string | undefined)[] = [];
   let libraryReads = 0;
   let libraryOffline = true;
   let offline = true;
@@ -459,12 +459,14 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
       if (offline) return route.abort("failed");
     }
     if (request.type === "play.sillytavern.import") {
-      imports++;
-      const response = await route.fetch();
-      expect(response.ok()).toBe(true);
-      return route.abort("failed");
+      imports.push(request.operationId);
+      if (imports.length === 1) {
+        const response = await route.fetch();
+        expect(response.ok()).toBe(true);
+        return route.abort("failed");
+      }
     }
-    if (request.type === "play.read" && imports > 0) {
+    if (request.type === "play.read" && imports.length > 0) {
       libraryReads++;
       if (libraryOffline) return route.abort("failed");
     }
@@ -513,7 +515,18 @@ test("SillyTavern inspection can recover in its dialog and a lost import respons
   );
   expect(libraryReads).toBe(2);
   await expect(dialog.getByLabel("新编排方案名称")).toHaveValue("迁移草稿");
-  expect(imports).toBe(1);
+  expect(imports).toHaveLength(1);
+  expect(imports[0]).toBeTruthy();
+  await dialog
+    .getByRole("button", { name: "导入独立副本", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("combobox", { name: "切换编排方案" })
+      .locator("option:checked"),
+  ).toHaveText("迁移草稿");
+  expect(imports).toEqual([imports[0], imports[0]]);
   expect(
     (await runtime<PlayPresetScreenLibrary>(page, { type: "play.read" }))
       .presets,

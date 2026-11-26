@@ -1,7 +1,11 @@
 import { openWorkspaceCreationTool } from "../support/workspaceNavigation.ts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "../support/isolatedRuntimeTest.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import type { SillyTavernSource } from "../../src/shared/sillytavern-source.ts";
+
+test.use({ runtimeScope: "sillytavern-preset-import" });
 
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
   return page.evaluate(async (request) => {
@@ -126,7 +130,7 @@ for (const locale of ["zh-CN", "en"] as const)
       await expect(wizard.getByText("Plain original")).toHaveCount(0);
       await expect(
         wizard.getByRole("checkbox", { name: "Plain", exact: true }),
-      ).not.toBeChecked();
+      ).toBeChecked();
       await expect(
         wizard.getByText(text.unordered, { exact: true }),
       ).toBeVisible();
@@ -270,6 +274,241 @@ for (const locale of ["zh-CN", "en"] as const)
       );
     });
   }
+
+test("switching order groups replaces defaults and clears a previous conversion", async ({
+  page,
+}) => {
+  await page.goto("/#/orchestrations");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await page.getByText("Manage orchestrations", { exact: true }).click();
+  await page.getByLabel("Choose SillyTavern JSON file").setInputFiles({
+    name: "order-test.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(source)),
+  });
+  const wizard = page.getByRole("dialog", {
+    name: "SillyTavern import wizard",
+  });
+  const checkbox = (name: string) =>
+    wizard.getByRole("checkbox", { name, exact: true });
+  const group = wizard.getByLabel("Source order group");
+  const convert = wizard.getByRole("button", {
+    name: "Conversion preview",
+    exact: true,
+  });
+  const importCopy = wizard.getByRole("button", {
+    name: "Import independent copy",
+    exact: true,
+  });
+  await expect(group).toHaveValue("100001");
+  await expect(checkbox("Plain")).toBeChecked();
+  await expect(checkbox("Orphan")).not.toBeChecked();
+  await convert.click();
+  await expect(importCopy).toBeVisible();
+  await group.selectOption("100000");
+  await expect(importCopy).toHaveCount(0);
+  await expect(checkbox("Plain")).not.toBeChecked();
+  await expect(checkbox("Orphan")).toBeChecked();
+  await group.selectOption("100001");
+  await expect(checkbox("Plain")).toBeChecked();
+  await expect(checkbox("Orphan")).not.toBeChecked();
+  await wizard
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await expect(wizard.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await wizard
+    .getByRole("button", { name: "Select enabled source prompts", exact: true })
+    .click();
+  await expect(wizard.getByRole("checkbox", { checked: true })).toHaveCount(4);
+  await checkbox("History").uncheck();
+  await checkbox("Orphan").check();
+  await convert.click();
+  await expect(
+    wizard.getByText(/Orphan — Imported user prompt — Disabled/u),
+  ).toBeVisible();
+  await importCopy.click();
+  await expect(wizard).toHaveCount(0);
+  const library = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  const preset = library.presets.find(({ name }) => name === "order-test");
+  expect(preset).toBeDefined();
+  const provenance = await runtime<SillyTavernSource>(page, {
+    type: "play.sillytavern.source.read",
+    presetId: preset!.id,
+  });
+  expect(provenance).toMatchObject({
+    kind: "snapshot",
+    snapshot: { groupId: "100001" },
+  });
+  if (provenance.kind !== "snapshot")
+    throw new Error("Expected a source snapshot");
+  expect(
+    provenance.snapshot.entries.map(({ id, enabled, selected, content }) => [
+      id,
+      enabled,
+      selected,
+      content,
+    ]),
+  ).toEqual([
+    ["plain", true, true, "Plain original"],
+    ["macro", true, true, "Hello {{char}}"],
+    ["chatHistory", true, false, undefined],
+    ["__settings", true, true, "Collision text"],
+    ["orphan", undefined, true, "Unordered original"],
+  ]);
+  await page.reload();
+  await page.getByText("SillyTavern source", { exact: true }).click();
+  await expect(
+    page.getByText(/History · Source enabled state Enabled · Not selected/u),
+  ).toBeVisible();
+  await page.getByText(/Orphan · Source enabled state/u).click();
+  await expect(
+    page.getByText("Unordered original", { exact: true }),
+  ).toBeVisible();
+});
+
+test("Prompt Manager defaults open an editable unconnected orchestration and settings returns with the message", async ({
+  page,
+}) => {
+  await page.goto("/#/orchestrations");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await page.getByText("Manage orchestrations", { exact: true }).click();
+  const manager = {
+    version: 1,
+    type: "full",
+    data: {
+      prompts: source.prompts,
+      prompt_order: [
+        { identifier: "plain", enabled: true },
+        { identifier: "macro", enabled: false },
+        { identifier: "chatHistory", enabled: true },
+      ],
+    },
+  };
+  await page.getByLabel("Choose SillyTavern JSON file").setInputFiles({
+    name: "offline-manager.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(manager)),
+  });
+  const wizard = page.getByRole("dialog", {
+    name: "SillyTavern import wizard",
+  });
+  const checkbox = (name: string) =>
+    wizard.getByRole("checkbox", { name, exact: true });
+  await expect(wizard.getByLabel("Source order group")).toHaveCount(0);
+  await expect(checkbox("Plain")).toBeChecked();
+  await expect(checkbox("History")).toBeChecked();
+  await expect(checkbox("Macro")).not.toBeChecked();
+  await expect(checkbox("Orphan")).not.toBeChecked();
+  await checkbox("Macro").check();
+  await wizard
+    .getByRole("button", { name: "Conversion preview", exact: true })
+    .click();
+  await wizard
+    .getByRole("button", { name: "Import and organize with AI", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("combobox", { name: "Switch orchestration", exact: true })
+      .locator("option:checked"),
+  ).toHaveText("offline-manager");
+  const originalUrl = page.url();
+  const assistant = page.getByRole("region", {
+    name: "AI orchestration editing",
+    exact: true,
+  });
+  const pending = assistant.getByLabel(
+    "Message to the orchestration assistant",
+  );
+  const configure = assistant.getByRole("button", {
+    name: "Configure model",
+    exact: true,
+  });
+  await expect(configure).toBeVisible();
+  const message =
+    "Explain which of my imported prompts can be applied globally.";
+  await pending.fill(message);
+  await page.getByText("SillyTavern source", { exact: true }).click();
+  await expect(page.getByText("manager", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add prompt", exact: true }).click();
+  await page.getByLabel("Prompt name", { exact: true }).fill("Offline edit");
+  await page
+    .getByLabel("Prompt text", { exact: true })
+    .fill("Locally edited with no connection.");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    page.getByText("Orchestration saved.", { exact: true }),
+  ).toBeVisible();
+
+  const commands: V1Request[] = [];
+  const runtimeRoute = "**/api/runtime/v1";
+  let rejectSave = true;
+  await page.route(runtimeRoute, async (route) => {
+    const { request } = route.request().postDataJSON() as {
+      request: V1Request;
+    };
+    commands.push(request);
+    if (request.type !== "model.save" || !rejectSave) return route.continue();
+    await route.fulfill({
+      status: 400,
+      json: {
+        protocol: "narraeon.runtime/v1",
+        error: { code: "invalid_request", message: "Fixture save rejected." },
+      },
+    });
+  });
+  const fillModel = async () => {
+    await page
+      .getByLabel("Configuration name", { exact: true })
+      .fill("Workbench fixture");
+    await page
+      .getByLabel("Base URL", { exact: true })
+      .fill("http://127.0.0.1:1/v1");
+    await page.getByLabel("API Key", { exact: true }).fill("test-key");
+    await page.getByLabel("Model ID", { exact: true }).fill("fixture-model");
+    await page
+      .getByRole("button", {
+        name: "Save and enable model connection",
+        exact: true,
+      })
+      .click();
+  };
+  await configure.click();
+  await expect(page).toHaveURL(/#\/models$/u);
+  await fillModel();
+  await expect(
+    page.getByText("Fixture save rejected.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Back to orchestration", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Discard and leave", exact: true })
+    .click();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(pending).toHaveValue(message);
+  await expect(configure).toBeVisible();
+  rejectSave = false;
+  await configure.click();
+  await fillModel();
+  await expect(page).toHaveURL(originalUrl);
+  await expect(pending).toHaveValue(message);
+  await expect(configure).toHaveCount(0);
+  expect(
+    commands.filter(({ type }) => /send|generate|chain\./u.test(type)),
+  ).toEqual([]);
+  const library = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  const imported = library.presets.find(
+    ({ name }) => name === "offline-manager",
+  );
+  expect(imported?.id).not.toBe(library.currentPresetId);
+  expect(imported?.draft?.files["orchestration.yaml"]).toContain(
+    "Locally edited with no connection.",
+  );
+});
 
 for (const mobile of [false, true]) {
   test(`static variable inspection ${mobile ? "mobile" : "desktop"}`, async ({

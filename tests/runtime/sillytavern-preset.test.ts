@@ -1,12 +1,24 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   inspectSillyTavernPreset,
   convertSillyTavernPreset,
+  prepareSillyTavernPresetImport,
 } from "../../src/shared/sillytavern-preset.ts";
-import { validatePlayPresetFiles } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import {
+  FileNativePlayPresetStore,
+  validatePlayPresetFiles,
+} from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { SillyTavernSourceStore } from "../../src/runtime/play/SillyTavernSourceStore.ts";
 
 const source = JSON.stringify({
   temperature: 1,
@@ -162,8 +174,6 @@ it("rejects malformed input and unknown or duplicate references without exposing
 });
 
 it("compiles selected static prompts in source order and roles, excluding disabled entries", async () => {
-  const { FileNativePlayPresetStore } =
-    await import("../../src/runtime/play/FileNativePlayPresetStore.ts");
   const { FileNativePromptCompiler, createMinimalFileNativePreviewInput } =
     await import("../../src/runtime/prompt/FileNativePromptCompiler.ts");
   const input = JSON.stringify({
@@ -263,6 +273,238 @@ it("compiles selected static prompts in source order and roles, excluding disabl
       ["user", "FIRST STATIC"],
       ["assistant", "SECOND STATIC"],
     ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps complete source order independently of the library and deduplicates cold and concurrent retries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "st-source-"));
+  try {
+    const options = {
+      name: "Imported",
+      locale: "en",
+      selected: ["unused", "a"],
+    } as const;
+    const { snapshot, conversion } = prepareSillyTavernPresetImport(source, {
+      ...options,
+      selected: [...options.selected],
+    });
+    expect(snapshot.groupId).toBe("100001");
+    expect(
+      snapshot.entries.map(({ id, order, enabled, selected, content }) => [
+        id,
+        order,
+        enabled,
+        selected,
+        content,
+      ]),
+    ).toEqual([
+      ["a", 0, true, true, "first"],
+      ["chatHistory", 1, true, false, undefined],
+      ["b", 2, true, false, undefined],
+      ["unused", undefined, undefined, true, "unplaced"],
+    ]);
+    expect(snapshot.entries[1]).toMatchObject({ marker: true });
+    expect(snapshot.entries[2]).toMatchObject({
+      reasons: ["unsupported_macro"],
+      macros: [],
+    });
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const request = {
+      name: options.name,
+      files: conversion.files,
+      snapshot,
+      operationId: "import-request",
+    };
+    const [first, retry] = await Promise.all([
+      store.importSillyTavern(request),
+      store.importSillyTavern(request),
+    ]);
+    expect(first).toEqual(retry);
+    expect(first.currentPresetId).not.toBe(first.preset.id);
+    expect(first.preset.scriptsEnabled).toBe(false);
+    const reopened = new FileNativePlayPresetStore(root);
+    await reopened.initialize();
+    expect(await reopened.importSillyTavern(request)).toEqual(first);
+    await expect(
+      reopened.importSillyTavern({ ...request, name: "Changed" }),
+    ).rejects.toThrow("different selection");
+    expect((await reopened.list()).presets).toHaveLength(2);
+    expect(await reopened.readSillyTavernSource(first.preset.id)).toEqual({
+      kind: "snapshot",
+      snapshot,
+    });
+
+    const path = join(root, "orchestration-sillytavern-sources");
+    const [sourceFile] = await readdir(path);
+    const rawSnapshot = await readFile(join(path, sourceFile!), "utf8");
+    expect(rawSnapshot).not.toMatch(/secret|Hello \{\{char\}\}/u);
+    const rawLibrary = await readFile(
+      join(root, "file-native-orchestrations.json"),
+      "utf8",
+    );
+    expect(rawLibrary).not.toMatch(/chatHistory|Hello \{\{char\}\}|secret/u);
+    const portable = await reopened.exportPortable(first.preset.id);
+    expect(portable).toContainEqual({
+      path: "assets/sillytavern-import-report.json",
+      contents: conversion.files["assets/sillytavern-import-report.json"],
+    });
+    expect(JSON.stringify(portable)).not.toContain("chatHistory");
+
+    const copied = await reopened.copy(first.preset.id);
+    expect(await reopened.readSillyTavernSource(copied.preset.id)).toEqual({
+      kind: "snapshot",
+      snapshot,
+    });
+    expect(await readdir(path)).toHaveLength(2);
+    await reopened.delete(first.preset.id);
+    await expect(
+      reopened.readSillyTavernSource(first.preset.id),
+    ).rejects.toThrow();
+    expect(await reopened.readSillyTavernSource(copied.preset.id)).toEqual({
+      kind: "snapshot",
+      snapshot,
+    });
+    expect(await readdir(path)).toHaveLength(1);
+    await reopened.delete(copied.preset.id);
+    expect(await readdir(path)).toEqual([]);
+    const afterDeletion = new FileNativePlayPresetStore(root);
+    await afterDeletion.initialize();
+    await expect(afterDeletion.importSillyTavern(request)).rejects.toThrow(
+      "not found",
+    );
+    expect((await afterDeletion.list()).presets).toHaveLength(1);
+    expect(await readdir(path)).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rolls back a staged source if library publication fails and sweeps interrupted source writes on startup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "st-source-rollback-"));
+  try {
+    const { snapshot, conversion } = prepareSillyTavernPresetImport(source, {
+      name: "Imported",
+      selected: ["a"],
+      locale: "en",
+    });
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const libraryPath = join(root, "file-native-orchestrations.json");
+    const backupPath = join(root, "library-backup");
+    const sourceDirectory = join(root, "orchestration-sillytavern-sources");
+    const sidecars = new SillyTavernSourceStore(root);
+    const originalSave = sidecars.save.bind(sidecars);
+    const failLibrary = vi
+      .spyOn(SillyTavernSourceStore.prototype, "save")
+      .mockImplementationOnce(async (presetId, value) => {
+        await originalSave(presetId, value);
+        await rename(libraryPath, backupPath);
+        await mkdir(libraryPath);
+      });
+    const request = {
+      name: "Imported",
+      files: conversion.files,
+      snapshot,
+      operationId: "retry-after-failure",
+    };
+    try {
+      await expect(store.importSillyTavern(request)).rejects.toThrow();
+      expect(await readdir(sourceDirectory)).toEqual([]);
+    } finally {
+      failLibrary.mockRestore();
+      await rm(libraryPath, { recursive: true });
+      await rename(backupPath, libraryPath);
+    }
+    expect((await store.list()).presets).toHaveLength(1);
+    const imported = await store.importSillyTavern(request);
+    await new SillyTavernSourceStore(root).save(
+      "interrupted-before-library-publish",
+      snapshot,
+    );
+    expect(await readdir(sourceDirectory)).toHaveLength(2);
+    const reopened = new FileNativePlayPresetStore(root);
+    await reopened.initialize();
+    expect(await readdir(sourceDirectory)).toHaveLength(1);
+    expect(
+      await reopened.readSillyTavernSource(imported.preset.id),
+    ).toMatchObject({ kind: "snapshot" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("reconnects matching original source to an old report even after an author edits an imported block", async () => {
+  const root = await mkdtemp(join(tmpdir(), "st-source-legacy-"));
+  try {
+    const store = new FileNativePlayPresetStore(root);
+    await store.initialize();
+    const { conversion, snapshot } = prepareSillyTavernPresetImport(source, {
+      name: "Old import",
+      selected: ["a"],
+      locale: "en",
+    });
+    const reportPath = "assets/sillytavern-import-report.json";
+    const oldTargetId = "st-1";
+    const newTargetId = snapshot.entries[0]!.targetEntryId!;
+    expect(oldTargetId).not.toBe(newTargetId);
+    const { preset } = await store.importPortable({
+      name: "Old import",
+      files: {
+        ...conversion.files,
+        [reportPath]: conversion.files[reportPath]!.replace(
+          `"targetId": "${newTargetId}"`,
+          `"targetId": "${oldTargetId}"`,
+        ),
+        "orchestration.yaml": conversion.files[
+          "orchestration.yaml"
+        ]!.replaceAll(newTargetId, oldTargetId),
+      },
+    });
+    await store.save({
+      presetId: preset.id,
+      name: preset.name,
+      files: {
+        ...preset.files,
+        "orchestration.yaml": preset.files["orchestration.yaml"]!.replace(
+          "body: first",
+          "body: edited",
+        ),
+      },
+    });
+    await store.select(preset.id);
+    expect(
+      (await store.bindRevision(preset.id)).files["orchestration.yaml"],
+    ).toContain("body: edited");
+    expect(await store.readSillyTavernSource(preset.id)).toMatchObject({
+      kind: "legacy",
+      groupId: "100001",
+    });
+    await expect(
+      store.associateSillyTavernSource(
+        preset.id,
+        source.replace('"first"', '"impostor"'),
+      ),
+    ).rejects.toThrow("does not match");
+    const restored = await store.associateSillyTavernSource(preset.id, source);
+    expect(restored).toMatchObject({
+      kind: "snapshot",
+      snapshot: {
+        entries: [
+          { id: "a", content: "first", targetEntryId: oldTargetId },
+          { id: "chatHistory" },
+          { id: "b" },
+        ],
+      },
+    });
+    expect(await store.associateSillyTavernSource(preset.id, source)).toEqual(
+      restored,
+    );
+    expect(
+      (await store.bindRevision(preset.id)).files["orchestration.yaml"],
+    ).toContain("body: edited");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
