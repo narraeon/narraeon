@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { V1Request } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
-import { scanVariables } from "./sillytavern-variable-preview.ts";
+import { scanVariables } from "../shared/sillytavern-variables.ts";
 import { readScripts } from "./sillytavern-scripts.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";

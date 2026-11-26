@@ -5,6 +5,8 @@ import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import type { V1OrchestrationOverview } from "../../src/protocol/orchestrationSession.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
+import { sillyTavernSnapshotFingerprint } from "../../src/runtime/play/SillyTavernSourceStore.ts";
+import type { SillyTavernSource } from "../../src/shared/sillytavern-source.ts";
 
 test.use({ runtimeScope: "orchestration-conversation" });
 
@@ -165,9 +167,10 @@ test("orchestration chat retains concurrent local edits and restores durable bat
       ),
     ).toEqual([]);
     expect(
-      browserCommands
-        .filter(({ type }) => type === "workspace.read")
-        .every((item) => item.scope === "orchestration"),
+      browserCommands.every(
+        (item) =>
+          item.type !== "workspace.read" || item.scope === "orchestration",
+      ),
     ).toBe(true);
     await page
       .locator("summary")
@@ -308,7 +311,7 @@ test("AI editing switches to the author surface on mobile and opens saved reques
       requestId: latest!.requestPreviews![0]!.requestId,
     });
     expect(preview).toMatchObject({
-      wireRequest: { provider: "chat_completions" },
+      compilation: { provider: { protocol: "chat_completions" } },
     });
     const display = page.getByRole("navigation", {
       name: "Orchestration editing views",
@@ -406,6 +409,130 @@ test("the 64-step pause resumes and a cancelled dispatch can replay the frozen r
     expect(cancelledRequests[1]).toBe(cancelledRequests[0]);
   } finally {
     release.resolve();
+    await provider.close();
+  }
+});
+
+test("source conditions appear in the AI batch and on the exact saved prompt revision", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await runtime(page, { type: "preferences.save", locale: "en" });
+  const source = await readFile(
+    new URL("../fixtures/sillytavern-complex-374.json", import.meta.url),
+    "utf8",
+  );
+  const { preset } = await runtime<{
+    preset: { id: string; revision: string };
+  }>(page, {
+    type: "play.sillytavern.import",
+    source,
+    name: "Provenance browser test",
+    selected: ["schedule"],
+    operationId: "provenance-browser-test",
+  });
+  const snapshot = await runtime<SillyTavernSource>(page, {
+    type: "play.sillytavern.source.read",
+    presetId: preset.id,
+  });
+  if (snapshot.kind !== "snapshot")
+    throw new Error("No imported source snapshot");
+  const snapshotId = sillyTavernSnapshotFingerprint(snapshot.snapshot);
+  const end = snapshot.snapshot.entries.find(({ id }) => id === "schedule")!
+    .content!.length;
+  let calls = 0;
+  const provider = await fixtureProvider(async () => {
+    calls++;
+    if (calls === 1)
+      return toolCall("read-source", "sillytavern_source_read", {
+        snapshotId,
+        entryId: "schedule",
+      });
+    if (calls === 2)
+      return toolCall("extract-source", "orchestration_edit", {
+        surface: "playPrompts",
+        expectedRevision: preset.revision,
+        operations: [
+          {
+            operationId: "create-cited-review",
+            op: "create",
+            entryId: "cited-review",
+            kind: "user",
+            name: "Cited review guidance",
+            body: "Review clue clarity.",
+            enabled: false,
+            provenance: {
+              snapshotId,
+              fragments: [{ entryId: "schedule", offset: 0, end }],
+              rationale: "Extract the standalone intent for author review.",
+              droppedConditions: [
+                "Every three turns",
+                "Conditional mood",
+                "History depth 4",
+              ],
+            },
+          },
+        ],
+      });
+    return { content: "The cited block is ready for review." };
+  });
+  try {
+    await configure(page, provider.url);
+    await page.goto(`/#/orchestrations/${preset.id}`);
+    await page.getByRole("button", { name: "AI editing", exact: true }).click();
+    const panel = page.getByRole("region", {
+      name: "AI orchestration editing",
+      exact: true,
+    });
+    await panel
+      .getByRole("textbox", { name: "Message to the orchestration assistant" })
+      .fill(
+        "Extract the source condition as a disabled choice for author review.",
+      );
+    await panel
+      .getByRole("button", { name: "Send to the orchestration assistant" })
+      .click();
+    await expect(
+      panel.getByText("The cited block is ready for review.", { exact: true }),
+    ).toBeVisible();
+    expect(calls).toBe(3);
+    const changes = panel.getByRole("region", {
+      name: "Draft changes",
+      exact: true,
+    });
+    await changes
+      .locator("summary")
+      .filter({ hasText: /^1 orchestration changes$/u })
+      .click();
+    await changes
+      .locator("summary")
+      .filter({ hasText: /Cited review guidance/u })
+      .click();
+    await changes.locator(".orchestration-provenance > summary").click();
+    await expect(
+      changes.getByText("Every three turns", { exact: true }),
+    ).toBeVisible();
+    await expect(changes.getByText(snapshotId, { exact: true })).toBeVisible();
+
+    const workspace = page.getByRole("tabpanel", { name: "Play", exact: true });
+    await workspace
+      .getByRole("button", { name: /Cited review guidance/u })
+      .click();
+    const sourceDetails = workspace.locator(".orchestration-provenance");
+    await sourceDetails.locator("summary").click();
+    await expect(
+      sourceDetails.getByText("Every three turns", { exact: true }),
+    ).toBeVisible();
+    await workspace
+      .getByRole("textbox", { name: "Prompt text", exact: true })
+      .fill("Review clue clarity and consistency.");
+    await page
+      .getByRole("button", { name: "Save local changes", exact: true })
+      .click();
+    await expect(sourceDetails.locator("summary")).toContainText(
+      /Manually edited after extraction/i,
+    );
+  } finally {
     await provider.close();
   }
 });

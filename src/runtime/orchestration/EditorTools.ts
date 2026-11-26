@@ -54,15 +54,23 @@ export interface OrchestrationEditorExtension {
   ): Promise<Record<string, string | number> | undefined>;
   read(input: {
     presetId: string;
+    sourceSnapshotId?: string | undefined;
     call: ModelHostToolCall;
     evidence: readonly unknown[];
   }): Promise<{ data: unknown; evidence?: unknown }>;
   validateProvenance(input: {
     presetId: string;
+    sourceSnapshotId?: string | undefined;
     surface: OrchestrationSurface;
     operation: EditOperation;
     evidence: readonly unknown[];
   }): Promise<unknown>;
+  validatePublication?(input: {
+    presetId: string;
+    revision: string;
+    entries: V1OrchestrationChangeSet["entries"];
+    provenance: NonNullable<V1OrchestrationChangeSet["provenance"]>;
+  }): Promise<void>;
 }
 
 export interface EditorAuthorization {
@@ -71,6 +79,7 @@ export interface EditorAuthorization {
   head: string;
   reads: EntryRead[];
   sourceEvidence: unknown[];
+  sourceSnapshotId?: string;
 }
 
 interface EditorPublication {
@@ -252,6 +261,7 @@ export async function settleEditorTools(input: {
             throw new Error("Unknown orchestration editor tool");
           const read = await input.extension.read({
             presetId: target.id,
+            sourceSnapshotId: auth.sourceSnapshotId,
             call,
             evidence: auth.sourceEvidence,
           });
@@ -309,6 +319,7 @@ export async function settleEditorTools(input: {
               throw new Error("No source provenance capability is available");
             const value = await input.extension.validateProvenance({
               presetId: target.id,
+              sourceSnapshotId: auth.sourceSnapshotId,
               surface,
               operation,
               evidence: input.authorization.sourceEvidence,
@@ -330,10 +341,23 @@ export async function settleEditorTools(input: {
         }
       }
       const entries = editorEntryDiff(before, after, locale);
-      if (entries.length === 0 && provenance.length !== 0)
+      if (
+        provenance.some(
+          ({ entryId }) =>
+            !entries.some(
+              (entry) => entry.entryId === entryId && entry.after !== null,
+            ),
+        )
+      )
         throw new Error(
           "A source annotation must accompany an actual prompt edit",
         );
+      await input.extension?.validatePublication?.({
+        presetId: target.id,
+        revision: target.revision,
+        entries,
+        provenance,
+      });
       const files =
         entries.length === 0
           ? target.files
