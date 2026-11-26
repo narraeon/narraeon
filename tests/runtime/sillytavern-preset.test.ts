@@ -441,14 +441,27 @@ it("reconnects matching original source to an old report even after an author ed
   try {
     const store = new FileNativePlayPresetStore(root);
     await store.initialize();
-    const conversion = convertSillyTavernPreset(source, {
+    const { conversion, snapshot } = prepareSillyTavernPresetImport(source, {
       name: "Old import",
       selected: ["a"],
       locale: "en",
     });
+    const reportPath = "assets/sillytavern-import-report.json";
+    const oldTargetId = "st-1";
+    const newTargetId = snapshot.entries[0]!.targetEntryId!;
+    expect(oldTargetId).not.toBe(newTargetId);
     const { preset } = await store.importPortable({
       name: "Old import",
-      files: conversion.files,
+      files: {
+        ...conversion.files,
+        [reportPath]: conversion.files[reportPath]!.replace(
+          `"targetId": "${newTargetId}"`,
+          `"targetId": "${oldTargetId}"`,
+        ),
+        "orchestration.yaml": conversion.files[
+          "orchestration.yaml"
+        ]!.replaceAll(newTargetId, oldTargetId),
+      },
     });
     await store.save({
       presetId: preset.id,
@@ -480,7 +493,7 @@ it("reconnects matching original source to an old report even after an author ed
       kind: "snapshot",
       snapshot: {
         entries: [
-          { id: "a", content: "first" },
+          { id: "a", content: "first", targetEntryId: oldTargetId },
           { id: "chatHistory" },
           { id: "b" },
         ],
