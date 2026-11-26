@@ -106,11 +106,16 @@ describe("旧格式默认提示词职责", () => {
       "zh-CN": "内容包设定用来确定“开场结束那一刻”的世界起点",
       en: "Content-package authoring defines the world at the exact moment the opening ends",
     } as const;
+    const lastingOpeningDetails = {
+      "zh-CN": "持续有效的线索和待回应事项也要写入合适的世界文档",
+      en: "Save enduring clues and matters awaiting a response in the appropriate world documents",
+    } as const;
     for (const locale of ["zh-CN", "en"] as const) {
       const contentPackage = defaultSettingImprovementPromptForLocale(locale);
       const revision = revisionSettingImprovementPromptForLocale(locale);
       expect(contentPackage).toContain(contentPackageOnly[locale]);
       expect(contentPackage).toContain(worldStart[locale]);
+      expect(contentPackage).toContain(lastingOpeningDetails[locale]);
       expect(revision).not.toContain(contentPackageOnly[locale]);
       expect(revision).not.toContain(worldStart[locale]);
       expect(revision).not.toContain("opening.md");
@@ -152,6 +157,7 @@ describe("旧格式默认提示词职责", () => {
           "下一次玩家提交可以选择“全新上下文”",
           "旧模型 transcript 不会进入那个请求",
           "全部已提交玩家原文与最终叙事",
+          "没有生效检查点时从世界起点补入，包含玩家已读的开场白",
           "具体保存时机由作者提示规定",
         ],
         state: [
@@ -172,6 +178,7 @@ describe("旧格式默认提示词职责", () => {
           "The player's next submission may choose a fresh context",
           "the old model transcript will not enter that request",
           "all committed original player inputs and final narratives",
+          "With no effective checkpoint, replay starts at the world origin with the opening already seen by the player",
           "Author instructions decide save timing",
         ],
         state: [

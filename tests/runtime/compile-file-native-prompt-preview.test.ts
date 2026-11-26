@@ -84,10 +84,10 @@ test.each([
 });
 
 test.each([
-  ["en", false, "already seen by the player"],
-  ["en", true, "already seen by the player"],
-  ["zh-CN", false, "玩家已经读过的开场白"],
-  ["zh-CN", true, "玩家已经读过的开场白"],
+  ["en", false, "# Opening already seen by the player"],
+  ["en", true, "# Opening already seen by the player"],
+  ["zh-CN", false, "# 玩家已经读过的开场白"],
+  ["zh-CN", true, "# 玩家已经读过的开场白"],
 ] as const)(
   "%s first play preview includes the opening with history slot=%s",
   (locale, historySlot, label) => {
@@ -131,7 +131,10 @@ test.each([
       .preview(request, preset)
       .compilation.logicalMessages.map(({ markdown }) => markdown)
       .join("\n");
-    expect(later).not.toContain(opening);
+    expect(later.split(opening)).toHaveLength(2);
+    expect(later.indexOf(opening)).toBeLessThan(
+      later.indexOf("Earlier action"),
+    );
     request.world.history = {};
     request.world.additionalMaterials = [];
     const empty = compiler
@@ -159,7 +162,12 @@ test.each([
       "补写完再输出正文",
     ],
     ending: "不必再添一句话来催玩家接续",
-    mechanics: ["玩家可以取消预选", "替代 frame 的 recent", "为空时"],
+    mechanics: [
+      "玩家可以取消预选",
+      "替代 frame 的 recent",
+      "为空时",
+      "没有生效检查点时从世界起点补入，包含玩家已读的开场白",
+    ],
     obsolete: [
       "最终正文后调用 world_checkpoint",
       "调用检查点意味着下一次将从全新上下文开始",
@@ -183,6 +191,7 @@ test.each([
       "the player can cancel the preselection",
       "replaces the frame's recent",
       "When it is empty",
+      "With no effective checkpoint, replay starts at the world origin and includes the opening already seen by the player",
     ],
     obsolete: [
       "Call world_checkpoint after this turn's final prose",
@@ -380,7 +389,7 @@ test("检查点原文按消息身份去重，完整保留大段和相同文本�
   const request = input({ playerInputPlacement: "append" });
   const text = "  未被写入状态的细节。".repeat(20000) + "\n\n";
   request.world.history = {
-    "message.genesis.narrator": "开场不重放",
+    "message.genesis.narrator": "玩家读过的开场",
     "message.1.1.player": "同一句输入",
     "message.2.1.narrator": text,
     "message.3.1.player": "同一句输入",
@@ -404,7 +413,7 @@ test("检查点原文按消息身份去重，完整保留大段和相同文本�
   ).toHaveLength(1);
   expect(world.markdown.split(text)).toHaveLength(2);
   expect(world.markdown.split("同一句输入")).toHaveLength(3);
-  expect(world.markdown).not.toContain("开场不重放");
+  expect(world.markdown.split("玩家读过的开场")).toHaveLength(2);
 });
 
 test.each([
@@ -2572,7 +2581,7 @@ test("历史附加材料保留作者顺序与全局位置，检查点补充去�
   expect(replay).not.toContain("position 4");
   expect(replay).toContain("remaining positions may have gaps");
   expect(replay).toContain(
-    "Explicit current world corrections take precedence",
+    "Explicit current world state and revisions take precedence",
   );
   expect(
     blocks
@@ -2637,10 +2646,10 @@ test("旧会话刷新编译仍保留冻结工具定义，新会话定义只声�
   ).not.toContain("history-message");
 });
 
-test("生产附加材料选择 genesis 提交时仍排除开场白原文", () => {
+test("附加材料选择 genesis 时，开场只通过世界起点的完整历史补入", () => {
   const request = input({ playerInputPlacement: "append" });
   request.world.history = {
-    "message.genesis.narrator": "GENESIS-MUST-NOT-BE-REPLAYED",
+    "message.genesis.narrator": "The first bell sounds.",
     "message.1.player": "An earlier action",
   };
   request.world.additionalMaterials = [
@@ -2650,12 +2659,31 @@ test("生产附加材料选择 genesis 提交时仍排除开场白原文", () =>
     request,
     builtinDefaultPlayPresetBinding(),
   ).bootstrap;
-  expect(compiled.provider.preload?.markdown).not.toContain(
-    "GENESIS-MUST-NOT-BE-REPLAYED",
-  );
+  expect(
+    compiled.provider.preload?.markdown.split("The first bell sounds."),
+  ).toHaveLength(2);
+  expect(
+    compiled.logicalMessages
+      .flatMap(({ blocks }) => blocks)
+      .filter(({ markdown }) => markdown.includes("The first bell sounds."))
+      .map(({ source }) => source),
+  ).toEqual(["runtime:checkpoint-history:message.genesis.narrator"]);
+  request.world.history["message.2.1.narrator"] = "A checkpoint.";
+  request.world.narrativeCheckpoint = {
+    head: "commit:2",
+    historyMessageId: "message.2.1.narrator",
+    contextId: "previous",
+    completedPlayerRounds: 1,
+  };
+  expect(
+    new FileNativePromptCompiler().compilePlayCallChain(
+      request,
+      builtinDefaultPlayPresetBinding(),
+    ).bootstrap.provider.preload?.markdown,
+  ).not.toContain("The first bell sounds.");
 });
 
-test.each(["recent", "additional", "checkpoint"] as const)(
+test.each(["recent", "additional", "origin"] as const)(
   "%s 历史材料与真实 Prompt Preview 使用同一已保存背景，不连续项各自可解释",
   (kind) => {
     const request = input({ playerInputPlacement: "append" });
@@ -2710,7 +2738,8 @@ test.each(["recent", "additional", "checkpoint"] as const)(
     const text = blocks.map(({ markdown }) => markdown).join("\n");
     expect(text).toContain("时间: 第一天");
     expect(text).toContain("时间: 第二天");
-    expect(text).not.toContain("时间: 起点");
+    if (kind === "origin") expect(text).toContain("时间: 起点");
+    else expect(text).not.toContain("时间: 起点");
     const entries = Object.entries(request.world.history).map(
       ([path, contents]) => ({
         path,

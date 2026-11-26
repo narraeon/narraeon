@@ -384,7 +384,7 @@ ${historyUseGuidance("en")}`,
 
 A nonempty tool-free response ends the model/tool loop started by the current player submission. A response that calls any tool is an intermediate step; its text has not yet been displayed or committed as final story. Tool results settle only those calls; subsequent steps remain in the same player submission. If further reads, adjudication or writes are needed, continue calling tools; do not repeat successful writes. When ready to finish, use the receipts to present this turn's still-unshown content in nonempty tool-free final prose consistent with committed state. Settlement does not expand the narrative scope.
 
-The player's next submission may choose a fresh context; the old model transcript will not enter that request. Fresh contexts replay all committed original player inputs and final narratives after the last effective world_checkpoint, excluding tools, reasoning, and the opening. At the story's origin, the already displayed opening is supplied separately. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
+The player's next submission may choose a fresh context; the old model transcript will not enter that request. A fresh context replays all committed original player inputs and final narratives in order after the last effective world_checkpoint. With no effective checkpoint, replay starts at the world origin with the opening already seen by the player. The first context carries that opening once. Replay excludes tools and reasoning. A checkpoint declaration takes effect only after the subsequent nonempty tool-free final prose successfully commits, including that prose in its boundary; further tool calls may follow registration. Registration neither ends an in-world event nor switches context. Author instructions decide save timing.
 
 The main call chain may not call artifact_emit or artifact_clear; those tools are reserved for follow-up requests. Runtime executes only real tool definitions, file validation, and authority commits. This block does not define story content, point of view, style, player agency, or state semantics.
 
@@ -414,7 +414,7 @@ ${historyUseGuidance("zh-CN")}`,
 
 非空且不调用工具的响应会结束本次玩家提交触发的模型／工具循环。只要响应调用了任何工具，它就是工具中间步，其中的文字尚未展示或提交为最终故事。工具结果只结算本次调用，后续仍属同一次玩家提交；若还需读取、判定或写回，可继续调用工具，不重复已成功的写入。准备结束时，根据回执用非空无工具最终正文呈现本轮尚未展示的内容，并与已提交状态一致；工具结算不扩大叙事范围。
 
-下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。新上下文会补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事，不含工具、推理和开场白。在故事起点，已展示的开场白另行提供。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
+下一次玩家提交可以选择“全新上下文”；旧模型 transcript 不会进入那个请求。全新上下文按顺序补入最近一次已生效 world_checkpoint 之后的全部已提交玩家原文与最终叙事。没有生效检查点时从世界起点补入，包含玩家已读的开场白。首次上下文也只携带一次开场白。重放不含工具和推理。检查点登记仅在随后非空且无工具调用的最终正文成功提交后生效，边界包含该正文；登记后仍可继续工具调用。登记不结束世界内事件，也不自动切换上下文。具体保存时机由作者提示规定。
 
 主调用链不能调用 artifact_emit 或 artifact_clear；这两个工具仅供后置请求使用。Runtime 只执行真实工具定义、文件校验和权威提交；本段不规定故事、人称、文风、玩家代理权或状态语义。
 
@@ -2457,9 +2457,11 @@ function resolveContext(
     ),
   );
   const excluded = new Set(input.world.historyAlreadyAppended ?? []);
+  const checkpoint = input.world.narrativeCheckpoint;
   const opening =
     input.world.replayHistory === true &&
     input.playerInputPlacement === "append" &&
+    checkpoint === undefined &&
     history.messages.length === 1 &&
     history.messages[0]?.isOpening &&
     !excluded.has(history.messages[0].id)
@@ -2475,14 +2477,10 @@ function resolveContext(
           : "# Opening already seen by the player\n\nThis committed historical original was shown before the player's first action; do not replay it. Explicit current world state and revisions take precedence.") +
         `\n\n${renderHistoryMessage(opening, locale)}`,
     });
-  const checkpointEntries =
-    input.world.replayHistory === true
-      ? checkpointHistory(
-          input.world.history ?? {},
-          input.world.narrativeCheckpoint,
-        )
+  const historyToReplay =
+    input.world.replayHistory === true && opening === undefined
+      ? checkpointHistory(history.messages, checkpoint)
       : [];
-  const replayEntries = checkpointEntries.filter(([id]) => !excluded.has(id));
   for (const entry of context) {
     const selectionStart = selected.length;
     const slot = isRecord(entry) && isRecord(entry.slot) ? entry.slot : null;
@@ -2506,7 +2504,7 @@ function resolveContext(
       resolveReferenceTargets(slot, snapshot, selected, coverage, locale);
     else if (slot.kind === "catalog")
       resolveCatalog(slot, snapshot, selected, coverage, locale);
-    else if (slot.kind === "history" && checkpointEntries.length > 0) continue;
+    else if (slot.kind === "history" && historyToReplay.length > 0) continue;
     else if (slot.kind === "history")
       resolveRecentHistory(
         slot,
@@ -2563,37 +2561,26 @@ function resolveContext(
       source: "runtime:player-view-bindings",
       markdown: bindings,
     });
-  if (checkpointEntries.length > 0) {
-    const selectedIds = new Set(
-      selected.flatMap(({ key }) =>
-        key.startsWith("history_message:")
-          ? [key.slice("history_message:".length)]
-          : [],
-      ),
-    );
-    const entries = replayEntries.filter(([id]) => !selectedIds.has(id));
-    const deduplicatedReplay = checkpointReplayBlocks(
-      input.world.history ?? {},
-      input.world.narrativeCheckpoint,
-      locale,
-      new Set([...excluded, ...selectedIds]),
-      history,
-    );
+  if (historyToReplay.length > 0) {
+    const entries = historyToReplay.filter(({ id }) => !excluded.has(id));
     selected.push(
-      ...deduplicatedReplay.map((block, index) => ({
-        ...block,
-        key:
-          index === 0
-            ? "history:checkpoint-notice"
-            : `history_message:${entries[index - 1]![0]}`,
-      })),
+      ...checkpointReplayBlocks(
+        history.messages.length,
+        entries,
+        checkpoint,
+        locale,
+      ),
     );
     coverage.push({
       slot: "checkpoint_history",
       source:
-        locale === "zh-CN"
-          ? `检查点后的 ${entries.length} 条已提交原文`
-          : `${entries.length} committed messages after checkpoint`,
+        checkpoint === undefined
+          ? locale === "zh-CN"
+            ? `从世界起点补入 ${entries.length} 条已提交原文`
+            : `${entries.length} committed messages from the world origin`
+          : locale === "zh-CN"
+            ? `检查点后的 ${entries.length} 条已提交原文`
+            : `${entries.length} committed messages after checkpoint`,
       status: "resolved",
       complete: true,
       continuation: null,

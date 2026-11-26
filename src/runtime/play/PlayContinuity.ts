@@ -1,4 +1,4 @@
-import { HistoryQuery, historyInputs } from "../history/HistoryQuery.ts";
+import type { HistoryMessage } from "../history/HistoryQuery.ts";
 import {
   renderHistoryMessage,
   renderHistoryInjectionNotice,
@@ -36,25 +36,20 @@ export function completedPlayerRounds(
 }
 
 export function checkpointHistory(
-  history: Readonly<Record<string, string>>,
+  history: readonly HistoryMessage[],
   checkpoint?: NarrativeCheckpoint,
-): [string, string][] {
-  const entries = Object.entries(history);
-  const cutoff =
-    checkpoint === undefined
-      ? -1
-      : entries.findIndex(
-          ([id]) =>
-            id === checkpoint.historyMessageId ||
-            id.endsWith(`.${checkpoint.historyMessageId}`),
-        );
-  if (checkpoint !== undefined && cutoff < 0)
+): readonly HistoryMessage[] {
+  if (checkpoint === undefined) return history;
+  const cutoff = history.findIndex(
+    ({ id }) =>
+      id === checkpoint.historyMessageId ||
+      id.endsWith(`.${checkpoint.historyMessageId}`),
+  );
+  if (cutoff < 0)
     throw new Error(
       "The narrative checkpoint is not reachable in this history.",
     );
-  return entries
-    .slice(cutoff + 1)
-    .filter(([id]) => !id.includes("message.genesis"));
+  return history.slice(cutoff + 1);
 }
 
 /** Retain released markers when reconstructing frozen transcript prefixes. */
@@ -122,34 +117,31 @@ export function playerInputAppend(
 }
 
 export function checkpointReplayBlocks(
-  history: Readonly<Record<string, string>>,
+  total: number,
+  entries: readonly HistoryMessage[],
   checkpoint: NarrativeCheckpoint | undefined,
   locale: AppLocale,
-  excluded: ReadonlySet<string> = new Set(),
-  snapshot = new HistoryQuery(
-    "checkpoint-replay",
-    historyInputs(
-      Object.entries(history).map(([path, contents]) => ({ path, contents })),
-    ),
-  ),
-): PromptCompilation["logicalMessages"][number]["blocks"] {
-  const eligible = checkpointHistory(history, checkpoint);
-  if (eligible.length === 0) return [];
-  const ids = new Set(
-    eligible.filter(([id]) => !excluded.has(id)).map(([id]) => id),
-  );
-  const entries = snapshot.messages.filter(({ id }) => ids.has(id));
+): { key: string; source: string; markdown: string }[] {
   const zh = locale === "zh-CN";
+  const fromOrigin = checkpoint === undefined;
+  const introduction = fromOrigin
+    ? zh
+      ? "# 从世界起点补入的已提交原文\n\n当前时间线尚无生效检查点，从世界起点按顺序补入已提交历史。开场白是玩家已经读过的第一段叙事。"
+      : "# Committed history from the world origin\n\nThis timeline has no effective checkpoint, so committed history is supplied in order from the world origin. The opening is the first narrative already seen by the player."
+    : zh
+      ? "# 检查点后的已提交原文\n\n以下是当前时间线上最近一次已生效检查点之后的玩家原文与最终主持叙事。"
+      : "# Committed history after the checkpoint\n\nThese are the current timeline’s original player inputs and final narratives after its last effective checkpoint.";
+  const guidance = zh
+    ? "部分结果可能已写入当前文档；这些记录用于核对连续性，已发生的事件无需重演。以当前明确的世界状态与修订为准。"
+    : "Some results may already be in current documents. Use these records to maintain continuity. Do not reenact past events. Explicit current world state and revisions take precedence over old narrative.";
   return [
     {
+      key: "history:checkpoint-notice",
       source: "runtime:checkpoint-history:notice",
-      markdown:
-        (zh
-          ? "# 检查点后的已提交原文\n\n以下是当前时间线上最近一次已生效检查点之后的玩家原文与最终主持叙事；尚无检查点时从世界起点选取，开场白除外。部分结果可能已写入当前文档；这些记录用于核对连续性，不代表需要再次执行其中的事件。当前明确的世界修订优先，不能用旧叙事推翻修订。"
-          : "# Committed history after the checkpoint\n\nThese are the current timeline’s original player inputs and final narratives after its last effective checkpoint (or the world origin if none, excluding the opening). Some results may already be in current documents. These records support continuity, not repeated execution. Explicit current world corrections take precedence over old narrative.") +
-        `\n\n${renderHistoryInjectionNotice(snapshot.messages.length, entries, "checkpoint", locale)}`,
+      markdown: `${introduction} ${guidance}\n\n${renderHistoryInjectionNotice(total, entries, "replay", locale)}`,
     },
     ...entries.map((message) => ({
+      key: `history_message:${message.id}`,
       source: `runtime:checkpoint-history:${message.id}`,
       markdown: renderHistoryMessage(message, locale),
     })),

@@ -63,7 +63,7 @@ content-package 的本地标题 -> 新世界的初始本地名称
 
 ### 3.2 `opening.md`、`bindings.currentSituation` 与文档模型
 
-- **`opening.md`**：根级唯一非空 UTF-8 Markdown（无 `$document` 头）。故事逻辑起点的首次游玩 bootstrap 直接携带完整原文一次并标明玩家已读；后期全新上下文不自动注入，且始终排除于 `recent` 与附加材料。
+- **`opening.md`**：根级唯一非空 UTF-8 Markdown（无 `$document` 头）。故事逻辑起点的首次游玩 bootstrap 直接携带完整原文一次并标明玩家已读；当前时间线没有生效检查点时，后续全新上下文从已保存的开场白开始按顺序补入已提交叙事。`recent` 与附加材料始终排除开场白。持续有效的线索与待回应事项由作者写入适当的世界文档。
 - **`bindings.currentSituation`**：每个世界必须精确绑定一份开放的**当前情境**文档承接短期局面，职责不由路径、ref 或标题猜测。受限 YAML 当前情境可选用精确顶层 `背景` 或 `background` 字段供 Runtime 随叙事不可变采集。两键并存时以 `背景` 为准（[ADR-0041](adr/0041-history-captures-optional-situation-background.md)）。
 - **受限 YAML／MD 与 `$document` 五项头**：开放对象默认受限 YAML，长篇规则与块默认 Markdown，一文一自然所有者；模型始终阅读确定性 Markdown 渲染结果。可引用文档仅保留五项 `$document` 技术头：世界内不可变 `id`（模型侧隐藏）、唯一公开短引用 `ref`（模型侧写 `@ref`）、`title`、`summary`、`aliases`。
 - **`$ref` 与逻辑节点**：单键 `{ $ref: ... }` 是唯一机械文档引用且只指整份文档，裸字符串永远只是文字。局部读写使用「文档 + YAML 路径／Markdown 标题路径」的逻辑节点；`frame.yaml`／`player-views.yaml` 持久选择器不得依赖数组下标，单次 patch 可用 0 起下标精确改删。

@@ -6130,12 +6130,12 @@ test.each([
   },
 );
 
-function playNarrativeResponse(): Response {
+function playNarrativeResponse(text = "Alex nods."): Response {
   return new Response(
     JSON.stringify({
       choices: [
         {
-          message: { role: "assistant", content: "Alex nods." },
+          message: { role: "assistant", content: text },
           finish_reason: "stop",
         },
       ],
@@ -6143,6 +6143,84 @@ function playNarrativeResponse(): Response {
     { headers: { "Content-Type": "application/json" } },
   );
 }
+
+test("全新游玩与对应预览按顺序各带一次已提交开场白和叙事", async () => {
+  const { root, worldId, runtime } = await createRuntimeWithModel(
+    "fresh-opening-history",
+  );
+  const worlds = new FileNativeWorldStore(root);
+  const opening = (await worlds.recoverEndpoint(worldId)).history[0]!.exactText;
+  const action = "I wait by the lamp.";
+  const prose = "Alex nods.";
+  const secondAction = "I set the lamp down.";
+  const secondProse = "Alex opens the door.";
+  const requests: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async (_url, options) => {
+      const body = JSON.parse(options?.body as string) as {
+        messages: { content: string | null }[];
+      };
+      requests.push(body.messages.map(({ content }) => content).join("\n"));
+      return playNarrativeResponse(requests.length === 2 ? secondProse : prose);
+    }),
+  );
+
+  const send = (target: V1Runtime, chainId: string, playerText: string) =>
+    target.handle({
+      type: "play.chain.start",
+      worldId,
+      chainId,
+      exchangeId: chainId,
+      playerText,
+    });
+  const first = (await send(runtime, "first", action))
+    .result as V1PlayCallChainView;
+  expect(requests[0]!.split(opening)).toHaveLength(2);
+  expect(first.status).toBe("ready");
+  const second = (
+    await runtime.handle({
+      type: "play.chain.append",
+      worldId,
+      chainId: first.chainId,
+      exchangeId: "second",
+      playerText: secondAction,
+    })
+  ).result as V1PlayCallChainView;
+  expect(second.status).toBe("ready");
+  expect(requests[1]!.split(opening)).toHaveLength(2);
+  expect(requests[1]!.split(prose)).toHaveLength(2);
+
+  // A revision advances the current endpoint, so the read endpoint previews
+  // an actual fresh context rather than the still-appendable native session.
+  await advanceOutsidePlay(worlds, worldId, "before-fresh", second.parentHead);
+  const restarted = new V1Runtime({
+    dataRoot: root,
+    configRoot: join(root, "config"),
+  });
+  await restarted.initialize();
+  const reading = (
+    await restarted.handle({ type: "world.play-context.read", worldId })
+  ).result as V1PlayContextReadingView;
+  expect(reading.nextFreshContext?.contextMode).toBe("fresh");
+  expect(requests).toHaveLength(2);
+  const preview = reading.nextFreshContext!.preview.compilation.logicalMessages
+    .filter(({ role }) => role === "world_context")
+    .map(({ markdown }) => markdown)
+    .join("\n\n");
+  await send(restarted, "fresh", "I move closer.");
+  expect(requests).toHaveLength(3);
+
+  for (const material of [preview, requests[2]!]) {
+    const originals = [opening, action, prose, secondAction, secondProse];
+    for (const original of originals)
+      expect.soft(material.split(original), original).toHaveLength(2);
+    const positions = originals.map((original) => material.indexOf(original));
+    expect(positions).toEqual(positions.toSorted((a, b) => a - b));
+    expect.soft(material).toContain("isOpening=true");
+  }
+  expect(requests[2]).toContain(preview);
+});
 
 async function createRuntimeWithModel(label: string) {
   const { root, worldId } = await createWorld(label);
@@ -6698,7 +6776,7 @@ test("协议拒绝无界时间线分页、空游标、非法详情事件与未�
     ).toThrow();
 });
 
-test("没有 history slot 的首发和原样重试携带开场，后期全新上下文不自动注入", async () => {
+test("没有 history slot 时首发、原样重试和检查点前的新上下文各携带一次开场", async () => {
   const files = worldFiles().map((file) =>
     file.path === "control/frame.yaml"
       ? {
@@ -6787,7 +6865,14 @@ test("没有 history slot 的首发和原样重试携带开场，后期全新上
     modelBinding: modelBinding(),
     modelHost,
   });
-  expect(worldText(2)).not.toContain("门外传来三声短促的铃响。");
+  const fresh = worldText(2);
+  expect(fresh.split("门外传来三声短促的铃响。\n")).toHaveLength(2);
+  expect(fresh.indexOf("门外传来三声短促的铃响。")).toBeLessThan(
+    fresh.indexOf("I knock."),
+  );
+  expect(fresh.indexOf("I knock.")).toBeLessThan(
+    fresh.indexOf("The door opens."),
+  );
   const fork = await chains.deriveWorld({
     operationId: "opening-fork-origin",
     sourceWorldId: worldId,
@@ -7229,10 +7314,115 @@ test("整理检查点随最终叙事提交，冷启动保留边界并补入跨�
     "  你拿起窗边的蓝色花瓶。\n",
   );
   expect(JSON.stringify(replay)).not.toContain("我们结束讨论");
+  expect(JSON.stringify(replay)).not.toContain("门外传来三声短促的铃响。");
   expect(JSON.stringify(replay)).not.toContain("world_checkpoint");
   expect(JSON.stringify(thirdHost.requests[0]?.appended)).not.toContain(
     "checkpoint_rounds",
   );
+});
+
+test("登记检查点后以所选时间线判断，未生效、早期分叉和回退均保留开场白", async () => {
+  const { worlds, worldId } = await createWorld("opening-checkpoint-reach");
+  const chains = new PlayCallChain(worlds);
+  const preset = playPreset();
+  const binding = modelBinding();
+  const start = (id: string, modelHost: ScriptedModelHost, target = worldId) =>
+    chains.start({
+      worldId: target,
+      chainId: id,
+      exchangeId: id,
+      playerText: `Player action for ${id}.`,
+      playPreset: preset,
+      hostBinding: hostBinding(),
+      modelBinding: binding,
+      modelHost,
+    });
+  const host = new ScriptedModelHost({
+    binding,
+    steps: [
+      { outcome: "response", text: "The first story remains." },
+      {
+        outcome: "response",
+        toolCalls: [{ id: "pending", name: "world_checkpoint", arguments: {} }],
+      },
+      { outcome: "failure", message: "Checkpoint prose could not finish." },
+      { outcome: "response", text: "The closing story becomes a checkpoint." },
+    ],
+  });
+  const before = await start("first-round", host);
+  const interrupted = await start("checkpoint-round", host);
+  expect(interrupted).toMatchObject({
+    status: "interrupted",
+    events: expect.arrayContaining([
+      expect.objectContaining({
+        kind: "tool_result",
+        callId: "pending",
+        ok: true,
+      }),
+    ]) as unknown,
+  });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint,
+  ).toBeUndefined();
+  const replayFromFork = async (id: string, sourceHead: string) => {
+    const fork = await chains.deriveWorld({
+      sourceWorldId: worldId,
+      sourceHead,
+      operationId: id,
+      hostPresetId: preset.id,
+    });
+    const fresh = new ScriptedModelHost({
+      binding,
+      steps: [{ outcome: "response", text: "A different ending." }],
+    });
+    await start(id, fresh, fork.world.worldId);
+    return fresh.requests[0]!.bootstrap.provider.preload!.markdown;
+  };
+  const pending = await replayFromFork("pending-fork", interrupted.parentHead);
+  const opening = "门外传来三声短促的铃响。\n";
+  expect(pending.split(opening)).toHaveLength(2);
+  expect(pending).toContain("Player action for checkpoint-round.");
+  const completed = await chains.append({
+    worldId,
+    chainId: interrupted.chainId,
+    exchangeId: "checkpoint-retry",
+    playerText: "",
+    modelHost: host,
+  });
+  expect(
+    (await worlds.recoverEndpoint(worldId)).narrativeCheckpoint?.head,
+  ).toBe(completed.parentHead);
+  const early = await replayFromFork("early-fork", before.parentHead);
+  expect(early.split(opening)).toHaveLength(2);
+  expect(early).toContain("The first story remains.");
+  expect(early).not.toContain("Player action for checkpoint-round.");
+
+  const revised = new ScriptedModelHost({
+    binding,
+    steps: [{ outcome: "response", text: "The new branch stays open." }],
+  });
+  await chains.reviseAndAppend(
+    {
+      operationId: "rewind-checkpoint",
+      worldId,
+      chainId: interrupted.chainId,
+      eventId: completed.events.find(({ kind }) => kind === "player")!.id,
+      replacementExchangeId: "replacement",
+      replacementText: "I keep the conversation going.",
+      continuation: "fresh_context",
+      freshContext: {
+        playPreset: preset,
+        hostBinding: hostBinding(),
+        modelBinding: binding,
+      },
+    },
+    revised,
+    () => Promise.resolve({ hostBinding: hostBinding(), playPreset: preset }),
+  );
+  const material = revised.requests[0]!.bootstrap.provider.preload!.markdown;
+  expect(material.split(opening)).toHaveLength(2);
+  expect(material).toContain("The first story remains.");
+  expect(material).not.toContain("The closing story becomes a checkpoint.");
 });
 
 test.each(
@@ -7363,8 +7553,18 @@ test.each(
     );
     expect(materials).toContain(feedback);
     expect(materials).not.toContain(intermediate);
-    if (legacyCheckpoint) expect(materials).not.toContain(final);
-    else expect(materials).toContain(final);
+    if (legacyCheckpoint) {
+      expect(materials).not.toContain(final);
+      expect(materials).not.toContain("门外传来三声短促的铃响。");
+    } else {
+      expect(materials).toContain(final);
+      expect(materials.split("门外传来三声短促的铃响。\n")).toHaveLength(2);
+      expect(materials).toContain(
+        locale === "en"
+          ? "The opening is the first narrative already seen by the player."
+          : "开场白是玩家已经读过的第一段叙事。",
+      );
+    }
     const replay = bootstrap.logicalMessages
       .flatMap(({ blocks }) => blocks)
       .filter(({ source }) => source.startsWith("runtime:checkpoint-history"));

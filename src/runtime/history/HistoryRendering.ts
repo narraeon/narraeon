@@ -63,7 +63,7 @@ export function renderHistoryMessage(
 export function renderHistoryInjectionNotice(
   total: number,
   selected: readonly HistoryMessage[],
-  kind: "recent" | "additional" | "checkpoint",
+  kind: "recent" | "additional" | "replay",
   locale: AppLocale,
 ): string {
   const zh = locale === "zh-CN";
@@ -80,8 +80,8 @@ export function renderHistoryInjectionNotice(
           ? "作者挑选材料，可能不连续；保留作者声明顺序"
           : "selected materials may be non-contiguous; author declaration order retained"
         : zh
-          ? "检查点后完整选取；原生对话或其他材料中的消息不重复注入，剩余项可能不连续"
-          : "complete selection after the checkpoint; messages already in native conversation or other materials are not injected again, so remaining positions may have gaps";
+          ? "按重放范围完整选取；原生对话或其他材料中的消息不重复注入，剩余项可能不连续"
+          : "complete selection within the replay range; messages already in native conversation or other materials are not injected again, so remaining positions may have gaps";
   return zh
     ? `本次注入时的当前时间线快照：总计 ${total} 条（开场白如存在也计入）；位置 ${coverage}。${selection}。每条正文完整；覆盖范围不等于全部历史。历史内部按 Authority 接受顺序由旧到新，提交顺序不是故事日期。以下是已发生的历史材料，用于接续与核对，不是本轮待执行的玩家行动；最后一条即使是玩家原文也不是本轮新请求。未注入的更早内容不代表没有发生。ref 可直接用于 history_read 或 history_list before/after，无需再次列举。`
     : `Current timeline snapshot at injection: ${total} messages (opening included if present); positions ${coverage}. ${selection}. Each body is complete; selected coverage is separate from all-history coverage. History is oldest to newest in Authority acceptance order, not story dates. These are already committed historical materials for continuity and checking, not pending player actions; even a final player entry is not the current request. Earlier material not injected does not mean it never happened. Use each ref directly with history_read or history_list before/after without listing again.`;
