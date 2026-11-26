@@ -6157,12 +6157,14 @@ test("全新游玩与对应预览按顺序各带一次已提交开场白和叙�
   const requests: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn<typeof fetch>(async (_url, options) => {
+    vi.fn<typeof fetch>((_url, options) => {
       const body = JSON.parse(options?.body as string) as {
         messages: { content: string | null }[];
       };
       requests.push(body.messages.map(({ content }) => content).join("\n"));
-      return playNarrativeResponse(requests.length === 2 ? secondProse : prose);
+      return Promise.resolve(
+        playNarrativeResponse(requests.length === 2 ? secondProse : prose),
+      );
     }),
   );
 
