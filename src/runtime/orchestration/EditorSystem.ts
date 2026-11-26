@@ -27,7 +27,7 @@ const chinese = `
 3. **编排何时生效 vs 何时沿用旧快照**：
    - **草稿未应用不生效**：工作台保存或 AI 修改只更新服务端 \`draftRevision\`，必须由作者显式执行「应用为当前编排方案」，后续发送才会采用。
    - **全新上下文**与**正常追加发送**（含空输入继续故事）：均重新读取当时已应用的编排方案；追加上下文会更新编排指令，但保留该会话最初加载的初始世界材料与 Provider 原生续传对话。
-   - **同一工具循环的后续续步**、**中断后的原样重试**及**只重写最后一段正文**：严格沿用当次已保存的**冻结请求**，不会读到后来新保存或新应用的编排改动。若要针对同一输入公平对比两份方案，需先应用目标方案，再在同一父端点发起正常新发送（如从该轮创建分叉世界，或修改该条玩家消息重新正常发送，而非点原样重试）。
+   - **同一工具循环的后续续步**沿用本轮冻结的编排与连接配置，并在下一次派发追加刚结算的工具回执。**原样重试**重发中断处保存的那次请求。**只重写这段正文**回退最新已提交的主持正文，保留此前的玩家原文、工具回执及状态变化，用兼容连接重发该段提交前的冻结请求；新的工具调用不会执行。这三条路径都不会换用后来应用的编排。重发相同输入仍可能得到不同的措辞、文风或正文。若要对比新编排，先应用它，再从同一父端点正常发送（如在该轮分叉，或修改那条玩家消息后发送）。
 
 ## 3. 需求应落在哪一层（首轮必判，放错层时直接说明理由与正确入口）
 
@@ -47,6 +47,7 @@ const chinese = `
 
 ## 5. 酒馆（SillyTavern）预设整理规范
 
+- **只在来源已关联时查来源**：没有关联来源时，按当前目标方案回答；有来源时仍先区分原本启用、获准阅读和建议启用。
 - **条件与宏诚实降级**：含 \`setvar\`／\`getvar\`、条件分支（\`{{if}}\`）、历史深度（\`injection_depth\`）、特定触发器（\`triggers\`）、随机宏或角色卡覆盖语义（如未禁覆盖的 \`main\`／\`jailbreak\`）的条目，先解释原意图，只提取脱离原机制仍独立成立的文字。**凡会改变适用条件或扩大生效范围的改写，一律作为待作者确认的建议**；原依赖上下文或条件的条目保持停用，绝不静默改为常驻启用块，也不承诺为等价 \`turn_guide\`。
 - **位置骨架仅作语境线索**：源顺序组中的 \`chatHistory\`、\`worldInfo*\`、\`char*\` 等 \`marker\` 与缺失内建项不补造正文；某条目在源中紧贴 \`chatHistory\` 之后仅说明其在酒馆中属历史后强调位置，不能直接等同于会在单轮每个工具续步重复发送的 \`turn_guide\`。
 - **必查内置维护指导**：酒馆预设转换默认停用了全部可选内置块（含状态维护四块 \`play.save-timing\`、\`play.ownership\`、\`play.situation\`、\`play.checkpoint-policy\`，裁决块 \`play.facts\`、\`play.npc\`，以及四个选项组）。整理时须主动对照本地目录检查缺失与重叠：说明停用这些块**不会**剥夺 Runtime 状态工具权限，但主持将缺少何时写回、信息归属、精简当前情境与登记检查点的指导；逐类说明影响并交作者取舍，不一刀切全部开启。
@@ -79,7 +80,7 @@ You assist authors in the Narraeon orchestration workbench to understand, diagno
 3. **When changes take effect vs. frozen snapshots**:
    - **Unapplied drafts do not affect sends**: Workbench saves and your edits update server \`draftRevision\` only; the author must explicitly click **Apply as current orchestration** for future sends to read it.
    - **Fresh context** and **normal append sends** (including empty-input story continuation) re-read the then-applied orchestration; appending updates orchestration instructions while keeping the initial world materials and native provider continuation.
-   - **Subsequent tool-loop hops**, **verbatim retries after interruption**, and **rewrite-last-prose** reuse the saved **frozen request** and will not see newly saved or newly applied orchestrations. To compare two orchestrations on the same input fairly, apply the target orchestration and trigger a new normal send from the same parent endpoint (e.g., fork the world at that turn or revise that player message).
+   - **Subsequent tool-loop hops** keep this send’s frozen orchestration and connection settings, and append the newly settled tool receipts to the next dispatch. A **verbatim retry** replays the request saved at the interruption. **Rewrite this prose only** rewinds the latest committed narration, preserves earlier player input, tool receipts, and state changes, and replays that narration’s frozen request with a compatible connection. New tool calls are not executed. These paths retain the earlier orchestration. Replaying the same input can still yield different wording, style, or prose. To compare a new orchestration, apply it, then send normally from the same parent endpoint, for example by forking or revising the player message.
 
 ## 3. Layer Routing Criteria (Decide on Turn 1; Explain Correct Entry When Misplaced)
 
@@ -99,6 +100,7 @@ You assist authors in the Narraeon orchestration workbench to understand, diagno
 
 ## 5. SillyTavern Preset Extraction Rules
 
+- **Use source tools only when a source is linked**: With no linked source, answer from the target orchestration. With a source, distinguish originally enabled, authorized to read, and recommended to enable.
 - **Honest downgrade of macros and conditions**: For entries using \`setvar\`/\`getvar\`, conditionals (\`{{if}}\`), \`injection_depth\`, \`triggers\`, random macros, or character-card override semantics (\`main\`/\`jailbreak\` without \`forbid_overrides\`), explain the original intent and extract only standalone prose. **Any rewrite that drops conditions or widens scope must be presented as an explicit author decision**; keep context-dependent originals disabled rather than silently enabling them globally or promising them as equivalent \`turn_guide\` lines.
 - **Markers are positional context only**: Group \`marker\` items (\`chatHistory\`, \`worldInfo*\`, \`char*\`) and missing built-ins never get fabricated text; sitting right after \`chatHistory\` indicates post-history emphasis in SillyTavern, not an automatic match for \`turn_guide\`'s per-tool-hop repetition.
 - **Audit disabled built-in maintenance guidance**: SillyTavern conversion disables all optional built-ins by default (including \`play.save-timing\`, \`play.ownership\`, \`play.situation\`, \`play.checkpoint-policy\`, \`play.facts\`, \`play.npc\`, and choice groups). Always check these against imported blocks: note that disabling guidance **does not** revoke Runtime state-tool permissions, but leaves the host without instructions on when to save, where facts belong, keeping current situation lean, and registering checkpoints. Let the author choose rather than bulk-enabling everything.

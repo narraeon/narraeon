@@ -488,7 +488,13 @@ it("reconnects matching original source to an old report even after an author ed
         source.replace('"first"', '"impostor"'),
       ),
     ).rejects.toThrow("does not match");
+    const copy = (await store.copy(preset.id)).preset;
+    expect(await store.readSillyTavernSource(copy.id)).toMatchObject({
+      kind: "legacy",
+    });
+    const copySource = await store.associateSillyTavernSource(copy.id, source);
     const restored = await store.associateSillyTavernSource(preset.id, source);
+    expect(copySource).toEqual(restored);
     expect(restored).toMatchObject({
       kind: "snapshot",
       snapshot: {

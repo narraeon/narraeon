@@ -1,10 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { V1OrchestrationChangeSet } from "../../protocol/orchestrationSession.ts";
 import { validAuthoringRequests } from "../authoring/AuthoringRequestSnapshot.ts";
 import type { ModelToolConversationState } from "../authoring/ModelToolConversation.ts";
-import type { ModelHostAppendItem, ModelHostToolCall } from "../model/ModelHost.ts";
+import type {
+  ModelHostAppendItem,
+  ModelHostToolCall,
+} from "../model/ModelHost.ts";
 import { validPromptCompilation } from "../prompt/PromptCompilationCodec.ts";
 import { RuntimeDomainError } from "../RuntimeDomainError.ts";
 import type { EditorAuthorization } from "./EditorTools.ts";
@@ -70,11 +80,17 @@ export class EditorSessionStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    const sessions = await Promise.all(entries
-      .filter((entry) => entry.endsWith(".json"))
-      .map((entry) => this.read(presetId, entry.slice(0, -5))));
-    return sessions.sort((a, b) => b.updatedAt - a.updatedAt ||
-      b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId));
+    const sessions = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map((entry) => this.read(presetId, entry.slice(0, -5))),
+    );
+    return sessions.sort(
+      (a, b) =>
+        b.updatedAt - a.updatedAt ||
+        b.createdAt - a.createdAt ||
+        b.sessionId.localeCompare(a.sessionId),
+    );
   }
 
   async read(presetId: string, id: string): Promise<EditorSessionState> {
@@ -95,12 +111,18 @@ export class EditorSessionStore {
       session.sessionId !== id ||
       session.presetId !== presetId ||
       typeof session.creationRequestId !== "string" ||
-      typeof session.createdAt !== "number" || typeof session.updatedAt !== "number" ||
-      !["ready", "running", "paused", "interrupted"].includes(String(session.runStatus)) ||
+      typeof session.createdAt !== "number" ||
+      typeof session.updatedAt !== "number" ||
+      !["ready", "running", "paused", "interrupted"].includes(
+        String(session.runStatus),
+      ) ||
       !validPromptCompilation(session.bootstrap) ||
-      !Array.isArray(session.messages) || !Array.isArray(session.modelItems) ||
-      !Array.isArray(session.completedRequestIds) || !Array.isArray(session.changes) ||
-      typeof session.authorization !== "object" || session.authorization === null ||
+      !Array.isArray(session.messages) ||
+      !Array.isArray(session.modelItems) ||
+      !Array.isArray(session.completedRequestIds) ||
+      !Array.isArray(session.changes) ||
+      typeof session.authorization !== "object" ||
+      session.authorization === null ||
       !validAuthoringRequests(session.requests, validPromptCompilation, {
         modelItems: session.modelItems,
         activeRequestId: session.activeRequestId,
@@ -108,16 +130,23 @@ export class EditorSessionStore {
         extended: true,
         independent: true,
       })
-    ) throw new Error("Invalid persisted orchestration conversation");
+    )
+      throw new Error("Invalid persisted orchestration conversation");
     return session as unknown as EditorSessionState;
   }
 
   async save(session: EditorSessionState): Promise<void> {
     const path = this.#path(session.presetId, session.sessionId);
     const temporary = `${path}.${randomUUID()}.tmp`;
-    await mkdir(this.#directory(session.presetId), { mode: 0o700, recursive: true });
+    await mkdir(this.#directory(session.presetId), {
+      mode: 0o700,
+      recursive: true,
+    });
     try {
-      await writeFile(temporary, JSON.stringify(session), { mode: 0o600, flag: "wx" });
+      await writeFile(temporary, JSON.stringify(session), {
+        mode: 0o600,
+        flag: "wx",
+      });
       await rename(temporary, path);
     } finally {
       await rm(temporary, { force: true });
@@ -143,9 +172,10 @@ export class EditorSessionStore {
   }
 
   #path(presetId: string, id: string): string {
-    if (!sessionIdFormat.test(id)) throw new RuntimeDomainError("Invalid orchestration session identity", {
-      receipt: { code: "invalid_request" },
-    });
+    if (!sessionIdFormat.test(id))
+      throw new RuntimeDomainError("Invalid orchestration session identity", {
+        receipt: { code: "invalid_request" },
+      });
     return join(this.#directory(presetId), `${id}.json`);
   }
 
