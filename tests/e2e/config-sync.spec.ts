@@ -406,10 +406,14 @@ for (const embedded of [false, true])
     const preview = page.locator(
       embedded ? ".orchestration-preview" : ".prompt-preview-screen",
     );
-    const generate = embedded ? "生成编排预览" : "生成真实预览";
+    const generate = "生成真实预览";
     const resultTitle = embedded ? "预览结果" : "编译通过";
-    await preview.getByRole("button", { name: generate, exact: true }).click();
+    if (!embedded)
+      await preview
+        .getByRole("button", { name: generate, exact: true })
+        .click();
     await held.promise;
+    offline = true;
     if (embedded) await preview.getByLabel("预览玩法").selectOption("d20");
     else
       await preview
@@ -419,8 +423,10 @@ for (const embedded of [false, true])
     await expect(
       preview.getByRole("heading", { name: resultTitle, exact: true }),
     ).toHaveCount(0);
-    offline = true;
-    await preview.getByRole("button", { name: generate, exact: true }).click();
+    if (!embedded)
+      await preview
+        .getByRole("button", { name: generate, exact: true })
+        .click();
     await expect(
       preview.getByText("暂时无法同步", { exact: true }),
     ).toBeVisible();

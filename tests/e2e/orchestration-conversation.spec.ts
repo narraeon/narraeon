@@ -275,7 +275,9 @@ test("AI editing switches to the author surface on mobile and opens saved reques
       name: "AI orchestration editing",
       exact: true,
     });
-    await expect(panel.getByText(/Setting improvement/)).toBeVisible();
+    await expect(
+      panel.getByText(/Setting improvement and world revision/),
+    ).toBeVisible();
     const composer = panel.getByRole("textbox", {
       name: "Message to the orchestration assistant",
     });
@@ -330,6 +332,18 @@ test("AI editing switches to the author surface on mobile and opens saved reques
     await display.getByRole("button", { name: "Orchestration" }).click();
     await expect(
       page.getByRole("button", { name: "Add prompt", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Interface language", exact: true })
+      .selectOption("zh-CN");
+    await page
+      .getByRole("navigation", { name: "编排编辑视图", exact: true })
+      .getByRole("button", { name: "对话", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("region", { name: "编排方案 AI 编辑", exact: true })
+        .getByText(/设定完善与世界修订/),
     ).toBeVisible();
   } finally {
     await provider.close();

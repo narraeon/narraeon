@@ -8,6 +8,7 @@ let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
   "AI 编辑": "AI editing",
+  设定完善与世界修订: "Setting improvement and world revision",
   编排编辑视图: "Orchestration editing views",
   编排: "Orchestration",
   对话: "Conversation",
@@ -71,7 +72,6 @@ const englishMessages: Record<string, string> = {
   创作目标: "Authoring target",
   连接条件: "Connection",
   无连接: "No connection",
-  生成编排预览: "Generate orchestration preview",
   "表单和原文均有修改。保留其中一种修改后，即可预览未保存版本。":
     "Both the form and source changed. Keep one set of edits to preview the unsaved version.",
   预览结果: "Preview result",
