@@ -172,6 +172,12 @@ const requiredFields = {
   "play.sillytavern.source.read": { presetId: text },
   "play.sillytavern.source.associate": { presetId: text, source: text },
   "play.workbench.read": {},
+  "play.orchestration.provenance.read": {
+    presetId: text,
+    revision: text,
+    surface: text,
+    entryId: text,
+  },
   "play.orchestration.preview": {
     presetId: text,
     revision: text,
@@ -659,6 +665,17 @@ const playChecks: Partial<Record<Command, readonly Check[]>> = {
     check(
       exactFields({ presetId: text, source: string }),
       "play.sillytavern.source.associate has invalid fields",
+    ),
+  ],
+  "play.orchestration.provenance.read": [
+    check(
+      exactFields({
+        presetId: text,
+        revision: { type: "string", pattern: "^rev-[a-f0-9]{64}$" },
+        surface: { enum: ["playPrompts", "authorPrompts"] },
+        entryId: text,
+      }),
+      "play.orchestration.provenance.read has invalid fields",
     ),
   ],
   "play.import": [

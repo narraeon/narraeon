@@ -492,6 +492,9 @@ export class OrchestrationEditorSession {
             .filter(({ name }) => name === "orchestration_edit")
             .map(({ id }) => id),
           beforeManifest,
+          ...(target.provenance === undefined
+            ? {}
+            : { beforeProvenance: target.provenance }),
           receipt: {
             id,
             requestId: request.requestId,
@@ -642,7 +645,7 @@ export class OrchestrationEditorSession {
           files,
           receiptId: pending.receiptId,
           nextHead: change.beforeHead,
-          restoreProvenance: true,
+          restoreProvenance: change.beforeProvenance ?? [],
         });
         reverted = true;
       } catch (error) {
@@ -652,6 +655,7 @@ export class OrchestrationEditorSession {
     if (reverted) {
       change.receipt.undone = true;
       delete change.beforeManifest;
+      delete change.beforeProvenance;
     }
     delete session.pendingUndo;
     await this.#save(session);
@@ -750,6 +754,7 @@ export class OrchestrationEditorSession {
           change.currentRevision !== target.currentRevision)
       ) {
         delete change.beforeManifest;
+        delete change.beforeProvenance;
         changed = true;
       }
     return changed;

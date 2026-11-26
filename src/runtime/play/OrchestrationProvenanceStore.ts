@@ -67,12 +67,12 @@ export class OrchestrationProvenanceStore {
   }
 
   async removeOrphans(
-    presets: { id: string; revisions: Record<string, unknown> }[],
+    presets: { id: string; revisions: string[] }[],
   ): Promise<void> {
     const live = new Map(
       presets.map(({ id, revisions }) => [
         presetDirectory(id),
-        new Set(Object.keys(revisions).map((revision) => `${revision}.json`)),
+        new Set(revisions.map((revision) => `${revision}.json`)),
       ]),
     );
     for (const directory of await names(this.#root)) {

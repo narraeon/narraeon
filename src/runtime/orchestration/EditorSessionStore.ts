@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import type { V1OrchestrationChangeSet } from "../../protocol/orchestrationSession.ts";
+import type { OrchestrationEntrySource } from "../../protocol/orchestrationProvenance.ts";
 import { validAuthoringRequests } from "../authoring/AuthoringRequestSnapshot.ts";
 import type { ModelToolConversationState } from "../authoring/ModelToolConversation.ts";
 import type {
@@ -30,6 +31,7 @@ export interface EditorChangeRecord {
   toolCallIds: string[];
   /** Prompt-only preimage; other preset files are untouched by model editing. */
   beforeManifest?: string;
+  beforeProvenance?: OrchestrationEntrySource[];
 }
 
 export interface PendingEditorSettlement {

@@ -140,7 +140,9 @@ export class V1Runtime {
       locale: () => this.#locale,
       bindModelHost: () => this.#modelHost(),
       bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
-      extension: input.orchestrationEditorExtension ?? sillyTavernEditorSource(this.#playPresets),
+      extension:
+        input.orchestrationEditorExtension ??
+        sillyTavernEditorSource(this.#playPresets),
     });
     this.#settingImprovements = new SettingImprovementSession({
       ...generation,
