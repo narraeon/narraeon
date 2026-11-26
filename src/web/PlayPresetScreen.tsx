@@ -1,3 +1,4 @@
+import { RuntimeRequestError } from "./runtimeClient.ts";
 import {
   idleWorkspaceNavigation,
   type WorkspaceNavigationProtection,
@@ -13,6 +14,8 @@ import {
 } from "./preset-resource-editor.ts";
 import { resourceTitle } from "./preset-resource-names.ts";
 import "./preset-workbench.css";
+import { OrchestrationConversationPanel } from "./OrchestrationConversationPanel.tsx";
+import type { ObserveConversation } from "./ConversationObserver.ts";
 import { PresetWorkbenchEditor } from "./PresetWorkbenchEditor.tsx";
 import { OrchestrationPreviewPanel } from "./OrchestrationPreviewPanel.tsx";
 import { PresetDraftPreview } from "./PresetDraftPreview.tsx";
@@ -249,6 +252,7 @@ export interface RecommendedPlayPresetTemplate {
 
 interface PlayPresetClient {
   request<T = unknown>(request: V1Request): Promise<T>;
+  observeConversation?: ObserveConversation;
 }
 
 interface Feedback {
@@ -366,6 +370,30 @@ export function PlayPresetScreen({
   const [workspaceView, setWorkspaceView] =
     useState<PlayPresetWorkspaceView>("call_chain");
   const [pending, setPending] = useState(false);
+  const [aiPane, setAiPane] = useState<"editor" | "conversation" | "changes">(
+    "conversation",
+  );
+  const [focusedPrompt, setFocusedPrompt] = useState<{
+    id: string;
+    name: string;
+  }>();
+  const focusPrompt = useCallback(
+    (id: string | undefined, name: string | undefined) => {
+      setFocusedPrompt((current) =>
+        current?.id === id && current?.name === name
+          ? current
+          : id === undefined || name === undefined
+            ? undefined
+            : { id, name },
+      );
+    },
+    [],
+  );
+  const [discardConfirmation, setDiscardConfirmation] =
+    useState<ConfirmationRequest<{
+      presetId: string;
+      revision: string;
+    }> | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deletion, setDeletion] = useState<ConfirmationRequest<
     Pick<PlayPresetScreenPreset, "id" | "name">
@@ -376,6 +404,12 @@ export function PlayPresetScreen({
     [draft?.id, library.presets],
   );
   const savedEditable = draftBase;
+  const aiPanelOpen = draft !== null && aiEditing?.presetId === draft.id;
+  const effectiveRevision = saved?.draft?.revision ?? saved?.revision;
+  const savedDraftChanged =
+    effectiveRevision !== undefined &&
+    draftBase !== null &&
+    effectiveRevision !== draftBase.revision;
   const contentDirty =
     draft !== null &&
     savedEditable !== null &&
@@ -433,7 +467,7 @@ export function PlayPresetScreen({
     ((next: PlayPresetScreenLibrary) => void) | undefined
   >(undefined);
   const previousLibrary = useRef(initialLibrary);
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyRead.current = (next) => applyLibrary(next, undefined, true);
   });
   const { target, syncFailed } = useReadTarget(
@@ -500,7 +534,6 @@ export function PlayPresetScreen({
             ? null
             : {
                 ...current,
-                revision: updated.draft?.revision ?? updated.revision,
                 enabled: updated.enabled !== false,
                 scriptsEnabled: updated.scriptsEnabled === true,
               },
@@ -522,6 +555,27 @@ export function PlayPresetScreen({
     );
   }
 
+  const refreshPreset = useCallback(async () => {
+    if ((await target.read()) === null)
+      throw new Error(uiText("无法刷新编排草稿。"));
+  }, [target]);
+
+  function discardSavedDraft(presetId: string, expectedRevision: string): void {
+    void run(async () => {
+      const receipt = await request<PlayPresetScreenLibrary>({
+        type: "play.draft.discard",
+        presetId,
+        expectedRevision,
+      });
+      target.accept({ complete: false });
+      applyLibrary(receipt);
+      setFeedback({
+        kind: "status",
+        text: uiText("已放弃尚未应用的编排草稿。"),
+      });
+    });
+  }
+
   function request<T>(input: V1Request): Promise<T> {
     return target.command(() => client.request<T>(input));
   }
@@ -536,7 +590,16 @@ export function PlayPresetScreen({
       setFeedback({
         kind: "error",
         text:
-          error instanceof Error ? error.message : uiText("编排方案操作失败"),
+          error instanceof RuntimeRequestError &&
+          (error.protocolCode === "orchestration_conflict" ||
+            error.protocolCode === "operation_conflict") &&
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "revision" in error.details
+            ? uiText("编排草稿已更新。请核对最新草稿后再试。")
+            : error instanceof Error
+              ? error.message
+              : uiText("编排方案操作失败"),
       });
     } finally {
       setPending(false);
@@ -652,6 +715,7 @@ export function PlayPresetScreen({
         presetId: draft.id,
         name: draft.name,
         files: draft.files,
+        expectedRevision: draftBase?.revision ?? draft.revision,
         ...(draft.structure === undefined ||
         rawStructuralDirty ||
         (!structuredDirty && draft.structure.migrationNotice === undefined)
@@ -925,11 +989,13 @@ export function PlayPresetScreen({
                     onImported={(receipt, startAiEditing) => {
                       acceptPreset(receipt);
                       setWorkspaceView("call_chain");
-                      if (startAiEditing)
+                      if (startAiEditing) {
+                        setAiPane("conversation");
                         onAiEditingChange?.({
                           presetId: receipt.preset.id,
                           message: "",
                         });
+                      }
                       setFeedback({
                         kind: "status",
                         text: uiText(
@@ -1081,7 +1147,11 @@ export function PlayPresetScreen({
                           })
                         }
                       >
-                        {uiText("复制为新编排方案")}
+                        {uiText(
+                          saved?.draft
+                            ? "从已保存草稿复制"
+                            : "复制为新编排方案",
+                        )}
                       </button>
                       <button
                         type="button"
@@ -1089,7 +1159,9 @@ export function PlayPresetScreen({
                         disabled={pending || dirty}
                         onClick={() => void exportPreset()}
                       >
-                        {uiText("导出编排方案")}
+                        {uiText(
+                          saved?.draft ? "导出已保存草稿" : "导出编排方案",
+                        )}
                       </button>
                       <button
                         type="button"
@@ -1204,275 +1276,366 @@ export function PlayPresetScreen({
                 </div>
               </header>
 
-              {aiEditing?.presetId === draft.id && (
-                <section
-                  className="orchestration-ai-draft"
-                  aria-label={uiText("编排方案 AI 编辑")}
-                >
-                  <div>
-                    <h4>{uiText("编排方案 AI 编辑")}</h4>
-                    <button
-                      type="button"
-                      onClick={() => onAiEditingChange?.(null)}
-                    >
-                      {uiText("关闭")}
-                    </button>
-                  </div>
-                  <label>
-                    {uiText("给编排助手的消息")}
-                    <textarea
-                      value={aiEditing.message}
-                      onChange={(event) =>
-                        onAiEditingChange?.({
-                          ...aiEditing,
-                          message: event.currentTarget.value,
-                        })
-                      }
-                    />
-                  </label>
-                  {modelConnection === undefined && (
-                    <button type="button" onClick={onConfigureAiModel}>
-                      {uiText("配置模型")}
-                    </button>
-                  )}
-                </section>
-              )}
-              {saved?.sillyTavernSource && (
-                <SillyTavernSource
-                  key={draft.id}
-                  client={client}
-                  presetId={draft.id}
-                />
-              )}
-
-              {saved?.structure?.migrationNotice && (
-                <p className="workspace-feedback" role="status">
-                  {saved.structure.migrationNotice}
-                </p>
-              )}
-              {draft.structure &&
-              (workspaceView === "call_chain" ||
-                workspaceView === "setting_improvement") ? (
-                <div
-                  id={`play-preset-panel-${workspaceView}`}
-                  role="tabpanel"
-                  aria-labelledby={`play-preset-tab-${workspaceView}`}
-                >
-                  <PresetWorkbenchEditor
-                    key={`${draft.id}:${workspaceView}`}
-                    structure={draft.structure}
-                    files={draft.files}
-                    authoring={workspaceView === "setting_improvement"}
-                    modelConnection={modelConnection}
-                    onEditModelConnection={onEditModelConnection}
-                    onChange={updateStructure}
-                    onWrite={updateFileAtPath}
-                    onResourceEdit={updateResources}
-                    promptPreview={
-                      saved && (
-                        <OrchestrationPreviewPanel
-                          key={draft.id}
-                          client={client}
-                          presetId={draft.id}
-                          currentRevision={saved.revision}
-                          draftRevision={saved.draft?.revision}
-                          candidateBaseRevision={draft.revision}
-                          candidate={
-                            contentDirty && !structuralConflict
-                              ? {
-                                  files: draft.files,
-                                  ...(!rawStructuralDirty &&
-                                  structuredDirty &&
-                                  draft.structure !== undefined
-                                    ? {
-                                        structure:
-                                          draft.structure as unknown as Record<
-                                            string,
-                                            unknown
-                                          >,
-                                      }
-                                    : {}),
-                                }
-                              : undefined
-                          }
-                          candidateConflict={structuralConflict}
-                          surface={
-                            workspaceView === "setting_improvement"
-                              ? "author"
-                              : "play"
-                          }
-                          connection={modelConnection}
-                        />
-                      )
-                    }
-                    preview={(requestId, output) =>
-                      requestId && output ? (
-                        <PresetDraftPreview
-                          key={`${requestId}:${output}`}
-                          client={client}
-                          presetId={draft.id}
-                          revision={draft.revision}
-                          files={draft.files}
-                          structure={
-                            draft.structure as unknown as Record<
-                              string,
-                              unknown
-                            >
-                          }
-                          scriptsEnabled={draft.scriptsEnabled === true}
-                          requestId={requestId}
-                          output={output}
-                        />
-                      ) : (
-                        <InterfaceExtensionPreview
-                          client={client}
-                          presetId={draft.id}
-                          revision={draft.revision}
-                          files={draft.files}
-                          structure={
-                            draft.structure as unknown as Record<
-                              string,
-                              unknown
-                            >
-                          }
-                          conflict={structuralConflict}
-                          scriptsEnabled={draft.scriptsEnabled === true}
-                        />
-                      )
-                    }
-                  />
-                </div>
-              ) : null}
-              {workspaceView === "files" ? (
-                <PresetFileWorkspace
-                  files={draft.files}
-                  filePath={filePath}
-                  newFilePath={newFilePath}
-                  pending={pending}
-                  onFilePathChange={setFilePath}
-                  onNewFilePathChange={setNewFilePath}
-                  onFileChange={updateFile}
-                  onCreateFile={() => {
-                    const path = newFilePath.trim();
-                    if (draft.files[path] !== undefined) {
-                      setFeedback({
-                        kind: "error",
-                        text: uiText("该编排方案文件路径已经存在。"),
-                      });
-                      return;
-                    }
-                    updateFiles((files) => ({ ...files, [path]: "" }));
-                    setFilePath(path);
-                    setNewFilePath("");
-                    setFeedback({
-                      kind: "status",
-                      text: uiText(
-                        "已加入修复草稿，保存时将检查编排方案格式。",
-                      ),
-                    });
+              {!aiPanelOpen && onAiEditingChange !== undefined && (
+                <button
+                  type="button"
+                  className="secondary-button orchestration-ai-launch"
+                  disabled={pending}
+                  onClick={() => {
+                    setAiPane("conversation");
+                    onAiEditingChange({ presetId: draft.id, message: "" });
                   }}
-                />
-              ) : null}
-              {draft.structure === undefined &&
-              (workspaceView === "call_chain" ||
-                workspaceView === "setting_improvement") ? (
-                <section
-                  id={`play-preset-panel-${workspaceView}`}
-                  className="play-preset-empty-view"
-                  role="tabpanel"
-                  aria-labelledby={`play-preset-tab-${workspaceView}`}
                 >
-                  <strong>{uiText("结构化编辑暂不可用")}</strong>
-                  <p>
-                    {uiText(
-                      "导入内容无法解析；原文完整保留，可导出或打开原文修复。",
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setWorkspaceView("files")}
-                  >
-                    {uiText("修复导入原文")}
-                  </button>
-                </section>
-              ) : null}
-              <footer className="play-preset-editor-actions">
-                {structuralConflict ? (
-                  <p role="alert" className="workspace-feedback">
-                    {uiText(
-                      "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
-                    )}
-                  </p>
-                ) : null}
-                <div className="play-preset-save-state">
-                  <strong>
-                    {dirty
-                      ? uiText("草稿尚未保存")
-                      : draft.validation.status === "valid"
-                        ? uiText("编排方案检查通过")
-                        : uiText("草稿需要修复")}
-                  </strong>
-                  <p>{nextSend}</p>
-                  {draft.validation.status === "invalid" && (
-                    <span>
-                      {`[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
-                    </span>
+                  {uiText("AI 编辑")}
+                </button>
+              )}
+              {aiPanelOpen && (
+                <nav
+                  className="orchestration-mobile-views"
+                  aria-label={uiText("编排编辑视图")}
+                >
+                  {(["editor", "conversation", "changes"] as const).map(
+                    (pane) => (
+                      <button
+                        type="button"
+                        aria-pressed={aiPane === pane}
+                        key={pane}
+                        onClick={() => setAiPane(pane)}
+                      >
+                        {uiText(
+                          pane === "editor"
+                            ? "编排"
+                            : pane === "conversation"
+                              ? "对话"
+                              : "改动",
+                        )}
+                      </button>
+                    ),
                   )}
-                </div>
-                <div className="play-preset-primary-actions">
-                  {dirty ? (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={pending}
-                      onClick={resetDraft}
+                </nav>
+              )}
+              <div
+                className={
+                  aiPanelOpen
+                    ? "orchestration-edit-layout orchestration-edit-with-ai"
+                    : "orchestration-edit-layout"
+                }
+                data-mobile-pane={aiPane}
+              >
+                <div className="orchestration-editor-column">
+                  {saved?.sillyTavernSource && (
+                    <SillyTavernSource
+                      key={draft.id}
+                      client={client}
+                      presetId={draft.id}
+                    />
+                  )}
+
+                  {saved?.structure?.migrationNotice && (
+                    <p className="workspace-feedback" role="status">
+                      {saved.structure.migrationNotice}
+                    </p>
+                  )}
+                  {draft.structure &&
+                  (workspaceView === "call_chain" ||
+                    workspaceView === "setting_improvement") ? (
+                    <div
+                      id={`play-preset-panel-${workspaceView}`}
+                      role="tabpanel"
+                      aria-labelledby={`play-preset-tab-${workspaceView}`}
                     >
-                      {uiText("撤销未保存修改")}
-                    </button>
+                      <PresetWorkbenchEditor
+                        key={`${draft.id}:${workspaceView}`}
+                        structure={draft.structure}
+                        files={draft.files}
+                        authoring={workspaceView === "setting_improvement"}
+                        modelConnection={modelConnection}
+                        onEditModelConnection={onEditModelConnection}
+                        onChange={updateStructure}
+                        onWrite={updateFileAtPath}
+                        onFocusPrompt={focusPrompt}
+                        onResourceEdit={updateResources}
+                        promptPreview={
+                          saved && (
+                            <OrchestrationPreviewPanel
+                              key={draft.id}
+                              client={client}
+                              presetId={draft.id}
+                              currentRevision={saved.revision}
+                              draftRevision={saved.draft?.revision}
+                              candidateBaseRevision={draft.revision}
+                              candidate={
+                                contentDirty && !structuralConflict
+                                  ? {
+                                      files: draft.files,
+                                      ...(!rawStructuralDirty &&
+                                      structuredDirty &&
+                                      draft.structure !== undefined
+                                        ? {
+                                            structure:
+                                              draft.structure as unknown as Record<
+                                                string,
+                                                unknown
+                                              >,
+                                          }
+                                        : {}),
+                                    }
+                                  : undefined
+                              }
+                              candidateConflict={structuralConflict}
+                              surface={
+                                workspaceView === "setting_improvement"
+                                  ? "author"
+                                  : "play"
+                              }
+                              connection={modelConnection}
+                            />
+                          )
+                        }
+                        preview={(requestId, output) =>
+                          requestId && output ? (
+                            <PresetDraftPreview
+                              key={`${requestId}:${output}`}
+                              client={client}
+                              presetId={draft.id}
+                              revision={draft.revision}
+                              files={draft.files}
+                              structure={
+                                draft.structure as unknown as Record<
+                                  string,
+                                  unknown
+                                >
+                              }
+                              scriptsEnabled={draft.scriptsEnabled === true}
+                              requestId={requestId}
+                              output={output}
+                            />
+                          ) : (
+                            <InterfaceExtensionPreview
+                              client={client}
+                              presetId={draft.id}
+                              revision={draft.revision}
+                              files={draft.files}
+                              structure={
+                                draft.structure as unknown as Record<
+                                  string,
+                                  unknown
+                                >
+                              }
+                              conflict={structuralConflict}
+                              scriptsEnabled={draft.scriptsEnabled === true}
+                            />
+                          )
+                        }
+                      />
+                    </div>
                   ) : null}
-                  <button
-                    type="button"
-                    disabled={
-                      pending ||
-                      (!dirty &&
-                        draft.structure?.migrationNotice === undefined) ||
-                      structuralConflict
-                    }
-                    onClick={() => void saveDraft()}
-                  >
-                    {uiText("保存修改")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={
-                      pending || dirty || draft.validation.status !== "valid"
-                    }
-                    onClick={() =>
-                      void run(async () => {
-                        const receipt = await request<PlayPresetReceipt>({
-                          type: "play.select",
-                          presetId: draft.id,
-                        });
-                        acceptPreset(receipt);
+                  {workspaceView === "files" ? (
+                    <PresetFileWorkspace
+                      files={draft.files}
+                      filePath={filePath}
+                      newFilePath={newFilePath}
+                      pending={pending}
+                      onFilePathChange={setFilePath}
+                      onNewFilePathChange={setNewFilePath}
+                      onFileChange={updateFile}
+                      onCreateFile={() => {
+                        const path = newFilePath.trim();
+                        if (draft.files[path] !== undefined) {
+                          setFeedback({
+                            kind: "error",
+                            text: uiText("该编排方案文件路径已经存在。"),
+                          });
+                          return;
+                        }
+                        updateFiles((files) => ({ ...files, [path]: "" }));
+                        setFilePath(path);
+                        setNewFilePath("");
                         setFeedback({
                           kind: "status",
                           text: uiText(
-                            "已应用此编排方案；游玩修改将在下一次正常发送时生效。",
+                            "已加入修复草稿，保存时将检查编排方案格式。",
                           ),
                         });
-                      })
-                    }
-                  >
-                    {uiText("应用为当前编排方案")}
-                  </button>
+                      }}
+                    />
+                  ) : null}
+                  {draft.structure === undefined &&
+                  (workspaceView === "call_chain" ||
+                    workspaceView === "setting_improvement") ? (
+                    <section
+                      id={`play-preset-panel-${workspaceView}`}
+                      className="play-preset-empty-view"
+                      role="tabpanel"
+                      aria-labelledby={`play-preset-tab-${workspaceView}`}
+                    >
+                      <strong>{uiText("结构化编辑暂不可用")}</strong>
+                      <p>
+                        {uiText(
+                          "导入内容无法解析；原文完整保留，可导出或打开原文修复。",
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setWorkspaceView("files")}
+                      >
+                        {uiText("修复导入原文")}
+                      </button>
+                    </section>
+                  ) : null}
+                  <footer className="play-preset-editor-actions">
+                    {structuralConflict ? (
+                      <p role="alert" className="workspace-feedback">
+                        {uiText(
+                          "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
+                        )}
+                      </p>
+                    ) : null}
+                    <div className="play-preset-save-state">
+                      <strong>
+                        {dirty
+                          ? uiText("草稿尚未保存")
+                          : draft.validation.status === "valid"
+                            ? uiText("编排方案检查通过")
+                            : uiText("草稿需要修复")}
+                      </strong>
+                      <p>{nextSend}</p>
+                      {draft.validation.status === "invalid" && (
+                        <span>
+                          {`[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="play-preset-primary-actions">
+                      {saved?.draft !== undefined && (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={pending || dirty}
+                          onClick={(event) =>
+                            setDiscardConfirmation({
+                              action: {
+                                presetId: draft.id,
+                                revision: saved.draft!.revision,
+                              },
+                              opener: event.currentTarget,
+                              message: uiText(
+                                "放弃这份尚未应用的编排草稿？保存的手动与 AI 改动都会丢失。",
+                              ),
+                              confirmLabel: uiText("放弃已保存草稿"),
+                            })
+                          }
+                        >
+                          {uiText("放弃已保存草稿")}
+                        </button>
+                      )}
+                      {dirty ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={pending}
+                          onClick={resetDraft}
+                        >
+                          {uiText("撤销未保存修改")}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={
+                          pending ||
+                          (!dirty &&
+                            draft.structure?.migrationNotice === undefined) ||
+                          structuralConflict
+                        }
+                        onClick={() => void saveDraft()}
+                      >
+                        {uiText("保存修改")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={
+                          pending ||
+                          dirty ||
+                          draft.validation.status !== "valid"
+                        }
+                        onClick={() =>
+                          void run(async () => {
+                            const receipt = await request<PlayPresetReceipt>({
+                              type: "play.select",
+                              presetId: draft.id,
+                            });
+                            acceptPreset(receipt);
+                            setFeedback({
+                              kind: "status",
+                              text: uiText(
+                                "已应用此编排方案；游玩修改将在下一次正常发送时生效。",
+                              ),
+                            });
+                          })
+                        }
+                      >
+                        {uiText("应用为当前编排方案")}
+                      </button>
+                    </div>
+                  </footer>
                 </div>
-              </footer>
+                {aiPanelOpen &&
+                  aiEditing !== undefined &&
+                  aiEditing !== null &&
+                  effectiveRevision !== undefined && (
+                    <OrchestrationConversationPanel
+                      key={draft.id}
+                      client={client}
+                      presetId={draft.id}
+                      presetName={draft.name}
+                      effectiveRevision={effectiveRevision}
+                      surface={
+                        workspaceView === "setting_improvement"
+                          ? "authorPrompts"
+                          : "playPrompts"
+                      }
+                      focusedEntryId={
+                        workspaceView === "files"
+                          ? undefined
+                          : focusedPrompt?.id
+                      }
+                      focusedEntryName={
+                        workspaceView === "files"
+                          ? undefined
+                          : focusedPrompt?.name
+                      }
+                      message={aiEditing.message}
+                      editMessage={(message) =>
+                        onAiEditingChange?.({ presetId: draft.id, message })
+                      }
+                      modelConfigured={modelConnection !== undefined}
+                      configureModel={onConfigureAiModel}
+                      close={() => onAiEditingChange?.(null)}
+                      localDirty={dirty}
+                      menuBusy={pending}
+                      localConflict={savedDraftChanged}
+                      saveLocal={saveDraft}
+                      discardLocal={resetDraft}
+                      refreshPreset={refreshPreset}
+                    />
+                  )}
+              </div>
             </section>
           )}
         </div>
       </fieldset>
+      {discardConfirmation !== null && (
+        <ConfirmationDialog
+          request={discardConfirmation}
+          onDecision={(confirmed) => {
+            const { presetId, revision } = discardConfirmation.action;
+            setDiscardConfirmation(null);
+            if (confirmed) discardSavedDraft(presetId, revision);
+          }}
+        />
+      )}
       {deletion !== null && (
         <ConfirmationDialog request={deletion} onDecision={decideDeletion} />
       )}

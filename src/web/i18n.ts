@@ -7,6 +7,53 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "AI 编辑": "AI editing",
+  编排编辑视图: "Orchestration editing views",
+  编排: "Orchestration",
+  对话: "Conversation",
+  改动: "Changes",
+  "无法刷新编排对话。": "Could not refresh the orchestration conversation.",
+  "无法刷新编排草稿。": "Could not refresh the orchestration draft.",
+  "编排对话操作失败。": "The orchestration conversation action failed.",
+  编排对话内容: "Orchestration conversation messages",
+  对话记录: "Conversation history",
+  开启新对话: "Start a new conversation",
+  删除对话: "Delete conversation",
+  "删除此编排对话？已保存的草稿仍可继续编辑。":
+    "Delete this orchestration conversation? The saved draft will still be available for editing.",
+  "编排草稿已在别处更新。你的本地修改仍保留。":
+    "The orchestration draft was updated elsewhere. Your local changes are still here.",
+  "请先保存或放弃本地修改，再发送给编排助手。":
+    "Save or discard your local changes before sending a message to the orchestration assistant.",
+  保存本地修改: "Save local changes",
+  "编排助手正在工作…": "The orchestration assistant is working…",
+  核对或重试同一请求: "Check or retry the same request",
+  继续本次编辑: "Continue this edit",
+  发送给编排助手: "Send to the orchestration assistant",
+  草稿改动: "Draft changes",
+  "此对话还没有草稿改动。": "This conversation has no draft changes yet.",
+  "{count} 项编排改动": "{count} orchestration changes",
+  已撤销: "Undone",
+  "名称、角色、位置、启停和尾部变化":
+    "Changes to name, role, position, enabled status and turn guide",
+  提示词正文差异: "Prompt text changes",
+  "撤销这批编排草稿改动？":
+    "Undo this batch of changes to the orchestration draft?",
+  撤销此批改动: "Undo this batch",
+  "此批已不是当前草稿的最后一批改动。":
+    "This batch can be undone only while it is the latest change to the draft.",
+  启停: "Enabled status",
+  尾部覆盖: "Turn-guide override",
+  玩法限定: "Gameplay scope",
+  已明确清空: "Explicitly cleared",
+  从已保存草稿复制: "Copy saved draft to a new orchestration",
+  导出已保存草稿: "Export saved draft",
+  "已放弃尚未应用的编排草稿。": "Discarded the unapplied orchestration draft.",
+  "放弃这份尚未应用的编排草稿？保存的手动与 AI 改动都会丢失。":
+    "Discard this unapplied orchestration draft? Saved manual and AI changes will be lost.",
+  放弃已保存草稿: "Discard saved draft",
+  "编排草稿已更新。请核对最新草稿后再试。":
+    "The orchestration draft changed. Review the current draft before trying again.",
   编排预览: "Orchestration preview",
   "此条目尚未产生消息。": "This entry does not emit a message.",
   "按当前编排展开可确定的提示词。世界与创作目标只显示占位。":
