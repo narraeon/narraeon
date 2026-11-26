@@ -36,6 +36,7 @@ import {
   writeEditorEntries,
   type EditOperation,
   type EditorEntries,
+  type EditorMove,
   type EntryRead,
 } from "./EditorOperations.ts";
 
@@ -284,6 +285,8 @@ export async function settleEditorTools(input: {
       const after = structuredClone(before);
       let surface: OrchestrationSurface | undefined;
       const operationIds = new Set<string>();
+      const allocatedEntryIds = new Set<string>();
+      const moves: EditorMove[] = [];
       const provenance: EditorPublication["provenance"] = [];
       for (const call of edits) {
         const args = fields(call.arguments, [
@@ -296,6 +299,8 @@ export async function settleEditorTools(input: {
           throw new Error(
             "A complete response may publish edits on only one surface",
           );
+        if (surface === undefined)
+          for (const { id } of before[editSurface]) allocatedEntryIds.add(id);
         surface = editSurface;
         assertRevision(args.expectedRevision, target.revision);
         if (
@@ -315,6 +320,17 @@ export async function settleEditorTools(input: {
               `Operation identity ${operation.operationId} has already been used`,
             );
           operationIds.add(operation.operationId);
+          const newId =
+            operation.op === "create"
+              ? operation.entryId
+              : operation.op === "replace_builtin"
+                ? operation.newEntryId
+                : undefined;
+          if (newId !== undefined && allocatedEntryIds.has(newId))
+            throw new Error(
+              "New prompts require an unused entry ID within the batch",
+            );
+          if (newId !== undefined) allocatedEntryIds.add(newId);
           if (operation.provenance !== undefined) {
             if (!input.extension?.provenanceSchema)
               throw new Error("No source provenance capability is available");
@@ -331,7 +347,7 @@ export async function settleEditorTools(input: {
               value,
             });
           }
-          applyEditOperation({
+          const move = applyEditOperation({
             entries: after[surface],
             operation,
             catalog,
@@ -339,9 +355,17 @@ export async function settleEditorTools(input: {
             wasRead: (entryId) =>
               completelyRead(input.authorization, editSurface, entryId),
           });
+          if (move !== undefined) moves.push(move);
         }
       }
-      const entries = editorEntryDiff(before, after, locale);
+      const editedSurface = surface!;
+      const entries = editorEntryDiff({
+        before: before[editedSurface],
+        after: after[editedSurface],
+        surface: editedSurface,
+        locale,
+        moves,
+      });
       if (
         provenance.some(
           ({ entryId }) =>
@@ -369,7 +393,7 @@ export async function settleEditorTools(input: {
           files,
           revision,
           entries,
-          surface: surface!,
+          surface: editedSurface,
           operationIds: [...operationIds],
           provenance,
         };

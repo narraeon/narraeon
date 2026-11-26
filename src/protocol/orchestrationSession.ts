@@ -85,6 +85,8 @@ export interface V1OrchestrationChangeSet {
   entries: {
     surface: OrchestrationSurface;
     entryId: string;
+    /** An explicit move changed this entry's order relative to surviving entries. */
+    moved?: true;
     before: V1OrchestrationEntry | null;
     after: V1OrchestrationEntry | null;
   }[];

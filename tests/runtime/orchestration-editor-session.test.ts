@@ -20,6 +20,7 @@ import { EditorSessionStore } from "../../src/runtime/orchestration/EditorSessio
 import { OrchestrationEditorSession } from "../../src/runtime/orchestration/OrchestrationEditorSession.ts";
 import { FileNativePlayPresetStore } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { orchestrationManifest } from "../../src/shared/application-preset-files.ts";
+import type { OrderedPlayPrompt } from "../../src/shared/ordered-play-prompts.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -397,6 +398,254 @@ test("writes require an earlier complete read and reject a full batch atomically
   expect(stored).not.toHaveProperty("builtinDefault");
   expect((await f.editor().send(f.send("safe-batch"))).changes).toHaveLength(1);
   expect(f.requests).toHaveLength(5);
+});
+
+test("a front insertion keeps the persisted and model receipts proportional to the actual edit", async () => {
+  const f = await setup();
+  const structure = f.initial.structure!;
+  const longBlocks = Array.from(
+    { length: 128 },
+    (_, index): OrderedPlayPrompt => ({
+      kind: "user",
+      id: `long-block-${index}`,
+      name: `Unchanged block ${index}`,
+      enabled: true,
+      body: `Fixture block ${index}: ` + "prose ".repeat(680),
+    }),
+  );
+  const large = await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: f.initial.files,
+    structure: {
+      ...structure,
+      playPrompts: [...structure.playPrompts!, ...longBlocks],
+    },
+  });
+  const original = large.preset.draft!.revision;
+  f.respond((request) =>
+    request.exchange === 1
+      ? reply(
+          "",
+          edit("front-insert", original, [
+            createEntry("new-first", "Only this text changed.", {
+              beforeId: structure.playPrompts![0]!.id,
+            }),
+          ]),
+        )
+      : reply("Saved one new entry"),
+  );
+  const editor = f.editor();
+  const result = await editor.send(f.send("insert-at-front", original));
+  const [change] = result.changes;
+  expect(change).toBeDefined();
+  const publicBytes = Buffer.byteLength(JSON.stringify(change));
+  const model = f.requests.at(-1)!;
+  const { data } = toolReceipt<{ changedEntryIds: string[] }>(
+    model,
+    "front-insert",
+  );
+  const modelBytes = Buffer.byteLength(JSON.stringify(data));
+  expect(
+    change!.entries.length,
+    `Batch ${publicBytes} bytes, tool receipt ${modelBytes} bytes`,
+  ).toBe(1);
+  expect(publicBytes).toBeLessThan(1200);
+  expect(modelBytes).toBeLessThan(400);
+  expect(change!.entries[0]).toMatchObject({
+    entryId: "new-first",
+    before: null,
+    after: { index: 0, text: "Only this text changed." },
+  });
+  expect(data.changedEntryIds).toEqual(["new-first"]);
+  const reopened = (await f.editor().handle({
+    type: "orchestration.session.read",
+    presetId: f.presetId,
+    sessionId: result.sessionId,
+  })) as V1OrchestrationView;
+  expect(reopened.changes).toEqual(result.changes);
+  // A stored receipt from before order-only rows were omitted remains usable.
+  const sessionStore = new EditorSessionStore(
+    join(f.root, "orchestration-sessions"),
+  );
+  const legacy = await sessionStore.read(f.presetId, result.sessionId);
+  const oldRow = {
+    ...change!.entries[0]!.after!,
+    id: "legacy-shifted-block",
+    index: 5,
+  };
+  legacy.changes[0]!.receipt.entries.push({
+    surface: "playPrompts",
+    entryId: oldRow.id,
+    before: oldRow,
+    after: { ...oldRow, index: 6 },
+  });
+  await sessionStore.save(legacy);
+  const historic = (await editor.handle({
+    type: "orchestration.session.read",
+    presetId: f.presetId,
+    sessionId: result.sessionId,
+  })) as V1OrchestrationView;
+  expect(historic.changes[0]?.entries.at(-1)).toEqual(
+    legacy.changes[0]?.receipt.entries.at(-1),
+  );
+
+  const insertedRevision = result.revision;
+  f.respond((request) => {
+    if (request.exchange === 1)
+      return reply(
+        "",
+        tool("read-first", "orchestration_read", {
+          surface: "playPrompts",
+          revision: insertedRevision,
+          entryId: "new-first",
+        }),
+      );
+    if (request.exchange === 2)
+      return reply(
+        "",
+        edit("front-delete", insertedRevision, [
+          { op: "delete", operationId: "remove-first", entryId: "new-first" },
+        ]),
+      );
+    return reply("Removed one entry.");
+  });
+  const removed = await editor.send(
+    f.send("delete-at-front", insertedRevision),
+  );
+  expect(removed.changes[0]?.entries).toEqual([
+    {
+      surface: "playPrompts",
+      entryId: "new-first",
+      after: null,
+      before: change!.entries[0]?.after,
+    },
+  ]);
+  expect(
+    toolReceipt(f.requests.at(-1)!, "front-delete").data.changedEntryIds,
+  ).toEqual(["new-first"]);
+  await editor.handle({
+    type: "orchestration.undo",
+    presetId: f.presetId,
+    sessionId: removed.sessionId,
+    changeSetId: removed.changes[0]!.id,
+    expectedRevision: removed.revision,
+  });
+  const undone = (await editor.handle({
+    type: "orchestration.undo",
+    presetId: f.presetId,
+    sessionId: result.sessionId,
+    changeSetId: change!.id,
+    expectedRevision: result.revision,
+  })) as V1OrchestrationView;
+  expect(undone.revision).toBe(original);
+});
+
+test("a combined batch keeps actual moves, inserts, deletes, and exclusive choice changes", async () => {
+  const f = await setup();
+  const structure = f.initial.structure!;
+  const initial = await f.drafts.save({
+    presetId: f.presetId,
+    name: f.initial.name,
+    files: f.initial.files,
+    structure: {
+      ...structure,
+      playPrompts: [
+        ...structure.playPrompts!,
+        ...["a", "b", "c", "d", "e"].map((id): OrderedPlayPrompt => ({
+          id,
+          kind: "user",
+          name: id,
+          body: `Body of ${id}`,
+          enabled: true,
+        })),
+      ],
+    },
+  });
+  const revision = initial.preset.draft!.revision;
+  const read = (entryId: string) =>
+    tool(`read-${entryId}`, "orchestration_read", {
+      surface: "playPrompts",
+      revision,
+      entryId,
+    });
+  f.respond((request) => {
+    if (request.exchange === 1)
+      return reply("", ...["a", "b", "c", "e", "play.person-first"].map(read));
+    if (request.exchange === 2)
+      return reply(
+        "",
+        edit("combined", revision, [
+          { op: "move", operationId: "move-b", entryId: "b", beforeId: "a" },
+          createEntry("combined-new", "Inserted before b.", { beforeId: "b" }),
+          {
+            op: "move",
+            operationId: "a-already-adjacent",
+            entryId: "a",
+            afterId: "b",
+          },
+          { op: "move", operationId: "c-moved", entryId: "c", afterId: "d" },
+          {
+            op: "move",
+            operationId: "c-moved-back",
+            entryId: "c",
+            beforeId: "d",
+          },
+          { op: "delete", operationId: "delete-e", entryId: "e" },
+          {
+            op: "update",
+            operationId: "enable-first-person",
+            entryId: "play.person-first",
+            enabled: true,
+          },
+        ]),
+      );
+    return reply("Combined batch saved.");
+  });
+  const result = await f.editor().send(f.send("test-combined", revision));
+  expect(result.changes).toHaveLength(1);
+  const [change] = result.changes;
+  expect(change!.entries.map(({ entryId }) => entryId).sort()).toEqual([
+    "b",
+    "combined-new",
+    "e",
+    "play.person-first",
+    "play.person-second",
+  ]);
+  const byId = new Map(change!.entries.map((entry) => [entry.entryId, entry]));
+  const moved = byId.get("b")!;
+  expect(moved.moved).toBe(true);
+  expect(moved.before?.index).toBe(moved.after?.index);
+  expect(byId.get("e")?.after).toBeNull();
+  expect(byId.get("combined-new")?.before).toBeNull();
+  expect(byId.get("play.person-first")?.after?.enabled).toBe(true);
+  expect(byId.get("play.person-second")?.after?.enabled).toBe(false);
+
+  const latest = result.revision;
+  f.respond((request) => {
+    if (request.exchange === 1)
+      return reply(
+        "",
+        tool("read-a-again", "orchestration_read", {
+          surface: "playPrompts",
+          revision: latest,
+          entryId: "a",
+        }),
+      );
+    if (request.exchange === 2)
+      return reply(
+        "",
+        edit("reuse-id", latest, [
+          { op: "delete", operationId: "remove-a", entryId: "a" },
+          createEntry("a", "Body of a", { beforeId: "b" }),
+        ]),
+      );
+    expect(toolReceipt(request, "reuse-id").isError).toBe(true);
+    return reply("Reused entry ID was rejected.");
+  });
+  const rejected = await f.editor().send(f.send("reuse-read-id", latest));
+  expect(rejected.changes).toEqual([]);
+  expect(rejected.revision).toBe(latest);
 });
 
 test("a manual save wins across a waiting model turn, conflicts are explicit and old save callers still work", async () => {

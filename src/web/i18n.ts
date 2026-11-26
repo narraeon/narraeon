@@ -2730,6 +2730,7 @@ const dynamicEnglishMessages: Record<string, string> = {
   写入: "Write",
   改节点: "Patch node",
   移动: "Move",
+  已移动: "Moved",
   自检: "Check",
   "第 {round} / {maxRounds} 轮": "Round {round} / {maxRounds}",
   "正在输出 {count} 字": "Streaming {count} characters",

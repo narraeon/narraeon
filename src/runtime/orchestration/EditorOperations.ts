@@ -90,36 +90,86 @@ export function editorEntry(
   };
 }
 
-export function editorEntryDiff(
-  before: EditorEntries,
-  after: EditorEntries,
-  locale: AppLocale,
-): V1OrchestrationChangeSet["entries"] {
+export interface EditorMove {
+  entryId: string;
+  crossedEntryIds: string[];
+}
+
+export function editorEntryDiff(input: {
+  before: readonly OrderedPlayPrompt[];
+  after: readonly OrderedPlayPrompt[];
+  surface: OrchestrationSurface;
+  locale: AppLocale;
+  moves: readonly EditorMove[];
+}): V1OrchestrationChangeSet["entries"] {
+  const { before, after, surface, locale, moves } = input;
+  const catalog = promptCatalog(surface, locale);
+  const name =
+    locale === "zh-CN" ? "完整世界提示占位" : "Full world prompt placeholder";
+  const indexed = (arrangement: readonly OrderedPlayPrompt[]) =>
+    new Map(arrangement.map((entry, index) => [entry.id, { entry, index }]));
+  const left = indexed(before);
+  const right = indexed(after);
+  const moved = netMovedEntries(moves, left, right);
   const entries: V1OrchestrationChangeSet["entries"] = [];
-  for (const surface of editorSurfaces) {
-    const catalog = promptCatalog(surface, locale);
-    const name =
-      locale === "zh-CN" ? "完整世界提示占位" : "Full world prompt placeholder";
-    const left = new Map(
-      before[surface].map((entry, index) => [
-        entry.id,
-        editorEntry(entry, index, catalog, name),
-      ]),
-    );
-    const right = new Map(
-      after[surface].map((entry, index) => [
-        entry.id,
-        editorEntry(entry, index, catalog, name),
-      ]),
-    );
-    for (const entryId of new Set([...left.keys(), ...right.keys()])) {
-      const old = left.get(entryId) ?? null;
-      const next = right.get(entryId) ?? null;
-      if (!isDeepStrictEqual(old, next))
-        entries.push({ surface, entryId, before: old, after: next });
-    }
+  for (const entryId of new Set([...left.keys(), ...right.keys()])) {
+    const oldEntry = left.get(entryId);
+    const newEntry = right.get(entryId);
+    const positionMoved = moved.has(entryId);
+    if (!positionMoved && isDeepStrictEqual(oldEntry?.entry, newEntry?.entry))
+      continue;
+    const old =
+      oldEntry === undefined
+        ? null
+        : editorEntry(oldEntry.entry, oldEntry.index, catalog, name);
+    const next =
+      newEntry === undefined
+        ? null
+        : editorEntry(newEntry.entry, newEntry.index, catalog, name);
+    if (
+      old === null ||
+      next === null ||
+      positionMoved ||
+      !isDeepStrictEqual({ ...old, index: next.index }, next)
+    )
+      entries.push({
+        surface,
+        entryId,
+        before: old,
+        after: next,
+        ...(positionMoved ? { moved: true } : {}),
+      });
   }
   return entries;
+}
+
+function netMovedEntries(
+  moves: readonly EditorMove[],
+  before: ReadonlyMap<string, { index: number }>,
+  after: ReadonlyMap<string, { index: number }>,
+): Set<string> {
+  const moved = new Set<string>();
+  const seenPairs = new Set<string>();
+  // Attribute each surviving reversal to the last explicit move that crossed
+  // the pair. Insertions, removals and undone crossings leave no reversal.
+  for (const { entryId, crossedEntryIds } of moves.toReversed()) {
+    const oldIndex = before.get(entryId)?.index;
+    const newIndex = after.get(entryId)?.index;
+    if (oldIndex === undefined || newIndex === undefined) continue;
+    for (const crossed of crossedEntryIds) {
+      const oldNeighbor = before.get(crossed)?.index;
+      const newNeighbor = after.get(crossed)?.index;
+      if (oldNeighbor === undefined || newNeighbor === undefined) continue;
+      const key =
+        entryId < crossed ? `${entryId}\0${crossed}` : `${crossed}\0${entryId}`;
+      if (seenPairs.has(key)) continue;
+      seenPairs.add(key);
+      const wasBeforeNeighbor = oldIndex < oldNeighbor;
+      const isBeforeNeighbor = newIndex < newNeighbor;
+      if (wasBeforeNeighbor !== isBeforeNeighbor) moved.add(entryId);
+    }
+  }
+  return moved;
 }
 
 export function writeEditorEntries(
@@ -350,7 +400,7 @@ export function applyEditOperation(input: {
   catalog: readonly BuiltinPlayPrompt[];
   surface: OrchestrationSurface;
   wasRead: (entryId: string) => boolean;
-}): void {
+}): EditorMove | undefined {
   const { entries, operation: op, catalog, surface } = input;
   const index = entries.findIndex(({ id }) => id === op.entryId);
   const existing = entries[index];
@@ -399,12 +449,20 @@ export function applyEditOperation(input: {
         throw new Error("Only user and tail blocks can be deleted");
       entries.splice(index, 1);
       break;
-    case "move":
+    case "move": {
       if (op.beforeId === undefined && op.afterId === undefined)
         throw new Error("Move needs a stable adjacent entry ID");
       entries.splice(index, 1);
-      insertEntry(entries, op, existing);
-      break;
+      const inserted = insertEntry(entries, op, existing);
+      const crossed =
+        index < inserted
+          ? entries.slice(index, inserted)
+          : entries.slice(inserted + 1, index + 1);
+      return {
+        entryId: existing.id,
+        crossedEntryIds: crossed.map(({ id }) => id),
+      };
+    }
     case "update":
       entries[index] = updateEntry(entries, existing, op, catalog);
       break;
@@ -454,6 +512,7 @@ export function applyEditOperation(input: {
       break;
     }
   }
+  return undefined;
 }
 
 function updateEntry(
@@ -561,16 +620,18 @@ function insertEntry(
   entries: OrderedPlayPrompt[],
   op: EditOperation,
   entry: OrderedPlayPrompt,
-): void {
+): number {
   const anchor = op.beforeId ?? op.afterId;
   if (anchor === undefined) {
     entries.push(entry);
-    return;
+    return entries.length - 1;
   }
   const at = entries.findIndex(({ id }) => id === anchor);
   if (at < 0)
     throw new Error(
       "The adjacent entry does not exist in the requested surface",
     );
-  entries.splice(at + (op.afterId === undefined ? 0 : 1), 0, entry);
+  const index = at + (op.afterId === undefined ? 0 : 1);
+  entries.splice(index, 0, entry);
+  return index;
 }

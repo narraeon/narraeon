@@ -674,13 +674,14 @@ export function OrchestrationConversationPanel({
               <code>{receipt.afterRevision}</code>
             </p>
             {receipt.entries.map(
-              ({ surface: entrySurface, entryId, before, after }) => (
+              ({ surface: entrySurface, entryId, moved, before, after }) => (
                 <details key={`${entrySurface}:${entryId}`}>
                   <summary>
                     {uiText(
                       entrySurface === "playPrompts" ? "游玩" : "设定完善",
                     )}{" "}
                     · {after?.name ?? before?.name ?? entryId}
+                    {moved === true && <> · {uiText("已移动")}</>}
                   </summary>
                   <p>
                     <code>{entryId}</code>
@@ -697,7 +698,8 @@ export function OrchestrationConversationPanel({
                         "gameplay",
                       ] as const
                     ).map((field) =>
-                      before?.[field] === after?.[field] ? null : (
+                      before?.[field] === after?.[field] &&
+                      !(field === "index" && moved === true) ? null : (
                         <div key={field}>
                           <dt>{uiText(changeFieldLabels[field])}</dt>
                           <dd>
