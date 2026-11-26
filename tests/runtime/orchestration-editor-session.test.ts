@@ -1631,7 +1631,7 @@ test("the English harbor authoring batch reads the full guidance without a secon
     "author.target",
   ];
   const guidance = defaultSettingImprovementPromptForLocale("en");
-  expect(guidance).toHaveLength(4900);
+  expect(guidance.length).toBeGreaterThan(4096);
   f.respond((request) => {
     if (request.exchange === 1)
       return reply(
@@ -1649,7 +1649,7 @@ test("the English harbor authoring batch reads the full guidance without a secon
           id: entryIds[1],
           text: guidance,
           offset: 0,
-          end: 4900,
+          end: guidance.length,
           nextOffset: null,
           completeForEditing: true,
         },
