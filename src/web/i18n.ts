@@ -9,6 +9,7 @@ let activeLocale: AppLocale = defaultAppLocale;
 const englishMessages: Record<string, string> = {
   "AI 编辑": "AI editing",
   设定完善与世界修订: "Setting improvement and world revision",
+  "正在生成预览…": "Generating preview…",
   编排编辑视图: "Orchestration editing views",
   编排: "Orchestration",
   对话: "Conversation",
