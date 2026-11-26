@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanVariables } from "../../src/web/sillytavern-variable-preview.ts";
+import { scanVariables } from "../../src/shared/sillytavern-variables.ts";
 
 describe("static SillyTavern variable reading", () => {
   it("preserves literal empty and multiline values and offsets", () => {

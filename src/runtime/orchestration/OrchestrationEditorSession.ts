@@ -259,9 +259,12 @@ export class OrchestrationEditorSession {
           host,
         );
       const modelPrompt = host.modelPrompt?.();
-      const bootstrap = await this.#compile(target, input, host);
+      const source = await this.#services.extension?.summarize(target.id);
+      const bootstrap = await this.#compile(target, input, host, source);
       session ??= initialSession(target, bootstrap, host, requestId);
       session.authorization = authorization(target);
+      if (typeof source?.snapshotId === "string")
+        session.authorization.sourceSnapshotId = source.snapshotId;
       beginAuthoringRequest(session, host, requestId, message, {
         bootstrap,
         modelPrompt,
@@ -359,10 +362,10 @@ export class OrchestrationEditorSession {
     target: OrchestrationDraftTarget,
     input: Message,
     host: ModelHost,
+    source?: Record<string, string | number>,
   ): Promise<PromptCompilation> {
     const locale = this.#services.locale();
     const modelPrompt = host.modelPrompt?.();
-    const source = await this.#services.extension?.summarize(target.id);
     const system = orchestrationEditorSystem(locale);
     const targetFacts =
       locale === "zh-CN"
@@ -489,6 +492,9 @@ export class OrchestrationEditorSession {
             .filter(({ name }) => name === "orchestration_edit")
             .map(({ id }) => id),
           beforeManifest,
+          ...(target.provenance === undefined
+            ? {}
+            : { beforeProvenance: target.provenance }),
           receipt: {
             id,
             requestId: request.requestId,
@@ -548,6 +554,17 @@ export class OrchestrationEditorSession {
             files,
             receiptId: receipt.id,
             nextHead: receipt.id,
+            ...(receipt.provenance === undefined
+              ? {}
+              : {
+                  provenance: receipt.provenance.map(({ entryId, value }) => ({
+                    entryId,
+                    surface: receipt.entries.find(
+                      (entry) => entry.entryId === entryId,
+                    )?.surface,
+                    value,
+                  })),
+                }),
           });
         }
         if (!session.changes.some((item) => item.receipt.id === receipt.id))
@@ -628,6 +645,7 @@ export class OrchestrationEditorSession {
           files,
           receiptId: pending.receiptId,
           nextHead: change.beforeHead,
+          restoreProvenance: change.beforeProvenance ?? [],
         });
         reverted = true;
       } catch (error) {
@@ -637,6 +655,7 @@ export class OrchestrationEditorSession {
     if (reverted) {
       change.receipt.undone = true;
       delete change.beforeManifest;
+      delete change.beforeProvenance;
     }
     delete session.pendingUndo;
     await this.#save(session);
@@ -735,6 +754,7 @@ export class OrchestrationEditorSession {
           change.currentRevision !== target.currentRevision)
       ) {
         delete change.beforeManifest;
+        delete change.beforeProvenance;
         changed = true;
       }
     return changed;

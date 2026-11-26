@@ -52,6 +52,7 @@ import { WorldRevisionWorkspace } from "./world-revision/WorldRevisionWorkspace.
 import { EditorSessionStore } from "./orchestration/EditorSessionStore.ts";
 import { OrchestrationEditorSession } from "./orchestration/OrchestrationEditorSession.ts";
 import type { OrchestrationEditorExtension } from "./orchestration/EditorTools.ts";
+import { sillyTavernEditorSource } from "./orchestration/SillyTavernEditorSource.ts";
 
 import { ConversationChanges } from "./ConversationChanges.ts";
 import type {
@@ -139,9 +140,9 @@ export class V1Runtime {
       locale: () => this.#locale,
       bindModelHost: () => this.#modelHost(),
       bindExistingModelHost: (binding) => this.#matchingModelHost(binding),
-      ...(input.orchestrationEditorExtension === undefined
-        ? {}
-        : { extension: input.orchestrationEditorExtension }),
+      extension:
+        input.orchestrationEditorExtension ??
+        sillyTavernEditorSource(this.#playPresets),
     });
     this.#settingImprovements = new SettingImprovementSession({
       ...generation,

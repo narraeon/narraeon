@@ -175,6 +175,18 @@ export class PlayCommands {
           );
         }
       }
+      case "play.orchestration.provenance.read":
+        return (
+          (
+            await this.#services.playPresets.readOrchestrationProvenance(
+              request.presetId,
+              request.revision,
+            )
+          ).find(
+            ({ surface, entryId }) =>
+              surface === request.surface && entryId === request.entryId,
+          ) ?? null
+        );
       case "play.orchestration.preview":
         return previewOrchestration(
           {

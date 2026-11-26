@@ -1,4 +1,7 @@
-import type { OrchestrationSessionRequest } from "./orchestrationSession.ts";
+import type {
+  OrchestrationSessionRequest,
+  OrchestrationSurface,
+} from "./orchestrationSession.ts";
 import { maxPortableContentArchiveBase64Characters } from "./contentTree.ts";
 import type { ModelRetryEvidence } from "./modelRetry.ts";
 import type { ContentSelection } from "./sillyTavernContent.ts";
@@ -243,6 +246,13 @@ export type V1Request =
       };
     }
   | ({ type: "play.orchestration.preview" } & OrchestrationPreviewInput)
+  | {
+      type: "play.orchestration.provenance.read";
+      presetId: string;
+      revision: string;
+      surface: OrchestrationSurface;
+      entryId: string;
+    }
   | {
       type: "prompt.preview";
       packageId: string;
