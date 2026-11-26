@@ -1,7 +1,7 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import { builtinAuthorPrompts } from "../shared/ordered-author-prompts.ts";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
   orderedPromptScope,
@@ -31,6 +31,7 @@ export function OrderedPlayPromptEditor({
   promptPreview,
   detail,
   onSelectPrompt,
+  onFocusPrompt,
   modelConnection,
   onEditModelConnection,
 }: {
@@ -44,6 +45,8 @@ export function OrderedPlayPromptEditor({
   promptPreview?: ReactNode;
   detail?: ReactNode;
   onSelectPrompt?: () => void;
+  onFocusPrompt?:
+    ((id: string | undefined, name: string | undefined) => void) | undefined;
   modelConnection?:
     Pick<ModelConnectionView, "name" | "modelPrompt"> | undefined;
   onEditModelConnection?: (() => void) | undefined;
@@ -68,6 +71,13 @@ export function OrderedPlayPromptEditor({
       : entry.kind === "user" || entry.kind === "tail"
         ? entry.name
         : catalog.find((item) => item.id === entry.builtin)!.name;
+  const focusedId = detail ? undefined : selected?.id;
+  const focusedName =
+    detail || selected === undefined ? undefined : name(selected);
+  useEffect(
+    () => onFocusPrompt?.(focusedId, focusedName),
+    [onFocusPrompt, focusedId, focusedName],
+  );
   const categoryLabels: Record<PromptCategory | "tail", string> = {
     mechanics: uiText("必选"),
     choice: uiText("选项"),

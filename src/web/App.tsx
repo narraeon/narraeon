@@ -59,7 +59,11 @@ import {
   useAuthoringWorkspace,
 } from "./useAuthoringWorkspace.ts";
 import { WorldPage, type WorldComposerDraft } from "./WorldPage.tsx";
-import type { OrchestrationAiWorkbenchDraft } from "./orchestration-ai-workbench.ts";
+import {
+  readOrchestrationAiWorkbench,
+  saveOrchestrationAiWorkbench,
+  type OrchestrationAiWorkbenchDraft,
+} from "./orchestration-ai-workbench.ts";
 import {
   idleWorkspaceNavigation,
   parseWorkspaceHash,
@@ -123,7 +127,12 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     useState<ConfirmationRequest<null> | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [orchestrationAiEditing, setOrchestrationAiEditing] =
-    useState<OrchestrationAiWorkbenchDraft | null>(null);
+    useState<OrchestrationAiWorkbenchDraft | null>(
+      readOrchestrationAiWorkbench,
+    );
+  useEffect(() => {
+    saveOrchestrationAiWorkbench(orchestrationAiEditing);
+  }, [orchestrationAiEditing]);
   const [presetPageVersion, setPresetPageVersion] = useState(0);
   const presetPageInstanceRef = useRef(0);
   const [selected, setSelected] = useState<string>("");
@@ -476,7 +485,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         client.request<Workspace>({
           type: "workspace.read",
           ...(workspaceReadScope.current !== "full" &&
-          parseWorkspaceHash(window.location.hash)?.screen === "plays"
+          (parseWorkspaceHash(window.location.hash)?.screen === "plays" ||
+            (modelSettingsVisit.current?.orchestration === true &&
+              parseWorkspaceHash(window.location.hash)?.screen === "model"))
             ? { scope: "orchestration" }
             : {}),
         }),

@@ -30,6 +30,7 @@ export function PresetWorkbenchEditor({
   onChange,
   onWrite,
   onResourceEdit,
+  onFocusPrompt,
   preview,
   promptPreview,
   modelConnection,
@@ -43,6 +44,8 @@ export function PresetWorkbenchEditor({
   ) => void;
   onWrite: (path: string, body: string) => void;
   onResourceEdit: (edit: PresetResourceEdit) => void;
+  onFocusPrompt?:
+    ((id: string | undefined, name: string | undefined) => void) | undefined;
   promptPreview?: ReactNode;
   modelConnection?: ModelConnectionView | undefined;
   onEditModelConnection?: (() => void) | undefined;
@@ -667,6 +670,7 @@ export function PresetWorkbenchEditor({
       }
       promptPreview={promptPreview}
       onSelectPrompt={() => setSelection(undefined)}
+      onFocusPrompt={onFocusPrompt}
       {...(!authoring ? { directory, detail } : {})}
     />
   );
