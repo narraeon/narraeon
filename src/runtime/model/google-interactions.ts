@@ -1,6 +1,7 @@
 import { modelReasoningPolicyIssue } from "../../protocol/modelConnections.ts";
 import {
   bootstrapPrefixEnd,
+  leadingSystemOrder,
   renderPromptDeltaMessage,
 } from "../prompt/FileNativePromptCompiler.ts";
 import { RuntimeRequestRejection } from "../RuntimeRequestRejection.ts";
@@ -81,14 +82,11 @@ function googleSystemSources(
         message.role !== "world_context"),
   );
   const ordered = logical.some((message) => message.messageRole !== undefined);
-  const firstConversation = logical.findIndex(
-    (message) => (message.messageRole ?? "system") !== "system",
+  const { split } = leadingSystemOrder(
+    logical.map((message) => ({ role: message.messageRole ?? "system" })),
   );
   const leading = ordered
-    ? logical.slice(
-        0,
-        firstConversation < 0 ? logical.length : firstConversation,
-      )
+    ? logical.slice(0, split)
     : logical.filter(
         (message) =>
           message.role === "runtime_system" ||
@@ -112,21 +110,19 @@ function googleSystemSources(
 }
 
 function googleLateSystemSource(request: ModelHostExchange): string {
-  let conversation = false;
-  for (const message of request.bootstrap.logicalMessages) {
-    if (
-      message.role === "player_input" ||
-      (request.bootstrap.provider.preload !== undefined &&
-        message.role === "world_context")
-    )
-      continue;
-    if ((message.messageRole ?? "system") !== "system") conversation = true;
-    else if (conversation)
-      return [message.promptId, ...message.blocks.map(({ source }) => source)]
+  const logical = request.bootstrap.logicalMessages.flatMap((message) =>
+    message.role === "player_input" ||
+    (request.bootstrap.provider.preload !== undefined &&
+      message.role === "world_context")
+      ? []
+      : [{ message, role: message.messageRole ?? "system" }],
+  );
+  const first = leadingSystemOrder(logical).conflicts[0]?.message;
+  return first === undefined
+    ? ""
+    : [first.promptId, ...first.blocks.map(({ source }) => source)]
         .filter((item) => item !== undefined)
         .join(", ");
-  }
-  return "";
 }
 
 function googleRequestHeaders(

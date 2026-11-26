@@ -492,6 +492,7 @@ export class FileNativePlayPresetError extends RuntimeDomainError {
                 "play.select",
                 "play.export",
                 "play.import",
+                "play.orchestration.preview",
               ],
             },
           },
@@ -725,72 +726,7 @@ export class FileNativePlayPresetStore {
       const document = await this.#read();
       const stored = findStored(document, input.presetId);
       delete stored.builtinDefault;
-      let files = cloneFiles(input.files);
-      const previous = parsePlayPresetFiles(
-        stored.revisions[stored.currentRevision]!,
-      );
-      if (input.structure !== undefined) {
-        const structure = parsePlayPresetStructuredEditor(input.structure);
-        if (previous.kind === "valid") {
-          for (const key of ["playPrompts", "authorPrompts"] as const) {
-            if (structure[key] === undefined) continue;
-            assertReadonlyPromptsRetained(
-              previous.definition[key] ?? [],
-              structure[key],
-            );
-          }
-        }
-        files = applyPlayPresetStructuredEditor(input.files, structure);
-      }
-      const repairLegacyDraft =
-        stored.draftRevision !== undefined &&
-        presetManifest(stored.revisions[stored.draftRevision]!) ===
-          legacyManifest;
-      const candidate = parsePlayPresetFiles(files, this.#limits);
-      if (
-        candidate.kind === "valid" &&
-        presetManifest(files) === legacyManifest &&
-        previous.kind === "valid" &&
-        previous.definition.format === orchestrationFormat &&
-        !repairLegacyDraft
-      )
-        throw new FileNativePlayPresetError(
-          "readonly_prompt_removed",
-          "An orchestration cannot be replaced with a legacy orchestration",
-        );
-      if (
-        candidate.kind === "valid" &&
-        previous.kind === "valid" &&
-        previous.definition.followupItems !== undefined &&
-        candidate.definition.followupItems === undefined &&
-        !repairLegacyDraft
-      ) {
-        throw new FileNativePlayPresetError(
-          "readonly_followup_removed",
-          "Ordered follow-ups cannot be replaced with the legacy format",
-        );
-      }
-      files = upgradeValidOrchestration(files, this.#limits);
-      if (
-        candidate.kind === "valid" &&
-        previous.kind === "valid" &&
-        previous.definition.playPrompts !== undefined
-      ) {
-        const definition = assertCurrentOrchestration(
-          files,
-          this.#limits,
-          this.#locale(),
-        );
-        assertReadonlyPromptsRetained(
-          previous.definition.playPrompts,
-          definition.playPrompts ?? [],
-        );
-        if (previous.definition.authorPrompts !== undefined)
-          assertReadonlyPromptsRetained(
-            previous.definition.authorPrompts,
-            definition.authorPrompts ?? [],
-          );
-      }
+      const files = this.#prepareDraftFiles(stored, input);
       const revision = revisionForFiles(files, this.#limits);
       stored.name = normalizeName(input.name);
       stored.revisions[revision] = cloneFiles(files);
@@ -802,6 +738,79 @@ export class FileNativePlayPresetStore {
         preset: this.#view(stored),
       };
     });
+  }
+
+  #prepareDraftFiles(
+    stored: StoredPreset,
+    input: { files: Record<string, string>; structure?: unknown },
+  ): Record<string, string> {
+    let files = cloneFiles(input.files);
+    const previous = parsePlayPresetFiles(
+      stored.revisions[stored.currentRevision]!,
+    );
+    if (input.structure !== undefined) {
+      const structure = parsePlayPresetStructuredEditor(input.structure);
+      if (previous.kind === "valid") {
+        for (const key of ["playPrompts", "authorPrompts"] as const) {
+          if (structure[key] === undefined) continue;
+          assertReadonlyPromptsRetained(
+            previous.definition[key] ?? [],
+            structure[key],
+          );
+        }
+      }
+      files = applyPlayPresetStructuredEditor(input.files, structure);
+    }
+    const repairLegacyDraft =
+      stored.draftRevision !== undefined &&
+      presetManifest(stored.revisions[stored.draftRevision]!) ===
+        legacyManifest;
+    const candidate = parsePlayPresetFiles(files, this.#limits);
+    if (
+      candidate.kind === "valid" &&
+      presetManifest(files) === legacyManifest &&
+      previous.kind === "valid" &&
+      previous.definition.format === orchestrationFormat &&
+      !repairLegacyDraft
+    )
+      throw new FileNativePlayPresetError(
+        "readonly_prompt_removed",
+        "An orchestration cannot be replaced with a legacy orchestration",
+      );
+    if (
+      candidate.kind === "valid" &&
+      previous.kind === "valid" &&
+      previous.definition.followupItems !== undefined &&
+      candidate.definition.followupItems === undefined &&
+      !repairLegacyDraft
+    ) {
+      throw new FileNativePlayPresetError(
+        "readonly_followup_removed",
+        "Ordered follow-ups cannot be replaced with the legacy format",
+      );
+    }
+    files = upgradeValidOrchestration(files, this.#limits);
+    if (
+      candidate.kind === "valid" &&
+      previous.kind === "valid" &&
+      previous.definition.playPrompts !== undefined
+    ) {
+      const definition = assertCurrentOrchestration(
+        files,
+        this.#limits,
+        this.#locale(),
+      );
+      assertReadonlyPromptsRetained(
+        previous.definition.playPrompts,
+        definition.playPrompts ?? [],
+      );
+      if (previous.definition.authorPrompts !== undefined)
+        assertReadonlyPromptsRetained(
+          previous.definition.authorPrompts,
+          definition.authorPrompts ?? [],
+        );
+    }
+    return files;
   }
 
   async select(
@@ -856,12 +865,63 @@ export class FileNativePlayPresetStore {
     const document = await this.#read();
     const stored = findStored(document, id);
     const selectedRevision = revision ?? stored.currentRevision;
-    const files = stored.revisions[selectedRevision];
-    if (files === undefined)
-      throw new FileNativePlayPresetError(
-        "revision_not_found",
-        "The requested orchestration revision was not found",
+    return this.#binding(
+      stored,
+      selectedRevision,
+      revisionFiles(stored, selectedRevision),
+    );
+  }
+
+  async bindOrchestrationPreview(input: {
+    presetId: string;
+    revision: string;
+    candidate?: { files: Record<string, string>; structure?: unknown };
+  }): Promise<{
+    current: PlayPresetBinding;
+    selected: PlayPresetBinding;
+    selectedKind: "current" | "draft" | "stored" | "candidate";
+    isCurrentPreset: boolean;
+  }> {
+    await this.#tail;
+    const document = await this.#read();
+    const stored = findStored(document, input.presetId);
+    const selectedFiles = revisionFiles(stored, input.revision);
+    const current = this.#binding(
+      stored,
+      stored.currentRevision,
+      revisionFiles(stored, stored.currentRevision),
+    );
+    const isCurrentPreset = document.currentPresetId === stored.id;
+    if (input.candidate !== undefined) {
+      const files = this.#prepareDraftFiles(stored, input.candidate);
+      const selected = this.#binding(
+        stored,
+        revisionForFiles(files, this.#limits),
+        files,
       );
+      return { current, selected, selectedKind: "candidate", isCurrentPreset };
+    }
+    return {
+      current,
+      selected:
+        input.revision === current.revision
+          ? current
+          : this.#binding(stored, input.revision, selectedFiles),
+      selectedKind:
+        input.revision === stored.currentRevision
+          ? "current"
+          : input.revision === stored.draftRevision
+            ? "draft"
+            : "stored",
+      isCurrentPreset,
+    };
+  }
+
+  #binding(
+    stored: StoredPreset,
+    selectedRevision: string,
+    files: Record<string, string>,
+  ): PlayPresetBinding {
     // A frozen revision may still name a retired composite builtin; the
     // ordered-prompt parser reads it as the blocks that replaced it, so old
     // requests keep a readable preset while the stored bytes stay as written.
@@ -3614,6 +3674,21 @@ function parseStoredDocument(
       "Current orchestration cannot be a disabled identity",
     );
   return { schemaVersion: 1, currentPresetId: selected, presets };
+}
+
+function revisionFiles(
+  stored: StoredPreset,
+  revision: string,
+): Record<string, string> {
+  const files = Object.hasOwn(stored.revisions, revision)
+    ? stored.revisions[revision]
+    : undefined;
+  if (files === undefined)
+    throw new FileNativePlayPresetError(
+      "revision_not_found",
+      "The requested orchestration revision was not found",
+    );
+  return files;
 }
 
 function findStored(document: StoredDocument, id: string): StoredPreset {

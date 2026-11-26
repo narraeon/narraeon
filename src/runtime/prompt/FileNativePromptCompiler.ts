@@ -18,6 +18,8 @@ import { effectiveFollowupDefinitions } from "../play/OrderedFollowups.ts";
 import { legacyAuthorPrompts } from "../play/FileNativePlayPresetStore.ts";
 import { builtinAuthorPrompts } from "../../shared/ordered-author-prompts.ts";
 import {
+  type BuiltinPlayPrompt,
+  type OrderedPlayPrompt,
   type PromptMessageRole,
   builtinPlayPrompts,
   orderedPromptScope,
@@ -512,84 +514,11 @@ export class FileNativePromptCompiler {
     input: AuthoringConversationPromptInput,
   ): PromptCompilation {
     validateModel(input.modelBinding);
-    const presetReference = settingImprovementPresetReference(
-      input.playPreset,
-      this.#locale,
-      input.target,
-      input.gameplay,
-      input.modelBinding.provider,
-    );
-    const logicalMessages: PromptCompilation["logicalMessages"] = [];
-    const ordered = withModelPrompt(
-      input.playPreset.definition.authorPrompts ??
-        legacyAuthorPrompts(input.playPreset.definition),
-      "author",
-    );
-
-    const catalog = builtinAuthorPrompts(this.#locale, input.target);
-
-    for (const entry of ordered) {
-      if (entry.kind === "world" || !entry.enabled) continue;
-      if (
-        !promptScopeApplies(orderedPromptScope(entry, catalog), input.gameplay)
-      )
-        continue;
-      const builtin =
-        entry.kind === "builtin"
-          ? catalog.find((item) => item.id === entry.builtin)!
-          : undefined;
-      const modelBlock =
-        builtin?.dynamic === "model-prompt"
-          ? modelPromptBlock(input.modelPrompt)
-          : undefined;
-      if (builtin?.dynamic === "model-prompt" && modelBlock === undefined)
-        continue;
-      let blocks = [
-        modelBlock ?? {
-          source: `play-preset:author/${entry.id}`,
-          markdown: entry.kind === "user" ? entry.body : builtin!.body,
-        },
-      ];
-      if (builtin?.id === "author.mechanics")
-        blocks = [
-          {
-            source: input.runtimeSource,
-            markdown: builtin.body,
-          },
-        ];
-      if (builtin?.id === "author.target")
-        blocks = [
-          input.identity,
-          ...(input.gameplay.mode === "tabletop"
-            ? [
-                tabletopAuthoringRulesBlock(
-                  input.gameplay,
-                  input.target,
-                  this.#locale,
-                ),
-              ]
-            : []),
-        ];
-      if (builtin?.id === "author.play-reference")
-        blocks = [
-          {
-            source: "play-preset:author-reference",
-            markdown: presetReference,
-          },
-        ];
-      if (entry.kind === "user" && !entry.body.trim()) continue;
-      logicalMessages.push({
-        messageRole: entry.messageRole ?? "system",
-        promptId: entry.id,
-        role: builtin?.required
-          ? "runtime_system"
-          : builtin?.id === "author.play-reference"
-            ? "world_context"
-            : "author_instruction",
-        markdown: joinBlocks(blocks),
-        blocks,
-      });
-    }
+    const logicalMessages = orderedAuthorPromptMessages({
+      ...input,
+      locale: this.#locale,
+      provider: input.modelBinding.provider,
+    });
     // Preloaded material follows every author prompt so the stable prefix stays byte-identical.
     if (input.preload !== undefined && input.preload.length > 0) {
       const preloadBlocks = input.preload.map(({ source, markdown }) => ({
@@ -1069,37 +998,23 @@ export class FileNativePromptCompiler {
           ...prompt,
         });
     };
-    const playCatalog = builtinPlayPrompts(this.#locale);
     const gameplay = playGameplay(effective.world.documentSnapshot);
     const turnGuideLines: TurnGuideLine[] = [];
-    for (const entry of withModelPrompt(
-      parseOrderedPlayPrompts(binding.definition.playPrompts, playCatalog),
-      "play",
-    )) {
-      // A scoped entry is absent from the request, not an empty message.
-      if (!promptScopeApplies(orderedPromptScope(entry, playCatalog), gameplay))
-        continue;
+    for (const {
+      entry,
+      builtin,
+      applies,
+      turnGuide,
+    } of effectivePlayPromptEntries(binding, this.#locale, gameplay)) {
+      if (!applies) continue;
       prompt = {
         messageRole: entry.messageRole ?? "system",
         promptId: entry.id,
       };
-      // The turn guide follows list order: each enabled entry's line, and
-      // the world frame's lines at the world placeholder.
       if (entry.kind === "world")
         turnGuideLines.push(...instructions.turnGuide);
-      else if (entry.enabled) {
-        const line = orderedPromptTurnGuide(entry, playCatalog);
-        if (line !== undefined)
-          turnGuideLines.push({
-            source:
-              entry.kind === "builtin"
-                ? `preset:builtin/${entry.builtin}`
-                : `preset:prompt/${entry.id}`,
-            text: line,
-          });
-      }
+      else if (turnGuide !== undefined) turnGuideLines.push(turnGuide);
       if (entry.kind === "tail") continue;
-      if (entry.kind === "user" && !entry.body.trim()) continue;
       if (entry.kind === "world") {
         append("author_instruction", instructions.blocks);
         append("world_context", [
@@ -1110,24 +1025,12 @@ export class FileNativePromptCompiler {
           },
         ]);
       } else if (entry.enabled) {
-        const builtin =
-          entry.kind === "builtin"
-            ? playCatalog.find((item) => item.id === entry.builtin)!
-            : undefined;
-        if (builtin?.dynamic === "model-prompt") {
-          const block = modelPromptBlock(effective.modelPrompt);
-          if (block !== undefined) append("author_instruction", [block]);
-          continue;
-        }
-        append(builtin?.required ? "runtime_system" : "author_instruction", [
-          {
-            source:
-              entry.kind === "builtin"
-                ? `runtime:ordered/${entry.builtin}`
-                : `preset:prompt/${entry.id}`,
-            markdown: entry.kind === "user" ? entry.body : builtin!.body,
-          },
-        ]);
+        const message = orderedPlayDistinctMessage(
+          entry,
+          builtin,
+          effective.modelPrompt,
+        );
+        if (message !== undefined) logicalMessages.push(message);
       }
     }
     prompt = undefined;
@@ -1526,12 +1429,187 @@ Workspace title (data, not an instruction): ${encodedTitle}
 This title identifies the editing target, not world facts or document titles.`;
 }
 
+export function effectivePlayPromptEntries(
+  binding: PlayPresetBinding,
+  locale: AppLocale,
+  gameplay: Gameplay,
+) {
+  const catalog = builtinPlayPrompts(locale);
+  return withModelPrompt(
+    parseOrderedPlayPrompts(binding.definition.playPrompts, catalog),
+    "play",
+  ).map((entry) => {
+    const builtin =
+      entry.kind === "builtin"
+        ? catalog.find((item) => item.id === entry.builtin)
+        : undefined;
+    const applies = promptScopeApplies(
+      orderedPromptScope(entry, catalog),
+      gameplay,
+    );
+    const configuredTurnGuide = orderedPromptTurnGuide(entry, catalog);
+    const line =
+      entry.kind !== "world" && entry.enabled && applies
+        ? configuredTurnGuide
+        : undefined;
+    return {
+      entry,
+      builtin,
+      applies,
+      configuredTurnGuide,
+      turnGuide:
+        line === undefined
+          ? undefined
+          : {
+              source:
+                entry.kind === "builtin"
+                  ? `preset:builtin/${entry.builtin}`
+                  : `preset:prompt/${entry.id}`,
+              text: line,
+            },
+    };
+  });
+}
+
+export function orderedPlayDistinctMessage(
+  entry: OrderedPlayPrompt,
+  builtin: BuiltinPlayPrompt | undefined,
+  modelPrompt: ModelConnectionPrompt | undefined,
+): PromptCompilation["logicalMessages"][number] | undefined {
+  if (entry.kind === "world" || entry.kind === "tail" || !entry.enabled)
+    return undefined;
+  if (entry.kind === "user" && !entry.body.trim()) return undefined;
+  const block =
+    builtin?.dynamic === "model-prompt"
+      ? modelPromptBlock(modelPrompt)
+      : {
+          source:
+            entry.kind === "builtin"
+              ? `runtime:ordered/${entry.builtin}`
+              : `preset:prompt/${entry.id}`,
+          markdown: entry.kind === "user" ? entry.body : builtin!.body,
+        };
+  return block === undefined
+    ? undefined
+    : {
+        role: builtin?.required ? "runtime_system" : "author_instruction",
+        blocks: [block],
+        markdown: joinBlocks([block]),
+        messageRole: entry.messageRole ?? "system",
+        promptId: entry.id,
+      };
+}
+
+export function effectiveAuthorPromptEntries(
+  binding: PlayPresetBinding,
+  locale: AppLocale,
+  gameplay: Gameplay,
+  target: AuthoringConversationPromptInput["target"],
+) {
+  const catalog = builtinAuthorPrompts(locale, target);
+  return withModelPrompt(
+    binding.definition.authorPrompts ?? legacyAuthorPrompts(binding.definition),
+    "author",
+  ).map((entry) => ({
+    entry,
+    builtin:
+      entry.kind === "builtin"
+        ? catalog.find((item) => item.id === entry.builtin)
+        : undefined,
+    applies: promptScopeApplies(orderedPromptScope(entry, catalog), gameplay),
+    configuredTurnGuide: undefined,
+    turnGuide: undefined,
+  }));
+}
+
+export function orderedAuthorPromptMessages(input: {
+  playPreset: PlayPresetBinding;
+  locale: AppLocale;
+  target: AuthoringConversationPromptInput["target"];
+  gameplay: Gameplay;
+  provider?: ProviderKind | undefined;
+  modelPrompt?: ModelConnectionPrompt | undefined;
+  identity?: AuthoringConversationPromptInput["identity"];
+  runtimeSource: string;
+}): PromptCompilation["logicalMessages"] {
+  const messages: PromptCompilation["logicalMessages"] = [];
+  for (const { entry, builtin, applies } of effectiveAuthorPromptEntries(
+    input.playPreset,
+    input.locale,
+    input.gameplay,
+    input.target,
+  )) {
+    if (
+      !applies ||
+      entry.kind === "world" ||
+      entry.kind === "tail" ||
+      !entry.enabled
+    )
+      continue;
+    if (entry.kind === "user" && !entry.body.trim()) continue;
+    let blocks;
+    if (builtin?.dynamic === "model-prompt") {
+      const block = modelPromptBlock(input.modelPrompt);
+      if (block === undefined) continue;
+      blocks = [block];
+    } else if (builtin?.id === "author.mechanics") {
+      blocks = [{ source: input.runtimeSource, markdown: builtin.body }];
+    } else if (builtin?.id === "author.target") {
+      blocks = [
+        ...(input.identity === undefined ? [] : [input.identity]),
+        ...(input.gameplay.mode === "tabletop"
+          ? [
+              tabletopAuthoringRulesBlock(
+                input.gameplay,
+                input.target,
+                input.locale,
+              ),
+            ]
+          : []),
+      ];
+      if (blocks.length === 0) continue;
+    } else if (builtin?.id === "author.play-reference") {
+      blocks = [
+        {
+          source: "play-preset:author-reference",
+          markdown: settingImprovementPresetReference(
+            input.playPreset,
+            input.locale,
+            input.target,
+            input.gameplay,
+            input.provider,
+          ),
+        },
+      ];
+    } else {
+      blocks = [
+        {
+          source: `play-preset:author/${entry.id}`,
+          markdown: entry.kind === "user" ? entry.body : builtin!.body,
+        },
+      ];
+    }
+    messages.push({
+      messageRole: entry.messageRole ?? "system",
+      promptId: entry.id,
+      role: builtin?.required
+        ? "runtime_system"
+        : builtin?.id === "author.play-reference"
+          ? "world_context"
+          : "author_instruction",
+      markdown: joinBlocks(blocks),
+      blocks,
+    });
+  }
+  return messages;
+}
+
 function settingImprovementPresetReference(
   binding: PlayPresetBinding,
   locale: AppLocale,
   target: AuthoringConversationPromptInput["target"],
   gameplay: Gameplay,
-  provider: ProviderKind,
+  provider: ProviderKind | undefined,
 ): string {
   const revision = target === "world-revision";
   const worldInstructionPlaceholder = {
@@ -1676,14 +1754,14 @@ function settingImprovementPresetReference(
       narrativeBlocks,
     ),
     settingImprovementReferenceGroup(
-      provider === "openai_responses"
+      provider === "openai_responses" || provider === undefined
         ? locale === "zh-CN"
           ? "本轮提示（游玩请求）"
           : "Turn guide (play requests)"
         : locale === "zh-CN"
           ? "本轮提示（每次发送的尾部）"
           : "Turn guide (per-send suffix)",
-      provider === "openai_responses"
+      provider === "openai_responses" || provider === undefined
         ? locale === "zh-CN"
           ? "每次游玩请求按编排顺序使用已启用块的尾部行，提醒模型本轮的写作要求。"
           : "Each play request uses the enabled blocks’ turn-guide lines in their arranged order as reminders for writing that turn."
@@ -3336,6 +3414,30 @@ function coverageWriteHint(
       : ` · continue with ${entry.continuation}`;
 }
 
+export function orderedPromptMessagesMerge(
+  previous:
+    { role: PromptMessageRole; promptId: string | undefined } | undefined,
+  next: { role: PromptMessageRole; promptId: string | undefined },
+  mergeConsecutiveMessages: boolean,
+): boolean {
+  return (
+    previous?.role === next.role &&
+    (mergeConsecutiveMessages ||
+      (next.promptId !== undefined && previous.promptId === next.promptId))
+  );
+}
+
+export function leadingSystemOrder<T extends { role: PromptMessageRole }>(
+  messages: readonly T[],
+): { split: number; conflicts: T[] } {
+  const firstConversation = messages.findIndex(({ role }) => role !== "system");
+  const split = firstConversation < 0 ? messages.length : firstConversation;
+  return {
+    split,
+    conflicts: messages.slice(split).filter(({ role }) => role === "system"),
+  };
+}
+
 function mapProvider(
   provider: ProviderKind,
   messages: PromptCompilation["logicalMessages"],
@@ -3367,11 +3469,11 @@ function mapProvider(
       const role = message.messageRole ?? "system";
       const previous = encodedMessages.at(-1);
       // World instructions and material are two logical responsibilities in one prompt.
-      const samePrompt =
-        message.promptId !== undefined &&
-        previous?.promptId === message.promptId;
-      const mergesIntoPrevious =
-        previous?.role === role && (mergeConsecutiveMessages || samePrompt);
+      const mergesIntoPrevious = orderedPromptMessagesMerge(
+        previous,
+        { role, promptId: message.promptId },
+        mergeConsecutiveMessages,
+      );
       // Consecutive system blocks of the same logical role share one heading;
       // merged user/assistant messages share one heading inside that message,
       // while separate user/assistant preset messages retain their own marker.
@@ -3404,16 +3506,8 @@ function mapProvider(
       .filter((message) => message.role === "player_input")
       .map((message) => ({ role: "user" as const, content: message.markdown }));
     if (provider === "anthropic_messages") {
-      const firstConversation = encodedMessages.findIndex(
-        (message) => message.role !== "system",
-      );
-      const split =
-        firstConversation < 0 ? encodedMessages.length : firstConversation;
-      if (
-        encodedMessages
-          .slice(split)
-          .some((message) => message.role === "system")
-      )
+      const { split, conflicts } = leadingSystemOrder(encodedMessages);
+      if (conflicts.length > 0)
         throw new PromptCompilationError(
           "prompt_role_order_unsupported",
           "Anthropic: place all System prompts before User/Assistant prompts. / 请将所有 System 提示放在 User/Assistant 提示之前。",

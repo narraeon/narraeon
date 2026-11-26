@@ -1,3 +1,4 @@
+import { previewOrchestration } from "../play/OrchestrationPreview.ts";
 import { V1ProtocolError } from "../../protocol/v1.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
@@ -144,6 +145,15 @@ export class PlayCommands {
           );
         }
       }
+      case "play.orchestration.preview":
+        return previewOrchestration(
+          {
+            playPresets: this.#services.playPresets,
+            models: this.#services.models,
+            locale: this.#services.locale(),
+          },
+          request,
+        );
       case "play.workbench.read": {
         const binding =
           request.presetId === undefined
