@@ -6206,8 +6206,10 @@ test("全新游玩与对应预览按顺序各带一次已提交开场白和叙�
   ).result as V1PlayContextReadingView;
   expect(reading.nextFreshContext?.contextMode).toBe("fresh");
   expect(requests).toHaveLength(2);
-  const preview = reading.nextFreshContext!.preview.compilation.logicalMessages
-    .filter(({ role }) => role === "world_context")
+  const preview = reading
+    .nextFreshContext!.preview.compilation.logicalMessages.filter(
+      ({ role }) => role === "world_context",
+    )
     .map(({ markdown }) => markdown)
     .join("\n\n");
   await send(restarted, "fresh", "I move closer.");
