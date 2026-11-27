@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { appLocales } from "../../src/protocol/appPreferences.ts";
@@ -162,52 +163,17 @@ test.each(appLocales)(
   async (locale) => {
     const { runtime } = await setup();
     const zh = locale === "zh-CN";
-    await request(runtime, { type: "preferences.save", locale });
-    await request(runtime, {
-      type: "model.save",
-      connection: {
-        provider: "chat_completions",
-        modelId: "fogbell-test",
-        name: "Fogbell dispatch fixture",
-        presetId: "custom",
-        baseUrl: "https://provider.invalid/v1",
-        apiKey: "fixture-only",
-        contextWindowTokens: 128_000,
-        maxOutputTokens: 512,
-      },
-    });
-    const { localId: packageId } = await request<{ localId: string }>(runtime, {
-      type: "content.create-sample",
-      locale,
-      sampleId: "fogbell-harbor",
-    });
-    const { base64 } = await request<{ base64: string }>(runtime, {
-      type: "content.export",
-      packageId,
-    });
-    const imported = await request<EditableContentPackageDetail>(runtime, {
-      type: "content.import",
-      archiveBase64: base64,
-      title: "Fogbell ZIP",
-    });
-    expect(imported.status).toBe("usable");
-    expect(imported.issues).toEqual([]);
-    const {
-      world: { worldId },
-    } = await request<{ world: { worldId: string } }>(runtime, {
-      type: "world.create",
-      operationId: "fogbell-from-zip",
-      packageId: imported.localId,
-    });
-    const { playerViews } = await request<{
-      playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
-    }>(runtime, { type: "world.read", worldId });
-    expect(playerViews.diagnostics).toEqual([]);
-    const readViews = Object.fromEntries(
-      playerViews.views.map(({ id, items }) => [
-        id,
-        Object.fromEntries(items.map((item) => [item.id, item.value])),
-      ]),
+    const { worldId, playerViews, readViews, files } =
+      await importPlayableSample(runtime, locale, "fogbell-harbor");
+    const labels = playerViews.views
+      .find((view) => view.id === "investigation-progress")
+      ?.items.map((item) => item.label);
+    expect(labels).toContain(zh ? "已获线索" : "Gathered leads");
+    const inn = files.find((file) =>
+      file.path.endsWith("/fogbell-inn.yaml"),
+    )?.contents;
+    expect(inn).toMatch(
+      zh ? /第 5 天大低潮[^\n]*午/u : /Day 5 spring ebb[^\n]*afternoon/iu,
     );
     expect(readViews["scene-status"]?.time).toBe(
       zh ? "第 1 天 · 傍晚" : "Day 1, dusk",
@@ -224,6 +190,10 @@ test.each(appLocales)(
       zh ? "登岸前一夜" : "the night before the investigator landed",
     );
 
+    expect(
+      files.find(({ path }) => path === "world/current-situation.yaml")
+        ?.contents,
+    ).not.toMatch(/^  (?:原话|Words):/mu);
     const planTime = zh ? "第 3 天深夜" : "late on Day 3";
     const planAction = zh
       ? "砸毁带双重货号的货箱铅封"
@@ -300,6 +270,154 @@ test.each(appLocales)(
     expect(details[1]).toContain(zh ? "体能检定" : "Athletics check");
   },
 );
+
+const longStoryChecks = [
+  {
+    sampleId: "qingzhou-tales",
+    board: "qingzhou-ledger",
+    archive: "mirror-bride-truth.yaml",
+    secret: /借运纸人|paper fate-effigy/i,
+    catalogSpoilers:
+      /青丘狐女|铜镜都用素绢|真正病因|fox spirit|mirrors.*silk|real cause of Zhou/i,
+    prematureClue: /白素心|柳溪旧宅|Bai Suxin|Willow Brook Old Manor/i,
+    openingClue: /生辰帖|birth.tall/i,
+    openingTitle: /秋雨夜的城西茶肆|Westgate Teahouse on a rainy night/i,
+  },
+  {
+    sampleId: "treasure-island",
+    board: "voyage-board",
+    archive: "island-notes.yaml",
+    secret: /英国奶酪|English cheese/i,
+    catalogSpoilers:
+      /老海盗头目|真正去向|空藏宝坑|转移宝藏|empty pit|moved hoard|leading the mutiny|treasure.s true hiding place/i,
+    prematureClue: /值得信赖|trustworthy|can be trusted/i,
+    openingClue: /草图|sketch/i,
+    openingTitle: /启航前夜|Eve of sailing/i,
+  },
+  {
+    sampleId: "baker-street-fog",
+    board: "london-case-board",
+    archive: "pledge-records.yaml",
+    secret: /因贪杯|pawned one for drink/i,
+    catalogSpoilers:
+      /被软禁|挂假货旗|沉船骗保案真相|held locked|false.flagged|truth of the .*insurance/i,
+    prematureClue:
+      /泰晤士航运|亚瑟·芬奇|Thames Shipping|盯梢者|watcher across the street/i,
+    openingClue: /金币|sovereign/i,
+    openingTitle: /灰雾中的三条急件|three.*errands/i,
+  },
+] as const;
+
+describe.each(appLocales)("long-story ZIP and scene change (%s)", (locale) => {
+  test.each(longStoryChecks)(
+    "$sampleId distinguishes the opening board, catalog and private dossier",
+    async (story) => {
+      const { runtime } = await setup();
+      const zh = locale === "zh-CN";
+      const { worldId, files, readViews } = await importPlayableSample(
+        runtime,
+        locale,
+        story.sampleId,
+      );
+      const board = JSON.stringify(readViews[story.board]);
+      const opening = files.find(({ path }) => path === "opening.md")!.contents;
+      expect(opening).toMatch(story.openingClue);
+      expect(board).toMatch(story.openingClue);
+      expect(board).not.toMatch(story.prematureClue);
+      const situation = files.find(
+        ({ path }) => path === "world/current-situation.yaml",
+      )!.contents;
+      const { $document: identity } = parse(situation);
+      expect(identity.title).not.toMatch(story.openingTitle);
+      expect(identity.summary).not.toMatch(
+        /明晨起锚|sails at dawn|同时浮出水面|surface at once|三条指向|three leads.*221B/iu,
+      );
+      expect(situation).not.toMatch(/^  (?:原话|Words):/mu);
+
+      const archive = files.find(({ path }) =>
+        path.endsWith("/" + story.archive),
+      )!;
+      const archiveRef = "@" + parse(archive.contents).$document.ref;
+      const place = zh ? "离开开场地点后" : "Away from the opening location";
+      const edits = [
+        {
+          op: "replace",
+          locator: {
+            yaml: [zh ? "背景" : "background", zh ? "地点" : "Place"],
+          },
+          value: place,
+        },
+      ];
+      if (story.sampleId === "treasure-island") {
+        edits.push({
+          op: "replace",
+          locator: {
+            yaml: [zh ? "背景" : "background", zh ? "航程阶段" : "Voyage act"],
+          },
+          value: zh ? "海上航行" : "Under way",
+        });
+      }
+      const network = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("Unexpected provider request"))
+        .mockResolvedValueOnce(
+          toolResponse("move", "world_patch", {
+            target: "@current-situation",
+            edits,
+          }),
+        )
+        .mockResolvedValueOnce(
+          toolResponse("lookup", "context_read", { ref: archiveRef }),
+        )
+        .mockResolvedValueOnce(narrativeResponse(place));
+      const played = await request<V1PlayCallChainView>(runtime, {
+        type: "play.chain.start",
+        worldId,
+        chainId: "change-scene",
+        exchangeId: "start",
+        playerText: zh ? "我出发了。" : "I set out.",
+      });
+      expect(played.status).toBe("ready");
+      const wireText = (call: number) => {
+        const body = network.mock.calls[call]?.[1]?.body;
+        if (typeof body !== "string")
+          throw new Error("Missing provider request");
+        const wire = JSON.parse(body) as {
+          messages: { role: string; content: string | null }[];
+        };
+        return wire.messages
+          .filter(({ role }) => role === "tool")
+          .map(({ content }) => content)
+          .join("\n");
+      };
+      const preload = wireText(0);
+      const catalog = preload
+        .split("\n")
+        .filter((line) => line.includes("[ref: @"))
+        .join("\n");
+      expect(catalog).toContain("[ref: " + archiveRef + "]");
+      expect(catalog).not.toMatch(story.catalogSpoilers);
+      expect(preload).not.toMatch(story.secret);
+      expect(wireText(2)).toMatch(story.secret);
+
+      const after = await request<{
+        playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
+      }>(runtime, { type: "world.read", worldId });
+      expect(after.playerViews.diagnostics).toEqual([]);
+      const values = (id: string) =>
+        after.playerViews.views
+          .find((view) => view.id === id)
+          ?.items.map((item) => item.value);
+      expect(values("scene-status")).toContain(place);
+      if (story.sampleId === "treasure-island") {
+        expect(values(story.board)).toContain(zh ? "海上航行" : "Under way");
+        expect(JSON.stringify(values(story.board))).not.toMatch(
+          /尚未起锚|still at anchor|At anchor \(Bristol/i,
+        );
+      }
+    },
+  );
+});
 
 describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
   test("has independent identities and supports editing, copying, ZIP round-trip and deletion", async () => {
@@ -717,6 +835,61 @@ test("English background survives play, a later advancement, and a cold history 
     noon.Place,
   ]);
 });
+
+async function importPlayableSample(
+  runtime: V1Runtime,
+  locale: (typeof appLocales)[number],
+  sampleId: SampleContentPackageId,
+) {
+  await request(runtime, { type: "preferences.save", locale });
+  await request(runtime, {
+    type: "model.save",
+    connection: {
+      provider: "chat_completions",
+      modelId: "sample-zip-test",
+      name: "Sample ZIP dispatch fixture",
+      presetId: "custom",
+      baseUrl: "https://provider.invalid/v1",
+      apiKey: "fixture-only",
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 512,
+    },
+  });
+  const { localId: packageId } = await request<{ localId: string }>(runtime, {
+    type: "content.create-sample",
+    locale,
+    sampleId,
+  });
+  const { base64 } = await request<{ base64: string }>(runtime, {
+    type: "content.export",
+    packageId,
+  });
+  const imported = await request<EditableContentPackageDetail>(runtime, {
+    type: "content.import",
+    archiveBase64: base64,
+    title: sampleId + " ZIP",
+  });
+  expect(imported.status).toBe("usable");
+  expect(imported.issues).toEqual([]);
+  const {
+    world: { worldId },
+  } = await request<{ world: { worldId: string } }>(runtime, {
+    type: "world.create",
+    operationId: "world-from-zip",
+    packageId: imported.localId,
+  });
+  const { playerViews } = await request<{
+    playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
+  }>(runtime, { type: "world.read", worldId });
+  expect(playerViews.diagnostics).toEqual([]);
+  const readViews = Object.fromEntries(
+    playerViews.views.map(({ id, items }) => [
+      id,
+      Object.fromEntries(items.map((item) => [item.id, item.value])),
+    ]),
+  );
+  return { worldId, playerViews, readViews, files: imported.files };
+}
 
 function toolResponse(id: string, name: string, args: object): Response {
   return Response.json({
