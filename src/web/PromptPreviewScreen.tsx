@@ -412,7 +412,7 @@ export function PromptPreviewScreen({
                 </span>
               </label>
 
-              <label className="prompt-preview-player-field">
+              <label className="prompt-preview-note-field">
                 {uiText("本轮临时要求")}
                 <input
                   type="text"

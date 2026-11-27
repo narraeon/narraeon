@@ -1075,7 +1075,11 @@
 }
 .prompt-preview-player-field {
   grid-column: 2;
-  grid-row: 2 / 4;
+  grid-row: 2;
+}
+.prompt-preview-note-field {
+  grid-column: 2;
+  grid-row: 3;
 }
 .prompt-preview-input-card > button {
   grid-column: 1;
@@ -1362,6 +1366,7 @@
   }
   .prompt-preview-package-field,
   .prompt-preview-player-field,
+  .prompt-preview-note-field,
   .prompt-preview-input-card > button {
     grid-column: 1;
     grid-row: auto;
