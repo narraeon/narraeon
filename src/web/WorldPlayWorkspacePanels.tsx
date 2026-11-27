@@ -37,7 +37,12 @@ export function WorldDocumentRail({
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
-  useAndroidBack(menuOpen, () => setMenuOpen(false));
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  function closeMenu(): void {
+    setMenuOpen(false);
+    menuTrigger.current?.focus({ preventScroll: true });
+  }
+  useAndroidBack(menuOpen, closeMenu);
   const selected =
     documents.find(({ path }) => path === selectedPath) ?? documents[0];
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
@@ -56,8 +61,18 @@ export function WorldDocumentRail({
 
   return (
     <div className="world-document-rail">
-      <div className="world-document-switcher">
+      <div
+        className="world-document-switcher"
+        onKeyDown={(event) => {
+          if (!menuOpen || event.key !== "Escape" || event.defaultPrevented)
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu();
+        }}
+      >
         <button
+          ref={menuTrigger}
           type="button"
           className="world-document-switcher-trigger"
           aria-expanded={menuOpen}
@@ -104,7 +119,7 @@ export function WorldDocumentRail({
                       }
                       onClick={() => {
                         onSelect(document.path);
-                        setMenuOpen(false);
+                        closeMenu();
                         setQuery("");
                       }}
                     >

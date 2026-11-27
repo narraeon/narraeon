@@ -120,6 +120,7 @@
   border-radius: 0;
 }
 .play-preset-screen .play-preset-library {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -486,18 +487,15 @@
 .play-preset-screen .play-preset-editor-header {
   display: none;
 }
-.play-preset-screen .play-preset-library > details {
-  position: relative;
-}
 .play-preset-screen .play-preset-library > details[open] > section {
   position: absolute;
   width: min(380px, calc(100vw - 24px));
   top: calc(100% + 8px);
-  left: -200px;
+  inset-inline-start: 0;
   background: #fffefa;
   padding: 18px;
   border: 1px solid #deded8;
-  max-height: 76vh;
+  max-height: min(76dvh, calc(100dvh - 8rem));
   overflow: auto;
   z-index: 5;
 }
@@ -583,10 +581,6 @@
   .play-preset-screen .play-preset-workspace-nav button {
     min-width: 0;
     padding-inline: 6px;
-  }
-  .play-preset-screen .play-preset-library > details[open] > section {
-    left: auto;
-    right: 0;
   }
   .play-preset-screen .play-preset-toolbar {
     grid-template-columns: minmax(0, 1fr) auto;

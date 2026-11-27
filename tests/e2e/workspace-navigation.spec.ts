@@ -198,6 +198,19 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     "right",
   );
   await page.getByRole("button", { name: "世界", exact: true }).click();
+  const worldRail = page.locator(".world-overlay-rail-right");
+  const documentChooser = worldRail.getByRole("button", {
+    name: /^选择文档/u,
+  });
+  await documentChooser.press("Enter");
+  const filter = worldRail.getByRole("searchbox", { name: "查找当前文档" });
+  await expect(filter).toBeFocused();
+  await filter.fill("current-situation");
+  await page.keyboard.press("Escape");
+  await expect(documentChooser).toHaveAttribute("aria-expanded", "false");
+  await expect(documentChooser).toBeFocused();
+  await expect(filter).toHaveCount(0);
+  await expect(worldRail).toHaveAttribute("aria-hidden", "false");
   await page.getByRole("button", { name: "修订当前世界", exact: true }).click();
   await expectEscapeClosesRail(
     page,

@@ -6,6 +6,43 @@ import { gunzipSync } from "node:zlib";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
+test("orchestration management opens within the viewport and restores keyboard focus", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "en" });
+  const name =
+    "Fogbell Harbor tabletop orchestration for the lighthouse, guild records, and coastal investigations";
+  const { preset } = await runtime<{ preset: { id: string } }>(page, {
+    type: "play.create",
+    name,
+  });
+  await page.goto(`/#/orchestrations/${preset.id}`);
+  const opener = page.getByText("Manage orchestrations", {
+    exact: true,
+  });
+  const menu = page.getByRole("region", {
+    name: "Create and import orchestrations",
+  });
+  for (const width of [390, 800, 801, 900, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(
+      page.getByRole("combobox", { name: "Switch orchestration" }),
+    ).toHaveValue(preset.id);
+    await opener.press("Enter");
+    await expect(menu).toBeVisible();
+    const box = (await menu.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y + box.height).toBeLessThanOrEqual(844);
+    await page.keyboard.press("Tab");
+    await expect(menu.getByLabel("New orchestration name")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(opener).toBeFocused();
+  }
+});
+
 test("A 工作台真实保存、独立三产物、正则、JS、导入及下一轮生产呈现", async ({
   page,
 }) => {

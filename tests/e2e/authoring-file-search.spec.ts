@@ -4,10 +4,75 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { appLocales } from "../../src/protocol/appPreferences.ts";
+import type { V1Request } from "../../src/protocol/v1.ts";
 import {
   availableRuntimePort,
   RuntimeServerPool,
 } from "../support/runtimeServer.ts";
+
+test("a long file list leaves the selected document available in both authoring previews", async ({
+  page,
+}) => {
+  async function request<T>(request: V1Request): Promise<T> {
+    const response = await page.request.post("/api/runtime/v1", {
+      data: { protocol: "narraeon.runtime/v1", request },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+    return ((await response.json()) as { result: T }).result;
+  }
+
+  await request({ type: "preferences.save", locale: "en" });
+  const { localId: packageId } = await request<{ localId: string }>({
+    type: "content.create-sample",
+    locale: "en",
+    sampleId: "fogbell-harbor",
+  });
+  const {
+    world: { worldId },
+  } = await request<{ world: { worldId: string } }>({
+    type: "world.create",
+    operationId: crypto.randomUUID(),
+    packageId,
+  });
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const target of ["content", "world"]) {
+      await page.goto(
+        target === "content"
+          ? `/#/content/${packageId}`
+          : `/#/world/${worldId}`,
+      );
+      if (target === "world") {
+        await page.getByRole("button", { name: "Worlds", exact: true }).click();
+        await page
+          .getByRole("button", { name: "Revise current world", exact: true })
+          .click();
+      }
+      await page.getByRole("button", { name: "Files", exact: true }).click();
+      const preview = page.locator(".setting-content-preview");
+      const files = preview.getByRole("navigation").getByRole("button");
+      await expect(files.nth(22)).toBeAttached();
+      const title = preview.locator("article header code");
+      for (const file of [files.nth(1), files.last(), files.nth(1)]) {
+        const path = await file.innerText();
+        await file.click();
+        await expect(file).toHaveAttribute("aria-pressed", "true");
+        await expect(title).toHaveText(path);
+        await expect(title).toBeInViewport();
+        await expect(
+          preview.getByRole("button", { name: "Edit this file", exact: true }),
+        ).toBeInViewport();
+      }
+      await preview.getByRole("button", { name: "Edit this file" }).click();
+      await expect(
+        page.locator(".setting-overlay-rail-right.is-editing"),
+      ).toBeVisible();
+    }
+  }
+});
 
 for (const locale of appLocales) {
   test(`authoring preview and editor share file search and order (${locale})`, async ({

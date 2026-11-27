@@ -908,11 +908,27 @@ export function PlayPresetScreen({
             menu.open = false;
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && deletion === null)
-          for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
+        if (
+          event.key !== "Escape" ||
+          event.defaultPrevented ||
+          !(event.target instanceof Element) ||
+          event.target.closest("dialog")
+        )
+          return;
+        const menus =
+          event.currentTarget.querySelectorAll<HTMLDetailsElement>(
             openPresetMenus,
-          ))
-            menu.open = false;
+          );
+        if (menus.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        for (const menu of menus) {
+          menu.open = false;
+          if (menu.contains(event.target))
+            menu
+              .querySelector<HTMLElement>(":scope > summary")
+              ?.focus({ preventScroll: true });
+        }
       }}
     >
       <header className="play-preset-header">

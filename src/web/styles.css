@@ -7359,8 +7359,8 @@ summary {
 
 .setting-content-preview {
   display: grid;
-  min-height: 100%;
-  grid-template-rows: auto auto minmax(7rem, 0.7fr) minmax(12rem, 1.3fr);
+  height: 100%;
+  grid-template-rows: auto auto auto minmax(8rem, 1fr);
   gap: 0.7rem;
 }
 
@@ -7398,6 +7398,7 @@ summary {
   align-content: start;
   gap: 0.2rem;
   min-height: 0;
+  max-height: clamp(3rem, calc((100dvh - 20rem) / 3), 12rem);
   overflow: hidden auto;
   padding: 0.25rem;
   border: 1px solid var(--border);
