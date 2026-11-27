@@ -3,7 +3,10 @@ import {
   chatGptUsageUrl,
   type ChatGptAccount,
 } from "../../src/protocol/chatGptAuth.ts";
-import type { ModelConnectionView } from "../../src/protocol/modelConnections.ts";
+import type {
+  ModelConnectionLibraryView,
+  ModelConnectionView,
+} from "../../src/protocol/modelConnections.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import { v1Protocol } from "../../src/protocol/v1Version.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
@@ -68,9 +71,12 @@ for (const locale of ["zh-CN", "en"] as const) {
               }
             : {}),
         });
-        const { result } = await response.json();
+        const { result } = (await response.json()) as {
+          result:
+            ModelConnectionLibraryView | { model: ModelConnectionLibraryView };
+        };
         const library = {
-          ...(request.type === "workspace.read" ? result.model : result),
+          ...("model" in result ? result.model : result),
           chatGptAvailable: true,
           configured:
             saved !== undefined && account.status === "plan_authorized",
