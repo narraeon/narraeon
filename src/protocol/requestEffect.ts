@@ -6,6 +6,8 @@ const reads = new Set<V1Request["type"]>([
   "preferences.read",
   "protagonist-templates.read",
   "model.read",
+  "model.chatgpt.accounts",
+  "model.chatgpt.sign-in-status",
   "model.models",
   "model.test",
   "content.read",

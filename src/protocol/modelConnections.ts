@@ -1,3 +1,5 @@
+import { chatGptPlanBaseUrl } from "./chatGptAuth.ts";
+
 export function isSameModelServiceOrigin(left: string, right: string): boolean {
   try {
     const source = new URL(left);
@@ -18,7 +20,7 @@ export type ModelProviderKind =
   | "anthropic_messages"
   | "google_interactions";
 
-export type ModelConnectionAuthMode = "api_key" | "none";
+export type ModelConnectionAuthMode = "api_key" | "none" | "chatgpt";
 
 export function supportsUnauthenticatedModelConnection(
   provider: ModelProviderKind,
@@ -277,6 +279,12 @@ export const modelProviderPresets = [
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
   },
   {
+    id: "chatgpt-plan",
+    name: "Sign in with ChatGPT",
+    provider: "openai_responses",
+    baseUrl: chatGptPlanBaseUrl,
+  },
+  {
     id: "openai",
     name: "OpenAI · Responses API",
     provider: "openai_responses",
@@ -442,10 +450,13 @@ export interface ModelConnectionView
   contextWindowTokens: number;
   maxOutputTokens: number;
   hasApiKey: boolean;
+  chatGptAccountId?: string;
+  chatGptAllowFollowups?: boolean;
 }
 
 export interface ModelConnectionLibraryView {
   configured: boolean;
+  chatGptAvailable?: boolean;
   activeConnectionId: string | null;
   connections: ModelConnectionView[];
   presets: readonly ModelProviderPreset[];
@@ -466,6 +477,8 @@ export interface SaveModelConnectionInput
   baseUrl: string;
   authMode?: ModelConnectionAuthMode;
   apiKey?: string;
+  chatGptAccountId?: string;
+  chatGptAllowFollowups?: boolean;
   modelId: string;
   modelPrompt?: string;
   reasoningEffort?: ModelReasoningEffort;
@@ -482,7 +495,7 @@ export interface ListProviderModelsInput {
   connectionId?: string;
   provider: ModelProviderKind;
   baseUrl: string;
-  authMode?: ModelConnectionAuthMode;
+  authMode?: Exclude<ModelConnectionAuthMode, "chatgpt">;
   apiKey?: string;
 }
 
