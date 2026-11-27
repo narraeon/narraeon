@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  type Document,
+  Document,
+  type Range,
+  type YAMLMap,
   isMap,
   isSeq,
   parseDocument,
@@ -1309,6 +1311,7 @@ function applyYamlRevisionEdit(
   }
   const value = resolveValue(edit.value, locator);
   if ("diagnostics" in value) return editFailed(value.diagnostics[0]!);
+  const emptyFlowMap = findEmptyYamlFlowMap(document, locator);
   if (!upsertYamlValue(document, locator, value.value))
     return editFailed(
       diagnostic({
@@ -1317,15 +1320,110 @@ function applyYamlRevisionEdit(
         message: "YAML add or replace parent must be a map or sequence",
       }),
     );
+  if (emptyFlowMap !== undefined) {
+    const filledMap = document.getIn(emptyFlowMap.locator, true);
+    if (
+      isMap(filledMap) &&
+      filledMap.items.length > 0 &&
+      !isYamlReference(filledMap)
+    )
+      return {
+        kind: "applied",
+        contents: expandYamlFlowMap(contents, emptyFlowMap, filledMap),
+        metadata,
+      };
+  }
   return serialized(metadata);
+}
+
+interface EmptyYamlFlowMap {
+  locator: readonly (string | number)[];
+  range: Range;
+  parentStart: number;
+}
+
+function findEmptyYamlFlowMap(
+  document: Document,
+  locator: readonly (string | number)[],
+): EmptyYamlFlowMap | undefined {
+  let parent: unknown = document.contents;
+  for (const [index, segment] of locator.entries()) {
+    // A block collection cannot be expressed inside an existing flow collection.
+    if ((!isMap(parent) && !isSeq(parent)) || parent.flow || !parent.range)
+      return undefined;
+    const child: unknown = parent.get(segment, true);
+    if (isMap(child) && child.flow && child.items.length === 0 && child.range)
+      return {
+        locator: locator.slice(0, index + 1),
+        range: child.range,
+        parentStart: parent.range[0],
+      };
+    parent = child;
+  }
+  return undefined;
+}
+
+function expandYamlFlowMap(
+  source: string,
+  empty: EmptyYamlFlowMap,
+  filled: YAMLMap,
+): string {
+  const [start, end] = empty.range;
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  const followingNewline = source.indexOf("\n", end);
+  const lineEnd = followingNewline === -1 ? source.length : followingNewline;
+  const beforeBraces = source.slice(lineStart, start);
+  const introducer = beforeBraces.trimEnd();
+  const parentLine = source.lastIndexOf("\n", empty.parentStart - 1) + 1;
+  const indentation = " ".repeat(
+    introducer === ""
+      ? beforeBraces.length
+      : empty.parentStart - parentLine + 2,
+  );
+
+  // Keep comments from between the braces and after the closing brace. The
+  // common trailing comment stays on the line with its original key or dash.
+  const innerComments = source
+    .slice(start + 1, end - 1)
+    .split("\n")
+    .map((line) => line.trimStart())
+    .filter((line) => line.startsWith("#"));
+  const trailing = source.slice(end, lineEnd);
+  let header = introducer === "" ? "" : `${introducer}\n`;
+  if (trailing.includes("#")) {
+    if (introducer !== "" && innerComments.length === 0)
+      header = `${introducer}${trailing}\n`;
+    else innerComments.push(trailing.trimStart());
+  }
+  const comments = innerComments
+    .map((comment) => `${indentation}${comment}\n`)
+    .join("");
+
+  filled.flow = false;
+  filled.comment = null;
+  filled.commentBefore = null;
+  // Quoting multiline scalars keeps the following source out of their values.
+  const body = new Document(filled)
+    .toString({ indent: 2, lineWidth: 0, blockQuote: false })
+    .replace(/^(?=.)/gmu, indentation);
+  return (
+    source.slice(0, lineStart) +
+    header +
+    comments +
+    body +
+    source.slice(lineEnd + 1)
+  );
+}
+
+function isYamlReference(map: YAMLMap): boolean {
+  return map.items.length === 1 && typeof map.get("$ref") === "string";
 }
 
 function createYamlPatchNode(document: Document, value: unknown) {
   const subtree = document.createNode(value);
   visit(subtree, {
     Map(_key, node) {
-      if (node.items.length === 1 && typeof node.get("$ref") === "string")
-        node.flow = true;
+      if (isYamlReference(node)) node.flow = true;
     },
   });
   return subtree;
