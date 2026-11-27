@@ -1,7 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse } from "yaml";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { appLocales } from "../../src/protocol/appPreferences.ts";
@@ -193,7 +192,7 @@ test.each(appLocales)(
     expect(
       files.find(({ path }) => path === "world/current-situation.yaml")
         ?.contents,
-    ).not.toMatch(/^  (?:原话|Words):/mu);
+    ).not.toMatch(/^ {2}(?:原话|Words):/mu);
     const planTime = zh ? "第 3 天深夜" : "late on Day 3";
     const planAction = zh
       ? "砸毁带双重货号的货箱铅封"
@@ -275,7 +274,7 @@ const longStoryChecks = [
   {
     sampleId: "qingzhou-tales",
     board: "qingzhou-ledger",
-    archive: "mirror-bride-truth.yaml",
+    archive: "archive.qingzhou-mirror-bride",
     secret: /借运纸人|paper fate-effigy/i,
     catalogSpoilers:
       /青丘狐女|铜镜都用素绢|真正病因|fox spirit|mirrors.*silk|real cause of Zhou/i,
@@ -286,7 +285,7 @@ const longStoryChecks = [
   {
     sampleId: "treasure-island",
     board: "voyage-board",
-    archive: "island-notes.yaml",
+    archive: "archive.ti-ben-gunn-hoard",
     secret: /英国奶酪|English cheese/i,
     catalogSpoilers:
       /老海盗头目|真正去向|空藏宝坑|转移宝藏|empty pit|moved hoard|leading the mutiny|treasure.s true hiding place/i,
@@ -297,7 +296,7 @@ const longStoryChecks = [
   {
     sampleId: "baker-street-fog",
     board: "london-case-board",
-    archive: "pledge-records.yaml",
+    archive: "archive.bs-anchor-coin",
     secret: /因贪杯|pawned one for drink/i,
     catalogSpoilers:
       /被软禁|挂假货旗|沉船骗保案真相|held locked|false.flagged|truth of the .*insurance/i,
@@ -314,11 +313,8 @@ describe.each(appLocales)("long-story ZIP and scene change (%s)", (locale) => {
     async (story) => {
       const { runtime } = await setup();
       const zh = locale === "zh-CN";
-      const { worldId, files, readViews } = await importPlayableSample(
-        runtime,
-        locale,
-        story.sampleId,
-      );
+      const { worldId, files, documents, readViews } =
+        await importPlayableSample(runtime, locale, story.sampleId);
       const board = JSON.stringify(readViews[story.board]);
       const opening = files.find(({ path }) => path === "opening.md")!.contents;
       expect(opening).toMatch(story.openingClue);
@@ -327,17 +323,17 @@ describe.each(appLocales)("long-story ZIP and scene change (%s)", (locale) => {
       const situation = files.find(
         ({ path }) => path === "world/current-situation.yaml",
       )!.contents;
-      const { $document: identity } = parse(situation);
+      const identity = documents.find(
+        (doc) => doc.ref === "current-situation",
+      )!;
       expect(identity.title).not.toMatch(story.openingTitle);
       expect(identity.summary).not.toMatch(
         /明晨起锚|sails at dawn|同时浮出水面|surface at once|三条指向|three leads.*221B/iu,
       );
-      expect(situation).not.toMatch(/^  (?:原话|Words):/mu);
+      expect(situation).not.toMatch(/^ {2}(?:原话|Words):/mu);
 
-      const archive = files.find(({ path }) =>
-        path.endsWith("/" + story.archive),
-      )!;
-      const archiveRef = "@" + parse(archive.contents).$document.ref;
+      const archive = documents.find((doc) => doc.id === story.archive)!;
+      const archiveRef = "@" + archive.ref;
       const place = zh ? "离开开场地点后" : "Away from the opening location";
       const edits = [
         {
@@ -888,7 +884,13 @@ async function importPlayableSample(
       Object.fromEntries(items.map((item) => [item.id, item.value])),
     ]),
   );
-  return { worldId, playerViews, readViews, files: imported.files };
+  return {
+    worldId,
+    playerViews,
+    readViews,
+    files: imported.files,
+    documents: imported.documents,
+  };
 }
 
 function toolResponse(id: string, name: string, args: object): Response {
