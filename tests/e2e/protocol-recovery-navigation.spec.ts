@@ -270,9 +270,9 @@ for (const surface of surfaces) {
         page.getByRole("textbox", { name: "提示词正文", exact: true }),
       ).toHaveValue("The harbor keeper writes in the ledger.");
       await late.press("Alt+ArrowUp");
-      await expect(list.getByRole("button").nth(-2)).toHaveText(
-        "Late harbor rule",
-      );
+      const prompts = list.getByRole("button");
+      await expect(prompts.nth(-2)).toHaveAccessibleName("Late harbor rule");
+      await expect(prompts.last()).toHaveAccessibleName("Harbor reader");
       if (surface === "play") {
         await page
           .locator("summary")

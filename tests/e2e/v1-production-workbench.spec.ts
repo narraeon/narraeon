@@ -256,20 +256,27 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   });
   await mechanics.click();
   await expect(page.getByLabel("启用", { exact: true })).toBeDisabled();
-  const promptCount = await page
-    .getByRole("list", { name: "提示词顺序" })
-    .getByRole("button")
-    .count();
-  for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
   const promptOrder = page.getByRole("list", { name: "提示词顺序" });
+  const promptButtons = promptOrder.getByRole("button");
+  const promptCount = await promptButtons.count();
+  for (let i = 0; i < promptCount; i++) await mechanics.press("Alt+ArrowDown");
   await mechanics.press("Alt+ArrowUp");
-  const keyboardOrder = await promptOrder.getByRole("button").allTextContents();
+  await expect(promptButtons.nth(-2)).toHaveAccessibleName(
+    "工具与响应结算（必选）",
+  );
+  const keyboardOrder = await promptButtons.evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute("aria-label") ?? ""),
+  );
+  expect(keyboardOrder).not.toContain("");
   await mechanics.press("Alt+ArrowDown");
   await promptOrder
     .getByRole("listitem")
     .last()
     .dragTo(promptOrder.getByRole("listitem").nth(promptCount - 2));
-  await expect(promptOrder.getByRole("button")).toHaveText(keyboardOrder);
+  await expect(promptButtons).toHaveCount(promptCount);
+  for (const [index, title] of keyboardOrder.entries()) {
+    await expect(promptButtons.nth(index)).toHaveAccessibleName(title);
+  }
   await mechanics.press("Alt+ArrowDown");
   await page.getByRole("tab", { name: /设定完善/u }).click();
   await expect(page.getByLabel("设定完善提示词编排")).toBeVisible();
