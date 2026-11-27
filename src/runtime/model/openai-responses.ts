@@ -9,7 +9,8 @@ import { prefillMessage } from "./AssistantPrefill.ts";
 import {
   chatGptPlanAccessToken,
   chatGptPlanHttpFailure,
-  chatGptPlanInterrupted,
+  ChatGptPlanInterruptedError,
+  chatGptPlanMedia,
   chatGptPlanStreamFailure,
   invalidateRejectedToken,
   sendChatGptPlanRequest,
@@ -30,7 +31,11 @@ import {
   type ModelHostUsage,
   type ModelHostWireRequest,
 } from "./ModelHost.ts";
-import { aggregateResponsesModelStream } from "./ModelHostStream.ts";
+import {
+  aggregateResponsesModelStream,
+  ResponsesStreamParseError,
+} from "./ModelHostStream.ts";
+import { ProviderStreamFramingError } from "./ProviderStream.ts";
 import { ModelResponseFormatError } from "./ModelResponseCorrection.ts";
 import {
   appendWithSuffixBreakpoint,
@@ -79,6 +84,7 @@ import {
 } from "./ProviderValues.ts";
 
 const chatGptPlanToolNamespace = "narraeon";
+const chatGptPlanMaxStreamBytes = 32 * 1024 * 1024;
 
 interface ResponsesRequestBodyInput {
   connection: ResolvedFileNativeModelConnection;
@@ -550,55 +556,122 @@ export async function exchangeResponses(
   if (connection.chatgptPlan !== undefined) {
     const plan = connection.chatgptPlan;
     const locale = request.bootstrap.locale ?? "en";
-    const token = await chatGptPlanAccessToken(plan, locale, signal);
-    const response = await sendChatGptPlanRequest({
-      fetchImplementation,
-      url: providerUrl(connection),
-      token,
-      body: JSON.stringify(body),
-      signal,
-      locale,
-    });
-    if (!response.ok) {
-      const error = await chatGptPlanHttpFailure(response, plan, token, locale);
-      await trace?.("responses_chatgpt_plan_failure", error.details);
-      throw error;
-    }
-    if (!isProviderEventStream(response) || response.body === null) {
-      void response.body?.cancel().catch(() => undefined);
-      throw chatGptPlanInterrupted(locale);
-    }
-    let payload: Record<string, unknown>;
+    const url = providerUrl(connection);
     try {
-      payload = await aggregateResponsesModelStream(
-        response.body,
-        observer?.onDelta,
-        (terminal) =>
-          chatGptPlanStreamFailure(
-            terminal,
-            token,
-            locale,
-            response.headers.get("x-request-id"),
-          ),
-      );
-    } catch (error: unknown) {
-      if (signal?.aborted) throw cancelledModelRequest();
-      if (error instanceof ModelHostFailureError) {
-        const evidence = error.details;
-        if (isRecord(evidence))
-          await invalidateRejectedToken(plan, token, evidence.providerCode);
-        await trace?.("responses_chatgpt_plan_failure", {
-          httpStatus: response.status,
-          ...(isRecord(evidence) ? evidence : {}),
-        });
+      const token = await chatGptPlanAccessToken(plan, locale, signal);
+      const response = await sendChatGptPlanRequest({
+        fetchImplementation,
+        url,
+        token,
+        body: JSON.stringify(body),
+        signal,
+        locale,
+      });
+      if (!response.ok) {
+        const error = await chatGptPlanHttpFailure(
+          response,
+          plan,
+          token,
+          locale,
+        );
+        await trace?.("responses_chatgpt_plan_failure", error.details);
         throw error;
       }
-      throw chatGptPlanInterrupted(locale);
+      const media = chatGptPlanMedia(response);
+      const evidence = { httpStatus: response.status, media };
+      if (media === "json" || media === "html") {
+        void response.body?.cancel().catch(() => undefined);
+        throw new ChatGptPlanInterruptedError(locale, {
+          stage: "response_media",
+          ...evidence,
+        });
+      }
+      if (response.body === null)
+        throw new ChatGptPlanInterruptedError(locale, {
+          stage: "response_body",
+          ...evidence,
+        });
+      let payload: Record<string, unknown>;
+      try {
+        payload = await aggregateResponsesModelStream(
+          response.body,
+          observer?.onDelta,
+          {
+            strictMaxBytes: chatGptPlanMaxStreamBytes,
+            terminalFailure: (terminal) =>
+              chatGptPlanStreamFailure(
+                terminal,
+                token,
+                locale,
+                response.headers.get("x-request-id"),
+              ),
+          },
+        );
+      } catch (error: unknown) {
+        if (signal?.aborted) throw cancelledModelRequest();
+        if (error instanceof ModelHostFailureError) {
+          const details = error.details;
+          if (isRecord(details))
+            await invalidateRejectedToken(plan, token, details.providerCode);
+          await trace?.("responses_chatgpt_plan_failure", {
+            ...evidence,
+            ...(isRecord(details) ? details : {}),
+          });
+          throw error;
+        }
+        throw new ChatGptPlanInterruptedError(locale, {
+          stage:
+            error instanceof ResponsesStreamParseError ||
+            error instanceof ProviderStreamFramingError
+              ? error.stage
+              : "sse_read",
+          ...evidence,
+        });
+      }
+      if (signal?.aborted) throw cancelledModelRequest();
+      if (!validResponsesOutput(payload.output))
+        throw new ChatGptPlanInterruptedError(locale, {
+          stage: "sse_completed_output",
+          output: payload.output === undefined ? "missing" : "invalid",
+          ...evidence,
+        });
+      if (payload.output.length === 0)
+        await trace?.("responses_chatgpt_plan_completed", {
+          ...evidence,
+          output: "empty",
+        });
+      return projectResponsesPayload(payload, true);
+    } catch (error: unknown) {
+      if (error instanceof ChatGptPlanInterruptedError) {
+        await trace?.("responses_chatgpt_plan_failure", error.details);
+        // Retain only the diagnostic stage. Headers, wire content and nested
+        // transport errors may contain OAuth credentials.
+        const capture = providerCapture(
+          failureLog,
+          connection.provider,
+          url,
+          modelDiagnosticContext(request),
+          "",
+        );
+        if (capture !== undefined && failureLog !== undefined) {
+          await failureLog.recordFailure({
+            exchange: capture.snapshot(),
+            failures: [
+              {
+                kind:
+                  error.details.stage === "transport" ||
+                  error.details.stage === "sse_read"
+                    ? "provider_transport"
+                    : "provider_response_format",
+                message: error.message,
+                details: error.details,
+              },
+            ],
+          });
+        }
+      }
+      throw error;
     }
-    if (signal?.aborted) throw cancelledModelRequest();
-    if (!validResponsesOutput(payload.output))
-      throw chatGptPlanInterrupted(locale);
-    return projectResponsesPayload(payload, true);
   }
   await trace?.("responses_request", body);
   const bodyJson = JSON.stringify(body);

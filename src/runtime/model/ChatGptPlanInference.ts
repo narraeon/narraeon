@@ -4,6 +4,8 @@ import {
   ModelHostFailureError,
   ModelHostOutcomeUnknownError,
 } from "./ModelHost.ts";
+import type { ResponsesStreamParseError } from "./ModelHostStream.ts";
+import type { ProviderStreamFramingError } from "./ProviderStream.ts";
 import { readProviderRejectionBody } from "./ProviderRejection.ts";
 import {
   bearerProviderHeaders,
@@ -18,6 +20,42 @@ type FailureAction =
   | "parameters"
   | "incomplete"
   | "failed";
+
+export type ChatGptPlanMedia =
+  | "event_stream"
+  | "json"
+  | "html"
+  | "octet_stream"
+  | "plain_text"
+  | "other"
+  | "missing";
+type TransportFailure =
+  | "connect_timeout"
+  | "dns"
+  | "request_length"
+  | "response_length"
+  | "socket"
+  | "tls"
+  | "other";
+
+type ChatGptPlanInterruption =
+  | { stage: "transport"; transport: TransportFailure }
+  | {
+      stage:
+        | "response_media"
+        | "response_body"
+        | "sse_read"
+        | ProviderStreamFramingError["stage"]
+        | ResponsesStreamParseError["stage"];
+      httpStatus: number;
+      media: ChatGptPlanMedia;
+    }
+  | {
+      stage: "sse_completed_output";
+      httpStatus: number;
+      media: ChatGptPlanMedia;
+      output: "missing" | "invalid";
+    };
 
 export async function chatGptPlanAccessToken(
   plan: ChatGptPlanConnection,
@@ -79,9 +117,12 @@ export async function sendChatGptPlanRequest(input: {
   if (input.signal?.aborted) throw cancelledModelRequest();
   try {
     return await input.fetchImplementation(input.url, options);
-  } catch {
+  } catch (error: unknown) {
     if (input.signal?.aborted) throw cancelledModelRequest();
-    throw chatGptPlanInterrupted(input.locale);
+    throw new ChatGptPlanInterruptedError(input.locale, {
+      stage: "transport",
+      transport: chatGptPlanTransportFailure(error),
+    });
   }
 }
 
@@ -101,7 +142,9 @@ export async function chatGptPlanHttpFailure(
     );
   await invalidateRejectedToken(plan, token, code, confirmedInvalidToken);
   return planFailure(locale, failureAction(code, response.status), {
+    stage: "http_rejection",
     httpStatus: response.status,
+    media: chatGptPlanMedia(response),
     bodyShape: isRecord(payload.error)
       ? "structured_error"
       : typeof payload.detail === "string"
@@ -134,14 +177,17 @@ export function chatGptPlanStreamFailure(
   return planFailure(
     locale,
     payload.type === "response.incomplete" ? "incomplete" : failureAction(code),
-    safeIdentifiers(token, {
-      providerCode: code,
-      eventType: payload.type,
-      status: response.status,
-      reason: incomplete.reason,
-      param: upstream.param,
-      requestId: requestId ?? payload.request_id ?? response.request_id,
-    }),
+    {
+      stage: "sse_terminal_failure",
+      ...safeIdentifiers(token, {
+        providerCode: code,
+        eventType: payload.type,
+        status: response.status,
+        reason: incomplete.reason,
+        param: upstream.param,
+        requestId: requestId ?? payload.request_id ?? response.request_id,
+      }),
+    },
   );
 }
 
@@ -161,14 +207,63 @@ export async function invalidateRejectedToken(
   }
 }
 
-export function chatGptPlanInterrupted(
-  locale: AppLocale,
-): ModelHostOutcomeUnknownError {
-  return new ModelHostOutcomeUnknownError(
-    locale === "zh-CN"
-      ? "ChatGPT 套餐请求未完整结束。请先检查网络，再手动重试。"
-      : "The ChatGPT plan request ended before completion. Check your connection before retrying.",
-  );
+export class ChatGptPlanInterruptedError extends ModelHostOutcomeUnknownError {
+  readonly details: ChatGptPlanInterruption;
+
+  constructor(locale: AppLocale, details: ChatGptPlanInterruption) {
+    super(
+      locale === "zh-CN"
+        ? "ChatGPT 套餐请求未完整结束。请先检查网络，再手动重试。"
+        : "The ChatGPT plan request ended before completion. Check your connection before retrying.",
+    );
+    this.details = details;
+  }
+}
+
+export function chatGptPlanMedia(response: Response): ChatGptPlanMedia {
+  const media = response.headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (!media) return "missing";
+  if (media === "text/event-stream") return "event_stream";
+  if (media === "application/json" || media.endsWith("+json")) return "json";
+  if (media === "text/html" || media === "application/xhtml+xml") return "html";
+  if (media === "application/octet-stream") return "octet_stream";
+  if (media === "text/plain") return "plain_text";
+  return "other";
+}
+
+function chatGptPlanTransportFailure(error: unknown): TransportFailure {
+  const cause = isRecord(error) && isRecord(error.cause) ? error.cause : error;
+  const code =
+    isRecord(cause) && typeof cause.code === "string" ? cause.code : undefined;
+  switch (code) {
+    case "UND_ERR_CONNECT_TIMEOUT":
+    case "ETIMEDOUT":
+      return "connect_timeout";
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      return "dns";
+    case "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH":
+      return "request_length";
+    case "UND_ERR_RES_CONTENT_LENGTH_MISMATCH":
+      return "response_length";
+    case "UND_ERR_SOCKET":
+    case "ECONNRESET":
+    case "ECONNREFUSED":
+    case "EPIPE":
+      return "socket";
+    case undefined:
+      return "other";
+    default:
+      return /^(?:ERR_TLS_|ERR_SSL_|CERT_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/u.test(
+        code,
+      )
+        ? "tls"
+        : "other";
+  }
 }
 
 function failureAction(code?: string, status?: number): FailureAction {
