@@ -516,17 +516,11 @@ test("旧世界可组合打开内置扩展，选择仅影响当前世界，状�
       ...upload,
     })
   ).result as { world: { worldId: string } };
-  expect((await readControls(imported.world.worldId)).items).toEqual(
-    expect.arrayContaining(
-      first.map((item) =>
-        expect.objectContaining({
-          key: item.key,
-          enabled: true,
-          overridden: true,
-        }),
-      ),
-    ),
-  );
+  const importedControls = await readControls(imported.world.worldId);
+  for (const item of first)
+    expect(
+      importedControls.items.find(({ key }) => key === item.key),
+    ).toMatchObject({ enabled: true, overridden: true });
   expect(
     (await readArtifacts(imported.world.worldId)).find(
       ({ output }) => output === "player_options",

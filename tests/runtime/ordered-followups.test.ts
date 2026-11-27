@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
 import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
+import { validatePlayPresetArtifactPayload } from "../../src/shared/artifact-payload-contract.ts";
+import { appLocales } from "../../src/protocol/appPreferences.ts";
 import {
   FileNativePlayPresetStore,
   applyPlayPresetStructuredEditor,
@@ -492,6 +494,36 @@ test("旧推荐方案稳定保留，内置默认范围经便携导入导出保�
       { channel: "builtin:generic-panels:generic.html", mount: "sidebar" },
       { channel: "builtin:generic-panels:generic.debug", mount: "debug" },
     ]);
+    const draft = toPlayPresetStructuredEditor(restored.definition);
+    draft.followupItems!.find(
+      ({ id }) => id === "builtin:action-choices",
+    )!.enabled = true;
+    for (const locale of appLocales) {
+      const workbench = buildPlayPresetWorkbenchSnapshot(
+        restored,
+        undefined,
+        { files: restored.files, structure: draft },
+        locale,
+      );
+      const shipped = workbench.artifactPreviews.find(
+        ({ requestId }) => requestId === "builtin:action-choices",
+      )!;
+      expect(shipped).toMatchObject({
+        mount: "composer_below",
+        renderer: { trustedLocalCode: true },
+      });
+      expect(
+        validatePlayPresetArtifactPayload(
+          shipped.declaration.payloadContract,
+          shipped.rawPayload,
+        ),
+      ).toMatchObject({ ok: true });
+      expect(
+        workbench.artifactPreviews.find(
+          ({ requestId }) => requestId === "player_options",
+        )?.renderer,
+      ).toMatchObject({ scripts: [], trustedLocalCode: false });
+    }
     expect(
       parsePlayPresetFiles({
         ...restored.files,

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { appLocales, type AppLocale } from "../../protocol/appPreferences.ts";
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { RenderedPlayerView } from "../../protocol/playerViews.ts";
 import {
   builtinExtensionLabel,
@@ -9,6 +9,7 @@ import {
 import type { BuiltinExtensionFollowupId } from "../../shared/ordered-followups.ts";
 import {
   parsePlayPresetFiles,
+  revisionForPlayPresetFiles,
   type FrozenArtifactPresentation,
   type PlayPresetBinding,
   type PlayPresetDefinition,
@@ -18,6 +19,13 @@ const catalog = new Map<
   string,
   { definition: PlayPresetDefinition; entryId: string }
 >();
+
+// Keep released renderer fingerprints so a later template update can render
+// historical frozen output with the exact reviewed code it shipped with.
+const trustedActionRendererRevisions = new Set([
+  "rev-39e4dd3fc00a95434c024dc502a73ba646cdf57771dab41887379f20d293abb2", // en
+  "rev-7bc2f4c0f7ed35a7abe34dade3c8eba4e9e862e65526e516bc93513794a194a6", // zh-CN
+]);
 
 function shippedDefinition(
   id: BuiltinExtensionFollowupId | typeof builtinStatusPanelId,
@@ -82,16 +90,17 @@ export function trustedBuiltinFollowupCode(
   id: BuiltinExtensionFollowupId,
   presentation: FrozenArtifactPresentation | undefined,
 ): boolean {
+  if (id !== "builtin:action-choices" || presentation === undefined)
+    return false;
+  const declaration = presentation.declaration;
   return (
-    id === "builtin:action-choices" &&
-    presentation !== undefined &&
-    appLocales.some((locale) =>
-      isDeepStrictEqual(
-        builtinExtensionFollowup(id, locale).frozenPresentations[
-          presentation.declaration.name
-        ],
-        presentation,
-      ),
+    declaration.name === "player_options" &&
+    declaration.rendererMode === "app" &&
+    declaration.renderer === "renderers/player-options.html" &&
+    isDeepStrictEqual(declaration.scripts, ["scripts/player-options.js"]) &&
+    isDeepStrictEqual(declaration.assets, ["assets/player-options.css"]) &&
+    trustedActionRendererRevisions.has(
+      revisionForPlayPresetFiles(presentation.files),
     )
   );
 }
