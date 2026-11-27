@@ -110,7 +110,7 @@ node dist/node/cli/main.js web
 
 ### 使用 ChatGPT 套餐游玩
 
-在本机运行 Narraeon 时，可在模型设置中选择 ChatGPT 套餐连接。用系统浏览器登录 OpenAI，授权 Narraeon 使用套餐额度，再从账号提供的模型中选择一个，保存并启用。游戏存档仍在本机。套餐用量和限额可在 ChatGPT 设置中查看。
+在桌面电脑上直接打开本机运行的 Narraeon，可在模型设置中选择 ChatGPT 套餐连接。用系统浏览器登录 OpenAI，授权 Narraeon 使用套餐额度，再从账号提供的模型中选择一个，保存并启用。游戏存档保存在本机，每次发送时，Narraeon 会把该轮所需的故事材料发给 OpenAI。套餐用量和限额可在 ChatGPT 设置中查看。
 
 「试发一条消息」也会使用套餐额度。OpenAI 的订阅通道不接受每次请求的最大输出参数。希望让行动建议等自动后置请求使用额度时，请在连接设置中单独开启。场景生图需要支持图像生成的独立连接。[OpenAI 开源应用接入说明](https://developers.openai.com/siwc/token-sharing-open-source)
 

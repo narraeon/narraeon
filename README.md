@@ -125,7 +125,7 @@ node dist/node/cli/main.js web
 
 ### Play using your ChatGPT plan
 
-When running Narraeon locally, choose a ChatGPT plan connection in model settings. Sign in to OpenAI in your system browser and authorize plan usage. Select a model available to that account, then save and enable the connection. Your world stays on your device. You can review usage and limits in ChatGPT settings.
+In the desktop Runtime, open Narraeon directly on localhost and choose a ChatGPT plan connection in model settings. Sign in to OpenAI in your system browser and authorize plan usage. Select a model available to that account, then save and enable the connection. Narraeon stores the world on your device and sends the story context needed for each turn to OpenAI. You can review usage and limits in ChatGPT settings.
 
 Sending a test message also uses plan allowance. OpenAI's plan route does not accept a per-request output token cap. To use the plan for automatic follow-up requests such as suggested actions, enable them separately in the connection settings. Scene illustrations require a separate connection that supports image generation. [OpenAI guide for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source)
 
