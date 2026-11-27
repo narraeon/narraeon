@@ -37,6 +37,15 @@ const currentActionCopy = {
 
 const composerMenu = 'details[name="world-composer-menu"]';
 
+function syncStatusTabStop(status: HTMLDivElement | null): void {
+  if (status === null) return;
+  const overflows =
+    status.clientHeight > 0 && status.scrollHeight > status.clientHeight;
+  if (overflows === status.hasAttribute("tabindex")) return;
+  if (overflows) status.tabIndex = 0;
+  else status.removeAttribute("tabindex");
+}
+
 export function PlayComposer({
   children,
   tools,
@@ -111,13 +120,17 @@ export function PlayComposer({
   const submissionModeId = useId();
   const statusId = submissionModeId + "-status";
   const [shortStatusOpen, setShortStatusOpen] = useState(false);
-  const [statusOverflows, setStatusOverflows] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
   const statusContentRef = useRef<HTMLDivElement>(null);
   const composerMoreRef = useRef<HTMLDetailsElement>(null);
   const primaryLabel = uiText(primaryLabels[primaryAction]);
   const iconOnly = primaryAction === "fresh" || primaryAction === "append";
   const [currentLabel, currentDescription] = currentActionCopy[currentAction];
+
+  // Update after disclosures and notices render without waiting for a resize event.
+  useLayoutEffect(() => {
+    syncStatusTabStop(statusRef.current);
+  });
 
   useLayoutEffect(() => {
     const status = statusRef.current;
@@ -128,12 +141,7 @@ export function PlayComposer({
       typeof ResizeObserver === "undefined"
     )
       return;
-    const measure = () =>
-      setStatusOverflows(
-        status.clientHeight > 0 && status.scrollHeight > status.clientHeight,
-      );
-    measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => syncStatusTabStop(status));
     observer.observe(status);
     observer.observe(content);
     return () => observer.disconnect();
@@ -157,6 +165,10 @@ export function PlayComposer({
     <footer
       ref={dockRef}
       className={`world-composer-dock ${styles.dock}`}
+      onKeyDownCapture={(event) => {
+        // A viewport change can land just before the browser handles Tab.
+        if (event.key === "Tab") syncStatusTabStop(statusRef.current);
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !(event.target instanceof Element))
           return;
@@ -195,7 +207,6 @@ export function PlayComposer({
           className={`${styles.status}${shortStatusOpen ? ` ${styles.statusOpen}` : ""}`}
           role="region"
           aria-label={uiText("游玩状态")}
-          tabIndex={statusOverflows ? 0 : undefined}
         >
           <div ref={statusContentRef} className={styles.statusContent}>
             {children}
