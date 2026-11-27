@@ -408,9 +408,9 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "15ae7446a5b225e241ca9d9e92b889a2f8b3e5c175ded60ee6f9dc01a0c93d28",
   "revision/en":
-    "59b5d2c84ac95b01f84a35ec8a83e5a62ad3ae501c66e5d98c6e58421e2235b3",
+    "cea8c7f8c028e6b20d4e14365714519cad598cdbbceaca7e2ef9d3204ef0808a",
   "revision/zh-CN":
-    "156dd8b49d8d57b8432981ad3633c7b82bd03e260bb7b5b438109956b7662684",
+    "30a4d3b5245a9f59cdd060897e0e7031462c37b980e47359ace2dd74c4a1f836",
   "setting/en":
     "010bc4da02c9fd401bc12ef664f624878e12e8ea9cc65c7e56ecb5bdd0eb660c",
   "setting/zh-CN":
