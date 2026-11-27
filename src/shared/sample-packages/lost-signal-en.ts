@@ -61,7 +61,7 @@ Known before the call: The eleven-name plaque recalls the lost survey crew. The 
   summary: Relay mechanic. Responsible for preparing the neighboring outpost’s courier batteries.
   aliases: []
 Wants: Give visitors a fair hearing with a way for both sides to stop or pull away. Wants to keep a way to test the outpost batteries or inform the next courier if the berth takes its socket for an extended stay.
-Knows: The load tester and an externally powered ship hose use the same socket. A hand winch, dead berth, and cable can hold a craft with its own power. The public berth plan shows those options without publishing live station data.
+Knows: The load tester and an externally powered ship hose use the same socket. A hand winch, dead berth, and cable can hold a craft with its own power. The public berth plan shows those options without publishing live station data. She also remembers that the watch desk archive drawer still holds the twenty-year-old Sedge Beacon telemetry fiche and an old outpost closure memo.
 Behavior: Makes concrete offers with conditions. Will leave the console to inspect a fitting or arrange an alternative if asked. If the conversation turns to checking each other’s accounts, she can suggest one observation each side can check for itself.
 `,
   },
@@ -88,7 +88,7 @@ Private recollection: She and her sibling pencilled a fish with a square tail on
   title: Last Light Relay
   summary: Watch desk, relay telescope, approach lamps, and entry to the service arm.
   aliases: []
-Watch desk: Open voice radio, a telescope feed, a paper service chart, and the enamel plaque issued after the disappearance. The plaque lists eleven names. Loosening two screws lifts it from the bulkhead, revealing an old fish drawn in pencil with a square tail.
+Watch desk: Open voice radio, a telescope feed, a paper service chart, and the enamel plaque issued after the disappearance. The plaque lists eleven names. Loosening two screws lifts it from the bulkhead, revealing an old fish drawn in pencil with a square tail. The archive drawer beneath the desk also holds old Sedge Beacon logs and an outpost closure memo.
 Approach lamps: Three white lamps rise from below the dish to above it. When the operator runs the usual test they pulse bottom, middle, top. The operator can run a different visible test pattern. The waiting craft can see all three without moving closer.
 Observations available: Telescope images can resolve the ship’s external contours and lamp. It cannot show who is speaking. If Jun slews for a side view, she can compare radiator braces with photographs in the survey record.
 Live station observations:
@@ -108,7 +108,10 @@ Connections beyond the relay: The outpost uses the relay for courier traffic. A 
   title: Isolated service berth
   summary: A docking cradle past the pressure bulkhead, with a manual tether and covered data port.
   aliases: []
-Default condition: Empty, physically disengaged, and unpressurized. The packet lead is unplugged under a cover. There is a separate voice-only radio and enough room for a suited observer at the safety rail.
+Status summary:
+  Berth: Empty, unpressurized, data port covered
+  Power socket: Currently connected to the courier battery load tester
+Fixed fittings: A manual-tether docking cradle past the pressure bulkhead, a physical data connector with a dust cover, a separate voice-only radio, and enough room for a suited observer at the safety rail.
 Options: Use the manual tether with the ship on its own power, connect external berth power without data, or negotiate a full supervised docking with the physical data lead still covered. Open the pressure bulkhead only by agreement after inspection. The ship can also hold outside the berth and use radio or exchange a sealed test packet.
 Shared resource: The external power hose and the courier battery load tester use the single suitable socket. Either can be unplugged and reconnected by Jun. Giving the ship permanent use postpones the scheduled battery work; a short use or independent supply leaves room for another arrangement.
 Protocol: A crew member stays at the ship controls until both sides have rehearsed a shared release signal. Either party may call a halt while that is still safe.
@@ -128,6 +131,34 @@ Crew account: In a brief patch of space, expected beacon replies seemed to arriv
 Material condition: Morrow can use its own power to hold position and keep its air moving. It would benefit from a quiet berth and later from power for a better survey of the ship. It can trade observations and report how its lamp or radio responds to a fresh signal without committing to dock.
 `,
   },
+  {
+    path: "world/archives/sedge-beacon-log.yaml",
+    contents: `$document:
+  id: archive.lost-signal-sedge-log
+  ref: sedge-beacon-log
+  title: Archived Sedge Beacon telemetry log
+  summary: Original twenty-year-old Sedge Beacon telemetry excerpt stored in the watch desk archive drawer.
+  aliases: []
+Location: Watch desk archive drawer at Last Light Relay.
+Original record:
+  Inverted echo: For fourteen seconds after Morrow broke off twenty years ago, Sedge Beacon logged an acknowledgment timestamped earlier than Morrow's ping, accompanied by a brief gravity-shear advisory.
+  Filing note: Three months later, an outpost technical officer reclassified the anomaly as instrument drift and omitted it from the public search summary.
+`,
+  },
+  {
+    path: "world/archives/outpost-standing-order.yaml",
+    contents: `$document:
+  id: archive.lost-signal-outpost-order
+  ref: outpost-standing-order
+  title: Outpost standing order on the outer survey channel
+  summary: Standing closure memo filed at Last Light Relay after Morrow vanished.
+  aliases: []
+Location: Outpost protocol folder in the watch desk archive drawer.
+Order terms:
+  Quarantine clause: Any vessel returning from the closed Sedge survey channel must be reported to the outpost immediately and placed under one-way telemetry lockdown, transferring all raw navigation logs to outpost custody before crew disembark.
+  Consequences: Reporting immediately brings a courier crew within hours to impound Morrow's logs and quarantine the eleven aboard; delaying the report breaches the standing order.
+`,
+  },
   ...storyControlFiles(
     "en",
     "last-light",
@@ -135,10 +166,40 @@ Material condition: Morrow can use its own power to hold position and keep its a
 
 Two crews are encountering the same sky from different experiences. Let each ask for something, offer something, and state what would make them comfortable agreeing. If a character naturally suggests a visual check, have the character explain in everyday words what each side could find out before the player chooses whether to try it. The station can make up a new pattern and ask the ship to say what it saw. The ship can flash back as agreed, and the station can watch through the telescope. Each side can learn whether the other can see its lights right now and make their own lights flash as agreed. Finding out who is aboard or how much time passed there takes different evidence. A radio answer, a hull feature, a public record, or a private recollection can each offer a different clue.
 
-Keep what the relay actually sees, what signals it receives, and what its checks establish in Live station observations in @last-light only. Keep the points awaiting a reply and the caller’s reported account with the conversation in the current situation. For exact wording, refer back to what the characters have already said in the story. The departure records and clues in @morrow-crossing are there for comparison. Distinguish firsthand observations from crew accounts and guesses.
+Keep what the relay actually sees, what signals it receives, and what its checks establish in Live station observations in @last-light only. Update Status summary in @outer-berth when berth or power-socket arrangements change. Keep the points awaiting a reply and the caller’s reported account with the conversation in the current situation. For exact wording, refer back to what the characters have already said in the story. The departure records and clues in @morrow-crossing are there for comparison. Distinguish firsthand observations from crew accounts and guesses.
 
-Em wants a conversation and a safe place to talk things over. A radio exchange, a dark berth, a dry tether, or other arrangements are viable by agreement. Let the players invent ways to share information with consent and agree on a release signal before physical contact. The waiting craft has time to deliberate. Use the shared power socket to make arrangements concrete when it is relevant. Record actual permissions, promises, and changes to the berth or the ship in their owners’ documents. The contact can grow into mutual aid, cautious separation, or a joint investigation. An explanation for the crossing can develop from later observations; no revelation or ending is required before anyone can talk.
+@sedge-beacon-log and @outpost-standing-order are on-demand second-layer archives: read them via context_read only when the player checks old logs, asks about outpost rules, or considers reporting the contact—never dump them into the opening exchange. Em wants a conversation and a safe place to talk things over. A radio exchange, a dark berth, a dry tether, or other arrangements are viable by agreement. Let the players invent ways to share information with consent and agree on a release signal before physical contact. The waiting craft has time to deliberate. Use the shared power socket to make arrangements concrete when it is relevant. Record actual permissions, promises, and changes to the berth or the ship in their owners’ documents. The contact can grow into mutual aid, cautious separation, or a joint investigation. An explanation for the crossing can develop from later observations; no revelation or ending is required before anyone can talk.
 `,
     ["em-arlen", "outer-berth", "morrow-crossing"],
+    undefined,
+    {
+      catalogDirectories: [{ directory: "archives", maxEntries: 4 }],
+      extraViews: [
+        {
+          id: "contact-status",
+          title: "Contact & berth",
+          items: [
+            {
+              id: "verification-progress",
+              label: "Verification status",
+              document: "last-light",
+              locator: ["Live station observations"],
+            },
+            {
+              id: "berth-state",
+              label: "Isolated berth",
+              document: "outer-berth",
+              locator: ["Status summary", "Berth"],
+            },
+            {
+              id: "power-socket",
+              label: "Shared power socket",
+              document: "outer-berth",
+              locator: ["Status summary", "Power socket"],
+            },
+          ],
+        },
+      ],
+    },
   ),
 ];

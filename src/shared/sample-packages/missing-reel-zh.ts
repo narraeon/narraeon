@@ -66,7 +66,7 @@ export const missingReelChinese: readonly ContentTreeFile[] = [
   summary: 负责保管母带的档案员，也是试听会的组织者。
   aliases: []
 动机: 想让歌者和家属听到完整录音。要是有具体理由可以向门外的家属交代，她会推迟试听。
-行事: 一紧张就把时间和日期说得很准。问到钥匙或手续，她会直接回答。
+行事: 一紧张就把时间和日期说得很准。问到钥匙或手续，她会直接回答。若有人追问捐赠方为何送来未签字的短版打样，她会想起阅览室捐赠档案夹里还夹着一份补充备忘。
 认知:
   亲眼所见: 五点二十检查过母带的黄铜轴芯。为预定的试音把展柜留在虚掩状态。
   判断: 觉得可能有人布置时顺手挪走了母带。她没完整听过试音文件。
@@ -142,7 +142,7 @@ export const missingReelChinese: readonly ContentTreeFile[] = [
   summary: 公用阅览桌旁保管曲目单、审批文件和录音署名。
   aliases: []
 出入: 试听会开放期间可自由查阅活动文件的桌面副本，开门前可请许玛带路。
-记录: 原曲目单上，报幕人写着桑黛。许玛签批播放带完整口述署名的长版录音。另一张捐赠方的打样单把短版写成“最终版”，却没有馆方签字。
+记录: 原曲目单上，报幕人写着桑黛。许玛签批播放带完整口述署名的长版录音。另一张捐赠方的打样单把短版写成“最终版”，却没有馆方签字。桌后立柜的捐赠档案夹里还收着捐赠方寄来的补充说明（见 @donor-transfer-addendum）。
 平日: 来访者可以听数字化录音、帮忙听写姓名，或约一次自己的录音访谈。
 `,
   },
@@ -156,6 +156,9 @@ export const missingReelChinese: readonly ContentTreeFile[] = [
   aliases: []
 已知线索:
   空展柜: 许玛说五点二十见过母带。玩家亲眼看见蓝毡上的空圆印。
+关键时限: 18:00 试听会预计开门（展厅外已有首位来宾等候）
+母带下落: 尚未找回（17:20 最后一次在展柜中被许玛见到）
+待核实疑点: 17:20 至 17:32 间谁接近过展柜；试音文件与原母带有何差别
 `,
   },
   {
@@ -178,6 +181,21 @@ export const missingReelChinese: readonly ContentTreeFile[] = [
   人证: 罗安能说出是谁把箱子带往 C 格所在的走廊。桑薇也可能承认自己的行为，开箱核验依然有效。
 `,
   },
+  {
+    path: "world/archives/donor-transfer-addendum.yaml",
+    contents: `$document:
+  id: archive.missing-reel-donor-addendum
+  ref: donor-transfer-addendum
+  title: 捐赠方补充协议与剪辑说明
+  summary: 收在阅览室立柜捐赠档案夹中的往来函件，载有捐赠方要求删去报幕的真实背景。
+  aliases: []
+存放位置: 潮屋阅览室立柜里的捐赠往来档案夹。
+事实记录:
+  书面理由: 捐赠方“港务航运遗产信托”（原装卸公司改制后的出资方）在补充说明中以“时长紧凑”为由要求删去桑黛的口述报幕。
+  真实顾忌: 三十年前录音开头的报幕里，桑黛依次念出了三名临时夜班装卸工的名字；那三人曾在同年起重机事故后被公司从正式安全花名册里抹去，家属一直没有拿到完整的工时证明。
+  资助关系: 该信托方同时资助着档案馆明年的恒温库改造预算。
+`,
+  },
   ...storyControlFiles(
     "zh-CN",
     "exhibition-room",
@@ -185,9 +203,38 @@ export const missingReelChinese: readonly ContentTreeFile[] = [
 
 保管记录里是已经发生的事。让玩家通过查看展柜、实际试听、比较手续、问人或其他说得通的方法发现实情。供主持者查阅的材料与各人已经知道的事分开；证人可以诚实却只知道一部分。等玩家有机会接触线索时再把它写进叙事。母带和短版试音文件的内容及用途不同。
 
-@case-notes#/已知线索 只记确实让玩家知道的观察或注明来源的证词。母带找到后将去向更新在 @reel-custody。人物做了新决定就推进当前情境。收运若如期发生，记录箱子去了哪里，玩家仍可继续追查。由玩家决定是否协调署名、保留证据、帮忙举办试听、通知某人或不再查案。不必取得口供才能查明经过。档案馆在这桩事过后还有日常工作。
+@case-notes#/已知线索 只记确实让玩家知道的观察或注明来源的证词；同步更新 @case-notes 的「关键时限」「母带下落」「待核实疑点」（例如玩家得知 17:50 收运安排后再写入关键时限），切勿提前泄露未发现的秘密。母带找到后将去向更新在 @reel-custody。@donor-transfer-addendum 是二层隐藏线索：仅在玩家追查捐赠方为何删去报幕或查验阅览室捐赠档案夹时再按需读取。人物做了新决定就推进当前情境。收运若如期发生，记录箱子去了哪里，玩家仍可继续追查。由玩家决定是否协调署名、保留证据、帮忙举办试听、通知某人或不再查案。不必取得口供才能查明经过。档案馆在这桩事过后还有日常工作。
 `,
     ["case-notes", "reel-custody"],
     { document: "case-notes", key: "已知线索" },
+    {
+      catalogDirectories: [{ directory: "archives", maxEntries: 4 }],
+      extraViews: [
+        {
+          id: "case-status",
+          title: "时限与进度",
+          items: [
+            {
+              id: "deadlines",
+              label: "关键时限",
+              document: "case-notes",
+              locator: ["关键时限"],
+            },
+            {
+              id: "reel-status",
+              label: "母带下落",
+              document: "case-notes",
+              locator: ["母带下落"],
+            },
+            {
+              id: "open-questions",
+              label: "待核实疑点",
+              document: "case-notes",
+              locator: ["待核实疑点"],
+            },
+          ],
+        },
+      ],
+    },
   ),
 ];

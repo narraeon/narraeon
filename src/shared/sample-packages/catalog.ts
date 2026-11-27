@@ -87,6 +87,62 @@ const descriptions = {
       premise: "失踪二十年的星船请求泊位。在双方同意靠近前，你准备交换什么？",
     },
   },
+  "fogbell-harbor": {
+    en: {
+      genre: "Tabletop · d100",
+      title: "Seven Days at Fogbell Harbor",
+      premise:
+        "Ice fog seals the harbor for seven nights. Hired to audit a missing lighthouse keeper’s books, you step ashore to hear the innkeeper murmur that the fogbell tolled three times in dead calm last night.",
+    },
+    "zh-CN": {
+      genre: "跑团调查 · d100",
+      title: "雾钟港七日",
+      premise:
+        "冰雾封港七夜。你受雇核查失踪守塔人的旧账，刚登岸，旅店老板娘便低声告诉你，昨夜无风，雾钟却自己响了三声。",
+    },
+  },
+  "qingzhou-tales": {
+    en: {
+      genre: "Tabletop · Chaos bag",
+      title: "Night Tales of Qingzhou",
+      premise:
+        "Autumn rain strands you outside Qingzhou. A ruined temple plays at midnight, a new bride avoids every mirror, and travelers lose their birth-tallies at an old post—three strange tales quietly entwined.",
+    },
+    "zh-CN": {
+      genre: "跑团志怪 · 混乱袋",
+      title: "聊斋行脚：青州夜话",
+      premise:
+        "秋雨困住青州西郊。城外废寺夜闻琴声、旧宅新妇不照镜、枯井驿站屡失生辰帖——三桩异闻彼此暗牵，由你择路查访。",
+    },
+  },
+  "treasure-island": {
+    en: {
+      genre: "Tabletop · d20",
+      title: "Treasure Island: Aboard the Hispaniola",
+      premise:
+        "On the eve of sailing for Skeleton Island, Captain Smollett distrusts the newly signed crew, two hands hide a torn island sketch in the hold, and genial one-legged cook Long John Silver brings warm rum on deck.",
+    },
+    "zh-CN": {
+      genre: "跑团航海 · d20",
+      title: "金银岛：暗流航程",
+      premise:
+        "伊斯帕尼奥拉号启航前夜，斯莫莱特船长对新水手满怀戒心，货舱里有人匆匆藏起撕角的岛屿草图，热情的独脚厨师西尔弗却笑盈盈递来热酒。",
+    },
+  },
+  "baker-street-fog": {
+    en: {
+      genre: "Long-form detective",
+      title: "A Study in Grey Fog",
+      premise:
+        "November fog traps London. With Holmes and Watson south of the Thames, three leads reach 221B: Holmes’s folded notes, a pawned anchor coin from Lestrade, and a museum call slip brought by Wiggins.",
+    },
+    "zh-CN": {
+      genre: "长线侦探 · 互动小说",
+      title: "贝克街的灰雾委托",
+      premise:
+        "十一月浓雾封锁伦敦。福尔摩斯与华生外出盯梢，桌上留着三张便签，雷斯垂德送来海锚暗记金币，维金斯也带来一张博物馆借书单。",
+    },
+  },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, { genre: string; title: string; premise: string }>

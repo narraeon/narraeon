@@ -30,6 +30,12 @@ Present:
   - { $ref: character.vault-leader }
   - { $ref: character.tide-ivo }
   - { $ref: character.tide-sera }
+Expedition status:
+  Tide window: Low water; about 35 minutes left to walk out under the arch (bird-light hovering)
+  Rope location: Coiled on Sera's shoulder (24 m, not yet rigged)
+  Confirmed leads:
+    Knocking: Two knocks, a pause, and one more from inside the gallery; Sera recognizes Ren's habit, not yet seen.
+    Upper seam: Lamp light shows square footholds climbing past the first lip; far end unverified.
 Awaiting a response:
   Speaker: { $ref: character.tide-sera }
   Words: Can we spare a little time to find who’s knocking?
@@ -61,7 +67,7 @@ Agreed before departure: Each person may call for a stop. If they separate, they
   aliases: []
 Goal: Wants to see where the old sluice feeds the lower orchard. Salt has reached two of the village wells this season. A sketch of the channels could help his neighbors decide where to dig.
 Gear: Hooded lamp, tide staff, slate and chalk.
-Knowledge: He knows the shore arch’s usual water marks from outside. The upper arrow and holes remind him of the old masons’ footholds. He has never reached their far end and cannot vouch for the exit.
+Knowledge: He knows the shore arch’s usual water marks from outside. The upper arrow and holes remind him of the old masons’ footholds. He has never reached their far end and cannot vouch for the exit. He has also heard of a long-sealed inspection door behind the old orchard cistern in the village.
 Position on risk: Will stop for a credible rescue. Wants the group to check actual water signs before committing to the gallery, and can do so or stay to mark the way if asked.
 `,
   },
@@ -90,6 +96,7 @@ Position on risk: Will spare mapping time for a rescue and listen to a workable 
 Location: { $ref: location.vault-bell-gallery }
 Position: On the dry service ledge beyond the broken footbridge. A settling step bruised his ankle before this ebb. He can put some weight on it and help lash a line but cannot jump the bridge gap.
 Framing his own errand: He expected to mark the collapsing masonry for the village, then check one sealed inspection bay he remembers from an old drawing.
+Carrying: Sera's borrowed inspection hammer, a stub of chalk, and a mason's field notebook tucked in his tool roll (see @ren-field-notes).
 Knows: He has seen a wall-bracket at his end of the ledge. He knows the return under the arch is temporary from past shore work. He has not climbed the upper traverse.
 Current action: Made the knocks with the inspection hammer and is listening for a return. Voice carries poorly around the first corner above the wash at the base of the gallery.
 `,
@@ -123,7 +130,7 @@ Shore: A gravel landing is safe above the steps. A fishing crew keeps a lamp in 
 Approach: About five minutes from the arch at a careful walk. The tide presses up through the broken floor as the channel fills.
 Crossing: A two-meter gap in the old plank bridge separates the passage from the service ledge. Both sides have stone rings mortared deep into the wall. Solid masonry sounds dull under a tap; the loose bridge-end slab rings bright and shifts under load.
 High connection: A set of rungs from the service ledge leads into the upper traverse. The middle rung has dropped out; the old rung sockets can be reached with a light and rigging.
-Work to return for: Beyond the ledge, older clay tablets show separate fresh-water and salt-water channels. A ceramic yard seal on the lowest shelf matches marks on the village’s sealed inspection doors. Reading the tablets here takes time. A rubbing or quick sketch is possible before the lowest shelf gets wet.
+Work to return for: Beyond the ledge, older clay tablets show separate fresh-water and salt-water channels. A ceramic yard seal on the lowest shelf matches marks on the village’s sealed inspection doors, and a dry recess behind the rack holds an older sluice secret (see @sluice-seal-ledger). Reading the tablets here takes time. A rubbing or quick sketch is possible before the lowest shelf gets wet.
 `,
   },
   {
@@ -140,6 +147,36 @@ Shutter: The stone shutter is dry above an ordinary high tide. Its small keeper 
 Constraints: A climbing line used here may be left in place or recovered at the cost of time. Whoever carries it can use it elsewhere; the same rope cannot serve both routes at once.
 `,
   },
+  {
+    path: "world/archives/sluice-seal-ledger.yaml",
+    contents: `$document:
+  id: archive.tide-vault-sluice-ledger
+  ref: sluice-seal-ledger
+  title: Sluice yard seal and village brine ledger
+  summary: Old sluice records and physical fittings hidden in the bell gallery's clay tablets and dry recess.
+  aliases: []
+Location: The clay tablet rack and the dry recess behind its lowest shelf on the bell gallery ledge.
+Physical clues and records:
+  Dry recess and bronze valve key: Behind the lowest tablet shelf sits a loose brick stamped with the same bird-and-wave mark as the entrance bronze, concealing a salt-crusted bronze valve key and a half-slate inscription.
+  What the tablets show: Fifty years ago, a storm cracked the freshwater weir stone; rather than repair the deep sluice, someone hastily plugged the wrong bypass gate from the village orchard cistern, gradually forcing brine into the lower well veins.
+  Hydraulic risk: Opening the sealed village inspection door with the valve key relieves brine pressure on the wells, but unless the cracked weir below the bell gallery is braced at low water first, a spring tide will flood two lower orchard cellars.
+`,
+  },
+  {
+    path: "world/archives/ren-field-notes.yaml",
+    contents: `$document:
+  id: archive.tide-vault-ren-notes
+  ref: ren-field-notes
+  title: Ren's mason notebook
+  summary: Field notebook in Ren's tool roll recording fresh mortar and bridge-plank observations.
+  aliases: []
+Location: Tucked inside Ren's tool roll.
+Notes:
+  Fresh mortar and chisel marks: Near the sealed inspection bay, Ren found unweathered mortar slapped over the old warning carving about the misplugged bypass gate during a recent ebb tide.
+  Bridge suspicion: Ren suspects the wedging block under the loose bridge plank may have been pried out, though he fell before he could tell rot from tampering.
+  Mortar makeup: The fresh mortar contains fine red brick dust fired only at the lower orchard kiln.
+`,
+  },
   ...storyControlFiles(
     "en",
     "shore-arch",
@@ -147,7 +184,40 @@ Constraints: A climbing line used here may be left in place or recovered at the 
 
 Run this as an exploration in real choices of route, time, gear, and trust. Let care or a well-aimed question reveal a physical observation. Give companions a chance to offer help, name a risk, or refuse an unsafe order. Sera’s recognition gives a lead; let a sound, a view, or contact with Ren confirm the source. Ivo’s village errand and Sera’s rescue both remain worth pursuing after this descent.
 
-Let the wall marks, rising water, and time spent agree with one another. Give the party signs before the shore arch is cut off. Verify the upper exit by what the party can observe, and allow aid from shore, a revised plan, or a return at the next ebb. Track the rope with its actual holder or fixing and durable outcomes in the documents they affect. Update the current situation with elapsed time and whoever is present when meaningful activity advances them. The player may explore, help, or retreat empty-handed. Stop for the player’s choice instead of spending a whole tide in one reply.
+Let the wall marks, rising water, and time spent agree with one another. Give the party signs before the shore arch is cut off. Verify the upper exit by what the party can observe, and allow aid from shore, a revised plan, or a return at the next ebb. Track the rope with its actual holder or fixing and durable outcomes in the documents they affect. Update the current situation with elapsed time, whoever is present, and Expedition status (Tide window, Rope location, Confirmed leads) as the party acts—never write unseen secrets into Confirmed leads early.
+
+@sluice-seal-ledger and @ren-field-notes are second-layer hidden clues: read them on demand via context_read only when the party inspects the bell gallery tablets or recess, reaches Ren, or examines the mortar and chalk marks—never reveal them at the entrance. The player may explore, help, investigate the sluice mystery, or retreat empty-handed. Stop for the player’s choice instead of spending a whole tide in one reply.
 `,
+    [],
+    undefined,
+    {
+      catalogDirectories: [{ directory: "archives", maxEntries: 4 }],
+      extraViews: [
+        {
+          id: "expedition-status",
+          title: "Expedition status",
+          items: [
+            {
+              id: "tide-window",
+              label: "Tide window",
+              document: "current-situation",
+              locator: ["Expedition status", "Tide window"],
+            },
+            {
+              id: "rope-location",
+              label: "Rope location",
+              document: "current-situation",
+              locator: ["Expedition status", "Rope location"],
+            },
+            {
+              id: "found-leads",
+              label: "Confirmed leads",
+              document: "current-situation",
+              locator: ["Expedition status", "Confirmed leads"],
+            },
+          ],
+        },
+      ],
+    },
   ),
 ];
