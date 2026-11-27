@@ -57,7 +57,10 @@ test("a rejected package rename synchronizes the list while keeping the editable
     createElement(App, { client: { request } as unknown as RuntimeClient }),
   );
   fireEvent.click(
-    await screen.findByRole("button", { name: "重命名内容包：Original" }),
+    await screen.findByRole("button", { name: "内容包操作：Original" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "重命名内容包：Original" }),
   );
   fireEvent.change(screen.getByLabelText("内容包标题"), {
     target: { value: "Keep this name" },
