@@ -258,15 +258,25 @@ const playableStories = [
     en: {
       genre: "Campus life",
       action:
-        "I offer to help Hana test the captions and ask Mina to hold off on the announcement.",
-      reply: "Hana shifts the laptop toward the dry end of the bench.",
-      context: ["The club has forty-six registrations."],
+        "I take out my own headphones and offer to help Hana test the captions. I ask Mina to hold off on the announcement.",
+      reply: "Hana cues the shot so you can try it with your own headphones.",
+      context: [
+        "The club needs to decide whether and how to hold tonight's screening",
+        "The club has forty-six registrations. Room 204 holds twenty-eight and must be claimed by six.",
+        "watch the captions against the audio and spot the mismatch for themselves",
+        "A listener can use their own headphones or borrow hers",
+      ],
     },
     "zh-CN": {
       genre: "校园生活",
-      action: "我想帮韩夏先试字幕，请米娜暂缓发通知。",
-      reply: "韩夏把笔记本往长凳干的那边挪了挪。",
-      context: ["报名四十六人"],
+      action: "我拿出自己的耳机，提出帮韩夏先试字幕，请米娜暂缓发通知。",
+      reply: "韩夏把片子停在那个镜头附近，好让你用自己的耳机试听。",
+      context: [
+        "今晚是否放映、怎么安排，以及要怎样及时通知报名的人",
+        "报名四十六人，204 教室只有二十八座，六点前要领钥匙",
+        "让对方边看字幕边听声音，自己找出错位",
+        "对方带了耳机就用那副",
+      ],
     },
   },
   {
@@ -458,6 +468,18 @@ for (const locale of appLocales) {
           { kind: "genesis", exactText: opening },
         ]);
         expect(initialWorld.playerViews.diagnostics).toEqual([]);
+        if (story.id === "screening-night") {
+          expect(
+            initialWorld.playerViews.views[0]?.items.map(({ value }) => value),
+          ).toEqual(
+            locale === "zh-CN"
+              ? ["秋季学期，周四下午五点四十分", "花楸学院院子，图书馆屋檐下"]
+              : [
+                  "Thursday, 5:40 p.m., during autumn term",
+                  "Rowan College courtyard, under the library eaves",
+                ],
+          );
+        }
         if (story.id === "missing-reel") {
           const clues = initialWorld.playerViews.views
             .flatMap(({ items }) => items)
@@ -518,6 +540,16 @@ for (const locale of appLocales) {
         for (const material of strings.context)
           expect(dispatched).toContain(material);
         expect(dispatched).toContain(strings.action);
+        if (story.id === "screening-night") {
+          const spokenLine = t(
+            "你说，我们到底怎么跟大家讲？",
+            "What do you think we should actually tell people?",
+          );
+          expect(opening).toContain(spokenLine);
+          expect(dispatched.split(spokenLine)).toHaveLength(2);
+          expect(dispatched).toContain("@hana");
+          expect(dispatched).toContain("@mina");
+        }
         if (story.id === "missing-reel") {
           expect(dispatched).toContain("@service-corridor");
           expect(dispatched).toContain("@reading-room");
