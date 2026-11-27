@@ -1,3 +1,4 @@
+import { FileEditorMode, FileSourceEditor } from "./FileSourceEditor.tsx";
 import { useId, useMemo, useState } from "react";
 
 import type { PlayerViewDiagnostic } from "../protocol/playerViews.ts";
@@ -99,29 +100,14 @@ export function PlayerViewEditor({
     >
       <header className={styles.toolbar}>
         <h5 id={titleId}>{uiText("玩家视图编辑")}</h5>
-        <div
-          className={styles.switcher}
-          role="group"
-          aria-label={uiText("玩家视图编辑方式")}
-        >
-          <button
-            type="button"
-            className="secondary-button"
-            aria-pressed={!showSource}
-            disabled={control.views === undefined}
-            onClick={() => setSourceRequested(false)}
-          >
-            {uiText("表单")}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            aria-pressed={showSource}
-            onClick={() => setSourceRequested(true)}
-          >
-            {uiText("源码")}
-          </button>
-        </div>
+        <FileEditorMode
+          showSource={showSource}
+          onSource={() => setSourceRequested(true)}
+          form={{
+            disabled: control.views === undefined,
+            show: () => setSourceRequested(false),
+          }}
+        />
       </header>
       {showSource ? (
         <>
@@ -147,21 +133,14 @@ export function PlayerViewEditor({
               {uiText("初始化玩家视图")}
             </button>
           ) : null}
-          <label className="content-source-editor">
-            <span>{uiText("文件内容")}</span>
-            <textarea
-              rows={27}
-              spellCheck={false}
-              aria-label={uiText("编辑 {path}", {
-                path: playerViewControlPath,
-              })}
-              value={contents}
-              onChange={(event) => {
-                setSourceRequested(true);
-                onChange(event.currentTarget.value);
-              }}
-            />
-          </label>
+          <FileSourceEditor
+            path={playerViewControlPath}
+            contents={contents}
+            onChange={(source) => {
+              setSourceRequested(true);
+              onChange(source);
+            }}
+          />
         </>
       ) : (
         <>

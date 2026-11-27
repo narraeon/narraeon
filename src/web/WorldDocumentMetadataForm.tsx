@@ -123,100 +123,107 @@ export function WorldDocumentMetadataForm({
     </>
   );
   return (
-    <fieldset className={styles.form}>
-      <legend>{uiText("文档元数据")}</legend>
-      <button
-        type="button"
-        className={`secondary-button ${styles.writeBody}`}
-        onClick={onWriteBody}
-      >
-        {uiText("继续写正文")}
-      </button>
-      <div className={styles.headingFields}>
-        <label>{title}</label>
-        <label>
-          <span>{uiText("公开短引用")}</span>
-          <span className={styles.reference}>
-            <span aria-hidden="true">@</span>
-            <input
-              aria-label={uiText("公开短引用")}
-              value={metadata.ref}
-              readOnly={fixedRef}
-              aria-invalid={refInvalid || conflictingPath !== undefined}
-              spellCheck={false}
-              autoCapitalize="none"
-              onBlur={(event) => {
-                if (!fixedRef) checkRef(event.target.value);
-              }}
-              onChange={(event) => {
-                update({ field: "ref", value: event.target.value });
-              }}
-            />
-          </span>
-          {refHint !== undefined && <small>{refHint}</small>}
-        </label>
-      </div>
-      <label>
-        <span>{uiText("文档摘要")}</span>
-        <textarea
-          rows={2}
-          aria-label={uiText("文档摘要")}
-          value={metadata.summary}
-          aria-invalid={summaryInvalid}
-          onChange={(event) =>
-            update({ field: "summary", value: event.target.value })
-          }
-        />
-        {summaryInvalid && <small>{uiText("摘要须为 1–240 个字符。")}</small>}
-      </label>
-      <fieldset className={styles.aliases}>
-        <legend>{uiText("文档别名")}</legend>
-        {metadata.aliases.map((value, index) => {
-          const invalid = [...value].length < 1 || [...value].length > 64;
-          const label = { number: index + 1 };
-          return (
-            <div className={styles.aliasRow} key={index}>
-              <label>
-                <span className="visually-hidden">
-                  {uiText("别名 {number}", label)}
-                </span>
-                <textarea
-                  rows={1}
-                  aria-label={uiText("别名 {number}", label)}
-                  value={value}
-                  aria-invalid={invalid}
-                  onChange={(event) =>
-                    update({ field: "alias", index, value: event.target.value })
-                  }
-                />
-                {invalid && <small>{uiText("别名须为 1–64 个字符。")}</small>}
-              </label>
-              <button
-                type="button"
-                className="secondary-button"
-                aria-label={uiText("移除别名 {number}", label)}
-                onClick={() => update({ field: "removeAlias", index })}
-              >
-                {uiText("移除")}
-              </button>
-            </div>
-          );
-        })}
+    <details className="file-metadata-disclosure">
+      <summary>{uiText("编辑文档元数据")}</summary>
+      <fieldset className={styles.form}>
+        <legend>{uiText("文档元数据")}</legend>
         <button
           type="button"
-          className="secondary-button"
-          disabled={metadata.aliases.length >= 16}
-          onClick={() => update({ field: "appendAlias" })}
+          className={`secondary-button ${styles.writeBody}`}
+          onClick={onWriteBody}
         >
-          {uiText("添加别名")}
+          {uiText("继续写正文")}
         </button>
-        {metadata.aliases.length > 16 && (
-          <p>{uiText("最多可填写 16 个别名。")}</p>
+        <div className={styles.headingFields}>
+          <label>{title}</label>
+          <label>
+            <span>{uiText("公开短引用")}</span>
+            <span className={styles.reference}>
+              <span aria-hidden="true">@</span>
+              <input
+                aria-label={uiText("公开短引用")}
+                value={metadata.ref}
+                readOnly={fixedRef}
+                aria-invalid={refInvalid || conflictingPath !== undefined}
+                spellCheck={false}
+                autoCapitalize="none"
+                onBlur={(event) => {
+                  if (!fixedRef) checkRef(event.target.value);
+                }}
+                onChange={(event) => {
+                  update({ field: "ref", value: event.target.value });
+                }}
+              />
+            </span>
+            {refHint !== undefined && <small>{refHint}</small>}
+          </label>
+        </div>
+        <label>
+          <span>{uiText("文档摘要")}</span>
+          <textarea
+            rows={2}
+            aria-label={uiText("文档摘要")}
+            value={metadata.summary}
+            aria-invalid={summaryInvalid}
+            onChange={(event) =>
+              update({ field: "summary", value: event.target.value })
+            }
+          />
+          {summaryInvalid && <small>{uiText("摘要须为 1–240 个字符。")}</small>}
+        </label>
+        <fieldset className={styles.aliases}>
+          <legend>{uiText("文档别名")}</legend>
+          {metadata.aliases.map((value, index) => {
+            const invalid = [...value].length < 1 || [...value].length > 64;
+            const label = { number: index + 1 };
+            return (
+              <div className={styles.aliasRow} key={index}>
+                <label>
+                  <span className="visually-hidden">
+                    {uiText("别名 {number}", label)}
+                  </span>
+                  <textarea
+                    rows={1}
+                    aria-label={uiText("别名 {number}", label)}
+                    value={value}
+                    aria-invalid={invalid}
+                    onChange={(event) =>
+                      update({
+                        field: "alias",
+                        index,
+                        value: event.target.value,
+                      })
+                    }
+                  />
+                  {invalid && <small>{uiText("别名须为 1–64 个字符。")}</small>}
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  aria-label={uiText("移除别名 {number}", label)}
+                  onClick={() => update({ field: "removeAlias", index })}
+                >
+                  {uiText("移除")}
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={metadata.aliases.length >= 16}
+            onClick={() => update({ field: "appendAlias" })}
+          >
+            {uiText("添加别名")}
+          </button>
+          {metadata.aliases.length > 16 && (
+            <p>{uiText("最多可填写 16 个别名。")}</p>
+          )}
+        </fieldset>
+        {failedEdit === file.contents && (
+          <p role="alert">{uiText("无法用表单修改此处。请在下方编辑源码。")}</p>
         )}
       </fieldset>
-      {failedEdit === file.contents && (
-        <p role="alert">{uiText("无法用表单修改此处。请在下方编辑源码。")}</p>
-      )}
-    </fieldset>
+    </details>
   );
 }

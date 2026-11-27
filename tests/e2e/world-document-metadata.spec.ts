@@ -43,6 +43,13 @@ for (const locale of ["zh-CN", "en"] as const) {
         exact: true,
       });
     };
+    const openMetadata = async (editor = packageEditor) => {
+      await editor
+        .getByText(label("编辑文档元数据", "Edit document metadata"), {
+          exact: true,
+        })
+        .click();
+    };
     const metadata = page.getByRole("group", {
       name: label("文档元数据", "Document metadata"),
       exact: true,
@@ -55,6 +62,8 @@ for (const locale of ["zh-CN", "en"] as const) {
 
     const harbor = await open(`world/${yamlPath}`);
     await expect(harbor).toHaveValue(yamlSource);
+    await expect(metadata).toBeHidden();
+    await openMetadata();
     await expect(title).toHaveValue("Old Harbor");
     await expect(
       metadata.getByRole("textbox", {
@@ -112,6 +121,7 @@ for (const locale of ["zh-CN", "en"] as const) {
     expect(savedYaml).toContain(yamlBody + bodyAddition);
 
     const gates = await open(`world/${markdownPath}`);
+    await openMetadata();
     await metadata.getByRole("button", { name: aliasesName }).click();
     await metadata
       .getByRole("textbox", { name: label("别名 1", "Alias 1"), exact: true })
@@ -132,6 +142,7 @@ for (const locale of ["zh-CN", "en"] as const) {
     await page.reload();
     await openFilePanel(page, "content", chinese);
     await expect(await open(`world/${yamlPath}`)).toHaveValue(savedYaml);
+    await openMetadata();
     await expect(title).toHaveValue(newTitle);
 
     const { world } = await runtime<{ world: { worldId: string } }>(page, {
@@ -144,6 +155,7 @@ for (const locale of ["zh-CN", "en"] as const) {
     const revisionEditor = await openFilePanel(page, "revision", chinese);
     const revisionGates = await open(`state/${markdownPath}`);
     const original = await revisionGates.inputValue();
+    await openMetadata(revisionEditor);
     await expect(ref).toHaveAttribute("readonly", "");
     await expect(ref).toHaveValue("guild-gates");
     const malformed = original.replace("# Guild Gates", "# Wrong heading");
@@ -159,6 +171,7 @@ for (const locale of ["zh-CN", "en"] as const) {
       ),
     ).toBeVisible();
     await revisionGates.fill(original);
+    await openMetadata(revisionEditor);
     await expect(title).toHaveValue("Guild Gates");
     await title.fill("");
     await expect(title).toHaveAttribute("aria-invalid", "true");
@@ -180,6 +193,7 @@ for (const locale of ["zh-CN", "en"] as const) {
     await revisionEditor
       .getByRole("button", { name: label("加入草稿", "Add to draft") })
       .click();
+    await openMetadata(revisionEditor);
     await expect(ref).not.toHaveAttribute("readonly", "");
     await ref.fill("first-pier");
     await revisionEditor
@@ -195,8 +209,10 @@ for (const locale of ["zh-CN", "en"] as const) {
     await openRevision(page, chinese);
     await openFilePanel(page, "revision", chinese);
     await expect(await open(`state/${markdownPath}`)).toHaveValue(revisedGates);
+    await openMetadata(revisionEditor);
     await expect(ref).toHaveAttribute("readonly", "");
     const pier = await open(newPath);
+    await openMetadata(revisionEditor);
     await expect(ref).not.toHaveAttribute("readonly", "");
     await expect(ref).toHaveValue("first-pier");
     await ref.fill("final-pier");

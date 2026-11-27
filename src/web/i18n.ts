@@ -325,6 +325,9 @@ const englishMessages: Record<string, string> = {
     "Editing this content package. Wait for the reply to finish before creating a world.",
   放弃控制修改: "Discard control changes",
   选择编辑文件: "Choose a file to edit",
+  文件编辑方式: "File editing mode",
+  编辑文档元数据: "Edit document metadata",
+  "从当前草稿删除 {path}？": "Delete {path} from the current draft?",
   当前文件: "Current file",
   工作区导航: "Workspace navigation",
   "此页有未保存的修改。要放弃修改并离开吗？":
@@ -2018,18 +2021,21 @@ const worldFrameEnglishMessages: Record<string, string> = {
   可视化已同步: "Visual editor synchronized",
   "仅可编辑 YAML": "YAML editing only",
   "当前 YAML 暂时无法可视化": "Current YAML cannot be visualized yet",
-  "下面的源码视图会原样保留草稿。修复后可视化页面会自动恢复。":
-    "The source view below preserves the draft exactly. The visual editor returns automatically after repair.",
+  "修复源码后可切回表单。": "Repair the source, then switch back to the form.",
+  编译角色与排序: "Compilation roles and ordering",
+  "Markdown 提示块按列表顺序进入世界指令位置。在独立文件中编辑正文。":
+    "Markdown prompt blocks enter the world-instruction position in list order. Edit their text in the individual files.",
+  "Runtime 按列表顺序读取精确选定的材料。":
+    "Runtime reads the selected materials in list order.",
+  "上移或下移条目可更改注入顺序。尾部提示按指令列表顺序进入本轮提示。":
+    "Move an entry up or down to change its position in the compiled prompt. Tail lines enter the turn guide in instruction-list order.",
+  "建议体积（UTF-8 字节，可留空）": "Advisory size (UTF-8 bytes, optional)",
+  "建议体积 · {bytes} 字节": "Advisory size · {bytes} bytes",
+  设置建议体积: "Set advisory size",
   "format 不是当前世界框架版本":
     "format is not the current world-frame version",
   "Runtime 只接受": "Runtime accepts only",
   "修复为 V1 格式": "Repair as V1 format",
-  世界提示框架流程: "World prompt-frame flow",
-  "Markdown 提示块": "Markdown prompt blocks",
-  份世界指令: "world instruction(s)",
-  "进入逻辑 role": "Enter logical role",
-  精确文档与目录: "Exact documents and directories",
-  个材料插槽: "material slot(s)",
   当前场景与常驻视图: "Current scene and pinned views",
   当前情境绑定: "Current-situation binding",
   未解析: "Unresolved",
@@ -2040,7 +2046,6 @@ const worldFrameEnglishMessages: Record<string, string> = {
   当前情境文档: "Current-situation document",
   选择一份世界文档: "Choose a world document",
   "（当前未解析）": "(currently unresolved)",
-  "02 · 世界专属指令": "02 · world-specific instructions",
   提示块顺序: "Prompt-block order",
   个块: "blocks",
   "这些 Markdown 块按顺序进入编排方案预留的世界指令位置；正文仍在独立文件中编辑。":
@@ -2053,14 +2058,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
   "要加入的 Markdown 块": "Markdown block to add",
   没有可加入的未引用块: "No unreferenced blocks are available",
   加入指令顺序: "Add to instruction order",
-  "03 · 确定性材料": "03 · deterministic material",
   上下文材料顺序: "Context-material order",
   个插槽: "slots",
-  "Runtime 只按这些精确位置取材。顺序会进入真实 prompt，但不会推断“相关人物”或“重要历史”。":
-    "Runtime reads material only from these exact locations. The order enters the real prompt, but Runtime never infers related characters or important history.",
-  从上到下就是实际注入顺序: "Top to bottom is the real injection order",
-  "每张卡片右上角都有“上移 / 下移”；移动后序号会立即更新。":
-    "Use Move up or Move down on each card. Sequence numbers update immediately.",
   必需插槽还未成对: "Required slots are not paired yet",
   当前情境: "Current situation",
   "个 · 附加材料": " · additional material",
@@ -2068,10 +2067,6 @@ const worldFrameEnglishMessages: Record<string, string> = {
   补上附加材料: "Add additional material",
   新增材料类型: "Add material type",
   新增材料插槽: "Add material slot",
-  "源码视图（frame.yaml）": "Source view (frame.yaml)",
-  "表单修改保留 YAML 注释和未编辑的节点。也可在这里直接编辑源码。":
-    "Form edits keep YAML comments and unedited nodes. You can also edit the source directly here.",
-  "直接编辑 control/frame.yaml": "Edit control/frame.yaml directly",
   调整注入顺序: "Change injection order",
   "YAML 路径": "YAML path",
   "Markdown 标题路径": "Markdown heading path",
@@ -2647,6 +2642,10 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "Resuming this turn uses the request saved before the pause.",
   更多: "More",
   选择文档: "Choose document",
+  "正文为空。": "The document body is empty.",
+  原始源码: "Original source",
+  "文档 ID": "Document ID",
+  文档身份: "Document identity",
   "配置模型后可查看下次发送的预览。":
     "Configure a model to preview the next send.",
   阅读设置: "Reading settings",

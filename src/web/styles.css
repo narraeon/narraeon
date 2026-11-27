@@ -1807,7 +1807,7 @@ summary {
   display: grid;
   gap: 1.15rem;
   padding: 0;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .content-tree-heading {
@@ -2067,21 +2067,19 @@ summary {
 }
 
 .content-save-boundary {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  align-self: start;
+  padding: 0.65rem 1.25rem;
+  border-block: 1px solid var(--border);
   background: var(--surface);
 }
 
-.content-save-boundary > div:first-child {
-  display: grid;
-  gap: 0.18rem;
-}
-
-.content-save-boundary span {
-  color: var(--muted);
-  font-size: 0.75rem;
+.content-save-boundary > strong {
+  font-size: 0.8rem;
 }
 
 .content-save-boundary .button-row {
@@ -2089,8 +2087,41 @@ summary {
   margin: 0;
 }
 
+.file-editor-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.file-editor-mode button {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.file-editor-mode button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-selected);
+}
+
+.file-metadata-disclosure {
+  margin-block: 0.45rem;
+}
+
+.file-metadata-disclosure > summary {
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.world-control-raw-file {
+  display: grid;
+  gap: 0.45rem;
+}
+
 .content-save-conflict {
   display: flex;
+  flex: 0 0 100%;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -2240,39 +2271,40 @@ summary {
   font-size: 0.75rem;
 }
 
-.world-frame-flow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.45rem;
+.world-frame-compile-help,
+.world-frame-slot-size {
+  font-size: 0.8rem;
 }
 
-.world-frame-flow > div {
-  display: grid;
-  gap: 0.12rem;
-  min-width: 0;
-  padding: 0.7rem 0.8rem;
+.world-frame-compile-help {
+  padding: 0.45rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: 3px;
-  background: var(--surface);
 }
 
-.world-frame-flow > span {
-  color: var(--accent);
-  font-size: 1rem;
-}
-
-.world-frame-flow div span {
+.world-frame-compile-help summary,
+.world-frame-slot-size summary {
+  width: fit-content;
   color: var(--muted);
-  font-size: 0.75rem;
+  cursor: pointer;
 }
 
-.world-frame-flow div strong {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 0.78rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.world-frame-compile-help dl {
+  display: grid;
+  gap: 0.2rem 0.75rem;
+  margin: 0.5rem 0 0.4rem;
+}
+
+.world-frame-compile-help dd {
+  margin: 0 0 0.35rem;
+}
+
+.world-frame-compile-help p {
+  margin: 0.35rem 0 0;
+}
+
+.world-frame-slot-size > label {
+  margin-top: 0.45rem;
 }
 
 .world-frame-section {
@@ -2311,43 +2343,6 @@ summary {
   margin: 0;
   color: var(--muted);
   font-size: 0.76rem;
-}
-
-.world-frame-reorder-guide {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px dashed var(--border);
-  border-radius: 3px;
-  background: var(--surface);
-}
-
-.world-frame-reorder-guide > span {
-  display: grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  flex: 0 0 auto;
-  border-radius: 3px;
-  background: var(--surface);
-  color: var(--accent);
-  font-size: 1rem;
-}
-
-.world-frame-reorder-guide > div {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.world-frame-reorder-guide strong {
-  color: var(--text);
-  font-size: 0.76rem;
-}
-
-.world-frame-reorder-guide div span {
-  color: var(--muted);
-  font-size: 0.75rem;
 }
 
 .world-frame-binding label,
@@ -2599,37 +2594,6 @@ summary {
   background: var(--surface);
   font-size: 0.75rem;
   white-space: pre-wrap;
-}
-
-.world-frame-source {
-  padding: 0.85rem;
-  border: 1px dashed var(--border);
-  border-radius: 3px;
-  background: var(--surface);
-}
-
-.world-frame-source summary {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.world-frame-source > p {
-  margin: 0.55rem 0;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.world-frame-source textarea {
-  min-height: 20rem;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.76rem;
-  line-height: 1.5;
-}
-
-.world-frame-source > [role="alert"] {
-  color: var(--danger);
 }
 
 .danger-button {
@@ -3831,7 +3795,10 @@ summary {
   }
 
   .content-save-boundary {
-    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    padding-inline: 1rem;
   }
 
   .content-save-boundary .button-row {
@@ -3845,15 +3812,6 @@ summary {
 
   .world-frame-status {
     justify-content: flex-start;
-  }
-
-  .world-frame-flow {
-    grid-template-columns: 1fr;
-  }
-
-  .world-frame-flow > span {
-    justify-self: center;
-    transform: rotate(90deg);
   }
 
   .world-frame-order-list > li,
@@ -7301,6 +7259,13 @@ summary {
 
 .setting-overlay-rail.is-editing .setting-overlay-rail-body {
   padding: 0;
+  scroll-padding-block-start: 3.5rem;
+}
+
+@media (--workspace-mobile) {
+  .setting-overlay-rail.is-editing .setting-overlay-rail-body {
+    scroll-padding-block-start: 5.5rem;
+  }
 }
 
 .setting-overlay-rail .setting-conversation-history {
@@ -7429,11 +7394,18 @@ summary {
   background: var(--surface-selected);
 }
 
+.setting-content-preview > nav strong,
 .setting-content-preview > nav code {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.setting-content-preview > nav strong,
+.setting-content-preview > article header strong {
+  display: block;
+  color: var(--text);
 }
 
 .setting-content-preview > article {
@@ -7445,6 +7417,14 @@ summary {
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--surface-inset);
+}
+
+.setting-content-preview article header > div {
+  min-width: 0;
+}
+
+.setting-content-preview article header strong {
+  overflow-wrap: anywhere;
 }
 
 .setting-content-preview article header code {
@@ -7873,16 +7853,39 @@ summary {
   border-bottom: 1px solid var(--border);
 }
 
-.world-document-card > header strong,
-.world-document-card > header small {
-  display: block;
+.world-document-details {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+  font-size: 0.75rem;
 }
 
-.world-document-card > header small {
-  margin-top: 0.2rem;
+.world-document-details summary {
+  width: fit-content;
   color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.45;
+  cursor: pointer;
+}
+
+.world-document-details dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.2rem 0.6rem;
+  margin-block: 0.5rem;
+}
+
+.world-document-details dt {
+  color: var(--muted);
+}
+
+.world-document-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.world-document-card .world-document-markdown {
+  padding: 0.8rem;
+  overflow-wrap: anywhere;
 }
 
 .world-document-card > header button {
@@ -7900,6 +7903,7 @@ summary {
   font-size: 0.75rem;
   line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ai-reading-rail {

@@ -332,15 +332,13 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     } else {
       await fileButton.click();
     }
-    if (file.path === "control/frame.yaml") {
-      await page.getByText("源码视图（frame.yaml）", { exact: true }).click();
-      await page.getByLabel("直接编辑 control/frame.yaml").fill(file.contents);
-    } else {
-      if (file.path === "control/player-views.yaml") {
-        await page.getByRole("button", { name: "源码", exact: true }).click();
-      }
-      await page.getByLabel(`编辑 ${file.path}`).fill(file.contents);
+    if (
+      file.path === "control/frame.yaml" ||
+      file.path === "control/player-views.yaml"
+    ) {
+      await page.getByRole("button", { name: "源码", exact: true }).click();
     }
+    await page.getByLabel(`编辑 ${file.path}`).fill(file.contents);
   }
   await expect(page.getByRole("button", { name: "返回工作区" })).toBeEnabled();
   await page.getByRole("button", { name: "整批保存" }).click();
@@ -1419,6 +1417,10 @@ test("新建世界文档时文件头是可编辑的草稿内容", async ({ page 
   const opening = await reopenFile(packageEditor, "opening.md");
   const originalOpening = await opening.inputValue();
   await packageEditor.getByRole("button", { name: "删除文件" }).click();
+  await page
+    .getByRole("dialog", { name: "从当前草稿删除 opening.md？" })
+    .getByRole("button", { name: "删除文件" })
+    .click();
   const newOpening = await addWorkbenchFile(packageEditor, "opening.md");
   await expect(newOpening).toHaveValue("");
   await newOpening.fill(originalOpening);

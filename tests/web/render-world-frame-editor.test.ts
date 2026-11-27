@@ -77,17 +77,15 @@ maintenance:
     fireEvent.change(screen.getByLabelText("尾部提示 World Style"), {
       target: { value: "新提示" },
     });
-    const source = screen.getByLabelText<HTMLTextAreaElement>(
-      "直接编辑 control/frame.yaml",
-    );
-    expect(source.value).toContain("# 框架文件头\n");
-    expect(source.value).toContain(
+    const source = () => changed.mock.lastCall?.[0];
+    expect(source()).toContain("# 框架文件头\n");
+    expect(source()).toContain(
       "bindings: { currentSituation: '@current-situation' } # 情境备注",
     );
-    expect(source.value).toContain("turnGuide: '新提示' # 尾部备注");
+    expect(source()).toContain("turnGuide: '新提示' # 尾部备注");
 
     fireEvent.click(screen.getByRole("button", { name: "下移 World Style" }));
-    expect(source.value).toMatch(
+    expect(source()).toMatch(
       /# 指令列表备注\n {2}# 维护前置备注\n {2}- \{ markdown: "blocks\/state\.md" \} # 维护备注\n {2}- markdown: 'blocks\/style\.md' # 文风路径/u,
     );
     fireEvent.click(screen.getByRole("button", { name: "加入独立尾部行" }));
@@ -100,10 +98,10 @@ maintenance:
     });
     fireEvent.click(screen.getByRole("button", { name: "新增材料插槽" }));
     fireEvent.click(screen.getByRole("button", { name: "移除材料 3" }));
-    expect(source.value).toMatch(
+    expect(source()).toMatch(
       /# 目录备注\n {2}- slot: \{ kind: catalog, directory: 'characters', maxEntries: 12 \} # 插槽备注\n {2}- slot: \{ kind: current_situation \}/u,
     );
-    expect(source.value).toContain(
+    expect(source()).toContain(
       "documents: { '@character-alex': 2500 } # 建议体积备注",
     );
     expect(latestFrame(changed).instructions).toHaveLength(2);
@@ -184,10 +182,10 @@ maintenance:
     );
 
     expect(screen.getByRole("heading", { name: "世界提示框架" })).toBeTruthy();
-    expect(screen.getByLabelText("世界提示框架流程").textContent).toContain(
-      "author_instruction",
-    );
-    expect(screen.getByText("从上到下就是实际注入顺序")).toBeTruthy();
+    const help = screen.getByText("编译角色与排序").closest("details");
+    expect(help?.hasAttribute("open")).toBe(false);
+    expect(help?.textContent).toContain("author_instruction");
+    expect(help?.textContent).toContain("world_context");
     // This fixture stores an id in the frame. The editor must resolve it to a
     // document so saving does not lose the binding, then write a visible @reference.
     expect(screen.getByLabelText<HTMLSelectElement>("当前情境文档").value).toBe(
@@ -455,7 +453,7 @@ context:
 
     expect(screen.getByText("当前 YAML 暂时无法可视化")).toBeTruthy();
     expect(screen.queryByLabelText("当前情境文档")).toBeNull();
-    const source = screen.getByLabelText("直接编辑 control/frame.yaml");
+    const source = screen.getByLabelText("编辑 control/frame.yaml");
     fireEvent.change(source, {
       target: { value: "format: narraeon.world-frame/v1\n" },
     });

@@ -7,6 +7,11 @@ import type {
   V1SettingAuthoringDiff,
 } from "../protocol/v1.ts";
 import { documentCodec } from "../shared/world-document-format.ts";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
+import { FileEditorMode, FileSourceEditor } from "./FileSourceEditor.tsx";
 import { PlayerViewEditor } from "./PlayerViewEditor.tsx";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { playerViewControlPath } from "./player-view-control-draft.ts";
@@ -33,26 +38,16 @@ export interface RevisionDocumentBase {
   diff?: readonly V1SettingAuthoringDiff[];
 }
 
-interface ContentPackageWorkspace {
-  kind: "content-package";
+interface DocumentWorkspace {
+  kind: AuthoringFileTarget;
   files: readonly ContentTreeFile[];
   dirty: boolean;
+  saving: boolean;
   issues: readonly DocumentWorkbenchIssue[];
   onFilesChange: (files: ContentTreeFile[]) => void;
   onSave: () => void;
 }
 
-interface WorldRevisionWorkspace {
-  kind: "world-revision";
-  files: readonly ContentTreeFile[];
-  dirty: boolean;
-  pending: boolean;
-  issues: readonly DocumentWorkbenchIssue[];
-  onFilesChange: (files: ContentTreeFile[]) => void;
-  onSave: () => void;
-}
-
-type DocumentWorkspace = ContentPackageWorkspace | WorldRevisionWorkspace;
 type DocumentWorkspaceKind = AuthoringFileTarget;
 
 export function DocumentWorkbench({
@@ -68,16 +63,22 @@ export function DocumentWorkbench({
   const [pathEdit, setPathEdit] = useState({ sourcePath: "", value: "" });
   const [newPath, setNewPath] = useState("");
   const [newPathTouched, setNewPathTouched] = useState(false);
+  const [deletion, setDeletion] = useState<ConfirmationRequest<string> | null>(
+    null,
+  );
+  const editorRef = useRef<HTMLElement>(null);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const {
     ordered: orderedFiles,
     visible: visibleFiles,
     selected: selectedFile,
     query,
+    titles,
     onQueryChange,
     onSelect: select,
   } = fileView;
   const selectedPath = selectedFile?.path ?? "";
+  const selectedTitle = titles.get(selectedPath);
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
   const { issues } = workspace;
@@ -147,26 +148,23 @@ export function DocumentWorkbench({
     setNewPathTouched(false);
   }
 
-  function removeSelected(): void {
-    if (selectedFile === undefined) return;
-    const remaining = files
-      .filter(({ path }) => path !== selectedFile.path)
-      .map((file) => ({ ...file }));
-    const previousIndex = orderedFiles.findIndex(
-      ({ path }) => path === selectedFile.path,
-    );
-    select(
-      orderedFiles[previousIndex + 1]?.path ??
-        orderedFiles[previousIndex - 1]?.path ??
-        "",
-    );
-    workspace.onFilesChange(remaining);
+  function removeFile(path: string): void {
+    if (workspace.saving || !files.some((file) => file.path === path)) return;
+    if (path === selectedPath) {
+      const previousIndex = orderedFiles.findIndex(
+        (file) => file.path === path,
+      );
+      select(
+        orderedFiles[previousIndex + 1]?.path ??
+          orderedFiles[previousIndex - 1]?.path ??
+          "",
+      );
+    }
+    workspace.onFilesChange(files.filter((file) => file.path !== path));
   }
 
   function saveShortcut(): void {
-    if (!workspace.dirty) return;
-    if (workspace.kind === "content-package" || !workspace.pending)
-      workspace.onSave();
+    if (workspace.dirty && !workspace.saving) workspace.onSave();
   }
 
   function writeBody(): void {
@@ -216,7 +214,9 @@ export function DocumentWorkbench({
           >
             {mobileFiles.map((file) => (
               <option key={file.path} value={file.path}>
-                {file.path}
+                {titles.has(file.path)
+                  ? `${titles.get(file.path)} · ${file.path}`
+                  : file.path}
               </option>
             ))}
           </select>
@@ -310,6 +310,7 @@ export function DocumentWorkbench({
                 </h5>
                 <ul>
                   {group.files.map((file) => {
+                    const title = titles.get(file.path);
                     const issueCount = issues.filter(
                       ({ path }) => path === file.path,
                     ).length;
@@ -326,6 +327,7 @@ export function DocumentWorkbench({
                             path: file.path,
                           })}
                           aria-pressed={file.path === selectedPath}
+                          aria-description={title}
                           title={file.path}
                           onClick={() => select(file.path)}
                         >
@@ -335,7 +337,10 @@ export function DocumentWorkbench({
                           >
                             {fileKind(file)}
                           </span>
-                          <code>{file.path}</code>
+                          <span className={styles.fileName}>
+                            {title !== undefined && <strong>{title}</strong>}
+                            <code>{file.path}</code>
+                          </span>
                           {issueCount > 0 && (
                             <span className="content-file-issue-count">
                               {issueCount}
@@ -353,6 +358,8 @@ export function DocumentWorkbench({
       </aside>
 
       <section
+        ref={editorRef}
+        tabIndex={-1}
         className={`content-file-editor ${styles.editor}`}
         aria-label={
           selectedFile === undefined
@@ -387,12 +394,25 @@ export function DocumentWorkbench({
                 <span className="content-editor-kicker">
                   {describeFile(selectedFile, workspace.kind)}
                 </span>
-                <h4>{leafName(selectedFile.path)}</h4>
+                <h4>{selectedTitle ?? leafName(selectedFile.path)}</h4>
+                <code className={styles.editorPath}>{selectedFile.path}</code>
               </div>
               <button
                 type="button"
+                key={selectedFile.path}
                 className="danger-button content-remove-file"
-                onClick={removeSelected}
+                disabled={workspace.saving}
+                onClick={(event) =>
+                  setDeletion({
+                    action: selectedFile.path,
+                    message: uiText("从当前草稿删除 {path}？", {
+                      path: selectedFile.path,
+                    }),
+                    confirmLabel: uiText("删除文件"),
+                    opener: event.currentTarget,
+                    fallback: editorRef.current,
+                  })
+                }
               >
                 {uiText("删除文件")}
               </button>
@@ -450,13 +470,17 @@ export function DocumentWorkbench({
                 layout={documentLayout}
                 dirty={workspace.dirty}
                 onChange={replaceSelected}
-                onSave={workspace.onSave}
+                onSave={saveShortcut}
               />
             ) : (
               <>
+                <FileEditorMode
+                  showSource
+                  onSource={() => sourceRef.current?.focus()}
+                />
                 {selectedCodec !== null && (
                   <WorldDocumentMetadataForm
-                    key={selectedFile.path}
+                    key={`metadata:${selectedFile.path}`}
                     file={selectedFile}
                     files={files}
                     codec={selectedCodec}
@@ -466,33 +490,23 @@ export function DocumentWorkbench({
                     onWriteBody={writeBody}
                   />
                 )}
-                <label className="content-source-editor">
-                  <span>
-                    {uiText(selectedCodec === null ? "文件内容" : "文件源码")}
-                    <small>
-                      {workspace.kind === "content-package"
-                        ? uiText("Ctrl / ⌘ + S 整批保存")
-                        : workspace.kind === "world-revision"
-                          ? uiText("Ctrl / ⌘ + S 保存到修订工作树")
-                          : uiText("Ctrl / ⌘ + S 预览整笔修订")}
-                    </small>
-                  </span>
-                  <textarea
-                    ref={sourceRef}
-                    rows={27}
-                    spellCheck={false}
-                    readOnly={isRevisionGameplayFile(
-                      selectedFile,
-                      workspace.kind,
-                    )}
-                    value={selectedFile.contents}
-                    placeholder={editorPlaceholder(selectedFile.path)}
-                    aria-label={uiText("编辑 {path}", {
-                      path: selectedFile.path,
-                    })}
-                    onChange={(event) => replaceSelected(event.target.value)}
-                  />
-                </label>
+                <FileSourceEditor
+                  key={`source:${selectedFile.path}`}
+                  path={selectedFile.path}
+                  contents={selectedFile.contents}
+                  sourceRef={sourceRef}
+                  readOnly={isRevisionGameplayFile(
+                    selectedFile,
+                    workspace.kind,
+                  )}
+                  placeholder={editorPlaceholder(selectedFile.path)}
+                  shortcut={
+                    workspace.kind === "content-package"
+                      ? uiText("Ctrl / ⌘ + S 整批保存")
+                      : uiText("Ctrl / ⌘ + S 保存到修订工作树")
+                  }
+                  onChange={replaceSelected}
+                />
               </>
             )}
             <footer className="content-source-meta">
@@ -531,6 +545,15 @@ export function DocumentWorkbench({
           </>
         )}
       </section>
+      {deletion !== null && (
+        <ConfirmationDialog
+          request={deletion}
+          onDecision={(confirmed) => {
+            setDeletion(null);
+            if (confirmed) removeFile(deletion.action);
+          }}
+        />
+      )}
     </div>
   );
 }

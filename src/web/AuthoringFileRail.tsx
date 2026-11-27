@@ -120,8 +120,10 @@ function SettingContentPreview({
   editDisabled: boolean;
 }): React.JSX.Element {
   const revisingWorld = target === "world-revision";
-  const { ordered, visible, selected, query, onQueryChange, onSelect } =
+  const { ordered, visible, selected, query, titles, onQueryChange, onSelect } =
     fileView;
+  const selectedTitle =
+    selected === undefined ? undefined : titles.get(selected.path);
 
   return (
     <div className="setting-content-preview">
@@ -163,8 +165,13 @@ function SettingContentPreview({
               key={file.path}
               className={file.path === selected?.path ? "is-current" : ""}
               aria-pressed={file.path === selected?.path}
+              aria-label={file.path}
+              aria-description={titles.get(file.path)}
               onClick={() => onSelect(file.path)}
             >
+              {titles.has(file.path) && (
+                <strong>{titles.get(file.path)}</strong>
+              )}
               <code>{file.path}</code>
             </button>
           ))
@@ -186,7 +193,10 @@ function SettingContentPreview({
       ) : (
         <article>
           <header>
-            <code>{selected.path}</code>
+            <div>
+              {selectedTitle !== undefined && <strong>{selectedTitle}</strong>}
+              <code>{selected.path}</code>
+            </div>
             <button type="button" disabled={editDisabled} onClick={onEdit}>
               {uiText("编辑这份文件")}
             </button>

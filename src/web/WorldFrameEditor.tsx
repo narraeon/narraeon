@@ -1,3 +1,4 @@
+import { FileEditorMode, FileSourceEditor } from "./FileSourceEditor.tsx";
 import { browserUUID } from "./browser-uuid.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useId, useMemo, useState } from "react";
@@ -163,6 +164,8 @@ export function WorldFrameEditor({
   onSave: () => void;
 }): React.JSX.Element {
   const parsed = useMemo(() => readWorldFrame(contents), [contents]);
+  const [sourceRequested, setSourceRequested] = useState(false);
+  const showSource = sourceRequested || parsed.value === null;
   const worldDraft = useMemo(
     () => buildWorldDocumentDraft(files, layout),
     [files, layout],
@@ -292,19 +295,36 @@ export function WorldFrameEditor({
             {visualReady ? uiText("可视化已同步") : uiText("仅可编辑 YAML")}
           </span>
         </div>
+        <FileEditorMode
+          showSource={showSource}
+          onSource={() => setSourceRequested(true)}
+          form={{
+            disabled: frame === null,
+            show: () => setSourceRequested(false),
+          }}
+        />
       </header>
 
-      {frame === null ? (
-        <div className="world-frame-parse-error" role="alert">
-          <strong>{uiText("当前 YAML 暂时无法可视化")}</strong>
-          <p>{parsed.error}</p>
-          <span>
-            {uiText(
-              "下面的源码视图会原样保留草稿。修复后可视化页面会自动恢复。",
-            )}
-          </span>
-        </div>
-      ) : (
+      {showSource && (
+        <>
+          {frame === null && (
+            <div className="world-frame-parse-error" role="alert">
+              <strong>{uiText("当前 YAML 暂时无法可视化")}</strong>
+              <p>{parsed.error}</p>
+              <span>{uiText("修复源码后可切回表单。")}</span>
+            </div>
+          )}
+          <FileSourceEditor
+            path="control/frame.yaml"
+            contents={contents}
+            onChange={(source) => {
+              setSourceRequested(true);
+              onChange(source);
+            }}
+          />
+        </>
+      )}
+      {!showSource && frame !== null && (
         <>
           {frame.format !== worldFrameFormat && (
             <div className="world-frame-repair-callout" role="note">
@@ -334,33 +354,28 @@ export function WorldFrameEditor({
             </div>
           )}
 
-          <div
-            className="world-frame-flow"
-            aria-label={uiText("世界提示框架流程")}
-          >
-            <div>
-              <span>{uiText("Markdown 提示块")}</span>
-              <strong>
-                {instructions?.length ?? "?"} {uiText("份世界指令")}
-              </strong>
-            </div>
-            <span aria-hidden="true">→</span>
-            <div>
-              <span>{uiText("进入逻辑 role")}</span>
-              <strong>author_instruction</strong>
-            </div>
-            <div>
-              <span>{uiText("精确文档与目录")}</span>
-              <strong>
-                {contextEntries?.length ?? "?"} {uiText("个材料插槽")}
-              </strong>
-            </div>
-            <span aria-hidden="true">→</span>
-            <div>
-              <span>{uiText("进入逻辑 role")}</span>
-              <strong>world_context</strong>
-            </div>
-          </div>
+          <details className="world-frame-compile-help">
+            <summary>{uiText("编译角色与排序")}</summary>
+            <dl>
+              <dt>
+                <code>author_instruction</code>
+              </dt>
+              <dd>
+                {uiText(
+                  "Markdown 提示块按列表顺序进入世界指令位置。在独立文件中编辑正文。",
+                )}
+              </dd>
+              <dt>
+                <code>world_context</code>
+              </dt>
+              <dd>{uiText("Runtime 按列表顺序读取精确选定的材料。")}</dd>
+            </dl>
+            <p>
+              {uiText(
+                "上移或下移条目可更改注入顺序。尾部提示按指令列表顺序进入本轮提示。",
+              )}
+            </p>
+          </details>
 
           <section
             className="world-frame-section world-frame-binding"
@@ -432,7 +447,6 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>{uiText("02 · 世界专属指令")}</span>
                 <h6 id="world-frame-instructions-title">
                   {uiText("提示块顺序")}
                 </h6>
@@ -441,11 +455,6 @@ export function WorldFrameEditor({
                 {instructions?.length ?? 0} {uiText("个块")}
               </span>
             </header>
-            <p>
-              {uiText(
-                "这些 Markdown 块按顺序进入编排方案预留的世界指令位置；正文仍在独立文件中编辑。每项可附一行尾部提示，或只保留尾部提示：它们在每次游玩发送追加的本轮提示中占据世界位置，只放本世界特有且最容易丢的约束。",
-              )}
-            </p>
             {instructions === null ? (
               <MalformedFrameSection
                 name="instructions"
@@ -634,7 +643,6 @@ export function WorldFrameEditor({
           >
             <header>
               <div>
-                <span>{uiText("03 · 确定性材料")}</span>
                 <h6 id="world-frame-context-title">
                   {uiText("上下文材料顺序")}
                 </h6>
@@ -643,22 +651,6 @@ export function WorldFrameEditor({
                 {contextEntries?.length ?? 0} {uiText("个插槽")}
               </span>
             </header>
-            <p>
-              {uiText(
-                "Runtime 只按这些精确位置取材。顺序会进入真实 prompt，但不会推断“相关人物”或“重要历史”。",
-              )}
-            </p>
-            <div className="world-frame-reorder-guide" role="note">
-              <span aria-hidden="true">↕</span>
-              <div>
-                <strong>{uiText("从上到下就是实际注入顺序")}</strong>
-                <span>
-                  {uiText(
-                    "每张卡片右上角都有“上移 / 下移”；移动后序号会立即更新。",
-                  )}
-                </span>
-              </div>
-            </div>
             {contextEntries === null ? (
               <MalformedFrameSection
                 name="context"
@@ -784,23 +776,6 @@ export function WorldFrameEditor({
           </section>
         </>
       )}
-
-      <details className="world-frame-source" open={frame === null}>
-        <summary>{uiText("源码视图（frame.yaml）")}</summary>
-        <p>
-          {uiText(
-            "表单修改保留 YAML 注释和未编辑的节点。也可在这里直接编辑源码。",
-          )}
-        </p>
-        <textarea
-          rows={18}
-          spellCheck={false}
-          aria-label={uiText("直接编辑 control/frame.yaml")}
-          value={contents}
-          onChange={(event) => onChange(event.currentTarget.value)}
-        />
-        {parsed.error !== null && <p role="alert">{parsed.error}</p>}
-      </details>
     </section>
   );
 }
@@ -883,29 +858,6 @@ function FrameSlotCard({
           </button>
         </div>
       </header>
-
-      <label>
-        {getWebLocale() === "zh-CN"
-          ? "建议体积（UTF-8 字节，可留空）"
-          : "Advisory size (UTF-8 bytes, optional)"}
-        <input
-          type="number"
-          min={1}
-          step={1}
-          value={
-            typeof slot.advisoryBytes === "number" ? slot.advisoryBytes : ""
-          }
-          onChange={(event) => {
-            const next = { ...slot };
-            if (event.currentTarget.value === "") delete next.advisoryBytes;
-            else {
-              next.advisoryBytes = Number(event.currentTarget.value);
-              next.id ??= `slot-${browserUUID()}`;
-            }
-            onChange(next);
-          }}
-        />
-      </label>
 
       {slot.kind === "document" && (
         <div className="world-frame-slot-fields">
@@ -1044,6 +996,35 @@ function FrameSlotCard({
           {stringify(slot, { lineWidth: 0 })}
         </pre>
       )}
+      <details className="world-frame-slot-size">
+        <summary>
+          {typeof slot.advisoryBytes === "number"
+            ? uiText("建议体积 · {bytes} 字节", {
+                bytes: slot.advisoryBytes.toLocaleString(getWebLocale()),
+              })
+            : uiText("设置建议体积")}
+        </summary>
+        <label>
+          {uiText("建议体积（UTF-8 字节，可留空）")}
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={
+              typeof slot.advisoryBytes === "number" ? slot.advisoryBytes : ""
+            }
+            onChange={(event) => {
+              const next = { ...slot };
+              if (event.currentTarget.value === "") delete next.advisoryBytes;
+              else {
+                next.advisoryBytes = Number(event.currentTarget.value);
+                next.id ??= `slot-${browserUUID()}`;
+              }
+              onChange(next);
+            }}
+          />
+        </label>
+      </details>
     </article>
   );
 }
