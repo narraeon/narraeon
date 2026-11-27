@@ -311,8 +311,9 @@ export function WorldFrameEditor({
               <div>
                 <strong>{uiText("format 不是当前世界框架版本")}</strong>
                 <span>
-                  {uiText("Runtime 只接受")}
-                  {worldFrameFormat}。
+                  {uiText("Runtime 只接受 {format}。", {
+                    format: worldFrameFormat,
+                  })}
                 </span>
               </div>
               <button
@@ -341,7 +342,9 @@ export function WorldFrameEditor({
             <div>
               <span>{uiText("Markdown 提示块")}</span>
               <strong>
-                {instructions?.length ?? "?"} {uiText("份世界指令")}
+                {uiText("世界指令：{count} 份", {
+                  count: instructions?.length ?? "—",
+                })}
               </strong>
             </div>
             <span aria-hidden="true">→</span>
@@ -352,7 +355,9 @@ export function WorldFrameEditor({
             <div>
               <span>{uiText("精确文档与目录")}</span>
               <strong>
-                {contextEntries?.length ?? "?"} {uiText("个材料插槽")}
+                {uiText("材料插槽：{count} 个", {
+                  count: contextEntries?.length ?? "—",
+                })}
               </strong>
             </div>
             <span aria-hidden="true">→</span>
@@ -438,7 +443,9 @@ export function WorldFrameEditor({
                 </h6>
               </div>
               <span className="world-frame-section-state">
-                {instructions?.length ?? 0} {uiText("个块")}
+                {uiText("提示块：{count} 个", {
+                  count: instructions?.length ?? "—",
+                })}
               </span>
             </header>
             <p>
@@ -640,7 +647,9 @@ export function WorldFrameEditor({
                 </h6>
               </div>
               <span className="world-frame-section-state">
-                {contextEntries?.length ?? 0} {uiText("个插槽")}
+                {uiText("插槽：{count} 个", {
+                  count: contextEntries?.length ?? "—",
+                })}
               </span>
             </header>
             <p>
@@ -676,9 +685,13 @@ export function WorldFrameEditor({
                     <div>
                       <strong>{uiText("必需插槽还未成对")}</strong>
                       <span>
-                        {uiText("当前情境")}
-                        {currentSituationSlots} {uiText("个 · 附加材料")}{" "}
-                        {additionalMaterialSlots} {uiText("个")}
+                        {uiText(
+                          "当前情境插槽 {current} 个，附加材料插槽 {additional} 个。",
+                          {
+                            current: currentSituationSlots,
+                            additional: additionalMaterialSlots,
+                          },
+                        )}
                       </span>
                     </div>
                     <div>
@@ -1026,8 +1039,7 @@ function FrameSlotCard({
       {slot.kind === "history_message" && (
         <div className="world-frame-slot-fields">
           <label>
-            {uiText("历史消息句柄")}
-            {ordinal}
+            {uiText("历史消息句柄（插槽 {index}）", { index: ordinal })}
             <input
               value={stringValue(slot.message)}
               onChange={(event) =>
@@ -1497,15 +1509,14 @@ function MalformedFrameSection({
     <div className="world-frame-malformed" role="alert">
       <div>
         <strong>
-          {name} {uiText("不是可视化编辑器支持的列表形状")}
+          {uiText("{name} 需要是可视化编辑器支持的列表。", { name })}
         </strong>
         <span>
           {uiText("可在高级 YAML 中修复，或明确重置为空列表后重新编排。")}
         </span>
       </div>
       <button type="button" className="secondary-button" onClick={onReset}>
-        {uiText("重置")}
-        {name}
+        {uiText("重置 {name}", { name })}
       </button>
     </div>
   );

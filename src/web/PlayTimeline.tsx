@@ -797,8 +797,7 @@ function TimelineEvent({
         >
           <summary>
             <strong>
-              {uiText("后置请求 ·")}
-              {event.displayName}
+              {uiText("后置请求 · {name}", { name: event.displayName })}
             </strong>
             <span>
               {event.failed

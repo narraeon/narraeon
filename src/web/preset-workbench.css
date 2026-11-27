@@ -244,7 +244,7 @@
 }
 .play-preset-screen .ordered-play-editor li small {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
 }
 .play-preset-screen .ordered-play-content,
 .play-preset-screen .preset-object-detail {
@@ -621,7 +621,7 @@
   border-radius: 0;
   background: #f0eee5;
   color: #655a46;
-  font-size: 12px;
+  font-size: 13px;
   margin: 0;
 }
 .play-preset-screen .ordered-play-editor li > small {
@@ -722,6 +722,7 @@
 }
 .play-preset-screen .turn-guide-preview li small {
   color: #756c5d;
+  font-size: 12px;
 }
 .play-preset-screen .turn-guide-preview [role="alert"] {
   color: #9a4b1f;

@@ -1,6 +1,6 @@
 import type { WorldPromptMaintenance } from "../protocol/worldMaintenance.ts";
 import { worldWritePositionText } from "../protocol/worldMaintenance.ts";
-import { getWebLocale } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 
 export function WorldMaintenancePanel({
   report,
@@ -10,14 +10,29 @@ export function WorldMaintenancePanel({
   if (report === undefined) return null;
   const locale = getWebLocale();
   const zh = locale === "zh-CN";
+  const summary = [
+    [zh ? "世界材料" : "World materials", report.worldMaterialsBytes],
+    [
+      zh ? "其中检查点历史" : "Checkpoint history subset",
+      report.checkpointHistoryBytes,
+    ],
+    [zh ? "作者提示" : "Author instructions", report.authorInstructionBytes],
+    [
+      zh ? "Runtime 提示" : "Runtime instructions",
+      report.runtimeInstructionBytes,
+    ],
+    [
+      zh ? "工具定义（逻辑 JSON）" : "Tool definitions (logical JSON)",
+      report.toolDefinitionBytes,
+    ],
+  ] as const;
   return (
     <section className="panel-card prompt-preview-detail">
       {report.unavailableReason !== undefined && (
         <p role="status">
-          {zh
-            ? "历史维护诊断暂时不可用"
-            : "Historical maintenance diagnostics unavailable"}
-          : {report.unavailableReason}
+          {uiText("历史维护诊断暂时不可用：{reason}", {
+            reason: report.unavailableReason,
+          })}
         </p>
       )}
       <h3>{zh ? "文档体积与维护" : "Document size and maintenance"}</h3>
@@ -26,29 +41,11 @@ export function WorldMaintenancePanel({
           ? "单位为 UTF-8 字节。建议上限只用于整理提示；不会阻止写入或截断历史。注入贡献按实际选取统计，包含选取的标题和标记，不是 token 用量。"
           : "Values are UTF-8 bytes. Advisory limits never block writes or truncate history. Injection contributions include selected headings and annotations; these are not token usage."}
       </p>
-      <dl className="prompt-diagnostic-grid">
-        {[
-          [zh ? "世界材料" : "World materials", report.worldMaterialsBytes],
-          [
-            zh ? "其中检查点历史" : "Checkpoint history subset",
-            report.checkpointHistoryBytes,
-          ],
-          [
-            zh ? "作者提示" : "Author instructions",
-            report.authorInstructionBytes,
-          ],
-          [
-            zh ? "Runtime 提示" : "Runtime instructions",
-            report.runtimeInstructionBytes,
-          ],
-          [
-            zh ? "工具定义（逻辑 JSON）" : "Tool definitions (logical JSON)",
-            report.toolDefinitionBytes,
-          ],
-        ].map(([title, value]) => (
+      <dl className="prompt-maintenance-summary">
+        {summary.map(([title, value]) => (
           <div key={title}>
             <dt>{title}</dt>
-            <dd>{value?.toLocaleString()}</dd>
+            <dd>{value.toLocaleString(locale)}</dd>
           </div>
         ))}
       </dl>

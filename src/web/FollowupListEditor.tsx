@@ -101,7 +101,7 @@ export function FollowupListEditor({
             <label>
               <input
                 type="checkbox"
-                aria-label={`${uiText("启用")} ${name(item)}`}
+                aria-label={uiText("启用 {name}", { name: name(item) })}
                 checked={item.enabled}
                 onChange={(event) =>
                   onItemsChange(
@@ -117,7 +117,7 @@ export function FollowupListEditor({
             </label>
             <button
               type="button"
-              aria-label={`${uiText("上移")} ${name(item)}`}
+              aria-label={uiText("上移 {title}", { title: name(item) })}
               disabled={index === 0}
               onClick={() => move(item.id, index - 1)}
             >
@@ -125,7 +125,7 @@ export function FollowupListEditor({
             </button>
             <button
               type="button"
-              aria-label={`${uiText("下移")} ${name(item)}`}
+              aria-label={uiText("下移 {title}", { title: name(item) })}
               disabled={index === items.length - 1}
               onClick={() => move(item.id, index + 1)}
             >

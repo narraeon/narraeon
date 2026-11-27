@@ -2229,7 +2229,7 @@ summary {
   display: block;
   margin-top: 0.15rem;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .world-frame-repair-callout button,
@@ -2237,7 +2237,7 @@ summary {
 .world-frame-required-slots button {
   flex: 0 0 auto;
   padding: 0.5rem 0.7rem;
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .world-frame-flow {
@@ -2310,7 +2310,7 @@ summary {
   max-width: 50rem;
   margin: 0;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 12px;
 }
 
 .world-frame-reorder-guide {
@@ -2342,12 +2342,12 @@ summary {
 
 .world-frame-reorder-guide strong {
   color: var(--text);
-  font-size: 0.76rem;
+  font-size: 12px;
 }
 
 .world-frame-reorder-guide div span {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .world-frame-binding label,
@@ -2530,7 +2530,7 @@ summary {
 .world-frame-association-note {
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -2586,7 +2586,7 @@ summary {
 }
 
 .world-frame-required-field small {
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .world-frame-unknown-slot {
@@ -5424,7 +5424,7 @@ summary {
 
 .prompt-preview-summary dt {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 12px;
 }
 
 .prompt-preview-summary dd {
@@ -6984,7 +6984,7 @@ summary {
   border-radius: 3px;
   color: var(--text);
   background: var(--surface);
-  font-size: 0.76rem;
+  font-size: 13px;
 }
 
 .setting-reader-page .setting-improvement-blocker,
@@ -8478,6 +8478,34 @@ dialog.world-dialog-scrim::backdrop {
   .ai-reading-table > div {
     min-width: 36rem;
   }
+}
+
+.prompt-maintenance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.prompt-maintenance-summary > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.prompt-maintenance-summary dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prompt-maintenance-summary dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
 }
 
 .maintenance-table-scroll {
