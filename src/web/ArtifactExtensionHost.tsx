@@ -791,7 +791,7 @@ interface ArtifactExtensionContextValue extends ArtifactExtensionHostProps {
   unambiguousRequestNames: ReadonlyMap<string, string>;
   hostId: string;
   folds: ReadonlyMap<string, boolean>;
-  setFoldOpen: (key: string, open: boolean) => void;
+  setFoldOpen: (keys: string | readonly string[], open: boolean) => void;
   disabled: Set<string>;
   errors: Map<string, string>;
   bridgeEvents: Map<string, string[]>;
@@ -821,9 +821,17 @@ export function ArtifactExtensionHost({
   const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(
     () => new Map(),
   );
-  const setFoldOpen = useCallback((key: string, open: boolean) => {
-    setFolds((current) => new Map(current).set(key, open));
-  }, []);
+  const setFoldOpen = useCallback(
+    (keys: string | readonly string[], open: boolean) => {
+      setFolds((current) => {
+        const next = new Map(current);
+        for (const key of typeof keys === "string" ? [keys] : keys)
+          next.set(key, open);
+        return next;
+      });
+    },
+    [],
+  );
   const [disabled, setDisabled] = useState<Set<string>>(() => new Set());
   const [errors, setErrors] = useState<Map<string, string>>(() => new Map());
   const [bridgeEvents, setBridgeEvents] = useState<Map<string, string[]>>(
@@ -996,6 +1004,67 @@ function rendersNativePlayerView(
   );
 }
 
+function mountFoldKey(worldId: string, mount: ArtifactMountName): string {
+  return JSON.stringify([worldId, mount]);
+}
+
+function extensionItemFoldKey(
+  worldId: string,
+  mount: ArtifactMountName,
+  artifact: FrontendArtifactProjection,
+  reply?: StoryReply,
+): string {
+  return JSON.stringify([
+    worldId,
+    mount,
+    reply?.chainId,
+    reply?.eventId,
+    artifactItemKey(artifact),
+  ]);
+}
+
+export function SidebarFoldActions({
+  hasPlayerViews,
+  onFoldPlayerViews,
+}: {
+  hasPlayerViews: boolean;
+  onFoldPlayerViews: (open: boolean) => void;
+}): React.JSX.Element | null {
+  const context = useContext(ArtifactExtensionContext);
+  const entries = context?.byMount.get("sidebar") ?? [];
+  const extensionEntries = entries.filter(
+    (artifact) => !rendersNativePlayerView(artifact),
+  );
+  if (!hasPlayerViews && entries.length === 0) return null;
+
+  function setOpen(open: boolean): void {
+    onFoldPlayerViews(open);
+    if (context !== null && extensionEntries.length > 0) {
+      const { worldId } = context;
+      context.setFoldOpen(
+        [
+          mountFoldKey(worldId, "sidebar"),
+          ...extensionEntries.map((artifact) =>
+            extensionItemFoldKey(worldId, "sidebar", artifact),
+          ),
+        ],
+        open,
+      );
+    }
+  }
+
+  return (
+    <div className="world-rail-fold-actions">
+      <button type="button" onClick={() => setOpen(true)}>
+        {uiText("全部展开")}
+      </button>
+      <button type="button" onClick={() => setOpen(false)}>
+        {uiText("全部收起")}
+      </button>
+    </div>
+  );
+}
+
 export function ArtifactExtensionMount({
   mount,
   reply,
@@ -1076,7 +1145,7 @@ export function ArtifactExtensionMount({
     progress.size === 0
   )
     return null;
-  const groupKey = JSON.stringify([context.worldId, mount]);
+  const groupKey = mountFoldKey(context.worldId, mount);
   const isComposerMount =
     mount === "composer_above" || mount === "composer_below";
   const groupOpen =
@@ -1105,13 +1174,12 @@ export function ArtifactExtensionMount({
   ].join(" · ");
   const renderEntry = (artifact: FrontendArtifactProjection) => {
     const key = artifactInstanceKey(artifact);
-    const foldKey = JSON.stringify([
+    const foldKey = extensionItemFoldKey(
       context.worldId,
       mount,
-      reply?.chainId,
-      reply?.eventId,
-      artifactItemKey(artifact),
-    ]);
+      artifact,
+      reply,
+    );
     const open = context.folds.get(foldKey) ?? true;
     return (
       <ArtifactExtensionInstance

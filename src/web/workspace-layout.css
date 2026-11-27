@@ -1447,7 +1447,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: 8px;
+  width: var(--world-rail-handle-width);
   cursor: col-resize;
   touch-action: none;
   user-select: none;
@@ -1456,7 +1456,7 @@
   content: "";
   position: absolute;
   top: calc(50% - 18px);
-  right: 3px;
+  inset-inline-start: calc(50% - 1px);
   width: 2px;
   height: 36px;
   border-radius: 2px;
@@ -1472,7 +1472,14 @@
 }
 @media (--world-reader-resizable) {
   .world-overlay-rail-left {
+    --world-rail-handle-width: 12px;
+    grid-template-columns: minmax(0, 1fr) var(--world-rail-handle-width);
     width: min(var(--world-left-rail-width, 320px), calc(100vw - 1.4rem));
+  }
+}
+@media (--world-reader-resizable) and (any-pointer: coarse) {
+  .world-overlay-rail-left {
+    --world-rail-handle-width: 24px;
   }
 }
 @media (--world-reader-narrow) {

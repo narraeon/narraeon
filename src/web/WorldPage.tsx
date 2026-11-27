@@ -102,6 +102,7 @@ import {
 import {
   ArtifactExtensionHost,
   ArtifactExtensionMount,
+  SidebarFoldActions,
 } from "./ArtifactExtensionHost.tsx";
 import { ArtifactDebugger } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
@@ -222,6 +223,8 @@ export function WorldPage({
 }): React.JSX.Element {
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
+  const nowButtonRef = useRef<HTMLButtonElement>(null);
+  const leftRailCloseRef = useRef<HTMLButtonElement>(null);
   const playerViewFold = usePlayerViewFoldController();
   const leftRailDrag = useRef<{
     pointerId: number;
@@ -237,8 +240,15 @@ export function WorldPage({
   const [rightRailTab, setRightRailTab] =
     useState<WorldReadingRail>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
-  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+  function closeLeftRail(): void {
+    nowButtonRef.current?.focus({ preventScroll: true });
     setLeftRailOpen(false);
+  }
+  useLayoutEffect(() => {
+    if (leftRailOpen) leftRailCloseRef.current?.focus({ preventScroll: true });
+  }, [leftRailOpen]);
+  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+    if (leftRailOpen) closeLeftRail();
     setRightRailOpen(false);
   });
   const [dialog, setDialog] = useState<WorldDialog>(null);
@@ -2002,10 +2012,14 @@ export function WorldPage({
           <WorldHeaderChrome
             worldTitle={worldTitle}
             leftRailOpen={leftRailOpen}
+            nowButtonRef={nowButtonRef}
             rightRail={rightRailOpen ? rightRailTab : null}
             readingOpen={readingOpen}
             onBack={showWorkspaceBack ? onBack : undefined}
-            onToggleNow={() => setLeftRailOpen((open) => !open)}
+            onToggleNow={() => {
+              if (leftRailOpen) closeLeftRail();
+              else setLeftRailOpen(true);
+            }}
             onOpenRail={(tab) => {
               setRightRailTab(tab);
               setRightRailOpen(true);
@@ -2437,8 +2451,9 @@ export function WorldPage({
                 : "world-panel-scrim"
             }
             aria-label={uiText("收起侧栏")}
+            tabIndex={-1}
             onClick={() => {
-              setLeftRailOpen(false);
+              if (leftRailOpen) closeLeftRail();
               setRightRailOpen(false);
             }}
           />
@@ -2450,7 +2465,13 @@ export function WorldPage({
                 : "world-overlay-rail world-overlay-rail-left"
             }
             aria-hidden={!leftRailOpen}
+            inert={!leftRailOpen}
             aria-label={uiText("当前情景")}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              closeLeftRail();
+            }}
           >
             <div
               className="world-rail-resize-handle"
@@ -2460,7 +2481,7 @@ export function WorldPage({
               aria-valuemin={240}
               aria-valuemax={720}
               aria-valuenow={leftRailWidth}
-              tabIndex={leftRailOpen ? 0 : -1}
+              tabIndex={0}
               title={uiText("拖拽调整宽度，双击恢复默认")}
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
@@ -2509,18 +2530,18 @@ export function WorldPage({
                 <strong>{uiText("此刻")}</strong>
               </div>
               <div className="world-rail-header-actions">
-                <div className="world-rail-fold-actions">
-                  <button type="button" onClick={playerViewFold.expandAll}>
-                    {uiText("全部展开")}
-                  </button>
-                  <button type="button" onClick={playerViewFold.collapseAll}>
-                    {uiText("全部收起")}
-                  </button>
-                </div>
+                <SidebarFoldActions
+                  hasPlayerViews={playerViewFallback.views.length > 0}
+                  onFoldPlayerViews={(open) => {
+                    if (open) playerViewFold.expandAll();
+                    else playerViewFold.collapseAll();
+                  }}
+                />
                 <button
+                  ref={leftRailCloseRef}
                   type="button"
                   aria-label={uiText("收起状态栏")}
-                  onClick={() => setLeftRailOpen(false)}
+                  onClick={closeLeftRail}
                 >
                   ×
                 </button>

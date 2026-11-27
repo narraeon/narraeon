@@ -1,12 +1,14 @@
 import styles from "./WorldHeaderChrome.module.css";
 import { ArtifactExtensionMount } from "./ArtifactExtensionHost.tsx";
 import { uiText } from "./i18n.ts";
+import type { Ref } from "react";
 
 export type WorldReadingRail = "documents" | "ai-reading";
 
 export function WorldHeaderChrome({
   worldTitle,
   leftRailOpen,
+  nowButtonRef,
   rightRail,
   readingOpen,
   onBack,
@@ -17,6 +19,7 @@ export function WorldHeaderChrome({
 }: {
   worldTitle: string;
   leftRailOpen: boolean;
+  nowButtonRef: Ref<HTMLButtonElement>;
   rightRail: WorldReadingRail | null;
   readingOpen: boolean;
   onBack?: (() => void) | undefined;
@@ -41,6 +44,7 @@ export function WorldHeaderChrome({
           </button>
         )}
         <button
+          ref={nowButtonRef}
           type="button"
           className={leftRailOpen ? "is-current" : ""}
           aria-pressed={leftRailOpen}

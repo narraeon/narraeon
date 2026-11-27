@@ -7700,7 +7700,18 @@ summary {
 }
 
 .world-overlay-rail-left .world-overlay-rail-body {
+  grid-column: 1;
   grid-row: 2 / -1;
+}
+
+.world-overlay-rail-left > header {
+  grid-column: 1;
+}
+
+.world-overlay-rail-left
+  .artifact-extension-mount-sidebar
+  + .player-view-empty {
+  display: none;
 }
 
 .world-overlay-rail > footer {
