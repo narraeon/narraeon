@@ -32,9 +32,8 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
   - { $ref: character.fogbell-investigator }
   - { $ref: character.fogbell-colin }
   - { $ref: character.fogbell-mae }
-待回应:
-  说话者: { $ref: character.fogbell-colin }
-  原话: 先签个名吧。你打算今晚就安顿下来，还是还有别的事想先问？
+待决定:
+  选择: 调查员要如何回应柯林的登记请求？接下来是先去旅店安顿，还是留在栈桥问话？
   现场: 柯林把登岸登记簿和蘸水笔递到你面前；几步外梅姨提着汤桶，刚压低声音提起登岸前一夜的无风三响与灯塔绿光。
 `,
   },
@@ -151,7 +150,7 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
 日常线索: 吧台后的公告板贴着本月潮汐表、补给船公告和十年前“海鸥号”海难捐款名单。
 公开日程:
   计日: 调查员登岸当天为第 1 天。
-  大低潮: 第 5 天大低潮是本季最低潮，露出通往沉船礁的石堤。这是封港期间唯一能徒步探查礁底的窗口。
+  大低潮: 第 5 天大低潮是本季最低潮，约在午后至傍晚露出通往沉船礁的石堤。这是封港期间唯一能徒步探查礁底的窗口。
   补给船: 第 8 天黎明，封港满七夜，下一班蒸汽补给船抵港。
 `,
   },
@@ -227,7 +226,7 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
   title: 调查进度板
   summary: 仅记录玩家已经亲眼所见、亲耳听闻或查实的线索与阵营态度。
   aliases: []
-已证实线索:
+已获线索:
   失踪与交接单: 原守塔人老周在调查员登岸前三天失踪，只留下一张未签字的补给交接单。
   无风鸣钟与绿光: 梅姨在调查员登岸时私下透露，登岸前一夜无风时雾钟自鸣三声，灯塔顶层亮过绿光。
 待解疑点:
@@ -296,7 +295,7 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
 
 - 常规观察、普通问话与无风险动作直接叙事，不必掷骰；只在存在明显风险、时间压力或对抗阻力时（如潜行入塔、撬锁、顶着戒备套话、冰海划船、辨认残缺复写字痕、抵御次声共振）发起 d100 检定，参考 @protagonist 的技能值并结合现场难度说明目标。
 - 严格遵循“失败也推进剧情”：检定失败不能让线索彻底断绝，而应转化为代价——消耗额外时段、体力/压力受损、惊动港务长眼线、或被迫换一条路线获取同类线索。
-- 体力、压力与装备变化写入 @protagonist；体能检定使用主角的体能技能值，按现场条件定难度。用 @current-situation 的「背景／时间」记录当前时刻，地点切换时也更新当前情境正文，保留文档标题。仅将玩家确实查明的内容写入 @investigation-board，线索发生时间以登岸等已经发生的事件为锚点。
+- 体力、压力与装备变化写入 @protagonist；体能检定使用主角的体能技能值，按现场条件定难度。用 @current-situation 的「背景／时间」记录当前时刻，地点切换时也更新当前情境正文，保留文档标题。将玩家实际获得的线索写入 @investigation-board，注明来自亲见、他人转述或查证。线索发生时间以登岸等已经发生的事件为锚点。
 
 ## 按需读取与长线节奏
 
@@ -338,9 +337,9 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
           items: [
             {
               id: "confirmed-clues",
-              label: "已证实线索",
+              label: "已获线索",
               document: "investigation-board",
-              locator: ["已证实线索"],
+              locator: ["已获线索"],
             },
             {
               id: "open-mysteries",
