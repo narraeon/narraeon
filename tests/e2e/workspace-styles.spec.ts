@@ -40,7 +40,9 @@ test.afterAll(async () => {
   );
 });
 
-const widths = [375, 639, 640, 641, 959, 960, 961, 1199, 1200, 1201, 1440];
+const widths = [
+  375, 639, 640, 641, 959, 960, 961, 1050, 1172, 1173, 1200, 1201, 1440,
+];
 const editorWidths = [375, 640, 960, 1200, 1440];
 
 for (const locale of ["zh-CN", "en"] as const) {
@@ -60,7 +62,12 @@ for (const locale of ["zh-CN", "en"] as const) {
 
     test("workspace layout and pointer targets across the breakpoints", async ({
       page,
+      browserName,
     }, testInfo) => {
+      const tab =
+        browserName === "webkit" && process.platform === "darwin"
+          ? "Alt+Tab"
+          : "Tab";
       const { packageId } = await openWorld(page, locale);
       const action = page.getByRole("textbox", {
         name: t("你的行动", "Your action"),
@@ -115,6 +122,17 @@ for (const locale of ["zh-CN", "en"] as const) {
           exact: true,
         });
         await expectHit(closeRail);
+        const send = page.locator(".world-composer-send");
+        await expect(send).toHaveAccessibleName(
+          t("继续故事", "Continue story"),
+        );
+        await expectHit(send);
+        await action.fill(t("我打开窗户。", "I open the window."));
+        await expect(send).toHaveAccessibleName(t("追加行动", "Append action"));
+        await expectHit(send);
+        await page.keyboard.press(tab);
+        await expect(send).toBeFocused();
+        await action.fill("");
         await page.screenshot({
           path: testInfo.outputPath(`rail-${width}.png`),
           animations: "disabled",

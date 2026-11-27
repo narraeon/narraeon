@@ -11,7 +11,7 @@
 
 .body > * + *,
 .body :where(li, blockquote) > * + * {
-  margin-block-start: 0.75em;
+  margin-block-start: var(--world-story-paragraph-gap, 0.75em);
 }
 
 .body :where(h1, h2, h3, h4, h5, h6) {

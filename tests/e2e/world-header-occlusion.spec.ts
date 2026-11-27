@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { createServer } from "node:http";
 import { test } from "../support/isolatedRuntimeTest.ts";
 import { minimalFileNativeContentScaffold } from "../../src/runtime/content/ContentWorkspace.ts";
+import { defaultAppReadingPreferences } from "../../src/protocol/appPreferences.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 
 test.use({ runtimeScope: "world-header-occlusion" });
@@ -9,7 +10,12 @@ test.use({ runtimeScope: "world-header-occlusion" });
 for (const width of [1440, 375]) {
   test(`世界页顶部遮挡滚动内容并保留首段和按钮（${width}px）`, async ({
     page,
+    browserName,
   }, testInfo) => {
+    const tab =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab";
     await page.setViewportSize({ width, height: 844 });
     const worldName = `Dormitory World ${width}px`;
     let responseNumber = 0;
@@ -19,7 +25,7 @@ for (const width of [1440, 375]) {
         responseNumber++;
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.end(
-          `data: ${JSON.stringify({ choices: [{ delta: { content: `Dormitory scene ${responseNumber}.\n\n${Array.from({ length: 8 }, (_, index) => `Alex unfolds the jersey and talks about practice ${index + 1}.`).join("\n\n")}` } }] })}\n\ndata: [DONE]\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: { content: `Dormitory scene ${responseNumber}.\n\n${Array.from({ length: 12 }, (_, index) => `Alex unfolds the jersey and talks about practice ${index + 1}.`).join("\n\n")}` } }] })}\n\ndata: [DONE]\n\n`,
         );
       });
     });
@@ -31,7 +37,11 @@ for (const width of [1440, 375]) {
       throw new Error("The fixture Provider did not receive a port");
 
     try {
-      await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+      await runtime(page, {
+        type: "preferences.save",
+        locale: "zh-CN",
+        reading: defaultAppReadingPreferences,
+      });
       await runtime(page, {
         type: "model.save",
         connection: {
@@ -185,11 +195,88 @@ for (const width of [1440, 375]) {
           }),
         ).toBe(true);
       }
-      await page.getByRole("button", { name: "此刻", exact: true }).click();
+      const now = page.getByRole("button", { name: "此刻", exact: true });
+      const title = page.getByRole("heading", { name: worldName, exact: true });
+      for (const width of [641, 672, 1440]) {
+        await page.setViewportSize({ width, height: 440 });
+        await expect(title).toBeInViewport();
+        await expect
+          .poll(async () => {
+            const [heading, tool] = await Promise.all([
+              title.boundingBox(),
+              now.boundingBox(),
+            ]);
+            return Math.abs(
+              heading!.y + heading!.height / 2 - tool!.y - tool!.height / 2,
+            );
+          })
+          .toBeLessThan(1);
+      }
+      await page.setViewportSize({ width, height: 844 });
+      await now.press("Enter");
+      await expect(now).toHaveAttribute("aria-pressed", "true");
       await expect(
-        page.getByRole("button", { name: "此刻", exact: true }),
-      ).toHaveAttribute("aria-pressed", "true");
-      await page.getByRole("button", { name: "此刻", exact: true }).click();
+        page.getByRole("button", { name: "收起状态栏" }),
+      ).toBeFocused();
+      await expect(page.getByRole("button", { name: /^全部/u })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(now).toBeFocused();
+      await page.keyboard.press(tab);
+      await expect(
+        page
+          .getByRole("navigation", { name: "世界阅读工具" })
+          .getByRole("button", { name: "世界", exact: true }),
+      ).toBeFocused();
+
+      const settings = page.getByRole("button", { name: "阅读设置" });
+      const settingsPanel = page.getByRole("complementary", {
+        name: "阅读设置",
+      });
+      await settings.press("Enter");
+      await expect(
+        settingsPanel.getByRole("button", { name: "关闭" }),
+      ).toBeFocused();
+      await page.keyboard.press(tab);
+      await expect(
+        settingsPanel.getByRole("slider", { name: "字号" }),
+      ).toBeFocused();
+      const secondParagraph = story
+        .getByText("Alex unfolds the jersey and talks about practice 2.", {
+          exact: true,
+        })
+        .last();
+      const paragraphMargin = () =>
+        secondParagraph.evaluate((node) =>
+          parseFloat(getComputedStyle(node).marginBlockStart),
+        );
+      const compact = await paragraphMargin();
+      await settingsPanel.getByRole("button", { name: "舒展" }).click();
+      await expect.poll(paragraphMargin).toBeGreaterThan(compact);
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeFocused();
+      await expect(settingsPanel).toHaveCount(0);
+
+      await settings.press("Enter");
+      await settingsPanel
+        .getByRole("checkbox", { name: "显示技术信息" })
+        .check();
+      const separator = story
+        .getByRole("separator", { name: "全新上下文从这里开始" })
+        .first();
+      await expect
+        .poll(() =>
+          separator.evaluate((node) => {
+            const line = getComputedStyle(node, "::before");
+            const surface = getComputedStyle(
+              node.closest("main")!,
+            ).backgroundColor;
+            return line.height === "1px" && line.backgroundColor !== surface;
+          }),
+        )
+        .toBe(true);
+      await page.mouse.click(4, 220);
+      await expect(settings).toBeFocused();
+      await expect(settingsPanel).toHaveCount(0);
       await page.getByRole("button", { name: "世界管理", exact: true }).click();
       await expect(
         page.getByRole("dialog", { name: "世界管理" }),

@@ -68,6 +68,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -102,6 +103,7 @@ import {
 import {
   ArtifactExtensionHost,
   ArtifactExtensionMount,
+  SidebarFoldActions,
 } from "./ArtifactExtensionHost.tsx";
 import { ArtifactDebugger } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
@@ -222,6 +224,10 @@ export function WorldPage({
 }): React.JSX.Element {
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [leftRailWidth, setLeftRailWidth] = useState(320);
+  const [visibleLeftRailWidth, setVisibleLeftRailWidth] = useState<number>();
+  const leftRailRef = useRef<HTMLElement>(null);
+  const nowButtonRef = useRef<HTMLButtonElement>(null);
+  const leftRailCloseRef = useRef<HTMLButtonElement>(null);
   const playerViewFold = usePlayerViewFoldController();
   const leftRailDrag = useRef<{
     pointerId: number;
@@ -237,8 +243,34 @@ export function WorldPage({
   const [rightRailTab, setRightRailTab] =
     useState<WorldReadingRail>("documents");
   const [readingOpen, setReadingOpen] = useState(false);
-  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+  const readingButtonRef = useRef<HTMLButtonElement>(null);
+  const readingPanelId = useId();
+  function closeReadingPreferences(): void {
+    setReadingOpen(false);
+    readingButtonRef.current?.focus({ preventScroll: true });
+  }
+  function closeLeftRail(): void {
+    nowButtonRef.current?.focus({ preventScroll: true });
     setLeftRailOpen(false);
+  }
+  useLayoutEffect(() => {
+    if (leftRailOpen) leftRailCloseRef.current?.focus({ preventScroll: true });
+  }, [leftRailOpen]);
+  useLayoutEffect(() => {
+    const rail = leftRailRef.current;
+    if (!leftRailOpen || rail === null || typeof ResizeObserver === "undefined")
+      return;
+    const updateWidth = () => {
+      const width = rail.offsetWidth;
+      setVisibleLeftRailWidth(width > 0 ? width : undefined);
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(rail);
+    return () => observer.disconnect();
+  }, [leftRailOpen]);
+  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+    if (leftRailOpen) closeLeftRail();
     setRightRailOpen(false);
   });
   const [dialog, setDialog] = useState<WorldDialog>(null);
@@ -1998,21 +2030,32 @@ export function WorldPage({
           }))
         }
       >
-        <div className="world-reader-shell">
+        <div
+          className="world-reader-shell"
+          data-left-rail-open={leftRailOpen}
+          data-right-rail-open={rightRailOpen}
+        >
           <WorldHeaderChrome
             worldTitle={worldTitle}
             leftRailOpen={leftRailOpen}
+            nowButtonRef={nowButtonRef}
             rightRail={rightRailOpen ? rightRailTab : null}
             readingOpen={readingOpen}
+            readingButtonRef={readingButtonRef}
+            readingPanelId={readingPanelId}
             onBack={showWorkspaceBack ? onBack : undefined}
-            onToggleNow={() => setLeftRailOpen((open) => !open)}
+            onToggleNow={() => {
+              if (leftRailOpen) closeLeftRail();
+              else setLeftRailOpen(true);
+            }}
             onOpenRail={(tab) => {
               setRightRailTab(tab);
               setRightRailOpen(true);
               setReadingOpen(false);
             }}
             onToggleReading={() => {
-              setReadingOpen((open) => !open);
+              if (readingOpen) closeReadingPreferences();
+              else setReadingOpen(true);
               setRightRailOpen(false);
             }}
             onManage={(opener) => openPlayDialog("manage", opener)}
@@ -2437,20 +2480,28 @@ export function WorldPage({
                 : "world-panel-scrim"
             }
             aria-label={uiText("收起侧栏")}
+            tabIndex={-1}
             onClick={() => {
-              setLeftRailOpen(false);
+              if (leftRailOpen) closeLeftRail();
               setRightRailOpen(false);
             }}
           />
 
           <aside
+            ref={leftRailRef}
             className={
               leftRailOpen
                 ? "world-overlay-rail world-overlay-rail-left is-open"
                 : "world-overlay-rail world-overlay-rail-left"
             }
             aria-hidden={!leftRailOpen}
+            inert={!leftRailOpen}
             aria-label={uiText("当前情景")}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              closeLeftRail();
+            }}
           >
             <div
               className="world-rail-resize-handle"
@@ -2459,8 +2510,8 @@ export function WorldPage({
               aria-orientation="vertical"
               aria-valuemin={240}
               aria-valuemax={720}
-              aria-valuenow={leftRailWidth}
-              tabIndex={leftRailOpen ? 0 : -1}
+              aria-valuenow={visibleLeftRailWidth ?? leftRailWidth}
+              tabIndex={0}
               title={uiText("拖拽调整宽度，双击恢复默认")}
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
@@ -2495,8 +2546,10 @@ export function WorldPage({
               onKeyDown={(event) => {
                 if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                   event.preventDefault();
+                  const width = event.currentTarget.parentElement!.offsetWidth;
                   resizeLeftRail(
-                    leftRailWidth + (event.key === "ArrowRight" ? 20 : -20),
+                    (width > 0 ? width : leftRailWidth) +
+                      (event.key === "ArrowRight" ? 20 : -20),
                   );
                 } else if (event.key === "Home" || event.key === "End") {
                   event.preventDefault();
@@ -2509,18 +2562,18 @@ export function WorldPage({
                 <strong>{uiText("此刻")}</strong>
               </div>
               <div className="world-rail-header-actions">
-                <div className="world-rail-fold-actions">
-                  <button type="button" onClick={playerViewFold.expandAll}>
-                    {uiText("全部展开")}
-                  </button>
-                  <button type="button" onClick={playerViewFold.collapseAll}>
-                    {uiText("全部收起")}
-                  </button>
-                </div>
+                <SidebarFoldActions
+                  hasPlayerViews={playerViewFallback.views.length > 0}
+                  onFoldPlayerViews={(open) => {
+                    if (open) playerViewFold.expandAll();
+                    else playerViewFold.collapseAll();
+                  }}
+                />
                 <button
+                  ref={leftRailCloseRef}
                   type="button"
                   aria-label={uiText("收起状态栏")}
-                  onClick={() => setLeftRailOpen(false)}
+                  onClick={closeLeftRail}
                 >
                   ×
                 </button>
@@ -2664,18 +2717,20 @@ export function WorldPage({
           </aside>
 
           {readingOpen ? (
-            <>
-              <SyncNotice
-                failed={readingSyncFailed}
-                onRead={() => void readingTarget.recover()}
-              />
-              <ReadingPreferencesPopover
-                value={readingPreferences}
-                saving={readingPreferencesSaving}
-                onChange={(next) => void saveReadingPreferences(next)}
-                onClose={() => setReadingOpen(false)}
-              />
-            </>
+            <ReadingPreferencesPopover
+              id={readingPanelId}
+              triggerRef={readingButtonRef}
+              value={readingPreferences}
+              saving={readingPreferencesSaving}
+              syncNotice={
+                <SyncNotice
+                  failed={readingSyncFailed}
+                  onRead={() => void readingTarget.recover()}
+                />
+              }
+              onChange={(next) => void saveReadingPreferences(next)}
+              onClose={closeReadingPreferences}
+            />
           ) : null}
 
           {dialog === "reading" ? (

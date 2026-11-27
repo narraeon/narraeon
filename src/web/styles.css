@@ -37,7 +37,6 @@
   --resolution-critical-success-surface: #eef4dc;
   --workspace-header-height: 54px;
   --z-reader-content: 1;
-  --z-reader-header-mask: 11;
   --z-reader-foreground: 12;
   --z-world-scrim: 30;
   --z-world-rail: 31;
@@ -7521,6 +7520,15 @@ summary {
 /* Focused world reader */
 
 .world-reader-page {
+  --world-rail-inline-inset: 0.7rem;
+  --world-right-rail-width: min(
+    21rem,
+    max(15rem, calc((100vw - var(--world-story-measure)) / 2 - 1.1rem))
+  );
+  --world-left-rail-size: min(
+    var(--world-left-rail-width),
+    calc(100vw - 2 * var(--world-rail-inline-inset))
+  );
   position: fixed;
   inset: 0;
   min-width: 320px;
@@ -7543,7 +7551,6 @@ summary {
   z-index: var(--z-reader-content);
   flex: 1 1 0;
   min-height: 0;
-  margin-block-start: var(--world-header-height);
   overflow: hidden auto;
   scroll-padding-block-end: 1.1rem;
   scrollbar-gutter: stable both-edges;
@@ -7592,13 +7599,10 @@ summary {
 .world-overlay-rail {
   position: fixed;
   z-index: var(--z-world-rail);
-  top: 3.35rem;
+  top: var(--world-header-height);
   bottom: 0.7rem;
   display: grid;
-  width: min(
-    21rem,
-    max(15rem, calc((100vw - var(--world-story-measure)) / 2 - 1.1rem))
-  );
+  width: var(--world-right-rail-width);
   min-width: 0;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -7620,12 +7624,12 @@ summary {
 }
 
 .world-overlay-rail-left {
-  left: 0.7rem;
+  left: var(--world-rail-inline-inset);
   transform: translateX(calc(-100% - 1.2rem));
 }
 
 .world-overlay-rail-right {
-  right: 0.7rem;
+  right: var(--world-rail-inline-inset);
   transform: translateX(calc(100% + 1.2rem));
 }
 
@@ -7700,7 +7704,18 @@ summary {
 }
 
 .world-overlay-rail-left .world-overlay-rail-body {
+  grid-column: 1;
   grid-row: 2 / -1;
+}
+
+.world-overlay-rail-left > header {
+  grid-column: 1;
+}
+
+.world-overlay-rail-left
+  .artifact-extension-mount-sidebar
+  + .player-view-empty {
+  display: none;
 }
 
 .world-overlay-rail > footer {
@@ -7999,10 +8014,13 @@ summary {
 .world-reading-popover {
   position: fixed;
   z-index: var(--z-reading-popover);
-  top: 3.7rem;
+  top: var(--world-header-height);
   right: 1rem;
   display: grid;
   width: min(20rem, calc(100vw - 2rem));
+  max-height: calc(100% - var(--world-header-height) - 0.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   gap: 0.85rem;
   padding: 1rem;
   border: 1px solid var(--border);
@@ -8410,8 +8428,11 @@ dialog.world-dialog-scrim::backdrop {
 }
 
 @media (--workspace-narrow-desktop) {
-  .world-overlay-rail {
-    width: min(20rem, calc(100vw - 1.4rem));
+  .world-reader-page {
+    --world-right-rail-width: min(
+      20rem,
+      calc(100vw - 2 * var(--world-rail-inline-inset))
+    );
   }
 }
 
@@ -8463,7 +8484,6 @@ dialog.world-dialog-scrim::backdrop {
 
 @media (--world-reader-narrow) {
   .world-overlay-rail {
-    top: 3rem;
     right: 0.35rem;
     bottom: calc(var(--world-composer-height) + 1.2rem);
     left: 0.35rem;

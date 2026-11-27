@@ -1144,6 +1144,7 @@ describe("世界游玩页面", () => {
       target: { value: "保留草稿" },
     });
     fireEvent.click(screen.getByRole("button", { name: "取消全新上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "阅读设置" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "显示技术信息" }));
     await act(async () => {
       await receive?.({ kind: "play", value: structuredClone(chain) }, true);
