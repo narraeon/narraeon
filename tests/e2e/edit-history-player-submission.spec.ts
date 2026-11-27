@@ -440,10 +440,13 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     exact: true,
   });
   const editAction = player.getByRole("button", { name: "修改", exact: true });
-  await expect(playerActions).toBeVisible();
+  await expect(playerActions).toHaveCSS("opacity", "0");
+  await player.locator("article").hover();
   await expect(playerActions).toHaveCSS("opacity", "1");
+  await page.mouse.move(0, 0);
   await expect(editAction).toHaveCount(0);
   await playerActions.focus();
+  await expect(playerActions).toHaveCSS("opacity", "1");
   const playerBefore = await player.boundingBox();
   await playerActions.press("Space");
   await expect(editAction).toBeVisible();
