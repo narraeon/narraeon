@@ -243,13 +243,9 @@ function markdownTableAt(
   const delimiter = lines[index + 1];
   if (delimiter === undefined || !/^[\t :|-]+$/u.test(delimiter)) return;
   const alignments = markdownTableCells(delimiter);
-  if (
-    alignments === undefined ||
-    !alignments.every((cell) => /^:?-+:?$/u.test(cell))
-  )
-    return;
+  if (!alignments?.every((cell) => /^:?-+:?$/u.test(cell))) return;
   const header = markdownTableCells(lines[index]!);
-  if (header === undefined || header.length !== alignments.length) return;
+  if (header?.length !== alignments.length) return;
 
   const styles = alignments.map((cell) => {
     if (cell.endsWith(":"))
