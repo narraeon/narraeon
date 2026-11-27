@@ -249,7 +249,7 @@ test.each([
                 chatgptPlan: {
                   accountId: "fixture",
                   allowFollowups: true,
-                  accessToken: async () => "synthetic",
+                  accessToken: () => Promise.resolve("synthetic"),
                 },
               }),
         },
@@ -325,7 +325,7 @@ test.each([
           ? "未列入的已声明字段可省略"
           : "other declared fields are optional",
       );
-      const schema = prompt?.match(/^  payloadContract=(.+)$/mu)?.[1];
+      const schema = prompt?.match(/^ {2}payloadContract=(.+)$/mu)?.[1];
       expect(schema).toBeDefined();
       const wireContract: unknown = JSON.parse(schema!);
       expect(wireContract).toEqual(

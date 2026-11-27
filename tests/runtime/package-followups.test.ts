@@ -235,7 +235,7 @@ test("真实编译在组位置展开并隔离同名来源，禁用保留定义�
   );
   const structuredRequest = compiled.followups[2]!;
   const contractLine = structuredRequest.logicalMessages[0]?.markdown.match(
-    /^  payloadContract=(.+)$/mu,
+    /^ {2}payloadContract=(.+)$/mu,
   )?.[1];
   expect(JSON.parse(contractLine!)).toEqual(payloadContract);
   expect(structuredRequest.artifacts[0]?.payloadContract).toEqual(
