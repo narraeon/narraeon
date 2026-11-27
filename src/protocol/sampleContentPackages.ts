@@ -5,6 +5,7 @@ export const sampleContentPackageIds = [
   "lost-signal",
   "screening-night",
   "last-proof",
+  "fogbell-harbor",
 ] as const;
 
 export type SampleContentPackageId = (typeof sampleContentPackageIds)[number];

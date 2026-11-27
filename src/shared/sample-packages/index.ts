@@ -3,6 +3,8 @@ import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { SampleContentPackageId } from "../../protocol/sampleContentPackages.ts";
 import type { ContentTreeFile } from "../../protocol/v1.ts";
 import { sampleStoryDescription } from "./catalog.ts";
+import { fogbellHarborEnglish } from "./fogbell-harbor-en.ts";
+import { fogbellHarborChinese } from "./fogbell-harbor-zh.ts";
 import { lastProofEnglish } from "./last-proof-en.ts";
 import { lastProofChinese } from "./last-proof-zh.ts";
 import { lostSignalEnglish } from "./lost-signal-en.ts";
@@ -31,6 +33,7 @@ const stories = {
   "last-proof": { en: lastProofEnglish, "zh-CN": lastProofChinese },
   "tide-vault": { en: tideVaultEnglish, "zh-CN": tideVaultChinese },
   "lost-signal": { en: lostSignalEnglish, "zh-CN": lostSignalChinese },
+  "fogbell-harbor": { en: fogbellHarborEnglish, "zh-CN": fogbellHarborChinese },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, readonly ContentTreeFile[]>

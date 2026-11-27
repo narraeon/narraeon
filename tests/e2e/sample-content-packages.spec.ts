@@ -76,7 +76,7 @@ for (const locale of appLocales) {
           .getByRole("dialog")
           .getByRole("list")
           .getByRole("button");
-        await expect(choices).toHaveCount(6);
+        await expect(choices).toHaveCount(7);
         await expect(choices.first()).toHaveAccessibleName(sample.title);
         await expect(choices.nth(1)).toHaveAccessibleName(
           chinese ? "潮退后的遗迹" : "The Vault at Ebb Tide",

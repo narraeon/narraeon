@@ -87,6 +87,20 @@ const descriptions = {
       premise: "失踪二十年的星船请求泊位。在双方同意靠近前，你准备交换什么？",
     },
   },
+  "fogbell-harbor": {
+    en: {
+      genre: "Tabletop · d100",
+      title: "Seven Days at Fogbell Harbor",
+      premise:
+        "Ice fog seals the harbor for seven days. Hired to audit a missing lighthouse keeper’s books, you arrive the night the fogbell tolls three times in dead calm.",
+    },
+    "zh-CN": {
+      genre: "跑团调查 · d100",
+      title: "雾钟港七日",
+      premise:
+        "冰雾封港七天。你受雇核查失踪守塔人的旧账，刚登岸的深夜，无风的港口雾钟却自己响了三声。",
+    },
+  },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, { genre: string; title: string; premise: string }>
