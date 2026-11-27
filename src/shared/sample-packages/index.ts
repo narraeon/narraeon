@@ -4,7 +4,11 @@ import type { SampleContentPackageId } from "../../protocol/sampleContentPackage
 import type { ContentTreeFile } from "../../protocol/v1.ts";
 import { bakerStreetFogEnglish } from "./baker-street-fog-en.ts";
 import { bakerStreetFogChinese } from "./baker-street-fog-zh.ts";
+import { canalEscortEnglish } from "./canal-escort-en.ts";
+import { canalEscortChinese } from "./canal-escort-zh.ts";
 import { sampleStoryDescription } from "./catalog.ts";
+import { driftlineEchoesEnglish } from "./driftline-echoes-en.ts";
+import { driftlineEchoesChinese } from "./driftline-echoes-zh.ts";
 import { fogbellHarborEnglish } from "./fogbell-harbor-en.ts";
 import { fogbellHarborChinese } from "./fogbell-harbor-zh.ts";
 import { lastProofEnglish } from "./last-proof-en.ts";
@@ -48,6 +52,14 @@ const stories = {
   "baker-street-fog": {
     en: bakerStreetFogEnglish,
     "zh-CN": bakerStreetFogChinese,
+  },
+  "canal-escort": {
+    en: canalEscortEnglish,
+    "zh-CN": canalEscortChinese,
+  },
+  "driftline-echoes": {
+    en: driftlineEchoesEnglish,
+    "zh-CN": driftlineEchoesChinese,
   },
 } satisfies Record<
   SampleContentPackageId,
