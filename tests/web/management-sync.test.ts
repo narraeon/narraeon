@@ -199,6 +199,7 @@ test("template save loses its receipt: the refreshed list and unsaved editor tex
     createElement(ProtagonistTemplateManager, {
       client: { request } as unknown as Pick<RuntimeClient, "request">,
       templates: [],
+      opener: { current: null },
       onChange,
       onClose: vi.fn(),
     }),

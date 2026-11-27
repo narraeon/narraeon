@@ -202,6 +202,110 @@ async function createdWorldId(page: Page, title: string) {
   return workspace.worlds.find((world) => world.title === title)!.worldId;
 }
 
+test("template manager contains focus and dismisses only the topmost dialog", async ({
+  page,
+}) => {
+  await setup(page, "en", "Template keyboard", false);
+  const opener = page.getByRole("button", {
+    name: "Manage protagonist templates",
+  });
+  const manager = page.getByRole("dialog", {
+    name: "Manage protagonist templates",
+  });
+  const close = manager.getByRole("button", { name: "Close", exact: true });
+  const name = manager.getByLabel("Template name");
+  const body = manager.getByLabel("Template body");
+  const androidBack = () =>
+    page.evaluate(() =>
+      (
+        window as { narraeonAndroidBack?: () => boolean }
+      ).narraeonAndroidBack?.(),
+    );
+
+  await opener.click();
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(body).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await opener.evaluate((button) => button.focus());
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(manager).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  await opener.click();
+  await name.fill("Draft");
+  await page.keyboard.press("Escape");
+  const confirmation = page.getByRole("dialog", {
+    name: "Discard unsaved protagonist template changes?",
+  });
+  const cancel = confirmation.getByRole("button", {
+    name: "Cancel",
+    exact: true,
+  });
+  const discard = confirmation.getByRole("button", {
+    name: "Discard",
+    exact: true,
+  });
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(discard).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(close).toBeFocused();
+  await expect(name).toHaveValue("Draft");
+
+  expect(await androidBack()).toBe(true);
+  await expect(cancel).toBeFocused();
+  expect(await androidBack()).toBe(true);
+  await expect(close).toBeFocused();
+  await close.click();
+  await discard.click();
+  await expect(opener).toBeFocused();
+
+  let releaseSave!: () => void;
+  const holdSave = new Promise<void>((resolve) => (releaseSave = resolve));
+  await page.route("**/api/runtime/v1", async (route) => {
+    const { request } = route.request().postDataJSON() as {
+      request: V1Request;
+    };
+    if (request.type === "protagonist-templates.save") await holdSave;
+    await route.continue();
+  });
+  await opener.click();
+  await name.fill("Saved template");
+  await body.fill("The template body.");
+  const save = manager.getByRole("button", { name: "Save", exact: true });
+  try {
+    await save.click();
+    await expect(close).toBeDisabled();
+    await page.keyboard.press("Escape");
+    expect(await androidBack()).toBe(true);
+    await expect(manager).toBeVisible();
+    await expect(confirmation).toHaveCount(0);
+  } finally {
+    releaseSave();
+  }
+  await expect(close).toBeEnabled();
+  await expect(
+    manager.getByRole("button", { name: "Saved template", exact: true }),
+  ).toBeVisible();
+  expect(await androidBack()).toBe(true);
+  await expect(manager).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  const { templates } = await runtime<ProtagonistTemplatesView>(page, {
+    type: "protagonist-templates.read",
+  });
+  const saved = templates.find(
+    (template) => template.name === "Saved template",
+  );
+  expect(saved).toBeDefined();
+  await runtime(page, { type: "protagonist-templates.delete", id: saved!.id });
+});
+
 test("review and explicitly apply a Chinese protagonist customization on a narrow screen", async ({
   page,
 }) => {

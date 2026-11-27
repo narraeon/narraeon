@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type RefObject,
 } from "react";
 import {
   isProtagonistTemplateContent,
@@ -16,8 +17,8 @@ import {
 } from "../protocol/protagonistTemplates.ts";
 import type { V1Request } from "../protocol/v1.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
-import { useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
+import { useModalDialog } from "./useModalDialog.ts";
 import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import {
@@ -40,12 +41,14 @@ interface TemplateConfirmation {
 export function ProtagonistTemplateManager({
   client,
   templates,
+  opener,
   onChange,
   onClose,
   onNavigationProtectionChange,
 }: {
   client: Pick<RuntimeClient, "request">;
   templates: ProtagonistTemplate[];
+  opener: RefObject<HTMLButtonElement | null>;
   onChange: (view: ProtagonistTemplatesView) => void;
   onClose: () => void;
   onNavigationProtectionChange?: (
@@ -149,9 +152,12 @@ export function ProtagonistTemplateManager({
     if (templateId === baseline?.id && shownName === name && shownBody === body)
       perform(next);
   }
-  // Back closes like the Close button, which stays inert while a save is pending.
-  useAndroidBack(true, () => {
-    requestAction({ type: "close" }, closeButton.current);
+  const dialog = useModalDialog({
+    open: true,
+    busy: pending,
+    opener,
+    initialFocus: closeButton,
+    onDismiss: () => requestAction({ type: "close" }, closeButton.current),
   });
   function select(template: ProtagonistTemplate | null): void {
     setBaseline(template);
@@ -187,11 +193,10 @@ export function ProtagonistTemplateManager({
     }
   }
   return (
-    <div className="protagonist-template-scrim">
-      <section
+    <>
+      <dialog
+        {...dialog}
         className="protagonist-template-manager"
-        role="dialog"
-        aria-modal="true"
         aria-labelledby="protagonist-templates-title"
       >
         <header>
@@ -199,7 +204,7 @@ export function ProtagonistTemplateManager({
           <button
             ref={closeButton}
             type="button"
-            disabled={pending}
+            aria-disabled={pending}
             onClick={(event) =>
               requestAction({ type: "close" }, event.currentTarget)
             }
@@ -317,10 +322,10 @@ export function ProtagonistTemplateManager({
             </div>
           </form>
         </div>
-      </section>
+      </dialog>
       {confirmation !== null && (
         <ConfirmationDialog request={confirmation} onDecision={decideAction} />
       )}
-    </div>
+    </>
   );
 }

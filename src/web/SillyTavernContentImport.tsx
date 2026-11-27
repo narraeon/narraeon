@@ -6,6 +6,7 @@ import type {
 } from "../protocol/sillyTavernContent.ts";
 import type { ContentTreeFile, V1Request } from "../protocol/v1.ts";
 import { useReadTarget } from "./useReadTarget.ts";
+import { useModalDialog } from "./useModalDialog.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { uiText } from "./i18n.ts";
 
@@ -62,10 +63,77 @@ function displayRule(value: unknown, label: string): string {
   if (label === "激活概率" && typeof value === "number") return `${value}%`;
   if (typeof value === "boolean") return value ? uiText("是") : uiText("否");
   if (Array.isArray(value))
-    return value.map((item) => String(item)).join(", ") || "—";
+    return value.map((item) => String(item)).join(", ") || uiText("空值");
+  if (typeof value === "string" && value.trim() === "") return uiText("空值");
   return typeof value === "string" || typeof value === "number"
     ? String(value)
     : JSON.stringify(value);
+}
+
+const worldBookRuleFields = [
+  ["关键词", "key", "keys"],
+  ["次关键词", "keysecondary", "secondary_keys"],
+  ["启用次关键词", "selective"],
+  ["次关键词逻辑（0 任一，1 非全部，2 全不，3 全部）", "selectiveLogic"],
+  ["常驻（仍受其他过滤限制）", "constant"],
+  ["编辑顺序", "displayIndex", "display_index"],
+  ["激活优先级", "order", "insertion_order"],
+  ["插入位置（来源枚举）", "position"],
+  ["历史深度", "depth"],
+  ["插入角色", "role"],
+  ["激活概率", "probability"],
+  ["启用概率", "useProbability"],
+  ["分组", "group"],
+  ["分组权重", "groupWeight", "group_weight"],
+  ["排除递归", "excludeRecursion", "exclude_recursion"],
+  ["阻止递归", "preventRecursion", "prevent_recursion"],
+  ["延迟至递归", "delayUntilRecursion", "delay_until_recursion"],
+  ["持续轮数", "sticky"],
+  ["冷却轮数", "cooldown"],
+  ["延迟轮数", "delay"],
+  ["角色过滤", "characterFilter"],
+  ["生成类型限制", "triggers"],
+  ["扫描深度", "scanDepth", "scan_depth"],
+] as const;
+
+function isSpecified(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function WorldBookRules({
+  rules,
+}: {
+  rules: Record<string, unknown>;
+}): React.JSX.Element {
+  const all = worldBookRuleFields.map(([label, ...keys]) => ({
+    label,
+    value: ruleValue(rules, ...keys),
+  }));
+  const specified = all.filter(({ value }) => isSpecified(value));
+  const rows = (fields: typeof all) =>
+    fields.map(({ label, value }) => (
+      <div key={label}>
+        <dt>{uiText(label)}</dt>
+        <dd>{displayRule(value, label)}</dd>
+      </div>
+    ));
+
+  return (
+    <>
+      {specified.length > 0 && <dl>{rows(specified)}</dl>}
+      <details>
+        <summary>{uiText("完整来源规则")}</summary>
+        <dl>{rows(all)}</dl>
+        <details>
+          <summary>{uiText("来源规则 JSON")}</summary>
+          <pre>{JSON.stringify(rules, null, 2)}</pre>
+        </details>
+      </details>
+    </>
+  );
 }
 function diagnosticText(code: string): string {
   const labels: Record<string, string> = {
@@ -198,11 +266,9 @@ export function SillyTavernContentImport({
       setShowResult(true);
     }, []),
   );
-  const dialog = useRef<HTMLDivElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const isOpen = Boolean(source || error);
-  useEffect(() => {
-    if (isOpen) dialog.current?.focus();
-  }, [isOpen]);
   async function run(work: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -215,6 +281,8 @@ export function SillyTavernContentImport({
     }
   }
   function close() {
+    inspectTarget.accept();
+    previewTarget.accept();
     setActive(undefined);
     setShowResult(false);
     setSource("");
@@ -223,23 +291,13 @@ export function SillyTavernContentImport({
     setSelection({ entries: {} });
     setError("");
   }
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        setActive(undefined);
-        setShowResult(false);
-        setSource("");
-        setView(undefined);
-        setPreview(undefined);
-        setSelection({ entries: {} });
-        setError("");
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, busy]);
+  const dialog = useModalDialog({
+    open: isOpen,
+    busy,
+    opener: picker,
+    initialFocus: closeButton,
+    onDismiss: close,
+  });
   function choose(patch: Partial<ContentSelection>) {
     setSelection((current) => ({ ...current, ...patch }));
     setPreview(undefined);
@@ -264,6 +322,7 @@ export function SillyTavernContentImport({
       <label>
         {uiText("导入 SillyTavern 角色卡或世界书")}
         <input
+          ref={picker}
           type="file"
           accept=".json,.png,application/json,image/png"
           disabled={busy}
@@ -287,19 +346,29 @@ export function SillyTavernContentImport({
           }}
         />
       </label>
-      {(source || error) && (
-        <div
-          ref={dialog}
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
+      {isOpen && (
+        <dialog
+          {...dialog}
           aria-label={uiText("SillyTavern 内容导入向导")}
           className="sillytavern-content-import"
         >
-          <h2>{uiText("SillyTavern 内容导入向导")}</h2>
+          <header className="sillytavern-import-header">
+            <h2>{uiText("SillyTavern 内容导入向导")}</h2>
+            <button
+              ref={closeButton}
+              type="button"
+              aria-disabled={busy}
+              aria-label={uiText("关闭导入向导")}
+              onClick={() => {
+                if (!busy) close();
+              }}
+            >
+              ×
+            </button>
+          </header>
           <p>
             {uiText(
-              "选择目标用途。来源规则不会作为 SillyTavern 触发机制执行；未绑定的宏需要手动完善。",
+              "选择目标用途。SillyTavern 触发规则在 Narraeon 中仅供参考；未绑定的宏需要手动完善。",
             )}
           </p>
           {error && <p role="alert">{errorText(error)}</p>}
@@ -553,133 +622,7 @@ export function SillyTavernContentImport({
                                 ? uiText("来源启用")
                                 : uiText("来源禁用")}
                             </p>
-                            <dl>
-                              {(
-                                [
-                                  [
-                                    "关键词",
-                                    ruleValue(entry.rules, "key", "keys"),
-                                  ],
-                                  [
-                                    "次关键词",
-                                    ruleValue(
-                                      entry.rules,
-                                      "keysecondary",
-                                      "secondary_keys",
-                                    ),
-                                  ],
-                                  [
-                                    "启用次关键词",
-                                    ruleValue(entry.rules, "selective"),
-                                  ],
-                                  [
-                                    "次关键词逻辑（0 任一，1 非全部，2 全不，3 全部）",
-                                    ruleValue(entry.rules, "selectiveLogic"),
-                                  ],
-                                  [
-                                    "常驻（仍受其他过滤限制）",
-                                    ruleValue(entry.rules, "constant"),
-                                  ],
-                                  [
-                                    "编辑顺序",
-                                    ruleValue(
-                                      entry.rules,
-                                      "displayIndex",
-                                      "display_index",
-                                    ),
-                                  ],
-                                  [
-                                    "激活优先级",
-                                    ruleValue(
-                                      entry.rules,
-                                      "order",
-                                      "insertion_order",
-                                    ),
-                                  ],
-                                  [
-                                    "插入位置（来源枚举）",
-                                    ruleValue(entry.rules, "position"),
-                                  ],
-                                  ["历史深度", ruleValue(entry.rules, "depth")],
-                                  ["插入角色", ruleValue(entry.rules, "role")],
-                                  [
-                                    "激活概率",
-                                    ruleValue(entry.rules, "probability"),
-                                  ],
-                                  [
-                                    "启用概率",
-                                    ruleValue(entry.rules, "useProbability"),
-                                  ],
-                                  ["分组", ruleValue(entry.rules, "group")],
-                                  [
-                                    "分组权重",
-                                    ruleValue(
-                                      entry.rules,
-                                      "groupWeight",
-                                      "group_weight",
-                                    ),
-                                  ],
-                                  [
-                                    "排除递归",
-                                    ruleValue(
-                                      entry.rules,
-                                      "excludeRecursion",
-                                      "exclude_recursion",
-                                    ),
-                                  ],
-                                  [
-                                    "阻止递归",
-                                    ruleValue(
-                                      entry.rules,
-                                      "preventRecursion",
-                                      "prevent_recursion",
-                                    ),
-                                  ],
-                                  [
-                                    "延迟至递归",
-                                    ruleValue(
-                                      entry.rules,
-                                      "delayUntilRecursion",
-                                      "delay_until_recursion",
-                                    ),
-                                  ],
-                                  [
-                                    "持续轮数",
-                                    ruleValue(entry.rules, "sticky"),
-                                  ],
-                                  [
-                                    "冷却轮数",
-                                    ruleValue(entry.rules, "cooldown"),
-                                  ],
-                                  ["延迟轮数", ruleValue(entry.rules, "delay")],
-                                  [
-                                    "角色过滤",
-                                    ruleValue(entry.rules, "characterFilter"),
-                                  ],
-                                  [
-                                    "生成类型限制",
-                                    ruleValue(entry.rules, "triggers"),
-                                  ],
-                                  [
-                                    "扫描深度",
-                                    ruleValue(
-                                      entry.rules,
-                                      "scanDepth",
-                                      "scan_depth",
-                                    ),
-                                  ],
-                                ] as const
-                              ).map(([label, value]) => (
-                                <div key={label}>
-                                  <dt>{uiText(label)}</dt>
-                                  <dd>{displayRule(value, label)}</dd>
-                                </div>
-                              ))}
-                            </dl>
-                            <details>
-                              <summary>{uiText("来源规则")}</summary>
-                              <pre>{JSON.stringify(entry.rules, null, 2)}</pre>
-                            </details>
+                            <WorldBookRules rules={entry.rules} />
                           </article>
                         ))}
                     </div>
@@ -779,7 +722,7 @@ export function SillyTavernContentImport({
           <button disabled={busy} onClick={close}>
             {uiText("取消")}
           </button>
-        </div>
+        </dialog>
       )}
     </section>
   );

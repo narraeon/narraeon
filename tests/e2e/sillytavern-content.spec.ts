@@ -1,5 +1,149 @@
 import { deflateSync } from "node:zlib";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import type { V1Request } from "../../src/protocol/v1.ts";
+import { test } from "../support/isolatedRuntimeTest.ts";
+
+test.use({ runtimeScope: "sillytavern-content-import" });
+
+const worldBook = {
+  entries: {
+    0: {
+      uid: 0,
+      comment: "With rules",
+      content: "A foggy port",
+      key: ["harbor"],
+      constant: false,
+      probability: 0,
+      cooldown: 0,
+      group: "",
+      keysecondary: [],
+    },
+    1: { uid: 1, comment: "Without rules", content: "A lighthouse" },
+  },
+};
+const worldBookFile = {
+  name: "world-book.json",
+  mimeType: "application/json",
+  buffer: Buffer.from(JSON.stringify(worldBook)),
+};
+
+test("content import contains focus, respects pending work, and restores the file picker", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  const picker = page.getByLabel(
+    "Import SillyTavern character card or world book",
+  );
+  const dialog = page.getByRole("dialog", {
+    name: "SillyTavern content import wizard",
+  });
+  const close = dialog.getByRole("button", {
+    name: "Close import wizard",
+    exact: true,
+  });
+  const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+  const androidBack = () =>
+    page.evaluate(() =>
+      (
+        window as { narraeonAndroidBack?: () => boolean }
+      ).narraeonAndroidBack?.(),
+    );
+
+  await picker.setInputFiles(worldBookFile);
+  await expect(dialog.getByText("A foggy port", { exact: true })).toBeVisible();
+  await expect(close).toBeFocused();
+  await cancel.focus();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(cancel).toBeFocused();
+  await picker.evaluate((input) => input.focus());
+  await expect(cancel).toBeFocused();
+
+  let releasePreview!: () => void;
+  const holdPreview = new Promise<void>(
+    (resolve) => (releasePreview = resolve),
+  );
+  await page.route("**/api/runtime/v1", async (route) => {
+    const request = (route.request().postDataJSON() as { request: V1Request })
+      .request;
+    if (request.type === "content.sillytavern.preview") await holdPreview;
+    await route.continue();
+  });
+  try {
+    await dialog.getByRole("button", { name: "Preview target files" }).click();
+    await expect(cancel).toBeDisabled();
+    await expect(close).toBeDisabled();
+    await page.keyboard.press("Escape");
+    expect(await androidBack()).toBe(true);
+    await expect(dialog).toBeVisible();
+  } finally {
+    releasePreview();
+  }
+  await expect(cancel).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(picker).toBeFocused();
+
+  await picker.focus();
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    page.keyboard.press("Enter"),
+  ]);
+  await chooser.setFiles(worldBookFile);
+  await expect(dialog).toBeVisible();
+  await close.click();
+  await expect(picker).toBeFocused();
+  await picker.setInputFiles(worldBookFile);
+  await expect(dialog).toBeVisible();
+  expect(await androidBack()).toBe(true);
+  await expect(dialog).toHaveCount(0);
+  await expect(picker).toBeFocused();
+});
+
+test("world book rules show supplied values and keep the complete list collapsed", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await page
+    .getByLabel("Import SillyTavern character card or world book")
+    .setInputFiles(worldBookFile);
+  const dialog = page.getByRole("dialog", {
+    name: "SillyTavern content import wizard",
+  });
+  const detail = dialog.locator(".import-browser-detail article");
+  await expect(detail).toContainText("A foggy port");
+  await expect(
+    dialog.getByText(/trigger rules are for reference only in Narraeon/u),
+  ).toBeVisible();
+  const visibleRules = detail.locator("dl > div:visible");
+  await expect(visibleRules).toHaveCount(4);
+  for (const [name, value] of [
+    ["Keywords", "harbor"],
+    ["Constant (other filters still apply)", "No"],
+    ["Activation probability", "0%"],
+    ["Cooldown turns", "0"],
+  ] as const) {
+    await expect(
+      visibleRules
+        .filter({ has: page.getByText(name, { exact: true }) })
+        .locator("dd"),
+    ).toHaveText(value);
+  }
+  const complete = detail.getByText("All source rules", { exact: true });
+  await complete.click();
+  await expect(detail.locator("details dl > div:visible")).toHaveCount(23);
+  await expect(
+    detail.getByText(/Not specified or follows source globals/u).first(),
+  ).toBeVisible();
+  await detail.getByText("Source rules JSON", { exact: true }).click();
+  await expect(detail.getByText(/"probability": 0/u)).toBeVisible();
+  await dialog.getByRole("button", { name: /Without rules/u }).click();
+  await expect(visibleRules).toHaveCount(0);
+  await expect(complete).toBeVisible();
+});
 
 function chunk(type: string, data: Buffer): Buffer {
   const body = Buffer.concat([Buffer.from(type), data]);

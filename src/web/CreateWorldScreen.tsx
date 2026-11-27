@@ -1,5 +1,5 @@
 import type { WorkspaceNavigationProtection } from "./WorkspaceLocation.ts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import type {
   ProtagonistTemplate,
@@ -51,6 +51,7 @@ export function CreateWorldScreen({
   const [templates, setTemplates] = useState<ProtagonistTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [managingTemplates, setManagingTemplates] = useState(false);
+  const manageTemplatesButton = useRef<HTMLButtonElement>(null);
   const {
     target: templateTarget,
     syncFailed: templatesFailed,
@@ -163,6 +164,7 @@ export function CreateWorldScreen({
           </select>
         </label>
         <button
+          ref={manageTemplatesButton}
           type="button"
           disabled={pending || templatesLoading || templatesFailed}
           onClick={() => setManagingTemplates(true)}
@@ -241,6 +243,7 @@ export function CreateWorldScreen({
         <ProtagonistTemplateManager
           client={client}
           templates={templates}
+          opener={manageTemplatesButton}
           onChange={(view) => {
             templateTarget.accept();
             setTemplates(view.templates);
