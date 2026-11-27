@@ -297,7 +297,7 @@ const longStoryChecks = [
     sampleId: "baker-street-fog",
     board: "london-case-board",
     archive: "archive.bs-anchor-coin",
-    secret: /因贪杯|pawned one for drink/i,
+    secret: /换酒钱|pawned one for drink/i,
     catalogSpoilers:
       /被软禁|挂假货旗|沉船骗保案真相|held locked|false.flagged|truth of the .*insurance/i,
     prematureClue:
@@ -320,6 +320,26 @@ describe.each(appLocales)("long-story ZIP and scene change (%s)", (locale) => {
       expect(opening).toMatch(story.openingClue);
       expect(board).toMatch(story.openingClue);
       expect(board).not.toMatch(story.prematureClue);
+      if (story.sampleId === "baker-street-fog") {
+        const boardItems = readViews[story.board]!;
+        expect(JSON.stringify(boardItems["evidence-in-hand"])).toMatch(
+          story.openingClue,
+        );
+        expect(JSON.stringify(boardItems["evidence-in-hand"])).not.toMatch(
+          /借书单|call slip/i,
+        );
+        expect(JSON.stringify(boardItems["reported-testimony"])).toMatch(
+          /小指|little finger/i,
+        );
+        expect(JSON.stringify(boardItems["pending-leads"])).toMatch(
+          /借书单|call slip/i,
+        );
+      }
+      if (story.sampleId === "qingzhou-tales") {
+        const threads = readViews[story.board]!["unresolved-threads"];
+        expect(JSON.stringify(threads)).toMatch(/停下翻书|pause mid-page/i);
+        expect(JSON.stringify(threads)).toMatch(/兰若|Lanruo/i);
+      }
       const situation = files.find(
         ({ path }) => path === "world/current-situation.yaml",
       )!.contents;
