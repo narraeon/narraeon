@@ -11,14 +11,26 @@ export interface ProviderStreamEvent {
   readonly data: string;
 }
 
+export class ProviderStreamFramingError extends Error {
+  readonly stage: "sse_frame" | "sse_size" | "sse_encoding";
+
+  constructor(stage: ProviderStreamFramingError["stage"]) {
+    super("Invalid provider event-stream framing");
+    this.stage = stage;
+  }
+}
+
 export async function* providerStreamEvents(
   body: ReadableStream<Uint8Array>,
-  options?: { fatalUtf8?: boolean },
+  options?: { fatalUtf8?: boolean; strictMaxBytes?: number },
 ): AsyncGenerator<ProviderStreamEvent> {
   const reader = body.getReader();
+  const maxBytes = options?.strictMaxBytes;
+  const strict = maxBytes !== undefined;
   const decoder = new TextDecoder("utf-8", {
-    fatal: options?.fatalUtf8 === true,
+    fatal: strict || options?.fatalUtf8 === true,
   });
+  let bytes = 0;
   let pending = "";
   let event: string | null = null;
   let data: string[] = [];
@@ -37,11 +49,20 @@ export async function* providerStreamEvents(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) reachedEof = true;
+      if (maxBytes !== undefined && value !== undefined) {
+        bytes += value.byteLength;
+        if (bytes > maxBytes) throw new ProviderStreamFramingError("sse_size");
+      }
       // `stream: true` keeps a split multi-byte character pending in the
       // decoder instead of emitting a replacement character for each half.
-      pending += done
-        ? decoder.decode()
-        : decoder.decode(value, { stream: true });
+      try {
+        pending += done
+          ? decoder.decode()
+          : decoder.decode(value, { stream: true });
+      } catch (error: unknown) {
+        if (strict) throw new ProviderStreamFramingError("sse_encoding");
+        throw error;
+      }
       let newline = pending.indexOf("\n");
       while (newline >= 0) {
         const line = pending.slice(0, newline).replace(/\r$/u, "");
@@ -58,12 +79,20 @@ export async function* providerStreamEvents(
           const value_ = rawValue.startsWith(" ")
             ? rawValue.slice(1)
             : rawValue;
-          if (field === "event") event = value_;
+          if (field === "event")
+            event = strict && value_ === "" ? null : value_;
           else if (field === "data") data.push(value_);
+          else if (strict && field !== "id" && field !== "retry")
+            throw new ProviderStreamFramingError("sse_frame");
         }
         newline = pending.indexOf("\n");
       }
       if (done) break;
+    }
+    if (strict) {
+      if (pending !== "" || data.length > 0)
+        throw new ProviderStreamFramingError("sse_frame");
+      return;
     }
     // A stream that ends without a trailing blank line still carries an event.
     if (pending.trim() !== "") {

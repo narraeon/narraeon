@@ -14,7 +14,10 @@ import {
   type ModelConnectionStore,
 } from "../model/ModelConnectionStore.ts";
 import { PlayCallChainError } from "../play/PlayCallChainError.ts";
-import type { ModelHostBinding } from "../model/ModelHost.ts";
+import {
+  compatibleModelHostContinuation,
+  type ModelHostBinding,
+} from "../model/ModelHost.ts";
 import type {
   PlayCallChain,
   PlayCallChainObserver,
@@ -491,7 +494,8 @@ export class PlayCommands {
         const continueContext =
           currentContext !== null &&
           !currentContext.stale &&
-          frozenBinding?.provider === modelBinding.provider;
+          frozenBinding !== undefined &&
+          compatibleModelHostContinuation(frozenBinding, modelBinding);
         const baseline = continueContext
           ? await this.#services.worlds.bindPlayCallChainAt(
               request.worldId,

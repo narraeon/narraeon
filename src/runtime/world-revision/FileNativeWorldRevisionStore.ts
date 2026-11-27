@@ -12,7 +12,10 @@ import {
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
-import type { GoogleHopEvidence } from "../model/ModelHost.ts";
+import {
+  validOptionalChatGptPlanFingerprint,
+  type GoogleHopEvidence,
+} from "../model/ModelHost.ts";
 import {
   lstat,
   mkdir,
@@ -1118,7 +1121,7 @@ function validModelBinding(value: unknown): boolean {
         "maxOutputTokens",
         "protocolConfigFingerprint",
       ],
-      ["cacheStrategy"],
+      ["cacheStrategy", "chatgptPlanAccountFingerprint"],
     ) &&
     (value.provider === "chat_completions" ||
       value.provider === "openai_responses" ||
@@ -1129,6 +1132,7 @@ function validModelBinding(value: unknown): boolean {
     count(value.contextWindowTokens) &&
     count(value.maxOutputTokens) &&
     typeof value.protocolConfigFingerprint === "string" &&
+    validOptionalChatGptPlanFingerprint(value) &&
     (value.cacheStrategy === undefined ||
       value.cacheStrategy === "explicit_anthropic_blocks" ||
       value.cacheStrategy === "explicit_cliproxyapi_message" ||

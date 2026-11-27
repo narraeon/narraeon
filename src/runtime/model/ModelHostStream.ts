@@ -448,33 +448,103 @@ export async function aggregateAnthropicModelStream(
   };
 }
 
+type ResponsesStreamParseStage =
+  | "sse_event_json"
+  | "sse_event_shape"
+  | "sse_event_type"
+  | "sse_event_mismatch"
+  | "sse_delta_shape"
+  | "sse_completed_shape"
+  | "sse_completed_status"
+  | "sse_end_before_completed";
+
+export class ResponsesStreamParseError extends Error {
+  readonly stage: ResponsesStreamParseStage;
+
+  constructor(stage: ResponsesStreamParseStage, message: string) {
+    super(message);
+    this.stage = stage;
+  }
+}
+
 export async function aggregateResponsesModelStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: ModelHostDeltaSink,
+  options?: {
+    terminalFailure?: (payload: Record<string, unknown>) => Error;
+    strictMaxBytes?: number;
+  },
 ): Promise<Record<string, unknown>> {
   let completed: Record<string, unknown> | null = null;
   let observedText = "";
-  for await (const event of modelHostEvents(body)) {
-    const payload = streamRecord(event.data);
+  const strictMaxBytes = options?.strictMaxBytes;
+  const strict = strictMaxBytes !== undefined;
+  const framing = strict ? { strictMaxBytes } : undefined;
+  for await (const event of providerStreamEvents(body, framing)) {
+    if (strict) {
+      if (event.event === "ping" || event.event === "keepalive") continue;
+      if (event.event === null || event.event === "message") {
+        if (event.data.trim() === "[DONE]") break;
+        if (event.data.trim() === "") continue;
+      }
+    }
+    let payload: unknown;
+    try {
+      payload = parseStreamJson(event.data);
+    } catch {
+      throw new ResponsesStreamParseError(
+        "sse_event_json",
+        "Provider SSE data is not valid JSON",
+      );
+    }
+    if (!isRecord(payload))
+      throw new ResponsesStreamParseError(
+        "sse_event_shape",
+        "Provider SSE data is not an object",
+      );
+    if (
+      options?.terminalFailure !== undefined &&
+      payload.type === undefined &&
+      (event.event === "error" || isRecord(payload.error))
+    )
+      throw options.terminalFailure({ ...payload, type: "error" });
     if (typeof payload.type !== "string")
-      throw new Error("Responses SSE type is invalid");
-    if (event.event !== null && event.event !== payload.type)
-      throw new Error("Responses SSE event and payload type do not match");
+      throw new ResponsesStreamParseError(
+        "sse_event_type",
+        "Responses SSE type is invalid",
+      );
+    if (
+      event.event !== null &&
+      event.event !== payload.type &&
+      !(strict && event.event === "message")
+    )
+      throw new ResponsesStreamParseError(
+        "sse_event_mismatch",
+        "Responses SSE event and payload type do not match",
+      );
     if (
       (payload.type === "response.output_text.delta" ||
         payload.type === "response.reasoning_text.delta" ||
         payload.type === "response.reasoning_summary_text.delta" ||
-        payload.type === "response.function_call_arguments.delta") &&
+        payload.type === "response.function_call_arguments.delta" ||
+        payload.type === "response.custom_tool_call_input.delta") &&
       typeof payload.delta !== "string"
     )
-      throw new Error("Responses SSE delta is invalid");
+      throw new ResponsesStreamParseError(
+        "sse_delta_shape",
+        "Responses SSE delta is invalid",
+      );
     if (
       payload.type === "response.output_item.added" &&
       isRecord(payload.item) &&
       payload.item.type !== "message"
     )
       onDelta?.({
-        kind: payload.item.type === "function_call" ? "tool" : "reasoning",
+        kind:
+          payload.item.type === "function_call" ||
+          payload.item.type === "custom_tool_call"
+            ? "tool"
+            : "reasoning",
         text: "",
       });
     if (
@@ -499,18 +569,25 @@ export async function aggregateResponsesModelStream(
     )
       onDelta?.({ kind: "reasoning", text: payload.delta as string });
     else if (
-      payload.type === "response.function_call_arguments.delta" &&
+      (payload.type === "response.function_call_arguments.delta" ||
+        payload.type === "response.custom_tool_call_input.delta") &&
       payload.delta !== ""
     )
       onDelta?.({ kind: "tool", text: payload.delta as string });
     else if (payload.type === "response.completed") {
       if (completed !== null || !isRecord(payload.response))
-        throw new Error("Responses SSE completed event is invalid");
+        throw new ResponsesStreamParseError(
+          "sse_completed_shape",
+          "Responses SSE completed event is invalid",
+        );
       if (
         payload.response.status !== undefined &&
         payload.response.status !== "completed"
       )
-        throw new Error("Responses SSE completed response status is invalid");
+        throw new ResponsesStreamParseError(
+          "sse_completed_status",
+          "Responses SSE completed response status is invalid",
+        );
       completed = structuredClone(payload.response);
       break;
     } else if (
@@ -519,6 +596,8 @@ export async function aggregateResponsesModelStream(
       payload.type === "response.cancelled" ||
       payload.type === "error"
     ) {
+      if (options?.terminalFailure !== undefined)
+        throw options.terminalFailure(payload);
       if (
         payload.type === "response.incomplete" &&
         isRecord(payload.response)
@@ -572,7 +651,10 @@ export async function aggregateResponsesModelStream(
     }
   }
   if (completed === null)
-    throw new Error("Responses SSE ended before response.completed");
+    throw new ResponsesStreamParseError(
+      "sse_end_before_completed",
+      "Responses SSE ended before response.completed",
+    );
   return completed;
 }
 

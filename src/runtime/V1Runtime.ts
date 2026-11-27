@@ -1,7 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { RuntimeDomainError } from "./RuntimeDomainError.ts";
 import { AuthoringCommands } from "./commands/AuthoringCommands.ts";
 import { hasCommandPrefix } from "./commands/Command.ts";
 import { handleContentCommand } from "./commands/ContentCommands.ts";
+import { chatGptMessage } from "./commands/ChatGptMessages.ts";
+import { ChatGptAuthError, type ChatGptAuth } from "./model/ChatGptAuth.ts";
 import { handleModelCommand } from "./commands/ModelCommands.ts";
 import { PlayCommands, previewWorld } from "./commands/PlayCommands.ts";
 import { WorldCommands } from "./commands/WorldCommands.ts";
@@ -13,6 +16,7 @@ import { join } from "node:path";
 
 import {
   assertV1RequestType,
+  V1ProtocolError,
   v1Protocol,
   type V1PlayCallChainView,
   type V1Request,
@@ -68,6 +72,8 @@ export class V1Runtime {
   readonly #worlds: FileNativeWorldStore;
   readonly #artifacts: FileNativeArtifactStore;
   readonly #models: ModelConnectionStore;
+  readonly #localChatGptAccess = new AsyncLocalStorage<boolean>();
+  readonly #modelFetch: typeof fetch;
   readonly #playCallChains: PlayCallChain;
   readonly #failureLog: FileNativeAiFailureLog | undefined;
   readonly #errorLog: FileNativeRuntimeErrorLog | undefined;
@@ -89,6 +95,8 @@ export class V1Runtime {
     archiveUploadPolicy?: ArchiveUploadPolicy;
     generationActivity?: GenerationActivity;
     orchestrationEditorExtension?: OrchestrationEditorExtension;
+    chatGptAuth?: ChatGptAuth;
+    modelFetch?: typeof fetch;
   }) {
     this.#preferences = new AppPreferencesStore(input.configRoot);
     this.#protagonistTemplates = new ProtagonistTemplateStore(input.configRoot);
@@ -124,7 +132,16 @@ export class V1Runtime {
         ? {}
         : { uploadPolicy: input.archiveUploadPolicy }),
     });
-    this.#models = new ModelConnectionStore(input.configRoot);
+    this.#modelFetch =
+      input.modelFetch ?? ((url, init) => globalThis.fetch(url, init));
+    this.#models = new ModelConnectionStore(
+      input.configRoot,
+      input.modelFetch,
+      () =>
+        this.#localChatGptAccess.getStore() === true
+          ? input.chatGptAuth
+          : undefined,
+    );
     const generation =
       input.generationActivity === undefined
         ? {}
@@ -284,7 +301,17 @@ export class V1Runtime {
     await this.worldArchives.initialize();
   }
 
-  async handle(
+  handle(
+    request: V1Request,
+    playCallChainObserver?: PlayCallChainObserver,
+    localChatGptAccess = false,
+  ): Promise<V1Response> {
+    return this.#localChatGptAccess.run(localChatGptAccess, () =>
+      this.#handle(request, playCallChainObserver),
+    );
+  }
+
+  async #handle(
     request: V1Request,
     playCallChainObserver?: PlayCallChainObserver,
   ): Promise<V1Response> {
@@ -294,6 +321,14 @@ export class V1Runtime {
       await this.#recordPlayInterruption(request, result);
       return { protocol: v1Protocol, result };
     } catch (error) {
+      if (error instanceof ChatGptAuthError)
+        throw new V1ProtocolError(
+          "invalid_request",
+          chatGptMessage(error.code, this.#locale),
+          {
+            details: { chatGptAuthError: error.code },
+          },
+        );
       await this.#errorLog?.recordRequestFailure(request, error);
       throw error instanceof RuntimeDomainError
         ? (error.toProtocolError(request.type) ?? error)
@@ -509,7 +544,7 @@ export class V1Runtime {
   async #modelHost(): Promise<FileNativeModelHost> {
     return new FileNativeModelHost(
       await this.#models.bind(),
-      fetch,
+      this.#modelFetch,
       this.#failureLog,
     );
   }
@@ -519,7 +554,7 @@ export class V1Runtime {
   ): Promise<FileNativeModelHost> {
     return new FileNativeModelHost(
       await this.#models.bindMatching(binding),
-      fetch,
+      this.#modelFetch,
       this.#failureLog,
     );
   }

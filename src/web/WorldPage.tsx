@@ -1,3 +1,4 @@
+import { ChatGptUsageLink } from "./ChatGptConnectionFields.tsx";
 import styles from "./PlayTimeline.module.css";
 import {
   applyPlayTimelineFrame,
@@ -180,6 +181,7 @@ export function WorldPage({
   worldTitle,
   modelConfigured,
   activeModelProtocol,
+  usingChatGptPlan = false,
   onBack,
   showWorkspaceBack = true,
   onConfigureModel,
@@ -200,6 +202,7 @@ export function WorldPage({
   worldTitle: string;
   modelConfigured: boolean;
   activeModelProtocol?: ModelProviderKind | undefined;
+  usingChatGptPlan?: boolean;
   onBack: () => void;
   showWorkspaceBack?: boolean;
   onConfigureModel: () => void;
@@ -2164,6 +2167,11 @@ export function WorldPage({
             disabled={!playIdle}
             showTechnicalInfo={readingPreferences.showTechnicalInfo}
           >
+            {usingChatGptPlan && (
+              <div className="play-retry-note">
+                {uiText("正在使用 ChatGPT 套餐")} <ChatGptUsageLink />
+              </div>
+            )}
             <SyncNotice
               failed={decorationFailed}
               reason={decorationError}

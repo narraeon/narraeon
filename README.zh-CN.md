@@ -108,6 +108,12 @@ node dist/node/cli/main.js web
 5. **创建世界。**把可用的内容包复制成独立世界。你可以先保存世界，随时重开并阅读开场白。如果选了主角模板，新世界会显示确认卡。你可以「确认并定制」，也可以「跳过，阅读开场」。定制结果经你审阅并应用后才会写入世界。
 6. **准备游玩时配置模型。**在世界里打开“配置模型”，选择 Provider 预设或自定义端点，填写 API Key、模型 ID、上下文窗口和最大输出限制。若本机 Chat Completions 服务使用 `localhost`、`127.0.0.0/8` 或 `[::1]`，可在“鉴权方式”选择“无需 API Key”，直接拉取并使用模型。可以在保存前点击“试发一条消息”检查当前配置，服务商可能计费。保存并启用连接后会回到同一个世界，并保留你写下的行动。准备好后再发送。
 
+### 使用 ChatGPT 套餐游玩
+
+在桌面电脑上直接打开本机运行的 Narraeon，可在模型设置中选择 ChatGPT 套餐连接。用系统浏览器登录 OpenAI，授权 Narraeon 使用套餐额度，再从账号提供的模型中选择一个，保存并启用。游戏存档保存在本机，每次发送时，Narraeon 会把该轮所需的故事材料发给 OpenAI。套餐用量和限额可在 ChatGPT 设置中查看。
+
+「试发一条消息」也会使用套餐额度。OpenAI 的订阅通道不接受每次请求的最大输出参数。希望让行动建议等自动后置请求使用额度时，请在连接设置中单独开启。场景生图需要支持图像生成的独立连接。[OpenAI 开源应用接入说明](https://developers.openai.com/siwc/token-sharing-open-source)
+
 ### 试用叙事文风
 
 - [下载简体中文叙事文风试用包](https://raw.githubusercontent.com/narraeon/narraeon/refs/heads/main/docs/orchestrations/chinese-prose-trial.orchestration.json)

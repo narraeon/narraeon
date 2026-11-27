@@ -2,6 +2,7 @@ import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts"
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { chatGptPlanBaseUrl } from "../../src/runtime/model/FileNativeModelConnection.ts";
 import { ModelConnectionStore } from "../../src/runtime/model/ModelConnectionStore.ts";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -264,6 +265,268 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
     { toolCalls: [{ name: "context_read", ok: false }] },
   ]);
   expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
+});
+
+test.each([
+  { allowFollowups: false, failFollowup: false, expectedRequests: 2 },
+  { allowFollowups: true, failFollowup: false, expectedRequests: 4 },
+  { allowFollowups: true, failFollowup: true, expectedRequests: 3 },
+])(
+  "ChatGPT plan runs the tool loop (followup consent $allowFollowups; followup fails $failFollowup)",
+  async ({ allowFollowups, failFollowup, expectedRequests }) => {
+    const nativeCall = {
+      type: "function_call",
+      namespace: "narraeon",
+      name: "context_read",
+      call_id: "call-world",
+      id: "fc-world",
+      status: "completed",
+      arguments: '{"ref":"@current-situation"}',
+    };
+    const reasoning = {
+      type: "reasoning",
+      id: "rs-world",
+      encrypted_content: "opaque-reasoning",
+      summary: [],
+    };
+    const story = "Alex holds the door until you can see inside.";
+    const outputs: unknown[][] = [
+      [reasoning, nativeCall],
+      [
+        {
+          type: "message",
+          id: "msg-story",
+          role: "assistant",
+          content: [{ type: "output_text", text: story }],
+        },
+      ],
+      [
+        {
+          type: "function_call",
+          namespace: "narraeon",
+          name: "artifact_emit",
+          call_id: "call-status-bar",
+          arguments: '{"output":"status_bar","payload":{"label":"example"}}',
+        },
+      ],
+      [
+        {
+          type: "function_call",
+          namespace: "narraeon",
+          name: "artifact_emit",
+          call_id: "call-options",
+          arguments: '{"output":"options","payload":{"label":"example"}}',
+        },
+      ],
+    ];
+    const sent: { headers: Headers; body: Record<string, unknown> }[] = [];
+    let token = 0;
+    const host = new FileNativeModelHost(
+      {
+        provider: "openai_responses",
+        baseUrl: chatGptPlanBaseUrl,
+        apiKey: "",
+        modelId: "subscription-model",
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4000,
+        chatgptPlan: {
+          accountId: "local-account",
+          allowFollowups,
+          accessToken: () => Promise.resolve(`fake-live-token-${++token}`),
+        },
+      },
+      async (url, init) => {
+        expect(url).toEqual(new URL("https://api.openai.com/v1/responses"));
+        const output = outputs[sent.length];
+        sent.push({
+          headers: new Headers(init?.headers),
+          body: (await new Response(init?.body).json()) as Record<
+            string,
+            unknown
+          >,
+        });
+        if (output === undefined) throw new Error("Unexpected paid request");
+        const terminal =
+          failFollowup && sent.length === 3
+            ? {
+                type: "response.failed",
+                response: {
+                  status: "failed",
+                  error: { code: "subscription_sharing_usage_limit_exceeded" },
+                },
+              }
+            : {
+                type: "response.completed",
+                response: {
+                  id: `resp-${sent.length}`,
+                  status: "completed",
+                  output,
+                },
+              };
+        return new Response(`data: ${JSON.stringify(terminal)}\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    );
+    const { worlds, root, worldId } = await createWorld(
+      "chatgpt-plan",
+      undefined,
+      host.binding(),
+    );
+    const artifacts = new FileNativeArtifactStore(root);
+    const view = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler(),
+      artifacts,
+    ).start({
+      worldId,
+      chainId: "chatgpt-plan",
+      exchangeId: "first",
+      playerText: "What is Alex doing? Read the world document first.",
+      hostBinding: hostBinding(),
+      playPreset: followupPlayPreset(),
+      modelBinding: host.binding(),
+      modelHost: host,
+    });
+    expect(view.status).toBe("ready");
+    expect(sent).toHaveLength(expectedRequests);
+    expect(
+      view.events.filter((event) => event.kind === "followup"),
+    ).toHaveLength(expectedRequests - 2);
+    for (const [index, { body, headers }] of sent.entries()) {
+      expect(body).toMatchObject({ store: false, stream: true });
+      expect(body).not.toHaveProperty("max_output_tokens");
+      expect(body).not.toHaveProperty("previous_response_id");
+      expect(body).not.toHaveProperty("prompt_cache_retention");
+      expect(body.input).not.toContainEqual(
+        expect.objectContaining({ role: "system" }),
+      );
+      expect(headers.get("authorization")).toBe(
+        `Bearer fake-live-token-${index + 1}`,
+      );
+    }
+    const namespaces = sent[0]?.body.tools as Record<string, unknown>[];
+    expect(namespaces).toHaveLength(1);
+    expect(namespaces[0]).toMatchObject({
+      name: "narraeon",
+      type: "namespace",
+    });
+    expect(namespaces[0]?.tools).toContainEqual(
+      expect.objectContaining({ type: "function", name: "context_read" }),
+    );
+    const first = sent[0]?.body.input as Record<string, unknown>[];
+    const preloadIndex = first.findIndex(
+      (item) => item.name === "runtime_load_context",
+    );
+    expect(preloadIndex).toBeGreaterThan(0);
+    const preload = first[preloadIndex]!;
+    expect(preload).toMatchObject({
+      type: "function_call",
+      namespace: "narraeon",
+    });
+    expect(first[preloadIndex + 1]).toMatchObject({
+      type: "function_call_output",
+      namespace: "narraeon",
+      call_id: preload.call_id,
+    });
+    expect(first[preloadIndex + 1]?.output).toContain('"success":true');
+    const next = sent[1]?.body.input as Record<string, unknown>[];
+    expect(next).toEqual(expect.arrayContaining([reasoning, nativeCall]));
+    const receipt = next.find(
+      (item) =>
+        item.call_id === nativeCall.call_id &&
+        item.type === "function_call_output",
+    );
+    expect(receipt).toMatchObject({
+      namespace: "narraeon",
+      name: nativeCall.name,
+    });
+    const result = JSON.parse(String(receipt?.output)) as Record<
+      string,
+      unknown
+    >;
+    expect(result.content).toContain("Alex");
+    expect(result.success).toBe(true);
+    const reopened = await new FileNativeWorldStore(root).recoverEndpoint(
+      worldId,
+    );
+    expect(
+      reopened.history.filter(({ exactText }) => exactText === story),
+    ).toHaveLength(1);
+    expect(JSON.stringify(view)).not.toContain("fake-live-token");
+  },
+);
+
+test("a terminal ChatGPT plan quota error never commits partial story or starts a second request", async () => {
+  const partialText = "This may look like the final reply.";
+  const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
+    Promise.resolve(
+      new Response(
+        [
+          { type: "response.output_text.delta", delta: partialText },
+          {
+            type: "response.failed",
+            response: {
+              status: "failed",
+              error: { code: "subscription_sharing_usage_limit_exceeded" },
+            },
+          },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    ),
+  );
+  const host = new FileNativeModelHost(
+    {
+      provider: "openai_responses",
+      baseUrl: chatGptPlanBaseUrl,
+      apiKey: "",
+      modelId: "subscription-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4000,
+      chatgptPlan: {
+        accountId: "local-account",
+        allowFollowups: true,
+        accessToken: () => Promise.resolve("fake-live-token"),
+      },
+    },
+    fetch_,
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "chatgpt-quota",
+    undefined,
+    host.binding(),
+  );
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId: "chatgpt-quota",
+    exchangeId: "first",
+    playerText: "Look inside.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(view).toMatchObject({
+    status: "interrupted",
+    lastFailureKind: "chatgpt_plan_quota",
+  });
+  expect(view.lastFailure).toMatch(/usage limit|使用限制/u);
+  expect(view.canContinuePartial).not.toBe(true);
+  expect(view.events.filter((event) => event.kind === "followup")).toEqual([]);
+  expect(fetch_).toHaveBeenCalledTimes(1);
+  const reopened = await new FileNativeWorldStore(root).recoverEndpoint(
+    worldId,
+  );
+  expect(reopened.history.map(({ exactText }) => exactText)).not.toContain(
+    partialText,
+  );
 });
 
 test("Google CLIProxyAPI 主请求和后置预览在重读时保留合法头名称", async () => {

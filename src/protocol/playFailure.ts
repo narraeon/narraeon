@@ -22,6 +22,8 @@ export const playFailureKinds = [
   "other",
   "configuration_mismatch",
   "dispatch_budget",
+  "chatgpt_plan_quota",
+  "chatgpt_plan_authorization",
 ] as const;
 
 export type PlayFailureKind = (typeof playFailureKinds)[number];

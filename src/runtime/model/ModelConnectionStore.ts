@@ -11,6 +11,9 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+import { chatGptPlanBaseUrl } from "../../protocol/chatGptAuth.ts";
+import { ChatGptAuthError, type ChatGptAuth } from "./ChatGptAuth.ts";
+
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   anthropicConnectionCacheSettings,
@@ -59,10 +62,15 @@ const maxStoredConnections = 64;
 
 interface StoredModelConnection
   extends
-    Omit<FileNativeModelConnection, "modelPrompt" | "apiKey" | "authMode">,
+    Omit<
+      FileNativeModelConnection,
+      "modelPrompt" | "apiKey" | "authMode" | "chatgptPlan"
+    >,
     ResponsesConnectionCapabilities {
   authMode: ModelConnectionAuthMode;
   apiKey?: string;
+  chatGptAccountId?: string;
+  chatGptAllowFollowups?: boolean;
   modelPrompt: string;
   id: string;
   name: string;
@@ -102,12 +110,18 @@ export class ModelConnectionStore {
   readonly #configRoot: string;
   readonly #path: string;
   readonly #fetch: typeof fetch;
+  readonly #localChatGpt: (() => ChatGptAuth | undefined) | undefined;
   #mutationTail: Promise<void> = Promise.resolve();
 
-  constructor(configRoot: string, fetchImplementation: typeof fetch = fetch) {
+  constructor(
+    configRoot: string,
+    fetchImplementation: typeof fetch = fetch,
+    localChatGpt?: () => ChatGptAuth | undefined,
+  ) {
     this.#configRoot = configRoot;
     this.#path = join(configRoot, libraryFileName);
     this.#fetch = fetchImplementation;
+    this.#localChatGpt = localChatGpt;
   }
 
   async view(): Promise<ModelConnectionLibraryView> {
@@ -138,6 +152,15 @@ export class ModelConnectionStore {
         id: existing?.id ?? randomUUID(),
         ...validateConnectionInput(() => normalizeSaveInput(input, existing)),
       };
+      if (saved.chatGptAccountId !== undefined) {
+        const models = await this.requireChatGpt().listModels(
+          saved.chatGptAccountId,
+        );
+        if (!models.some(({ id }) => id === saved.modelId))
+          throw new RuntimeRequestRejection(
+            "Choose a model available to the selected ChatGPT account",
+          );
+      }
       if (index < 0) document.connections.push(saved);
       else document.connections[index] = saved;
       document.activeConnectionId = saved.id;
@@ -158,8 +181,12 @@ export class ModelConnectionStore {
         throw new RuntimeRequestRejection(
           "The model configuration limit has been reached",
         );
+      if (source.chatGptAccountId !== undefined) this.requireChatGpt();
       const copied: StoredModelConnection = {
         ...structuredClone(source),
+        ...(source.chatGptAccountId === undefined
+          ? {}
+          : { chatGptAllowFollowups: false }),
         id: randomUUID(),
         name: validateConnectionInput(() =>
           requiredTrimmed(name, "Configuration name", 160),
@@ -168,7 +195,7 @@ export class ModelConnectionStore {
       document.connections.push(copied);
       await this.#writeDocument(document);
       return {
-        library: this.#viewDocument(document),
+        library: await this.#viewDocument(document),
         copiedConnectionId: copied.id,
       };
     });
@@ -177,10 +204,15 @@ export class ModelConnectionStore {
   select(connectionId: string): Promise<ModelConnectionLibraryView> {
     return this.#mutate(async () => {
       const document = await this.#readDocument();
-      if (!document.connections.some(({ id }) => id === connectionId))
+      const selected = document.connections.find(
+        ({ id }) => id === connectionId,
+      );
+      if (selected === undefined)
         throw new RuntimeRequestRejection(
           "The model configuration to enable was not found",
         );
+      if (selected.chatGptAccountId !== undefined)
+        await this.#requirePlanAccount(selected.chatGptAccountId);
       document.activeConnectionId = connectionId;
       await this.#writeDocument(document);
       return this.#viewDocument(document);
@@ -213,18 +245,30 @@ export class ModelConnectionStore {
   }
 
   async bind(): Promise<FileNativeModelConnection> {
-    const connection = await this.bindActiveIfPresent();
-    if (connection === null) throw new ModelConnectionUnavailableError();
-    return connection;
+    const connection = await this.#readActiveConnection();
+    if (connection === undefined) throw new ModelConnectionUnavailableError();
+    if (connection.chatGptAccountId !== undefined)
+      await this.#requirePlanAccount(connection.chatGptAccountId);
+    return this.#bind(connection);
   }
 
   async bindActiveIfPresent(): Promise<FileNativeModelConnection | null> {
+    const connection = await this.#readActiveConnection();
+    if (connection === undefined) return null;
+    if (
+      connection.chatGptAccountId !== undefined &&
+      !(await this.#planAccountAvailable(connection.chatGptAccountId))
+    )
+      return null;
+    return this.#bind(connection);
+  }
+
+  async #readActiveConnection(): Promise<StoredModelConnection | undefined> {
     await this.#mutationTail;
     const document = await this.#readDocument();
-    const connection = document.connections.find(
+    return document.connections.find(
       ({ id }) => id === document.activeConnectionId,
     );
-    return connection === undefined ? null : toBinding(connection);
   }
 
   /** Resolve a frozen logical operation without changing the active model. */
@@ -234,9 +278,12 @@ export class ModelConnectionStore {
     await this.#mutationTail;
     const document = await this.#readDocument();
     for (const connection of document.connections) {
-      const candidate = toBinding(connection);
-      if (new FileNativeModelHost(candidate).matchesBinding(binding))
+      const candidate = this.#bind(connection);
+      if (new FileNativeModelHost(candidate).matchesBinding(binding)) {
+        if (connection.chatGptAccountId !== undefined)
+          await this.#requirePlanAccount(connection.chatGptAccountId);
         return candidate;
+      }
     }
     throw new ModelHostBindingMismatchError(
       "No saved model connection matches this setting-improvement conversation",
@@ -258,13 +305,13 @@ export class ModelConnectionStore {
       return { outcome: "invalid_settings" };
     let connection: FileNativeModelConnection;
     try {
-      connection = toBinding({
+      connection = this.#bind({
         id: existing?.id ?? "",
         ...normalizeSaveInput(
           {
             ...input,
             name: "Connection test",
-            presetId: "custom",
+            presetId: input.authMode === "chatgpt" ? "chatgpt-plan" : "custom",
             modelPrompt: "",
           },
           existing,
@@ -273,6 +320,8 @@ export class ModelConnectionStore {
     } catch {
       return { outcome: "invalid_settings" };
     }
+    if (connection.chatgptPlan !== undefined)
+      await this.#requirePlanAccount(connection.chatgptPlan.accountId);
     return testModelConnection(connection, locale, this.#fetch);
   }
 
@@ -285,6 +334,10 @@ export class ModelConnectionStore {
       requiredTrimmed(input.baseUrl, "Base URL", 4096),
     );
     const authMode = validateAuthMode(input.authMode, provider, baseUrl);
+    if (authMode === "chatgpt")
+      throw new RuntimeRequestRejection(
+        "Use the ChatGPT account model catalog for this connection",
+      );
     let apiKey = normalizeApiKey(input.apiKey, authMode);
     if (
       authMode === "api_key" &&
@@ -361,12 +414,72 @@ export class ModelConnectionStore {
     return { models };
   }
 
-  #viewDocument(document: ModelConnectionDocument): ModelConnectionLibraryView {
+  async #viewDocument(
+    document: ModelConnectionDocument,
+  ): Promise<ModelConnectionLibraryView> {
+    const auth = this.#localChatGpt?.();
+    const active = document.connections.find(
+      ({ id }) => id === document.activeConnectionId,
+    );
+    const configured =
+      active !== undefined &&
+      (active.chatGptAccountId === undefined ||
+        (await this.#planAccountAvailable(active.chatGptAccountId)));
     return {
-      configured: document.activeConnectionId !== null,
+      configured,
+      ...(auth === undefined ? {} : { chatGptAvailable: true }),
       activeConnectionId: document.activeConnectionId,
       connections: document.connections.map(toView),
       presets: structuredClone(modelProviderPresets),
+    };
+  }
+
+  requireChatGpt(): ChatGptAuth {
+    const auth = this.#localChatGpt?.();
+    if (auth === undefined) throw new ChatGptAuthError("local_only");
+    return auth;
+  }
+
+  async #planAccountAvailable(accountId: string): Promise<boolean> {
+    const auth = this.#localChatGpt?.();
+    if (auth === undefined) return false;
+    const accounts = await auth.listAccounts().catch(() => []);
+    return accounts.some(
+      ({ id, status }) => id === accountId && status === "plan_authorized",
+    );
+  }
+
+  async #requirePlanAccount(accountId: string): Promise<void> {
+    const account = (await this.requireChatGpt().listAccounts()).find(
+      ({ id }) => id === accountId,
+    );
+    switch (account?.status) {
+      case "plan_authorized":
+        return;
+      case "signed_in":
+        throw new ChatGptAuthError("plan_permission_required");
+      case "reauthorization_required":
+        throw new ChatGptAuthError("reauthorization_required");
+      case "signed_out":
+      case undefined:
+        throw new ChatGptAuthError("sign_in_required");
+    }
+  }
+
+  #bind(connection: StoredModelConnection): FileNativeModelConnection {
+    const binding = toBinding(connection);
+    const accountId = connection.chatGptAccountId;
+    if (accountId === undefined) return binding;
+    return {
+      ...binding,
+      chatgptPlan: {
+        accountId,
+        allowFollowups: connection.chatGptAllowFollowups === true,
+        accessToken: (signal) =>
+          this.requireChatGpt().getAccessToken(accountId, signal),
+        invalidate: (token) =>
+          this.requireChatGpt().invalidateAccessToken(accountId, token),
+      },
     };
   }
 
@@ -483,6 +596,7 @@ function normalizeSaveInput(
         : "Switching authentication requires an API key",
     );
   validatePresetBinding(presetId, provider, baseUrl);
+  const plan = planSettings(authMode, presetId, dialect, input);
   return {
     name,
     presetId,
@@ -490,6 +604,7 @@ function normalizeSaveInput(
     dialect,
     baseUrl,
     authMode,
+    ...plan,
     ...(apiKey === undefined ? {} : { apiKey }),
     modelId,
     modelPrompt: validateModelPrompt(input.modelPrompt, existing?.modelPrompt),
@@ -593,6 +708,7 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     { allowLegacyGoogleSettings: true },
   );
   validatePresetBinding(presetId, provider, baseUrl);
+  const plan = planSettings(authMode, presetId, dialect, value);
   return {
     id,
     name,
@@ -601,6 +717,7 @@ function validateStoredConnection(value: unknown): StoredModelConnection {
     dialect,
     baseUrl,
     authMode,
+    ...plan,
     ...(apiKey === undefined ? {} : { apiKey }),
     modelId,
     modelPrompt: validateModelPrompt(value.modelPrompt),
@@ -653,6 +770,12 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     contextWindowTokens: connection.contextWindowTokens,
     maxOutputTokens: connection.maxOutputTokens,
     hasApiKey: connection.authMode === "api_key",
+    ...(connection.chatGptAccountId === undefined
+      ? {}
+      : {
+          chatGptAccountId: connection.chatGptAccountId,
+          chatGptAllowFollowups: connection.chatGptAllowFollowups === true,
+        }),
   });
 }
 
@@ -879,12 +1002,62 @@ function validateAuthMode(
   baseUrl: string,
 ): ModelConnectionAuthMode {
   if (value === undefined || value === "api_key") return "api_key";
+  if (value === "chatgpt") {
+    if (provider !== "openai_responses" || baseUrl !== chatGptPlanBaseUrl)
+      throw new Error(
+        "ChatGPT plan usage requires the official Responses endpoint",
+      );
+    return value;
+  }
   if (value !== "none") throw new Error("Model authentication mode is invalid");
   if (!supportsUnauthenticatedModelConnection(provider, baseUrl))
     throw new Error(
       "Using no API key requires a loopback Chat Completions endpoint",
     );
   return value;
+}
+
+function planSettings(
+  authMode: ModelConnectionAuthMode,
+  presetId: ModelProviderPresetId,
+  dialect: ModelProviderDialect,
+  input: {
+    chatGptAccountId?: unknown;
+    chatGptAllowFollowups?: unknown;
+    assistantPrefillMode?: unknown;
+    responsesCacheControl?: unknown;
+    responsesTurnInstructions?: unknown;
+  },
+): Pick<StoredModelConnection, "chatGptAccountId" | "chatGptAllowFollowups"> {
+  if (authMode !== "chatgpt") {
+    if (
+      presetId === "chatgpt-plan" ||
+      input.chatGptAccountId !== undefined ||
+      input.chatGptAllowFollowups !== undefined
+    )
+      throw new Error("ChatGPT account settings require Sign in with ChatGPT");
+    return {};
+  }
+  if (
+    presetId !== "chatgpt-plan" ||
+    dialect !== "standard" ||
+    (input.assistantPrefillMode !== undefined &&
+      input.assistantPrefillMode !== "disabled") ||
+    input.responsesCacheControl === true ||
+    input.responsesTurnInstructions === true
+  )
+    throw new Error(
+      "ChatGPT plan usage requires the standard ChatGPT connection settings",
+    );
+  const accountId = requiredTrimmed(
+    input.chatGptAccountId,
+    "ChatGPT account ID",
+    160,
+  );
+  const allowFollowups = input.chatGptAllowFollowups ?? false;
+  if (typeof allowFollowups !== "boolean")
+    throw new Error("ChatGPT follow-up consent must be a boolean");
+  return { chatGptAccountId: accountId, chatGptAllowFollowups: allowFollowups };
 }
 
 function normalizeApiKey(
@@ -894,6 +1067,8 @@ function normalizeApiKey(
   if (value === undefined || value === "") return undefined;
   if (authMode === "none")
     throw new Error("Do not enter an API key when authentication is disabled");
+  if (authMode === "chatgpt")
+    throw new Error("Do not enter an API key for a ChatGPT account");
   return requiredTrimmed(value, "API Key", 16_384);
 }
 

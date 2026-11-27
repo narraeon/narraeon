@@ -22,14 +22,17 @@ export async function testModelConnection(
   fetchImplementation: typeof fetch,
 ): Promise<TestModelConnectionResult> {
   const thinkingBudget = connection.thinkingBudgetTokens ?? 0;
-  if (thinkingBudget >= testOutputTokens)
+  const chatgptPlan = connection.chatgptPlan !== undefined;
+  if (!chatgptPlan && thinkingBudget >= testOutputTokens)
     return { outcome: "thinking_budget_too_large" };
   // Google reports explicit thinking separately from max_output_tokens.
-  const maxOutputTokens = Math.min(
-    connection.maxOutputTokens,
-    testOutputTokens -
-      (connection.provider === "google_interactions" ? thinkingBudget : 0),
-  );
+  const maxOutputTokens = chatgptPlan
+    ? connection.maxOutputTokens
+    : Math.min(
+        connection.maxOutputTokens,
+        testOutputTokens -
+          (connection.provider === "google_interactions" ? thinkingBudget : 0),
+      );
   const signal = AbortSignal.timeout(timeoutMs);
   let dispatched = false;
   let status: number | undefined;
@@ -39,25 +42,29 @@ export async function testModelConnection(
   let googleTerminalStatus: "incomplete" | "requires_continuation" | undefined;
   const fetchOnce: typeof fetch = async (url, init) => {
     if (dispatched) throw new Error("The connection test already dispatched");
-    if (typeof init?.body !== "string")
-      throw new Error("The connection test requires an encoded request body");
     signal.throwIfAborted();
-    const payload = new TextEncoder().encode(init.body);
-    const headers = new Headers(init.headers);
-    headers.set("Content-Length", String(payload.byteLength));
-    // A replayable string lets Node fetch resend a POST after HTTP 421.
-    const options: RequestInit & { duplex: "half" } = {
-      ...init,
-      headers,
-      body: new ReadableStream<Uint8Array>({
-        start(stream) {
-          stream.enqueue(payload);
-          stream.close();
-        },
-      }),
-      duplex: "half",
-      redirect: "manual",
-    };
+    let options = init;
+    if (!chatgptPlan) {
+      if (typeof init?.body !== "string")
+        throw new Error("The connection test requires an encoded request body");
+      const payload = new TextEncoder().encode(init.body);
+      const headers = new Headers(init.headers);
+      headers.set("Content-Length", String(payload.byteLength));
+      // A replayable string lets Node fetch resend a POST after HTTP 421.
+      const singleRequest: RequestInit & { duplex: "half" } = {
+        ...init,
+        headers,
+        body: new ReadableStream<Uint8Array>({
+          start(stream) {
+            stream.enqueue(payload);
+            stream.close();
+          },
+        }),
+        duplex: "half",
+        redirect: "manual",
+      };
+      options = singleRequest;
+    }
     dispatched = true;
     const response = await fetchImplementation(url, options);
     status = response.status;
@@ -117,6 +124,12 @@ export async function testModelConnection(
     };
   } catch (error: unknown) {
     let outcome: Outcome;
+    const planFailure =
+      chatgptPlan &&
+      error instanceof ModelHostFailureError &&
+      isRecord(error.details)
+        ? error.details.chatgptPlanFailure
+        : undefined;
     if (
       error instanceof ModelHostFailureError &&
       isRecord(error.details) &&
@@ -136,6 +149,13 @@ export async function testModelConnection(
         error.reason === "connect_timeout")
     )
       outcome = "timeout";
+    else if (
+      planFailure === "quota" ||
+      planFailure === "authentication" ||
+      planFailure === "parameters"
+    )
+      outcome = planFailure;
+    else if (planFailure === "unavailable") outcome = "failed";
     else if (googleTerminalStatus === "requires_continuation")
       outcome = "continuation_required";
     else if (googleTerminalStatus === "incomplete")

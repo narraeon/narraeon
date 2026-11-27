@@ -21,7 +21,10 @@ import {
 } from "../authoring/AuthoringRequestSnapshot.ts";
 import { randomUUID } from "node:crypto";
 import { readGoogleHops, writeGoogleHop } from "../model/GoogleHopJournal.ts";
-import type { GoogleHopEvidence } from "../model/ModelHost.ts";
+import {
+  validOptionalChatGptPlanFingerprint,
+  type GoogleHopEvidence,
+} from "../model/ModelHost.ts";
 import {
   mkdir,
   open,
@@ -1745,7 +1748,7 @@ function validModelBinding(value: unknown): value is ModelHostBinding {
         "maxOutputTokens",
         "protocolConfigFingerprint",
       ],
-      ["cacheStrategy"],
+      ["cacheStrategy", "chatgptPlanAccountFingerprint"],
     ) &&
     validProviderKind(value.provider) &&
     typeof value.endpointFingerprint === "string" &&
@@ -1753,6 +1756,7 @@ function validModelBinding(value: unknown): value is ModelHostBinding {
     validCount(value.contextWindowTokens) &&
     validCount(value.maxOutputTokens) &&
     typeof value.protocolConfigFingerprint === "string" &&
+    validOptionalChatGptPlanFingerprint(value) &&
     (value.cacheStrategy === undefined ||
       validCacheStrategy(value.cacheStrategy))
   );

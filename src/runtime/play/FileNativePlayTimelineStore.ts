@@ -81,6 +81,7 @@ import type {
   ModelHostWireRequest,
   GoogleHopEvidence,
 } from "../model/ModelHost.ts";
+import { validOptionalChatGptPlanFingerprint } from "../model/ModelHost.ts";
 import type {
   MaterialSelection,
   PlayFollowupCompilation,
@@ -2116,6 +2117,7 @@ function validModelHostBinding(value: unknown): value is ModelHostBinding {
     value.maxOutputTokens > 0 &&
     typeof value.protocolConfigFingerprint === "string" &&
     value.protocolConfigFingerprint.length > 0 &&
+    validOptionalChatGptPlanFingerprint(value) &&
     (value.cacheStrategy === undefined ||
       value.cacheStrategy === "explicit_anthropic_blocks" ||
       value.cacheStrategy === "explicit_cliproxyapi_message" ||

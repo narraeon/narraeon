@@ -61,6 +61,7 @@
     "ajv": "^8.20.0",
     "env-paths": "^4.0.0",
     "fastify": "^5.11.3",
+    "jose": "^6.2.18",
     "open": "^11.0.1",
     "unicode-segmenter": "^0.17.3",
     "yaml": "^2.8.1",

@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { onRequestAsyncHookHandler } from "fastify";
+import type { FastifyRequest, onRequestAsyncHookHandler } from "fastify";
 
 const runtimeApiPath = "/api/runtime/v1";
 const mobileCallerCookie = "narraeon_mobile_runtime=";
@@ -98,4 +98,28 @@ export function checkWebAccess(
     if (!accepted)
       return reply.code(403).send({ error: "Untrusted Runtime origin" });
   };
+}
+
+/** Only the desktop UI served directly from the loopback listener uses a ChatGPT plan. */
+export function isLocalChatGptRequest(request: FastifyRequest): boolean {
+  const socket = request.raw.socket;
+  const listener = request.server.server.address();
+  const { origin, host } = request.headers;
+  return (
+    listener !== null &&
+    typeof listener !== "string" &&
+    listener.address === "127.0.0.1" &&
+    socket.localAddress === "127.0.0.1" &&
+    socket.remoteAddress === "127.0.0.1" &&
+    (host === `127.0.0.1:${listener.port}` ||
+      host === `localhost:${listener.port}`) &&
+    origin === `http://${host}` &&
+    !Object.keys(request.headers).some(
+      (header) =>
+        header === "forwarded" ||
+        header === "via" ||
+        header === "x-real-ip" ||
+        header.startsWith("x-forwarded-"),
+    )
+  );
 }

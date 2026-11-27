@@ -107,6 +107,16 @@ export type V1Request =
   | { type: "protagonist-templates.copy"; id: string }
   | { type: "protagonist-templates.delete"; id: string }
   | { type: "model.read" }
+  | { type: "model.chatgpt.accounts" }
+  | {
+      type: "model.chatgpt.sign-in";
+      accountId?: string;
+      requestPlanConsent: boolean;
+    }
+  | { type: "model.chatgpt.sign-in-status"; attemptId: string }
+  | { type: "model.chatgpt.models"; accountId: string }
+  | { type: "model.chatgpt.refresh"; accountId: string }
+  | { type: "model.chatgpt.disconnect"; accountId: string }
   | {
       type: "model.save";
       connection: SaveModelConnectionInput;

@@ -174,15 +174,17 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByLabel("Base URL").fill(providerUrl);
   await page.getByLabel("API Key").fill("test-secret");
   await page.getByRole("button", { name: "从端点拉取模型" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "已从当前端点拉取 2 个模型",
-  );
+  await expect(
+    page.locator(".workspace-feedback").getByRole("status"),
+  ).toContainText("已从当前端点拉取 2 个模型");
   const fetchedModels = page.getByRole("combobox", { name: "已拉取的模型" });
   await expect(fetchedModels.locator("option")).toHaveCount(3);
   await fetchedModels.selectOption("trace-model");
   await expect(page.getByLabel("模型 ID")).toHaveValue("trace-model");
   await page.getByRole("button", { name: "保存模型连接" }).click();
-  await expect(page.getByRole("status")).toContainText("模型连接已保存");
+  await expect(
+    page.locator(".workspace-feedback").getByRole("status"),
+  ).toContainText("模型连接已保存");
   await page.getByRole("button", { name: "新建另一份" }).click();
   await page.getByLabel("配置名称").fill("备用模型");
   await page.getByLabel("Base URL").fill(providerUrl);
@@ -195,9 +197,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     .filter({ hasText: "备用模型" });
   await backupModel.getByRole("button", { name: "克隆配置" }).click();
   await expect(page.locator(".config-card")).toHaveCount(3);
-  await expect(page.getByRole("status")).toContainText(
-    "副本保留本机凭据，但不会切换当前配置",
-  );
+  await expect(
+    page.locator(".workspace-feedback").getByRole("status"),
+  ).toContainText("副本保留本机凭据，但不会切换当前配置");
   await expect(page.locator(".model-active-summary")).toContainText("备用模型");
   await expect(page.getByLabel("配置名称")).toHaveValue("备用模型（副本）");
   await expect(page.getByLabel("API Key")).toHaveValue("");
@@ -206,12 +208,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page.getByLabel("Base URL").fill(`${providerUrl}/alternate`);
   await expect(page.getByLabel("API Key")).not.toHaveAttribute("required", "");
   await page.getByRole("button", { name: "从端点拉取模型" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "已从当前端点拉取 2 个模型",
-  );
+  await expect(
+    page.locator(".workspace-feedback").getByRole("status"),
+  ).toContainText("已从当前端点拉取 2 个模型");
   await page.getByLabel("模型 ID").fill("backup-model-copy");
   await page.getByRole("button", { name: "保存模型连接" }).click();
-  await expect(page.getByRole("status")).toContainText("模型连接已保存");
+  await expect(
+    page.locator(".workspace-feedback").getByRole("status"),
+  ).toContainText("模型连接已保存");
   await expect(page.locator(".model-active-summary")).toContainText(
     "备用模型（副本）",
   );
@@ -1385,7 +1389,9 @@ test("新建世界文档时文件头是可编辑的草稿内容", async ({ page 
     await page.getByLabel("API Key").fill("world-document-header-fixture");
     await page.getByLabel("模型 ID").fill("trace-model");
     await page.getByRole("button", { name: "保存模型连接" }).click();
-    await expect(page.getByRole("status")).toContainText("模型连接已保存");
+    await expect(
+      page.locator(".workspace-feedback").getByRole("status"),
+    ).toContainText("模型连接已保存");
   }
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page.getByRole("button", { name: "新建内容包" }).click();
@@ -1513,7 +1519,9 @@ test("世界修订复用统一编辑工作区且世界管理可以纵向滚动",
     await page.getByLabel("API Key").fill("dialog-scroll-secret");
     await page.getByLabel("模型 ID").fill("trace-model");
     await page.getByRole("button", { name: "保存模型连接" }).click();
-    await expect(page.getByRole("status")).toContainText("模型连接已保存");
+    await expect(
+      page.locator(".workspace-feedback").getByRole("status"),
+    ).toContainText("模型连接已保存");
   }
   await page.getByRole("button", { name: "返回工作区" }).click();
   await page

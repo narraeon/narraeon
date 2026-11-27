@@ -391,6 +391,12 @@ export class ModelToolConversation<
           validateModelToolCalls(response);
         } catch (error) {
           if (
+            input.host.binding().chatgptPlanAccountFingerprint !== undefined
+          ) {
+            live.toolReceived = true;
+            throw error;
+          }
+          if (
             !(error instanceof ModelResponseFormatError) ||
             live.controller.signal.aborted
           )

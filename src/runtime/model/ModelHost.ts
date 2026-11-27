@@ -49,6 +49,30 @@ export interface ModelHostBinding {
   protocolConfigFingerprint: string;
   /** Optional only for bindings written before cache policy became visible. */
   cacheStrategy?: ModelHostCacheStrategy;
+  /** Nonsecret account binding for the dedicated ChatGPT Responses wire path. */
+  chatgptPlanAccountFingerprint?: string;
+}
+
+export function compatibleModelHostContinuation(
+  left: ModelHostBinding,
+  right: ModelHostBinding,
+): boolean {
+  return (
+    left.provider === right.provider &&
+    left.chatgptPlanAccountFingerprint === right.chatgptPlanAccountFingerprint
+  );
+}
+
+export function validOptionalChatGptPlanFingerprint(
+  value: Record<string, unknown>,
+): boolean {
+  const fingerprint = value.chatgptPlanAccountFingerprint;
+  return (
+    fingerprint === undefined ||
+    (value.provider === "openai_responses" &&
+      typeof fingerprint === "string" &&
+      /^[0-9a-f]{64}$/u.test(fingerprint))
+  );
 }
 
 export function equalModelHostBinding(
@@ -56,7 +80,7 @@ export function equalModelHostBinding(
   right: ModelHostBinding,
 ): boolean {
   return (
-    left.provider === right.provider &&
+    compatibleModelHostContinuation(left, right) &&
     left.endpointFingerprint === right.endpointFingerprint &&
     left.modelId === right.modelId &&
     left.contextWindowTokens === right.contextWindowTokens &&
@@ -133,6 +157,7 @@ export interface ModelHostRequestConfig {
   /** Absent in older snapshots; use the selected connection setting. */
   supportsAllowedTools?: boolean;
   assistantPrefillMode?: ModelAssistantPrefillMode;
+  chatgptPlanAccountFingerprint?: string;
 }
 
 export interface ModelHostExchange {
@@ -250,6 +275,8 @@ export interface ModelHost {
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   previewAuthoringRequest?(request: ModelHostExchange): ModelHostWireRequest;
+  /** Whether this captured connection allows automatic post-play requests. */
+  allowsAutomaticFollowups?(): boolean;
   binding(): ModelHostBinding;
   exchange(
     request: ModelHostExchange,

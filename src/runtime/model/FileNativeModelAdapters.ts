@@ -88,6 +88,7 @@ export class FileNativeModelHost implements ModelHost {
   readonly #connection: ResolvedFileNativeModelConnection;
   readonly #fetch: typeof fetch;
   readonly #failureLog: AiFailureRecorder | undefined;
+  readonly #chatgptPlanAccountFingerprint: string | undefined;
 
   constructor(
     { modelPrompt, ...connection }: FileNativeModelConnection,
@@ -97,12 +98,22 @@ export class FileNativeModelHost implements ModelHost {
   ) {
     this.#modelPrompt = structuredClone(modelPrompt);
     this.#connection = resolveConnection(connection, legacyResponses);
+    this.#chatgptPlanAccountFingerprint =
+      connection.chatgptPlan === undefined
+        ? undefined
+        : createHash("sha256")
+            .update(`chatgpt-plan\0${connection.chatgptPlan.accountId}`)
+            .digest("hex");
     this.#fetch = fetchImplementation;
     this.#failureLog = failureLog;
   }
 
   modelPrompt(): ModelConnectionPrompt | undefined {
     return this.#modelPrompt;
+  }
+
+  allowsAutomaticFollowups(): boolean {
+    return this.#connection.chatgptPlan?.allowFollowups ?? true;
   }
 
   binding(): ModelHostBinding {
@@ -114,6 +125,11 @@ export class FileNativeModelHost implements ModelHost {
       contextWindowTokens,
       maxOutputTokens,
       cacheStrategy: modelCacheStrategy(this.#connection),
+      ...(this.#chatgptPlanAccountFingerprint === undefined
+        ? {}
+        : {
+            chatgptPlanAccountFingerprint: this.#chatgptPlanAccountFingerprint,
+          }),
       endpointFingerprint: createHash("sha256")
         .update(`${provider}\0${this.#connection.baseUrl}`)
         .digest("hex"),
@@ -158,7 +174,11 @@ export class FileNativeModelHost implements ModelHost {
   /** Existing operations can refer to a binding fingerprint frozen before Responses capabilities existed. */
   matchesBinding(binding: ModelHostBinding): boolean {
     if (equalModelHostBinding(this.binding(), binding)) return true;
-    if (this.#connection.provider !== "openai_responses") return false;
+    if (
+      this.#connection.provider !== "openai_responses" ||
+      this.#connection.chatgptPlan !== undefined
+    )
+      return false;
     const legacy = new FileNativeModelHost(
       this.#connection,
       this.#fetch,
@@ -175,12 +195,22 @@ export class FileNativeModelHost implements ModelHost {
         baseUrl: _baseUrl,
         authMode: _authMode,
         apiKey: _apiKey,
+        chatgptPlan: _chatgptPlan,
         ...config
       } = this.#connection;
       void _baseUrl;
       void _authMode;
       void _apiKey;
-      frozen.modelConfig = config;
+      void _chatgptPlan;
+      frozen.modelConfig = {
+        ...config,
+        ...(this.#chatgptPlanAccountFingerprint === undefined
+          ? {}
+          : {
+              chatgptPlanAccountFingerprint:
+                this.#chatgptPlanAccountFingerprint,
+            }),
+      };
     }
     return frozen;
   }
@@ -191,9 +221,17 @@ export class FileNativeModelHost implements ModelHost {
       throw new ModelHostBindingMismatchError(
         "The request protocol does not match the selected model host",
       );
+    const { chatgptPlanAccountFingerprint, ...config } = request.modelConfig;
+    if (chatgptPlanAccountFingerprint !== this.#chatgptPlanAccountFingerprint)
+      throw new ModelHostBindingMismatchError(
+        "The frozen request belongs to a different ChatGPT plan connection",
+      );
     return new FileNativeModelHost(
       {
-        ...request.modelConfig,
+        ...config,
+        ...(this.#connection.chatgptPlan === undefined
+          ? {}
+          : { chatgptPlan: this.#connection.chatgptPlan }),
         supportsAllowedTools:
           request.modelConfig.supportsAllowedTools ??
           this.#connection.supportsAllowedTools,
@@ -224,18 +262,24 @@ export class FileNativeModelHost implements ModelHost {
       host.#connection.provider === "google_interactions"
         ? Date.now() + googleExchangeTimeoutMs
         : undefined;
-    return withModelRetry(
-      () =>
-        host.#exchange(
-          request,
-          {
-            ...observer,
-            onDelta: assistantPrefillDelta(request, observer?.onDelta),
-          },
-          deadline,
-        ),
-      { signal: observer?.signal, onRetry: observer?.onRetry, deadline },
-    ).then((response) => {
+    const dispatch = () =>
+      host.#exchange(
+        request,
+        {
+          ...observer,
+          onDelta: assistantPrefillDelta(request, observer?.onDelta),
+        },
+        deadline,
+      );
+    const result =
+      host.#connection.chatgptPlan === undefined
+        ? withModelRetry(dispatch, {
+            signal: observer?.signal,
+            onRetry: observer?.onRetry,
+            deadline,
+          })
+        : dispatch();
+    return result.then((response) => {
       try {
         return completeAssistantPrefill(request, response);
       } catch (error) {

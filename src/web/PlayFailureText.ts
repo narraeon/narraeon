@@ -41,6 +41,14 @@ export const failureText: Record<
     title: "模型连接发生错误",
     description: "模型服务未能完成请求。请检查模型连接。",
   },
+  chatgpt_plan_quota: {
+    title: "ChatGPT 套餐使用达到上限",
+    description: "请在 ChatGPT 设置中查看套餐或此应用的用量。",
+  },
+  chatgpt_plan_authorization: {
+    title: "ChatGPT 套餐授权不可用",
+    description: "请在模型连接中检查 ChatGPT 账号，并刷新授权或重新登录。",
+  },
   other: {
     title: "调用链中断",
     description: "处理这次请求时发生错误。旧请求不能重发。请查看技术详情。",
@@ -52,7 +60,12 @@ export function playFailureDescription(
   canRetry: boolean,
   canContinuePartial = false,
 ): string {
-  if (kind === "dispatch_budget") return uiText(failureText[kind].description);
+  if (
+    kind === "dispatch_budget" ||
+    kind === "chatgpt_plan_quota" ||
+    kind === "chatgpt_plan_authorization"
+  )
+    return uiText(failureText[kind].description);
   if (canContinuePartial) return uiText("可以从已保存的部分回复接着生成。");
   if (!canRetry && kind === "retryable")
     return uiText(failureText.other.description);

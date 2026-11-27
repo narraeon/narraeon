@@ -31,6 +31,12 @@
   - 设定完善与世界修订的用户任务及对话保留在 `input`。
   - 模型名或代理别名不自动决定该开关，必须由连接配置显式选择。参考：[OpenAI GPT-6.2 指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6.2-astra)、[前缀匹配说明](https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works)。
 
+#### 本地 ChatGPT 套餐连接
+
+订阅连接使用 OpenAI 的开源客户端授权流程。本机 Runtime 以 Narraeon 的名义发起授权，按账号及工作区对应的注册保存并刷新凭据。只有已授予套餐使用权限的连接能派发。模型列表来自所选账号。OAuth 凭据仅用于官方服务；Web 接口、请求预览、故障记录和世界归档均不得携带凭据。账号退出后，该连接停止派发。[动态注册](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) · [账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
+
+套餐派发使用公开的 Responses 端点，开启流式传输，设置 `store: false`，每次携带本轮所需的完整输入。按订阅通道支持的形式传送工具定义及原生回执，系统材料用开发者消息或 `instructions` 表达。请求省略 `max_output_tokens`。需收到成功完成事件才结算本步，额度不足或授权失效由用户处理。试发只发一次；自动后置请求须经单独同意。[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+
 ### 1.3 Anthropic Messages
 
 - 有序前部编码为有序 text blocks。
@@ -117,7 +123,7 @@ Effort、Thinking 模式和返回 thinking 内容是三项独立配置意图：
 
 **连接表单试发**是独立的 `model.test` 命令。它用当前表单的端点、模型、协议和请求参数，由正常适配器流式派发一条固定的短用户消息。已保存的 Key 仅能沿用同一服务来源。回环 Chat Completions 支持免 Key。试发不加入模型提示词、历史、工具或世界材料，不保存、启用或修改连接。
 
-试发最多发送一次请求，禁止重定向、重试和 Google 续接。等待上限为 15 秒，输出上限为 256 tokens，成功响应读取上限为 1 MiB。Google 的显式思考预算从试发输出额度扣除。无法放入额度的显式思考预算在请求前拒绝，不改写表单。Provider 默认或自适应思考仍按 Provider 行为运行。只有收到非空正文才显示成功，正文和推理均不出现在试发回执。回执只返回分类状态，不包含上游原始错误。
+试发最多发送一次请求，禁止重定向、重试和 Google 续接。等待上限为 15 秒，支持设置输出上限的连接最多请求 256 tokens，成功响应读取上限为 1 MiB。ChatGPT 套餐试发保留单次请求和本地读取限制，服务端输出量由套餐通道决定。Google 的显式思考预算从试发输出额度扣除。无法放入额度的显式思考预算在请求前拒绝，不改写表单。Provider 默认或自适应思考仍按 Provider 行为运行。只有收到非空正文才显示成功，正文和推理均不出现在试发回执。回执只返回分类状态，不包含上游原始错误。
 
 ### 5.2 稳定前缀、显式缓存标记与 `prompt_cache_key`
 

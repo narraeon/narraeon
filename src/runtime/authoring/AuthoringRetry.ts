@@ -1,4 +1,5 @@
 import {
+  compatibleModelHostContinuation,
   isModelHostTokenLimitFailure,
   ModelHostFailureError,
 } from "../model/ModelHost.ts";
@@ -183,13 +184,13 @@ export function assertCompatibleAuthoring(
   items: readonly ModelHostAppendItem[],
   host: ModelHost,
 ): void {
-  const selectedProtocol = host.binding().provider;
-  if (binding.provider !== selectedProtocol)
+  const selected = host.binding();
+  if (!compatibleModelHostContinuation(binding, selected))
     throw new RuntimeDomainError(
       "The selected model protocol is incompatible with this conversation; switch back or start a fresh model context.",
       { receipt: { code: "model_protocol_mismatch" } },
     );
-  if (!validAuthoringNativeContinuation(items, selectedProtocol))
+  if (!validAuthoringNativeContinuation(items, selected.provider))
     throw new Error(
       "The selected model protocol is incompatible with this conversation; switch back or start a fresh model context.",
     );

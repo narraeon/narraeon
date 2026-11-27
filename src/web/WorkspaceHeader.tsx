@@ -45,9 +45,12 @@ export function WorkspaceHeader({
   onNavigate: (screen: WorkspaceScreen) => void;
   onLocaleChange: (locale: AppLocale) => void;
 }): React.JSX.Element {
-  const activeModelName =
-    model.connections.find(({ id }) => id === model.activeConnectionId)?.name ??
-    null;
+  const activeModel = model.connections.find(
+    ({ id }) => id === model.activeConnectionId,
+  );
+  const activeModelName = activeModel?.name ?? null;
+  const usingChatGptPlan =
+    model.configured && activeModel?.chatGptAccountId !== undefined;
   const [menuOpen, setMenuOpen] = useState(false);
   const [creationOpen, setCreationOpen] = useState(false);
   const mobileToggle = useRef<HTMLButtonElement>(null);
@@ -229,18 +232,22 @@ export function WorkspaceHeader({
               className="workspace-model-button"
               aria-label={uiText("模型设置")}
               aria-current={screen === "model" ? "page" : undefined}
-              title={activeModelName ?? uiText("尚未配置")}
+              title={
+                usingChatGptPlan
+                  ? uiText("正在使用 ChatGPT 套餐")
+                  : (activeModelName ?? uiText("尚未配置"))
+              }
               disabled={navigationLocked}
               onClick={() => navigate("model")}
             >
               <span
-                className={`workspace-model-dot ${activeModelName === null ? "needs-attention" : "is-ready"}`}
+                className={`workspace-model-dot ${!model.configured ? "needs-attention" : "is-ready"}`}
                 aria-hidden="true"
               />
               {uiText("模型设置")}
               {activeModelName !== null && (
                 <span className="workspace-model-label" aria-hidden="true">
-                  {activeModelName}
+                  {usingChatGptPlan ? uiText("ChatGPT 套餐") : activeModelName}
                 </span>
               )}
             </button>

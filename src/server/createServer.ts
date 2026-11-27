@@ -1,5 +1,9 @@
 import { registerConversationStream } from "./ConversationStream.ts";
-import { checkMobileRuntimeAccess, checkWebAccess } from "./WebAccess.ts";
+import {
+  checkMobileRuntimeAccess,
+  checkWebAccess,
+  isLocalChatGptRequest,
+} from "./WebAccess.ts";
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
@@ -65,7 +69,8 @@ function isPollingRequest(request: FastifyRequest): boolean {
     (runtimeRequest.type === "setting-improvement.read" ||
       runtimeRequest.type === "setting-improvement.status" ||
       runtimeRequest.type === "setting-improvement.overview" ||
-      runtimeRequest.type === "play.chain.inspect")
+      runtimeRequest.type === "play.chain.inspect" ||
+      runtimeRequest.type === "model.chatgpt.sign-in-status")
   );
 }
 
@@ -285,6 +290,10 @@ export async function createServer(input: {
       try {
         const envelope = parseV1Envelope(request.body);
         runtimeRequestType = envelope.request.type;
+        const localChatGptAccess =
+          trustedOrigins.length === 0 &&
+          mobileStartupKey === undefined &&
+          isLocalChatGptRequest(request);
         if (
           acceptsPlayCallChainStream(request) &&
           (envelope.request.type === "play.chain.start" ||
@@ -295,8 +304,13 @@ export async function createServer(input: {
             envelope.request,
             request,
             reply,
+            localChatGptAccess,
           );
-        const response = await input.runtime.handle(envelope.request);
+        const response = await input.runtime.handle(
+          envelope.request,
+          undefined,
+          localChatGptAccess,
+        );
         const playCallFailure =
           runtimeRequestType === "play.chain.start" ||
           runtimeRequestType === "play.chain.append"
@@ -400,6 +414,7 @@ function sendPlayCallChainStream(
   >,
   request: FastifyRequest,
   reply: FastifyReply,
+  localChatGptAccess: boolean,
 ): FastifyReply {
   const stream = new PassThrough();
   const send = (frame: V1PlayCallChainStreamFrame): void => {
@@ -421,7 +436,7 @@ function sendPlayCallChainStream(
     },
   };
   void runtime
-    .handle(runtimeRequest, observer)
+    .handle(runtimeRequest, observer, localChatGptAccess)
     .then((response) => {
       if (!isPlayCallChainView(response.result))
         throw new Error(

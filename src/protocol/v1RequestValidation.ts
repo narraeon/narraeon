@@ -32,6 +32,12 @@ const requiredFields = {
   "preferences.read": {},
   "protagonist-templates.read": {},
   "model.read": {},
+  "model.chatgpt.accounts": {},
+  "model.chatgpt.sign-in": { requestPlanConsent: boolean },
+  "model.chatgpt.sign-in-status": { attemptId: text },
+  "model.chatgpt.models": { accountId: text },
+  "model.chatgpt.refresh": { accountId: text },
+  "model.chatgpt.disconnect": { accountId: text },
   "content.create": {},
   "play.read": {},
   "preferences.save": {},
@@ -410,6 +416,7 @@ const beforeRequired: Partial<Record<Command, readonly Check[]>> = {
 };
 
 const configChecks: Partial<Record<Command, readonly Check[]>> = {
+  "model.chatgpt.sign-in": [field("accountId", text)],
   "preferences.save": [
     check(
       {
