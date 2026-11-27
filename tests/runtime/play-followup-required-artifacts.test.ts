@@ -248,7 +248,6 @@ test.each([
             : {
                 chatgptPlan: {
                   accountId: "fixture",
-                  allowFollowups: true,
                   accessToken: () => Promise.resolve("synthetic"),
                 },
               }),
