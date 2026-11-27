@@ -1,7 +1,7 @@
 {
   "name": "narraeon",
   "version": "1.0.0-preview.2",
-  "description": "A local-first workspace for living worlds.",
+  "description": "Local-first AI roleplay workspace with file-native worlds, persistent state, and forkable timelines.",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {},
@@ -20,10 +20,16 @@
     "url": "https://github.com/narraeon/narraeon/issues"
   },
   "keywords": [
-    "ai",
-    "rpg",
+    "ai-roleplay",
+    "roleplay",
+    "ai-rpg",
+    "interactive-fiction",
+    "worldbuilding",
+    "storytelling",
+    "text-adventure",
+    "llm",
     "local-first",
-    "storytelling"
+    "self-hosted"
   ],
   "publishConfig": {
     "access": "public",
