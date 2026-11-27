@@ -126,12 +126,12 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     const originalText = "第二次行动\n保留同一输入";
     await page.getByLabel("你的行动").fill(originalText);
     await page.getByRole("button", { name: "追加行动", exact: true }).click();
-    await expect(
-      page.getByText("原来的第二段回复", { exact: true }),
-    ).toBeVisible();
     const latestReply = page
       .locator(".call-chain-assistant.is-completed")
       .last();
+    await expect(
+      latestReply.getByText("原来的第二段回复", { exact: true }),
+    ).toBeVisible();
     const actions = latestReply.getByRole("button", {
       name: "主持消息操作",
       exact: true,
