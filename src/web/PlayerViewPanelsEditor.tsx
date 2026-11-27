@@ -103,8 +103,10 @@ export function PlayerViewPanelsEditor({
                   <div>
                     <strong>{panel.config.title ?? panel.id}</strong>
                     <span>
-                      {uiText("玩家视图")}
-                      {panel.source.view} · {mountLabel(panel.mount)}
+                      {uiText("玩家视图 ID：{id} · {mount}", {
+                        id: panel.source.view,
+                        mount: mountLabel(panel.mount),
+                      })}
                     </span>
                   </div>
                   <button

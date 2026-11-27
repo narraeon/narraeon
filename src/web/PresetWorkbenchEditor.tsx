@@ -220,7 +220,7 @@ export function PresetWorkbenchEditor({
               </button>
               <input
                 type="checkbox"
-                aria-label={`${uiText("启用")} ${name(item)}`}
+                aria-label={uiText("启用 {name}", { name: name(item) })}
                 checked={item.enabled}
                 onChange={(e) =>
                   onChange((s) => ({

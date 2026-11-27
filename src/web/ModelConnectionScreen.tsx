@@ -1003,13 +1003,17 @@ export function ModelConnectionScreen({
                   )
                 }
               />
-              {selectedPreset?.id !== "custom" && (
-                <p className="field-note">
-                  {uiText("已填入")}
-                  {selectedPreset?.name}{" "}
-                  {uiText("的内置端点；手动修改后按自定义端点保存。")}
-                </p>
-              )}
+              {selectedPreset !== undefined &&
+                selectedPreset.id !== "custom" && (
+                  <p className="field-note">
+                    {uiText(
+                      "已填入 {name} 的内置端点，手动修改后按自定义端点保存。",
+                      {
+                        name: selectedPreset.name,
+                      },
+                    )}
+                  </p>
+                )}
 
               {form.provider === "chat_completions" && (
                 <>

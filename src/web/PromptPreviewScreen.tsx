@@ -660,7 +660,7 @@ function PromptPreviewResult({
                 : `${budgetPercent}%`}
             </dd>
             {contextAdmissionDisabled ? (
-              <small>tokens · Provider binding</small>
+              <small>{uiText("令牌数 · 模型绑定")}</small>
             ) : (
               <progress
                 aria-label={uiText("上下文窗口占用")}
@@ -893,10 +893,10 @@ function PlayPresetCallChain({
         <code>{callChain.bootstrap.cache.stablePrefixFingerprint}</code>
       </p>
       <p className="prompt-preview-cache-line">
-        {uiText("调用链可用工具：")}
-        <strong>{callChain.toolUniverse.length}</strong>{" "}
-        {uiText("· 后置请求：")}
-        <strong>{callChain.followups.length}</strong>
+        {uiText("调用链可用工具：{tools} · 后置请求：{followups}", {
+          tools: formatNumber(callChain.toolUniverse.length),
+          followups: formatNumber(callChain.followups.length),
+        })}
       </p>
     </section>
   );
@@ -1253,9 +1253,11 @@ function ProviderMapping({
       {provider.system === undefined ? null : (
         <div className="provider-system-blocks">
           <div className="prompt-preview-subsection-heading">
-            <h4>System blocks</h4>
+            <h4>{uiText("系统块")}</h4>
             <span>
-              {provider.system.length} {uiText("块")}
+              {uiText("块数：{count}", {
+                count: formatNumber(provider.system.length),
+              })}
             </span>
           </div>
           <ol>

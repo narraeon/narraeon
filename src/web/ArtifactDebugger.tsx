@@ -142,13 +142,15 @@ export function ArtifactDebugger({
             <article key={panel.panelId}>
               <strong>{panel.panelId}</strong>
               <span>
-                {uiText("已提交玩家视图投影 · head：")}
-                {panel.head}
+                {uiText("已提交玩家视图投影 · head：{head}", {
+                  head: panel.head,
+                })}
               </span>
               <span>
-                {uiText("来源")} · {panel.source.viewId} ·{" "}
-                {uiText("当前编排方案")} {panel.preset.id}/
-                {panel.preset.revision}
+                {uiText("玩家视图 ID：{view} · 当前编排方案：{preset}", {
+                  view: panel.source.viewId,
+                  preset: `${panel.preset.id}/${panel.preset.revision}`,
+                })}
               </span>
               {panel.diagnostics.length === 0 ? null : (
                 <ul>

@@ -233,7 +233,9 @@ export function PlayTurnCallDetails({
                   <ModelCallDetails
                     key={`${chainId}:${event.id}`}
                     retries={event.retries}
-                    label={`${uiText("后置请求")} · ${event.displayName}`}
+                    label={uiText("后置请求 · {name}", {
+                      name: event.displayName,
+                    })}
                     status={
                       event.status ??
                       (event.failed ? "interrupted" : "completed")

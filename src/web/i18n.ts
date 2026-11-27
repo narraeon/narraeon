@@ -916,7 +916,10 @@ const englishMessages: Record<string, string> = {
   无: "None",
   玩家视图面板诊断: "Player-view panel diagnostics",
   玩家视图面板: "Player-view panels",
-  "已提交玩家视图投影 · head：": "Committed player-view projection · head:",
+  "已提交玩家视图投影 · head：{head}":
+    "Committed player-view projection · head: {head}",
+  "玩家视图 ID：{view} · 当前编排方案：{preset}":
+    "Player view ID: {view} · Active orchestration: {preset}",
   "bridge 事件（": "Bridge events (",
   来源: "Source",
   世界端点: "World endpoint",
@@ -1184,9 +1187,8 @@ const englishMessages: Record<string, string> = {
   "保存后会移除这份配置原有的 API Key。":
     "Saving removes the API key stored for this configuration.",
   "请输入 API Key": "Enter an API key",
-  已填入: "Using",
-  "的内置端点；手动修改后按自定义端点保存。":
-    "'s built-in endpoint. After a manual edit it will be saved as a custom endpoint.",
+  "已填入 {name} 的内置端点，手动修改后按自定义端点保存。":
+    "Using the built-in endpoint for {name}. Editing the URL saves it as a custom endpoint.",
   新配置必填: "Required for a new configuration",
   更换服务来源时必填: "Required when changing the service origin",
   留空以沿用本机保存的现有凭据:
@@ -1533,6 +1535,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   删除面板: "Delete panel",
   面板标题: "Panel title",
   读取哪个玩家视图: "Player view to read",
+  "玩家视图 ID：{id} · {mount}": "Player view ID: {id} · {mount}",
   排列方式: "Layout",
   纵向排列: "Vertical",
   网格排列: "Grid",
@@ -1744,8 +1747,13 @@ const promptPreviewEnglishMessages: Record<string, string> = {
   "全新上下文发送这份稳定前缀；玩家原文随后作为普通消息追加。Runtime 不再插入裁决、叙事或结算 delta。":
     "A new context sends this stable prefix, then appends the player's original text as a regular message. Runtime no longer inserts adjudication, narrative, or settlement deltas.",
   条逻辑消息: "logical message(s)",
-  "调用链可用工具：": "Call-chain tools:",
-  "· 后置请求：": "· Follow-up requests:",
+  "调用链可用工具：{tools} · 后置请求：{followups}":
+    "Call-chain tools: {tools} · Follow-up requests: {followups}",
+  "令牌数 · 模型绑定": "Tokens · Model binding",
+  系统块: "System blocks",
+  "块数：{count}": "Blocks: {count}",
+  "历史维护诊断暂时不可用：{reason}":
+    "Historical maintenance diagnostics unavailable: {reason}",
   "这次编译没有逻辑消息。": "This compilation has no logical messages.",
   "逻辑消息与最终 Markdown": "Logical messages and final Markdown",
   "这里先保留产品逻辑 role；Provider 如何映射在下一分区单独展示。":
@@ -2025,14 +2033,14 @@ const worldFrameEnglishMessages: Record<string, string> = {
     "The source view below preserves the draft exactly. The visual editor returns automatically after repair.",
   "format 不是当前世界框架版本":
     "format is not the current world-frame version",
-  "Runtime 只接受": "Runtime accepts only",
+  "Runtime 只接受 {format}。": "Runtime accepts only {format}.",
   "修复为 V1 格式": "Repair as V1 format",
   世界提示框架流程: "World prompt-frame flow",
   "Markdown 提示块": "Markdown prompt blocks",
-  份世界指令: "world instruction(s)",
+  "世界指令：{count} 份": "World instructions: {count}",
   "进入逻辑 role": "Enter logical role",
   精确文档与目录: "Exact documents and directories",
-  个材料插槽: "material slot(s)",
+  "材料插槽：{count} 个": "Material slots: {count}",
   当前场景与常驻视图: "Current scene and pinned views",
   当前情境绑定: "Current-situation binding",
   未解析: "Unresolved",
@@ -2045,7 +2053,7 @@ const worldFrameEnglishMessages: Record<string, string> = {
   "（当前未解析）": "(currently unresolved)",
   "02 · 世界专属指令": "02 · world-specific instructions",
   提示块顺序: "Prompt-block order",
-  个块: "blocks",
+  "提示块：{count} 个": "Prompt blocks: {count}",
   "这些 Markdown 块按顺序进入编排方案预留的世界指令位置；正文仍在独立文件中编辑。":
     "These Markdown blocks enter the orchestration's world-instruction position in order. Their bodies remain editable in separate files.",
   世界指令顺序: "World-instruction order",
@@ -2058,7 +2066,7 @@ const worldFrameEnglishMessages: Record<string, string> = {
   加入指令顺序: "Add to instruction order",
   "03 · 确定性材料": "03 · deterministic material",
   上下文材料顺序: "Context-material order",
-  个插槽: "slots",
+  "插槽：{count} 个": "Slots: {count}",
   "Runtime 只按这些精确位置取材。顺序会进入真实 prompt，但不会推断“相关人物”或“重要历史”。":
     "Runtime reads material only from these exact locations. The order enters the real prompt, but Runtime never infers related characters or important history.",
   从上到下就是实际注入顺序: "Top to bottom is the real injection order",
@@ -2066,7 +2074,8 @@ const worldFrameEnglishMessages: Record<string, string> = {
     "Use Move up or Move down on each card. Sequence numbers update immediately.",
   必需插槽还未成对: "Required slots are not paired yet",
   当前情境: "Current situation",
-  "个 · 附加材料": " · additional material",
+  "当前情境插槽 {current} 个，附加材料插槽 {additional} 个。":
+    "Required slots: current situation ({current}), additional materials ({additional}).",
   补上当前情境: "Add current situation",
   补上附加材料: "Add additional material",
   新增材料类型: "Add material type",
@@ -2090,7 +2099,7 @@ const worldFrameEnglishMessages: Record<string, string> = {
   "高级：手动填写节点路径": "Advanced: enter the node path manually",
   每行填写一个标题层级: "Enter one heading level per line",
   "选择实际 YAML 文件": "Choose an actual YAML file",
-  历史消息句柄: "History-message handle",
+  "历史消息句柄（插槽 {index}）": "History-message handle (slot {index})",
   选择实际文档文件: "Choose an actual document file",
   "只列出当前草稿中可读取的世界文档。":
     "Only readable world documents in the current draft are listed.",
@@ -2118,11 +2127,11 @@ const worldFrameEnglishMessages: Record<string, string> = {
   缺失时阻止请求: "Block request when missing",
   "关闭后，目标暂时不存在时会明确略过。":
     "When disabled, a temporarily missing target is explicitly skipped.",
-  不是可视化编辑器支持的列表形状:
-    "The list shape is not supported by the visual editor",
+  "{name} 需要是可视化编辑器支持的列表。":
+    "{name} needs a list supported by the visual editor.",
   "可在高级 YAML 中修复，或明确重置为空列表后重新编排。":
     "Repair it in advanced YAML, or explicitly reset it to an empty list and arrange it again.",
-  重置: "Reset",
+  "重置 {name}": "Reset {name}",
   "frame.yaml 顶层必须是 YAML map。":
     "The top level of frame.yaml must be a YAML map.",
   "YAML 无法解析。": "YAML could not be parsed.",
@@ -2416,7 +2425,7 @@ const worldPageEnglishMessages: Record<string, string> = {
   返回: "Result",
   成功: "Success",
   "拒绝／失败": "Rejected / failed",
-  "后置请求 ·": "Follow-up request ·",
+  "后置请求 · {name}": "Follow-up request · {name}",
   "请求编码：已收到完整响应": "Request encoding: complete response received",
   "请求编码：派发后取消": "Request encoding: cancelled after dispatch",
   "请求编码：已尝试派发，响应未确认":
@@ -2837,6 +2846,7 @@ const dynamicEnglishMessages: Record<string, string> = {
   "启用顺序 {index}": "Enabled order {index}",
   "停用 {path}": "Disable {path}",
   "启用 {path}": "Enable {path}",
+  "启用 {name}": "Enable {name}",
   "上移 {path}": "Move {path} up",
   "下移 {path}": "Move {path} down",
   "编辑提示块内容 {path}": "Edit prompt-block content {path}",
