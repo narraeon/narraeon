@@ -173,6 +173,8 @@ export function chatGptPlanInterrupted(
 
 function failureAction(code?: string, status?: number): FailureAction {
   switch (code) {
+    case undefined:
+      break;
     case "subscription_sharing_usage_limit_exceeded":
       return "quota";
     case "invalid_token":

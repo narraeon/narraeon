@@ -81,14 +81,16 @@ test("ChatGPT plan retains native custom tool calls and wraps the matching Runti
     input: '{"ref":"@current-situation"}',
     encrypted_content: "opaque-continuation",
   };
-  const bodies: unknown[] = [];
+  const bodies: Record<string, unknown>[] = [];
   const fetch_ = vi.fn<typeof fetch>(async (url, init) => {
-    expect(String(url)).toBe("https://api.openai.com/v1/responses");
+    expect(url).toEqual(new URL("https://api.openai.com/v1/responses"));
     expect(init?.redirect).toBe("manual");
     expect(new Headers(init?.headers).get("authorization")).toBe(
       `Bearer ${fixtureToken}`,
     );
-    bodies.push(await new Response(init?.body).json());
+    bodies.push(
+      (await new Response(init?.body).json()) as Record<string, unknown>,
+    );
     return stream(
       completed(
         bodies.length === 1
@@ -142,19 +144,14 @@ test("ChatGPT plan retains native custom tool calls and wraps the matching Runti
   const response = await host.exchange(next);
   expect(response.text).toBe("Complete.");
   expect(bodies[1]).toEqual(preview.body);
-  expect(bodies[1]).toMatchObject({
-    store: false,
-    stream: true,
-    input: expect.arrayContaining([
-      customCall,
-      {
-        type: "custom_tool_call_output",
-        namespace: "narraeon",
-        name: "context_read",
-        call_id: "call-custom",
-        output: JSON.stringify({ content: "Rejected receipt", success: false }),
-      },
-    ]),
+  expect(bodies[1]).toMatchObject({ store: false, stream: true });
+  expect(bodies[1]?.input).toContainEqual(customCall);
+  expect(bodies[1]?.input).toContainEqual({
+    type: "custom_tool_call_output",
+    namespace: "narraeon",
+    name: "context_read",
+    call_id: "call-custom",
+    output: JSON.stringify({ content: "Rejected receipt", success: false }),
   });
   expect(bodies[1]).not.toHaveProperty("tools");
   expect(bodies[1]).not.toHaveProperty("previous_response_id");
@@ -247,7 +244,6 @@ test("a rejected ChatGPT token is invalidated once and upstream secrets are excl
     .exchange(requestFor(host))
     .catch((error: unknown) => error);
   expect(failure).toMatchObject({
-    message: expect.stringContaining("authorize plan usage again"),
     details: {
       chatgptPlanFailure: "authentication",
       providerCode: "invalid_token",
@@ -255,6 +251,9 @@ test("a rejected ChatGPT token is invalidated once and upstream secrets are excl
       requestId: "req-revoke",
     },
   });
+  expect(failure).toBeInstanceOf(Error);
+  if (failure instanceof Error)
+    expect(failure.message).toContain("authorize plan usage again");
   expect(JSON.stringify(failure)).not.toContain(fixtureToken);
   expect(invalidate).toHaveBeenCalledExactlyOnceWith(fixtureToken);
   expect(fetch_).toHaveBeenCalledTimes(1);
@@ -305,3 +304,23 @@ test("cancelling while acquiring authorization prevents a late paid dispatch", a
   await Promise.resolve();
   expect(fetch_).not.toHaveBeenCalled();
 });
+
+test.each([307, 421, 429])(
+  "a ChatGPT plan POST does not redirect or retry status %s",
+  async (status) => {
+    const fetch_ = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status,
+        headers: {
+          location: "https://api.openai.com/v1/elsewhere",
+          "retry-after": "0",
+        },
+      }),
+    );
+    const host = new FileNativeModelHost(planConnection(), fetch_);
+    await expect(host.exchange(requestFor(host))).rejects.toThrow(
+      /ChatGPT plan/u,
+    );
+    expect(fetch_).toHaveBeenCalledTimes(1);
+  },
+);

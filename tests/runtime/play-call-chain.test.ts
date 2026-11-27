@@ -267,9 +267,13 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
   expect(await artifacts.readActiveProjection(worldId)).toEqual([]);
 });
 
-test.each([false, true])(
-  "ChatGPT plan runs the real Runtime tool loop and follows post-play consent %s",
-  async (allowFollowups) => {
+test.each([
+  { allowFollowups: false, failFollowup: false, expectedRequests: 2 },
+  { allowFollowups: true, failFollowup: false, expectedRequests: 4 },
+  { allowFollowups: true, failFollowup: true, expectedRequests: 3 },
+])(
+  "ChatGPT plan runs the tool loop (followup consent $allowFollowups; followup fails $failFollowup)",
+  async ({ allowFollowups, failFollowup, expectedRequests }) => {
     const nativeCall = {
       type: "function_call",
       namespace: "narraeon",
@@ -332,7 +336,7 @@ test.each([false, true])(
         },
       },
       async (url, init) => {
-        expect(String(url)).toBe("https://api.openai.com/v1/responses");
+        expect(url).toEqual(new URL("https://api.openai.com/v1/responses"));
         const output = outputs[sent.length];
         sent.push({
           headers: new Headers(init?.headers),
@@ -342,17 +346,26 @@ test.each([false, true])(
           >,
         });
         if (output === undefined) throw new Error("Unexpected paid request");
-        return new Response(
-          `data: ${JSON.stringify({
-            type: "response.completed",
-            response: {
-              id: `resp-${sent.length}`,
-              status: "completed",
-              output,
-            },
-          })}\n\n`,
-          { headers: { "content-type": "text/event-stream" } },
-        );
+        const terminal =
+          failFollowup && sent.length === 3
+            ? {
+                type: "response.failed",
+                response: {
+                  status: "failed",
+                  error: { code: "subscription_sharing_usage_limit_exceeded" },
+                },
+              }
+            : {
+                type: "response.completed",
+                response: {
+                  id: `resp-${sent.length}`,
+                  status: "completed",
+                  output,
+                },
+              };
+        return new Response(`data: ${JSON.stringify(terminal)}\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        });
       },
     );
     const { worlds, root, worldId } = await createWorld(
@@ -376,10 +389,10 @@ test.each([false, true])(
       modelHost: host,
     });
     expect(view.status).toBe("ready");
-    expect(sent).toHaveLength(allowFollowups ? 4 : 2);
+    expect(sent).toHaveLength(expectedRequests);
     expect(
       view.events.filter((event) => event.kind === "followup"),
-    ).toHaveLength(allowFollowups ? 2 : 0);
+    ).toHaveLength(expectedRequests - 2);
     for (const [index, { body, headers }] of sent.entries()) {
       expect(body).toMatchObject({ store: false, stream: true });
       expect(body).not.toHaveProperty("max_output_tokens");
@@ -392,15 +405,15 @@ test.each([false, true])(
         `Bearer fake-live-token-${index + 1}`,
       );
     }
-    expect(sent[0]?.body.tools).toEqual([
-      expect.objectContaining({
-        name: "narraeon",
-        type: "namespace",
-        tools: expect.arrayContaining([
-          expect.objectContaining({ type: "function", name: "context_read" }),
-        ]),
-      }),
-    ]);
+    const namespaces = sent[0]?.body.tools as Record<string, unknown>[];
+    expect(namespaces).toHaveLength(1);
+    expect(namespaces[0]).toMatchObject({
+      name: "narraeon",
+      type: "namespace",
+    });
+    expect(namespaces[0]?.tools).toContainEqual(
+      expect.objectContaining({ type: "function", name: "context_read" }),
+    );
     const first = sent[0]?.body.input as Record<string, unknown>[];
     const preloadIndex = first.findIndex(
       (item) => item.name === "runtime_load_context",
@@ -415,8 +428,8 @@ test.each([false, true])(
       type: "function_call_output",
       namespace: "narraeon",
       call_id: preload.call_id,
-      output: expect.stringContaining('"success":true'),
     });
+    expect(first[preloadIndex + 1]?.output).toContain('"success":true');
     const next = sent[1]?.body.input as Record<string, unknown>[];
     expect(next).toEqual(expect.arrayContaining([reasoning, nativeCall]));
     const receipt = next.find(
@@ -428,10 +441,12 @@ test.each([false, true])(
       namespace: "narraeon",
       name: nativeCall.name,
     });
-    expect(JSON.parse(String(receipt?.output))).toMatchObject({
-      content: expect.stringContaining("Alex"),
-      success: true,
-    });
+    const result = JSON.parse(String(receipt?.output)) as Record<
+      string,
+      unknown
+    >;
+    expect(result.content).toContain("Alex");
+    expect(result.success).toBe(true);
     const reopened = await new FileNativeWorldStore(root).recoverEndpoint(
       worldId,
     );
@@ -441,6 +456,78 @@ test.each([false, true])(
     expect(JSON.stringify(view)).not.toContain("fake-live-token");
   },
 );
+
+test("a terminal ChatGPT plan quota error never commits partial story or starts a second request", async () => {
+  const partialText = "This may look like the final reply.";
+  const fetch_ = vi.fn<typeof fetch>().mockImplementation(() =>
+    Promise.resolve(
+      new Response(
+        [
+          { type: "response.output_text.delta", delta: partialText },
+          {
+            type: "response.failed",
+            response: {
+              status: "failed",
+              error: { code: "subscription_sharing_usage_limit_exceeded" },
+            },
+          },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    ),
+  );
+  const host = new FileNativeModelHost(
+    {
+      provider: "openai_responses",
+      baseUrl: chatGptPlanBaseUrl,
+      apiKey: "",
+      modelId: "subscription-model",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4000,
+      chatgptPlan: {
+        accountId: "local-account",
+        allowFollowups: true,
+        accessToken: () => Promise.resolve("fake-live-token"),
+      },
+    },
+    fetch_,
+  );
+  const { worlds, root, worldId } = await createWorld(
+    "chatgpt-quota",
+    undefined,
+    host.binding(),
+  );
+  const view = await new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    new FileNativeArtifactStore(root),
+  ).start({
+    worldId,
+    chainId: "chatgpt-quota",
+    exchangeId: "first",
+    playerText: "Look inside.",
+    hostBinding: hostBinding(),
+    playPreset: followupPlayPreset(),
+    modelBinding: host.binding(),
+    modelHost: host,
+  });
+  expect(view).toMatchObject({
+    status: "interrupted",
+    lastFailureKind: "chatgpt_plan_quota",
+  });
+  expect(view.lastFailure).toMatch(/usage limit|使用限制/u);
+  expect(view.canContinuePartial).not.toBe(true);
+  expect(view.events.filter((event) => event.kind === "followup")).toEqual([]);
+  expect(fetch_).toHaveBeenCalledTimes(1);
+  const reopened = await new FileNativeWorldStore(root).recoverEndpoint(
+    worldId,
+  );
+  expect(reopened.history.map(({ exactText }) => exactText)).not.toContain(
+    partialText,
+  );
+});
 
 test("Google CLIProxyAPI 主请求和后置预览在重读时保留合法头名称", async () => {
   const { host } = googleAuthoringHost(

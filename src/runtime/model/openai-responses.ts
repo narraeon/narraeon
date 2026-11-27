@@ -559,8 +559,11 @@ export async function exchangeResponses(
       signal,
       locale,
     });
-    if (!response.ok)
-      throw await chatGptPlanHttpFailure(response, plan, token, locale);
+    if (!response.ok) {
+      const error = await chatGptPlanHttpFailure(response, plan, token, locale);
+      await trace?.("responses_chatgpt_plan_failure", error.details);
+      throw error;
+    }
     if (!isProviderEventStream(response) || response.body === null) {
       void response.body?.cancel().catch(() => undefined);
       throw chatGptPlanInterrupted(locale);
@@ -584,6 +587,10 @@ export async function exchangeResponses(
         const evidence = error.details;
         if (isRecord(evidence))
           await invalidateRejectedToken(plan, token, evidence.providerCode);
+        await trace?.("responses_chatgpt_plan_failure", {
+          httpStatus: response.status,
+          ...(isRecord(evidence) ? evidence : {}),
+        });
         throw error;
       }
       throw chatGptPlanInterrupted(locale);

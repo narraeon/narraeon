@@ -119,6 +119,8 @@ export async function runPlayFollowupRequests(
   const prefix = structuredClone(input.prefix) as ModelHostAppendItem[];
   const outcomes: PlayFollowupOutcome[] = [];
   const completed: string[] = [];
+  const chatgptPlan =
+    input.modelHost.binding().chatgptPlanAccountFingerprint !== undefined;
   let failure: string | undefined;
 
   for (const followup of input.followups) {
@@ -161,7 +163,12 @@ export async function runPlayFollowupRequests(
     outcomes.push(outcome);
     await input.observer?.onOutcome?.(outcome);
     if (outcome.failure === undefined) completed.push(followup.id);
-    else failure ??= outcome.failure;
+    else {
+      failure ??= outcome.failure;
+      // Consent allows running the post-play work. A failed plan request ends
+      // that automatic sequence, leaving the committed main story intact.
+      if (chatgptPlan) break;
+    }
   }
 
   const extension =
