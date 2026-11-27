@@ -250,7 +250,7 @@ Faction stances:
   id: archive.fogbell-wreck-truth
   ref: wreck-insurance-truth
   title: Truth of the Seagull insurance wreck
-  summary: What happened ten winters ago when the Seagull sank and Colin's active plan.
+  summary: Background record linking the Seagull wreck ten winters ago with harbor accounts and cargo markings.
   aliases: []
 Facts:
   - Ten winters ago, the Seagull's insured copper cargo was quietly swapped for scrap iron by the cargo owners and Colin.

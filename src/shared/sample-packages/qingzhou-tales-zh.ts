@@ -219,7 +219,7 @@ export const qingzhouTalesChinese: readonly ContentTreeFile[] = [
   id: archive.qingzhou-lanruo-debt
   ref: lanruo-zither-debt
   title: 兰若夜琴与旧报恩
-  summary: 兰若废寺夜琴的真实缘由与白素心对周家的报恩旧事。
+  summary: 用于核对兰若废寺夜琴与周家旧事的关联。
   aliases: []
 事实记录:
   旧恩: 白素心乃青丘狐女，十年前负伤躲入兰若寺，得周言之父以草药相救且未曾泄密。

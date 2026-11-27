@@ -218,7 +218,7 @@ Facts:
   id: archive.bs-almanac-cipher
   ref: almanac-cipher
   title: The 1874 almanac & Blackwater channel
-  summary: What page 88 of the missing almanac records and why Vale’s confederate borrowed it.
+  summary: Reference record on the missing 1874 almanac’s river chart and its borrowing trail.
   aliases: []
 Facts:
   Almanac chart: Page 88 of the 1874 Thames Shoals & Tides Almanac charts an abandoned deep channel off Blackwater Bend that lets a barge bypass customs launches on a foggy high tide.
@@ -231,7 +231,7 @@ Facts:
   id: archive.bs-insurance-ring
   ref: insurance-ring-truth
   title: Truth of the Thames Shipping insurance plot
-  summary: Deputy manager Marcus Vale’s smuggling-and-insurance scheme and Arthur Finch’s abduction.
+  summary: Background record linking marine insurance policies, cargo movements, and Arthur Finch’s disappearance.
   aliases: []
 Facts:
   Mastermind: Deputy manager Marcus Vale colluded with river smugglers to offload insured tea and porcelain onto a hidden lighter in tonight’s fog, then ground the stripped freighter to collect a fraudulent total-loss payout.

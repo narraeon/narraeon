@@ -92,13 +92,13 @@ const descriptions = {
       genre: "Tabletop · d100",
       title: "Seven Days at Fogbell Harbor",
       premise:
-        "Ice fog seals the harbor for seven days. Hired to audit a missing lighthouse keeper’s books, you arrive the night the fogbell tolls three times in dead calm.",
+        "Ice fog seals the harbor for seven nights. Hired to audit a missing lighthouse keeper’s books, you step ashore to hear the innkeeper murmur that the fogbell tolled three times in dead calm last night.",
     },
     "zh-CN": {
       genre: "跑团调查 · d100",
       title: "雾钟港七日",
       premise:
-        "冰雾封港七天。你受雇核查失踪守塔人的旧账，刚登岸的深夜，无风的港口雾钟却自己响了三声。",
+        "冰雾封港七夜。你受雇核查失踪守塔人的旧账，刚登岸，旅店老板娘便低声告诉你，昨夜无风，雾钟却自己响了三声。",
     },
   },
   "qingzhou-tales": {
@@ -134,13 +134,13 @@ const descriptions = {
       genre: "Long-form detective",
       title: "A Study in Grey Fog",
       premise:
-        "November fog traps London. With Holmes and Watson south of the Thames, three urgent leads—a pawned anchor coin, a missing clerk, and a stolen museum almanac—land on your desk at 221B.",
+        "November fog traps London. With Holmes and Watson south of the Thames, three leads reach 221B: Holmes’s folded notes, a pawned anchor coin from Lestrade, and a museum call slip brought by Wiggins.",
     },
     "zh-CN": {
       genre: "长线侦探 · 互动小说",
       title: "贝克街的灰雾委托",
       premise:
-        "十一月浓雾封锁伦敦。福尔摩斯与华生外出盯梢，海锚暗记金币、失踪航运文书与博物馆海事年鉴三条急件同时汇到贝克街 221B。",
+        "十一月浓雾封锁伦敦。福尔摩斯与华生外出盯梢，桌上留着三张便签，雷斯垂德送来海锚暗记金币，维金斯也带来一张博物馆借书单。",
     },
   },
 } satisfies Record<

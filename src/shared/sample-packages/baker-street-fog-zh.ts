@@ -218,7 +218,7 @@ export const bakerStreetFogChinese: readonly ContentTreeFile[] = [
   id: archive.bs-almanac-cipher
   ref: almanac-cipher
   title: 1874 年海事年鉴与黑水弯暗道
-  summary: 失踪海事年鉴所载暗槽与冒名借阅者的真实目的。
+  summary: 用于核对失踪海事年鉴所载航道与借阅记录。
   aliases: []
 事实记录:
   年鉴内容: 1874 年《泰晤士暗礁与潮汐年鉴》第 88 页记载了黑水弯废驳船码头一条已被废弃的雾夜深水暗槽，只有大雾加涨潮时驳船才能避开海关巡逻艇悄然入海。
@@ -231,7 +231,7 @@ export const bakerStreetFogChinese: readonly ContentTreeFile[] = [
   id: archive.bs-insurance-ring
   ref: insurance-ring-truth
   title: 泰晤士航运沉船骗保案真相
-  summary: 副经理马库斯·韦尔的走私骗保计划与亚瑟·芬奇失踪经过。
+  summary: 用于核对航运保单、货运记录与亚瑟·芬奇失踪案的关联。
   aliases: []
 事实记录:
   主谋与计划: 泰晤士航运公司副经理马库斯·韦尔串通走私驳船团伙，计划在今晚大雾中把投保高额海险的货轮精品茶叶与瓷器暗中卸到黑水弯驳船转卖，再让空船故意搁浅骗取理赔。

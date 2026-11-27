@@ -247,7 +247,7 @@ export const fogbellHarborChinese: readonly ContentTreeFile[] = [
   id: archive.fogbell-wreck-truth
   ref: wreck-insurance-truth
   title: 海鸥号沉船保险案真相
-  summary: 十年前海鸥号沉船的真实经过与港务长柯林近期的善后打算。
+  summary: 用于核对十年前海鸥号沉船记录、货箱标记与港口账目的关联。
   aliases: []
 事实记录:
   - 十年前寒冬，“海鸥号”名义上运载高价精铜，实则被货主与柯林合伙掉包成废铁并投保巨额海险。

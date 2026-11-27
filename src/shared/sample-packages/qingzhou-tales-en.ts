@@ -219,7 +219,7 @@ Companions & trust:
   id: archive.qingzhou-lanruo-debt
   ref: lanruo-zither-debt
   title: The Lanruo zither and an old debt
-  summary: Why the zither plays at Lanruo Temple and Bai Suxin’s old debt to the Zhou family.
+  summary: Background record connecting the midnight zither at Lanruo Temple and the Zhou family.
   aliases: []
 Facts:
   Old debt: Bai Suxin is a fox spirit sheltered and healed ten years ago at Lanruo Temple by Zhou Yan’s late father, who never betrayed her secret.
