@@ -9309,9 +9309,14 @@ dialog.world-dialog-scrim::backdrop {
   gap: 0.25rem;
   margin-block: 0.35rem;
   padding: 0.35rem 0.55rem;
-  border-inline-start: 2px solid var(--danger);
-  background: var(--danger-surface);
+  border-inline-start: 2px solid var(--border);
+  background: var(--surface-muted);
   overflow-wrap: anywhere;
+}
+
+.model-call[data-status="interrupted"] .model-call-failure {
+  border-inline-start-color: var(--danger);
+  background: var(--danger-surface);
 }
 
 .model-call[data-status="interrupted"] > header small,
