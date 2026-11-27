@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { type Document, isMap, isSeq, parseDocument, stringify } from "yaml";
+import {
+  type Document,
+  isMap,
+  isSeq,
+  parseDocument,
+  stringify,
+  visit,
+} from "yaml";
 import {
   documentCodec,
   nextAvailableShortRef,
@@ -1297,7 +1304,7 @@ function applyYamlRevisionEdit(
       );
     const value = resolveValue(edit.value, [...locator, sequence.items.length]);
     if ("diagnostics" in value) return editFailed(value.diagnostics[0]!);
-    sequence.add(document.createNode(value.value));
+    sequence.add(createYamlPatchNode(document, value.value));
     return serialized(metadata);
   }
   const value = resolveValue(edit.value, locator);
@@ -1311,6 +1318,17 @@ function applyYamlRevisionEdit(
       }),
     );
   return serialized(metadata);
+}
+
+function createYamlPatchNode(document: Document, value: unknown) {
+  const subtree = document.createNode(value);
+  visit(subtree, {
+    Map(_key, node) {
+      if (node.items.length === 1 && typeof node.get("$ref") === "string")
+        node.flow = true;
+    },
+  });
+  return subtree;
 }
 
 /**
@@ -1328,23 +1346,28 @@ function upsertYamlValue(
     const rest = locator.slice(depth + 1);
     if (isMap(node) && typeof segment === "string") {
       if (rest.length === 0) {
-        node.set(segment, document.createNode(value));
+        node.set(segment, createYamlPatchNode(document, value));
         return true;
       }
       const child: unknown = node.get(segment, true);
       if (child === undefined) {
-        node.set(segment, document.createNode(yamlTailValue(rest, value)));
+        node.set(
+          segment,
+          createYamlPatchNode(document, yamlTailValue(rest, value)),
+        );
         return true;
       }
       if (!isMap(child) && !isSeq(child)) return false;
       node = child;
     } else if (isSeq(node) && typeof segment === "number") {
       if (segment >= node.items.length) {
-        node.items.push(document.createNode(yamlTailValue(rest, value)));
+        node.items.push(
+          createYamlPatchNode(document, yamlTailValue(rest, value)),
+        );
         return true;
       }
       if (rest.length === 0) {
-        node.items[segment] = document.createNode(value);
+        node.items[segment] = createYamlPatchNode(document, value);
         return true;
       }
       const child: unknown = node.items[segment];

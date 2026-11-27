@@ -481,6 +481,171 @@ describe("WorldDocumentStore atomic candidate batch Interface", () => {
     });
   });
 
+  test("a local YAML patch keeps a reference inline when replacing its parent map", () => {
+    const path = "state/gate.yaml";
+    const before = yamlDocument({
+      id: "place.gate",
+      ref: "gate",
+      title: "北门",
+      body: "出口:\n  位置: { $ref: place.gate }\n  状态: 关闭\n",
+    });
+    const source = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [{ path, contents: before }],
+    });
+
+    const revised = source.revise({
+      commands: [
+        {
+          kind: "patch",
+          document: { shortRef: "gate" },
+          edits: [
+            {
+              op: "replace",
+              locator: { yaml: ["出口"] },
+              value: { 位置: { $ref: "@gate" }, 状态: "开放" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(revised).toMatchObject({
+      ok: true,
+      changes: [
+        {
+          documentId: "place.gate",
+          shortRef: "gate",
+          before: { contents: before },
+          after: { contents: before.replace("关闭", "开放") },
+        },
+      ],
+    });
+  });
+
+  test("local YAML patches style only new reference nodes in maps and lists", () => {
+    const path = "state/gate.yaml";
+    const body = [
+      "# 作者保留的格式",
+      "原引用:",
+      '  $ref: "place.gate" # 块式引用',
+      "原行内: { $ref: place.gate } # 行内引用",
+      "原映射: { 状态: '关闭', 方向: 北 }",
+      "来访:",
+      "  - 旅人 # 保留来访记录",
+      "  - 无",
+      "",
+    ].join("\n");
+    const before = yamlDocument({
+      id: "place.gate",
+      ref: "gate",
+      title: "北门",
+      body,
+    });
+    const source = WorldDocumentStore.open({
+      layout: "world_state",
+      files: [{ path, contents: before }],
+    });
+    const revised = source.revise({
+      commands: [
+        {
+          kind: "patch",
+          document: { shortRef: "gate" },
+          edits: [
+            {
+              op: "add",
+              locator: { yaml: ["入口"] },
+              value: { $ref: "@gate" },
+            },
+            {
+              op: "add",
+              locator: { yaml: ["行程", 0, "终点"] },
+              value: { $ref: "@gate" },
+            },
+            {
+              op: "replace",
+              locator: { yaml: ["来访", 1] },
+              value: { $ref: "@gate" },
+            },
+            {
+              op: "add",
+              locator: { yaml: ["来访", 9, "下一站"] },
+              value: { $ref: "@gate" },
+            },
+            {
+              op: "append",
+              locator: { yaml: ["来访"] },
+              value: { 终点: [{ $ref: "@gate" }], 状态: "出发" },
+            },
+            {
+              op: "add",
+              locator: { yaml: ["错误引用"] },
+              value: { $ref: "@gate", 状态: "出发" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(revised).toMatchObject({
+      ok: true,
+      editOutcomes: [
+        { status: "applied" },
+        { status: "applied" },
+        { status: "applied" },
+        { status: "applied" },
+        { status: "applied" },
+        {
+          status: "failed",
+          diagnostic: { code: "document_reference_invalid" },
+        },
+      ],
+    });
+    if (!revised.ok) throw new Error("YAML patch unexpectedly failed");
+    expect(revised.changes[0]?.after.contents).toBe(
+      before.replace(
+        "  - 无\n",
+        [
+          "  - { $ref: place.gate }",
+          "  - 下一站: { $ref: place.gate }",
+          "  - 终点:",
+          "      - { $ref: place.gate }",
+          "    状态: 出发",
+          "入口: { $ref: place.gate }",
+          "行程:",
+          "  - 终点: { $ref: place.gate }",
+          "",
+        ].join("\n"),
+      ),
+    );
+    expect(
+      revised.snapshot.query({
+        kind: "select_node",
+        document: { documentId: "place.gate" },
+        locator: { yaml: ["来访", 3, "终点", 0] },
+      }),
+    ).toMatchObject({
+      ok: true,
+      node: { value: { target: { shortRef: "gate" } } },
+    });
+
+    const replacement = before.replace("  - 无", "  - 商人 # 整份源码原样保存");
+    expect(
+      revised.snapshot.revise({
+        commands: [
+          {
+            kind: "replace",
+            document: { shortRef: "gate" },
+            contents: replacement,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      ok: true,
+      changes: [{ documentId: "place.gate", after: { contents: replacement } }],
+    });
+  });
+
   test("partial metadata edits preserve omitted fields and keep Markdown title aligned", () => {
     const source = WorldDocumentStore.open({
       layout: "content_package",
@@ -1825,7 +1990,9 @@ describe("WorldDocumentStore write revision command", () => {
     if (!revised.ok) throw new Error("write revision unexpectedly failed");
     const contents = revised.changes[0]?.after.contents ?? "";
     expect(contents).toContain("地点: 宿舍");
-    expect(contents).toContain("$ref: character.alex");
+    expect(contents).toContain(
+      "人物:\n  - $ref: character.alex\n在场:\n  - $ref: character.alex\n",
+    );
     expect(revised.snapshot.status).toBe("usable");
   });
 
