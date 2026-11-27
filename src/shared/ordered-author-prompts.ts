@@ -100,6 +100,13 @@ export function authoringMechanics(
   return [
     `# ${zh ? "创作工具与结算" : "Authoring tools and settlement"}`,
     common,
+    ...(target === "world-revision"
+      ? [
+          zh
+            ? "已完整读取且仍获授权的独立修改可在同一响应发出。跳过已确认不变的值；需要新读取或前一步结果时，先等对应回执再决定。"
+            : "You can send independent edits to fully read, still-authorized files in one response. Skip confirmed unchanged values. Wait for required reads or prerequisite results before deciding.",
+        ]
+      : []),
     boundary,
     unicode,
     views,

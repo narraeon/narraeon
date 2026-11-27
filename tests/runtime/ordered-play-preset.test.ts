@@ -568,6 +568,16 @@ test.each(["en", "zh-CN"] as const)(
         worldTitle: "World",
       }),
     };
+    const writeGuidance =
+      locale === "en"
+        ? "You can send independent edits to fully read, still-authorized files in one response. Skip confirmed unchanged values. Wait for required reads or prerequisite results before deciding."
+        : "已完整读取且仍获授权的独立修改可在同一响应发出。跳过已确认不变的值；需要新读取或前一步结果时，先等对应回执再决定。";
+    expect(JSON.stringify(results["world-revision"].provider)).toContain(
+      writeGuidance,
+    );
+    expect(JSON.stringify(results.setting.provider)).not.toContain(
+      writeGuidance,
+    );
     for (const target of ["setting", "world-revision"] as const) {
       const result = results[target];
       const builtin = builtinAuthorPrompts(locale, target).find(
