@@ -14,6 +14,7 @@ let providerUrl = "";
 const disconnectProviderResponse = Symbol("disconnect-provider-response");
 const responses: (object | typeof disconnectProviderResponse)[] = [];
 const providerRequests: string[] = [];
+const streamCompletionGates = new WeakMap<object, Promise<void>>();
 /** Delay Provider SSE frames so the browser's real increments remain observable. */
 let providerDelayMs = 0;
 
@@ -70,6 +71,13 @@ test.beforeAll(async () => {
       if (payload !== undefined && body.includes('"stream":true')) {
         response.writeHead(200, { "content-type": "text/event-stream" });
         const frames = sseFrames(payload);
+        const completionGate = streamCompletionGates.get(payload);
+        if (completionGate !== undefined) {
+          const done = frames.pop();
+          response.write(frames.join(""));
+          void completionGate.then(() => response.end(done));
+          return;
+        }
         if (providerDelayMs === 0) {
           response.end(frames.join(""));
           return;
@@ -141,6 +149,18 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     }
   });
   const damagedPath = "world/characters/damaged.yaml";
+  const openingLead =
+    "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.";
+  // Already committed when the world opens, so the reader can scroll before
+  // receiving any text or tool steps from the first play request.
+  const publishedOpening = [
+    openingLead,
+    ...Array.from(
+      { length: 24 },
+      (_, index) =>
+        `Training log, day ${index + 1}. Alex leaves the dormitory before warm-up.`,
+    ),
+  ].join("\n\n");
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("zh-CN");
   await expect(page.getByRole("heading", { name: "世界工作区" })).toBeVisible();
@@ -512,8 +532,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       }),
       tool("setting_write_file", {
         path: "opening.md",
-        contents:
-          "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.\n",
+        contents: publishedOpening + "\n",
       }),
       tool("setting_write_file", {
         path: "control/blocks/world.md",
@@ -791,9 +810,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await page
     .getByRole("button", { name: "打开世界：Dormitory World", exact: true })
     .click();
-  await expect(page.getByLabel("故事时间线")).toContainText(
-    "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
-  );
+  await expect(page.getByLabel("故事时间线")).toContainText(openingLead);
   await expect(page.getByLabel("你的行动")).toBeVisible();
   // This workbench scenario inspects the technical trace throughout.
   await page.getByRole("button", { name: "阅读设置" }).click();
@@ -842,42 +859,51 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       },
     ],
   });
+  const narrationText = "Alex nods and continues folding the jersey.";
+  const narration = chatText(
+    narrationText,
+    "First verify the character's current location and the player's action.",
+  );
+  const finishNarration = Promise.withResolvers<void>();
+  streamCompletionGates.set(narration, finishNarration.promise);
   responses.push(
     chatTools(
       [worldPatch],
       "I will update the record before narrating the result.",
     ),
-    chatText(
-      "Alex nods and continues folding the jersey.",
-      "First verify the character's current location and the player's action.",
-    ),
+    narration,
   );
-  providerDelayMs = 200;
-  await page
-    .getByLabel("你的行动")
-    .fill("I ask Alex whether we are training tonight.");
-  await page.getByLabel("你的行动").press("Shift+Enter");
-  await expect(page.getByLabel("你的行动")).toHaveValue(
+  const transcript = page.getByLabel("世界游玩", { exact: true });
+  const callChain = page.getByLabel("模型调用链");
+  const action = page.getByLabel("你的行动");
+  await action.fill("I ask Alex whether we are training tonight.");
+  await action.press("Shift+Enter");
+  await expect(action).toHaveValue(
     "I ask Alex whether we are training tonight.\n",
   );
-  await page.getByLabel("你的行动").press("Enter");
-  const callChain = page.getByLabel("模型调用链");
-  await expect(callChain).toContainText("模型响应中");
-  const transcript = page.getByLabel("世界游玩");
-  const scrollRange = await transcript.evaluate((element) => {
-    element.scrollTop = 0;
-    return element.scrollHeight - element.clientHeight;
-  });
-  expect(scrollRange).toBeGreaterThan(0);
+  await expectCanScrollVertically(transcript);
+  await transcript.evaluate((element) => (element.scrollTop = 0));
+  try {
+    await action.press("Enter");
+    await expect(callChain).toContainText("模型响应中");
+    await expect(
+      callChain.locator(".call-chain-assistant.is-streaming", {
+        hasText: "Alex nods",
+      }),
+    ).toBeVisible();
+    const reader = await transcript.evaluate((element) => ({
+      scrollTop: element.scrollTop,
+      scrollRange: element.scrollHeight - element.clientHeight,
+    }));
+    expect(reader.scrollRange).toBeGreaterThan(0);
+    expect(reader.scrollTop).toBe(0);
+  } finally {
+    finishNarration.resolve();
+  }
   await expect(
-    callChain.locator(".call-chain-assistant.is-streaming", {
-      hasText: "Alex nods",
+    callChain.locator(".call-chain-assistant.is-completed", {
+      hasText: narrationText,
     }),
-  ).toBeVisible();
-  expect(await transcript.evaluate((element) => element.scrollTop)).toBe(0);
-  providerDelayMs = 0;
-  await expect(
-    page.getByText("Alex nods and continues folding the jersey."),
   ).toBeVisible();
   const orderedPlayRequest = providerRequests.find(
     (body) =>
@@ -916,11 +942,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   await expect(
     toolStep.getByText("I will update the record before narrating the result."),
   ).toBeVisible();
-  await expect(
-    page.getByText(
-      "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText(openingLead, { exact: true })).toBeVisible();
   await expect(
     page.getByRole("separator", { name: "全新上下文从这里开始" }),
   ).toBeVisible();
@@ -954,9 +976,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     tool_call_id: worldPatch.id,
     content: writeReceipt,
   });
-  expect(JSON.stringify(firstPlayRequest)).toContain(
-    "The dormitory door closes behind you. Alex, wearing a dark blue athletic tank top, waits to discuss tonight's training.",
-  );
+  expect(JSON.stringify(firstPlayRequest)).toContain(openingLead);
   expect(JSON.stringify(firstPlayRequest)).toContain("玩家已经读过的开场白");
   expect(JSON.stringify(firstPlayRequest)).not.toContain(
     "本次没有可注入的非开场白原文",
