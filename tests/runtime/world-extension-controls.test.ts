@@ -20,7 +20,7 @@ afterEach(async () => {
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
-async function setup(extraRequests: string[] = []) {
+async function setup(extraRequests: string[] = [], viewId = "status") {
   const root = await mkdtemp(join(tmpdir(), "world-extension-controls-"));
   roots.push(root);
   const options = { dataRoot: root, configRoot: join(root, "config") };
@@ -61,7 +61,7 @@ async function setup(extraRequests: string[] = []) {
               format: "narraeon.player-views/v1",
               views: [
                 {
-                  id: "status",
+                  id: viewId,
                   title: "Current fields",
                   items: [
                     {
@@ -304,8 +304,256 @@ test("关闭在途请求中止独立信号，迟到产物只留诊断；重开�
 });
 
 import type { WorldExtensionsView } from "../../src/protocol/worldExtensions.ts";
+import { builtinExtensionFollowupIds } from "../../src/shared/ordered-followups.ts";
+import { builtinStatusPanelId } from "../../src/shared/first-party-play-preset-templates.ts";
+import {
+  projectArtifactForFrontend,
+  type FrontendArtifactProjection,
+} from "../../src/runtime/extension/FrontendExtensionBundle.ts";
 import type { FrontendPlayerViewPanelProjection } from "../../src/runtime/extension/PlayerViewPanelProjector.ts";
 import type { RenderedPlayerView } from "../../src/protocol/playerViews.ts";
+
+test("旧世界可组合打开内置扩展，选择仅影响当前世界，状态栏关闭恢复原视图", async () => {
+  const { root, options, runtime, worlds, worldId, files } = await setup(
+    [],
+    "scene-status",
+  );
+  const otherWorldId = (
+    await worlds.createFromContentPackage({
+      operationId: "another-world",
+      sourcePackageId: "source",
+      sourcePackageTitle: "Other world",
+      packageFiles: files,
+    })
+  ).world.worldId;
+  const store = new FileNativePlayPresetStore(options.configRoot);
+  const original = await store.bindCurrent();
+  await store.setScriptsEnabled(original.id, false);
+  const preset = await store.bindCurrent();
+  const originalHead = await worlds.currentHead(worldId);
+  const ids = [...builtinExtensionFollowupIds, builtinStatusPanelId];
+  const readControls = async (id: string) =>
+    (await runtime.handle({ type: "world.extensions.read", worldId: id }))
+      .result as WorldExtensionsView;
+  const readDecorations = async (rt = runtime) =>
+    (await rt.handle({ type: "world.play-decorations.read", worldId }))
+      .result as {
+      playerViewPanels: FrontendPlayerViewPanelProjection[];
+      suppressedPlayerViewIds: string[];
+    };
+  const first = (await readControls(worldId)).items.filter(({ id }) =>
+    ids.some((builtin) => builtin === id),
+  );
+  expect(first).toHaveLength(4);
+  expect(
+    first.every(
+      (item) => item.source === "builtin" && !item.enabled && !item.overridden,
+    ),
+  ).toBe(true);
+  expect((await readDecorations()).suppressedPlayerViewIds).toEqual([]);
+  for (const item of first) {
+    await runtime.handle({
+      type: "world.extensions.set",
+      worldId,
+      key: item.key,
+      value: "on",
+    });
+  }
+  expect(
+    (await readControls(otherWorldId)).items
+      .filter(({ id }) => ids.some((builtin) => builtin === id))
+      .every((item) => !item.enabled),
+  ).toBe(true);
+  expect(await worlds.currentHead(worldId)).toBe(originalHead);
+  expect(await store.bindCurrent()).toEqual(preset);
+  const status = await readDecorations(new V1Runtime(options));
+  expect(status.suppressedPlayerViewIds).toEqual(["scene-status"]);
+  expect(status.playerViewPanels).toHaveLength(1);
+  expect(status.playerViewPanels[0]).toMatchObject({
+    panelId: builtinStatusPanelId,
+    source: { kind: "player_view", viewId: "scene-status" },
+    frontend: { trustedLocalCode: true },
+  });
+  expect(
+    (await runtime.handle({ type: "world.package-scripts.read", worldId }))
+      .result,
+  ).toEqual({ enabled: false });
+  const optionsPayload = Array.from({ length: 4 }, (_, index) => ({
+    id: `choice-${index}`,
+    label: `Choice ${index}`,
+    prompt: `Player draft ${index}`,
+  }));
+  const requests: string[] = [];
+  const modelBinding = {
+    provider: "chat_completions" as const,
+    modelId: "test",
+    contextWindowTokens: 64000,
+    maxOutputTokens: 8192,
+    endpointFingerprint: "fixture",
+    protocolConfigFingerprint: "fixture",
+  };
+  const emit = (output: string, payload: unknown) => ({
+    id: output,
+    name: "artifact_emit",
+    arguments: { output, payload },
+  });
+  const responses: Record<string, ModelHostResponse> = {
+    "builtin:action-choices": {
+      toolCalls: [emit("player_options", optionsPayload)],
+    },
+    "builtin:generic-panels": {
+      toolCalls: [
+        emit("markdown_panel", "# In the story"),
+        emit("html_panel", "<p>In the sidebar</p>"),
+        emit("debug_panel", "In diagnostics"),
+      ],
+    },
+    "builtin:artifact-debugger": {
+      toolCalls: [emit("debug_example", "Generated debug sample")],
+    },
+  };
+  const host: ModelHost = {
+    binding: () => modelBinding,
+    exchange(request) {
+      requests.push(request.requestId!);
+      return Promise.resolve(
+        responses[request.requestId!] ?? {
+          text: "The story advances.",
+          providerState: {
+            protocol: "chat_completions",
+            assistantMessage: {
+              role: "assistant",
+              content: "The story advances.",
+            },
+          },
+        },
+      );
+    },
+  };
+  const artifacts = new FileNativeArtifactStore(root);
+  const chain = new PlayCallChain(
+    worlds,
+    new FileNativePromptCompiler(),
+    artifacts,
+  );
+  expect(
+    (
+      await chain.start({
+        worldId,
+        chainId: "builtins-chain",
+        exchangeId: "first",
+        playerText: "Wait by the door",
+        hostBinding: presetHostBinding(preset),
+        playPreset: preset,
+        modelBinding,
+        modelHost: host,
+      })
+    ).status,
+  ).toBe("ready");
+  expect(requests.slice(1)).toEqual(builtinExtensionFollowupIds);
+  const cold = new V1Runtime(options);
+  const readArtifacts = async (id = worldId) =>
+    (await cold.handle({ type: "artifacts.read", worldId: id }))
+      .result as FrontendArtifactProjection[];
+  const projections = await readArtifacts();
+  expect(
+    projections.find(({ output }) => output === "player_options"),
+  ).toMatchObject({
+    payload: optionsPayload,
+    frontend: { mount: "composer_below", trustedLocalCode: true },
+  });
+  expect(
+    projections.find(({ output }) => output === "markdown_panel"),
+  ).toMatchObject({
+    frontend: { mount: "story", trustedLocalCode: false },
+  });
+  expect(
+    projections.find(({ output }) => output === "html_panel"),
+  ).toMatchObject({
+    frontend: {
+      mount: "sidebar",
+      trustedLocalCode: false,
+      renderer: { mode: "document", scripts: [] },
+    },
+  });
+  expect(
+    (await cold.handle({ type: "artifacts.debug", worldId })).result,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        output: "debug_panel",
+        payload: "In diagnostics",
+      }),
+      expect.objectContaining({
+        output: "debug_example",
+        payload: "Generated debug sample",
+      }),
+    ]),
+  );
+  const frozen = (await artifacts.readDebug(worldId)).find(
+    ({ output }) => output === "player_options",
+  )!;
+  const tampered = structuredClone(frozen);
+  tampered.frozenPresentation!.files["scripts/player-options.js"] =
+    "throw new Error('foreign code')";
+  expect(projectArtifactForFrontend(tampered, preset).renderer).toMatchObject({
+    scripts: [],
+    trustedLocalCode: false,
+  });
+  await cold.initialize();
+  await cold.handle({
+    type: "world.archive.export",
+    worldId,
+    operationId: "export-builtins",
+  });
+  const download = await cold.worldArchives.download("export-builtins");
+  const upload = await cold.worldArchives.upload(download.stream);
+  await download.cleanup();
+  const imported = (
+    await cold.handle({
+      type: "world.archive.import",
+      operationId: "import-builtins",
+      ...upload,
+    })
+  ).result as { world: { worldId: string } };
+  expect((await readControls(imported.world.worldId)).items).toEqual(
+    expect.arrayContaining(
+      first.map((item) =>
+        expect.objectContaining({
+          key: item.key,
+          enabled: true,
+          overridden: true,
+        }),
+      ),
+    ),
+  );
+  expect(
+    (await readArtifacts(imported.world.worldId)).find(
+      ({ output }) => output === "player_options",
+    ),
+  ).toMatchObject({
+    payload: optionsPayload,
+    frontend: { mount: "composer_below", trustedLocalCode: true },
+  });
+  const set = (id: string, value: "on" | "off" | "default") =>
+    cold.handle({
+      type: "world.extensions.set",
+      worldId,
+      key: first.find((item) => item.id === id)!.key,
+      value,
+    });
+  await set(builtinStatusPanelId, "default");
+  expect(await readDecorations(cold)).toMatchObject({
+    playerViewPanels: [],
+    suppressedPlayerViewIds: [],
+  });
+  await set("builtin:action-choices", "off");
+  await set("builtin:action-choices", "on");
+  expect(requests).toHaveLength(4);
+  expect(
+    (await readArtifacts()).some(({ output }) => output === "player_options"),
+  ).toBe(false);
+});
 
 test("纯界面关闭抑制 fallback，重开读取当前字段；同端点通知、重启及 fork 偏好独立且零模型请求", async () => {
   const { runtime, options, worlds, worldId } = await setup();
