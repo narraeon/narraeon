@@ -139,7 +139,7 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
 ## Information Discipline & State Tracking
 
 - @sealed-crate-origin is an on-demand background record; read it via context_read only when the player probes the chest’s origin, confronts someone who knows, or breaks the seal—never reveal the chest’s true contents early.
-- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation (keeping only what is still undecided right now, clearing settled choices, and splitting partially completed steps such as papers checked vs. hold inspection still pending) and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open; record ongoing promises in @pending-matters and lasting ties in @relationships.
+- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open: track step-by-step lock, inspection, or handover progress (such as papers checked vs. hold inspection still pending) only in @current-situation while clearing settled choices; keep Side threads & notes in @escort-manifest to high-level arrivals, confirmed rumors, and side-thread outcomes (for example, arrived at Willow Bend Lock on Day 2 morning) without duplicating live sub-steps; record ongoing promises in @pending-matters and lasting ties in @relationships.
 `,
     ["escort-manifest"],
     undefined,

@@ -139,7 +139,7 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
 ## 信息隔离与状态维护
 
 - @sealed-crate-origin 是按需读取的幕后底档，仅在玩家设法查探箱子来历、与知情者交锋或拆封查验时再通过 context_read 读取，严禁在玩家尚未查验前泄露箱内实情。
-- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation（只保留眼下仍未决定的事项，移除已落定的旧选择；若过闸盘查或交接只完成了一半，例如文书已验而货舱待验，应分开写明已完成与待处理部分）与 @escort-manifest；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
+- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation 与 @escort-manifest：过闸、盘查或交接的即时步骤进度（例如文书已验、货舱待验）只维护在 @current-situation 中，并清理已落定的旧选择；@escort-manifest 的「沿途见闻与支线」只记站点抵达、已查明传闻与支线结果（例如“第 2 日清晨抵达柳湾闸”），不重复抄写当前过闸子步骤，避免两处状态脱节；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
 `,
     ["escort-manifest"],
     undefined,
