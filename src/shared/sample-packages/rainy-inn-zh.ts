@@ -35,7 +35,7 @@ export const rainyInnChinese: SampleContentPackage = {
   说话者: { $ref: character.shen-he }
   邀请: 先擦擦雨吧。我们正找一封信——你愿意帮忙看看吗？
 短期局面:
-  - 你刚抵达门口，沈禾递来的干毛巾尚未被接过。
+  - 玩家刚抵达门口，沈禾递来的干毛巾尚未被接过。
   - 周澄抱着登记簿，刚停下擦拭湿书角的动作。
 `,
     },
