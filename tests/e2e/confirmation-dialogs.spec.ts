@@ -90,16 +90,18 @@ test("home deletion confirms the named world and content package in Chinese", as
   });
   await page.goto("/#/");
 
-  for (const { actions, target, warning, request } of [
+  for (const { actions, target, card, warning, request } of [
     {
       actions: "世界操作：待删除的世界",
       target: "删除世界：待删除的世界",
+      card: "打开世界：待删除的世界",
       warning: /删除世界“待删除的世界”.*全部提交、历史和存档/,
       request: { type: "world.delete", worldId },
     },
     {
       actions: "内容包操作：临时内容包",
       target: "删除内容包：临时内容包",
+      card: "打开内容包：临时内容包",
       warning: /删除内容包“临时内容包”.*已创建的世界不受影响/,
       request: { type: "content.delete", packageId: localId },
     },
@@ -134,7 +136,9 @@ test("home deletion confirms the named world and content package in Chinese", as
 
     await opener.click();
     await confirm.dblclick();
-    await expect(opener).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: card, exact: true }),
+    ).toHaveCount(0);
     expect(writes.slice(count)).toEqual([request]);
   }
   const workspace = await runtime<{
