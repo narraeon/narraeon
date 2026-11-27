@@ -92,6 +92,7 @@ export function WorldExtensionMenu({
         </p>
         <fieldset>
           <legend>{uiText("后置请求")}</legend>
+          <p>{uiText("每个启用的后置请求会在回复完成后额外调用模型一次。")}</p>
           {view.items
             .filter((item) => item.kind === "request" || item.kind === "group")
             .map(row)}

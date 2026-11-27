@@ -1,6 +1,7 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import {
+  builtinFollowupSource,
   newPresetArtifact,
   type PresetResourceEdit,
 } from "./preset-resource-editor.ts";
@@ -10,8 +11,14 @@ import { OrderedPlayPromptEditor } from "./OrderedPlayPromptEditor.tsx";
 import {
   defaultFollowupItems,
   builtinFollowupExample,
+  isBuiltinExtensionFollowupId,
+  withBuiltinExtensionFollowups,
   type FollowupItem,
 } from "../shared/ordered-followups.ts";
+import {
+  builtinExtensionLabel,
+  builtinStatusPanelId,
+} from "../shared/first-party-play-preset-templates.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import type {
   PlayPresetStructuredEditor,
@@ -62,23 +69,32 @@ export function PresetWorkbenchEditor({
   }>();
   const [tab, setTab] = useState("prompt");
   const [output, setOutput] = useState("");
-  const items =
-    structure.followupItems ?? defaultFollowupItems(structure.followups);
+  const items = withBuiltinExtensionFollowups(
+    structure.followupItems ?? defaultFollowupItems(structure.followups),
+  );
   // A failed clone must keep the source selected; the new identity only exists
   // after the complete resource edit has been applied.
   const selection =
-    requestedSelection?.kind === "followup" &&
-    !items.some((item) => item.id === requestedSelection.id) &&
-    requestedSelection.fallback
+    requestedSelection?.fallback &&
+    !(requestedSelection.kind === "followup"
+      ? items.some((item) => item.id === requestedSelection.id)
+      : structure.playerViewPanels.some(
+          (panel) => panel.id === requestedSelection.id,
+        ))
       ? { ...requestedSelection, id: requestedSelection.fallback }
       : requestedSelection;
-  const example = builtinFollowupExample(getWebLocale());
+  const locale = getWebLocale();
   const selectedItem = items.find((i) => i.id === selection?.id);
-  const followup: PlayPresetFollowupDefinition | undefined =
+  const builtin =
     selectedItem?.kind === "builtin"
-      ? example.definition
-      : structure.followups.find((f) => f.id === selection?.id);
+      ? builtinFollowupSource(selectedItem.id)
+      : undefined;
+  const followup: PlayPresetFollowupDefinition | undefined =
+    builtin?.definition ??
+    structure.followups.find((f) => f.id === selection?.id);
+  const followupMounts = builtin?.mounts ?? structure.mounts;
   const panel = structure.playerViewPanels.find((p) => p.id === selection?.id);
+  const statusPanelLabel = builtinExtensionLabel(builtinStatusPanelId, locale);
   const artifact =
     followup?.artifacts.find((a) => a.name === output) ??
     followup?.artifacts[0];
@@ -98,14 +114,14 @@ export function PresetWorkbenchEditor({
       artifacts: f.artifacts.map((a) => (a.name === artifact?.name ? next : a)),
     }));
   }
-  function addFollowup(clone?: PlayPresetFollowupDefinition) {
+  function addFollowup(source?: string) {
     const id = `request_${browserUUID().replaceAll("-", "")}`;
     onResourceEdit(
-      clone
+      source
         ? {
             type: "clone-followup",
             id,
-            source: clone.id,
+            source,
           }
         : {
             type: "create-followup",
@@ -117,16 +133,18 @@ export function PresetWorkbenchEditor({
     setSelection({
       kind: "followup",
       id,
-      ...(clone && selection ? { fallback: selection.id } : {}),
+      ...(source && selection ? { fallback: selection.id } : {}),
     });
     setTab("prompt");
   }
   function name(item: FollowupItem) {
-    return item.kind === "builtin"
-      ? example.definition.displayName
-      : item.kind === "content-package"
-        ? uiText("内容包后置组")
-        : (structure.followups.find((f) => f.id === item.id)?.displayName ??
+    if (item.kind === "builtin")
+      return isBuiltinExtensionFollowupId(item.id)
+        ? builtinExtensionLabel(item.id, locale)
+        : builtinFollowupExample(locale).definition.displayName;
+    return item.kind === "content-package"
+      ? uiText("内容包后置组")
+      : (structure.followups.find((f) => f.id === item.id)?.displayName ??
           item.id);
   }
   function move(id: string, to: number) {
@@ -149,6 +167,7 @@ export function PresetWorkbenchEditor({
             ＋
           </button>
         </header>
+        <p>{uiText("每个启用的后置请求会在回复完成后额外调用模型一次。")}</p>
         <ol aria-label={uiText("后置请求")}>
           {items.map((item, index) => (
             <li
@@ -239,6 +258,27 @@ export function PresetWorkbenchEditor({
           </button>
         </header>
         <ol>
+          <li>
+            <button
+              type="button"
+              aria-pressed={selection?.id === builtinStatusPanelId}
+              onClick={() =>
+                setSelection({ kind: "panel", id: builtinStatusPanelId })
+              }
+            >
+              {statusPanelLabel}
+              <small>{uiText("系统")}</small>
+            </button>
+            <input
+              type="checkbox"
+              aria-label={`${uiText("启用")} ${statusPanelLabel}`}
+              checked={structure.statusPanelEnabled === true}
+              onChange={(event) => {
+                const statusPanelEnabled = event.currentTarget.checked;
+                onChange((s) => ({ ...s, statusPanelEnabled }));
+              }}
+            />
+          </li>
           {structure.playerViewPanels.map((p) => (
             <li key={p.id}>
               <button
@@ -255,7 +295,27 @@ export function PresetWorkbenchEditor({
     </>
   );
   const detail =
-    selection?.kind === "panel" && panel ? (
+    selection?.id === builtinStatusPanelId ? (
+      <div className="preset-object-detail">
+        <h2>{statusPanelLabel}</h2>
+        <p>
+          {uiText(
+            "用内置样式展示世界已有的状态视图。关闭后恢复默认卡片，不调用模型。",
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            const id = `panel_${browserUUID().replaceAll("-", "")}`;
+            onResourceEdit({ type: "clone-status-panel", id });
+            setSelection({ kind: "panel", id, fallback: builtinStatusPanelId });
+          }}
+        >
+          {uiText("克隆状态栏")}
+        </button>
+        {preview()}
+      </div>
+    ) : selection?.kind === "panel" && panel ? (
       <div className="preset-object-detail">
         <PlayerViewPanelsEditor
           panels={[panel]}
@@ -305,7 +365,7 @@ export function PresetWorkbenchEditor({
             ↓
           </button>
           {followup && (
-            <button type="button" onClick={() => addFollowup(followup)}>
+            <button type="button" onClick={() => addFollowup(followup.id)}>
               {uiText("orchestration.followup.clone")}
             </button>
           )}
@@ -369,11 +429,7 @@ export function PresetWorkbenchEditor({
                     )}
                     rows={16}
                     readOnly={readonly}
-                    value={
-                      readonly
-                        ? example.body
-                        : (files[followup.prompt.path] ?? "")
-                    }
+                    value={builtin?.body ?? files[followup.prompt.path] ?? ""}
                     onChange={(e) =>
                       onWrite(followup.prompt.path, e.target.value)
                     }
@@ -412,7 +468,7 @@ export function PresetWorkbenchEditor({
                       <small>{a.purpose ?? uiText("尚未填写用途")}</small>
                       <span>
                         {mountLabel(
-                          structure.mounts.find((m) => m.channel === a.channel)
+                          followupMounts.find((m) => m.channel === a.channel)
                             ?.mount ?? "story",
                         )}
                       </span>
@@ -572,7 +628,7 @@ export function PresetWorkbenchEditor({
                           <MountSelect
                             ariaLabel={uiText("orchestration.output.position")}
                             value={
-                              structure.mounts.find(
+                              followupMounts.find(
                                 (m) => m.channel === artifact.channel,
                               )?.mount ?? ""
                             }
@@ -594,7 +650,7 @@ export function PresetWorkbenchEditor({
                         </label>
                         <PresetDisplayEditor
                           value={artifact}
-                          files={files}
+                          files={builtin?.files ?? files}
                           onWrite={onWrite}
                           onEdit={(edit) =>
                             onResourceEdit({
@@ -649,7 +705,12 @@ export function PresetWorkbenchEditor({
                 )}
               </>
             )}
-            {preview(followup.id, artifact?.name)}
+            {isBuiltinExtensionFollowupId(followup.id) &&
+            selectedItem?.enabled === false ? (
+              <p>{uiText("启用此项后可预览样例。")}</p>
+            ) : (
+              preview(followup.id, artifact?.name)
+            )}
           </>
         )}
       </div>

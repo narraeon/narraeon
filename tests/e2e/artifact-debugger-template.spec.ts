@@ -48,43 +48,75 @@ for (const locale of appLocales) {
       },
     );
     await manage.click();
-    const copyPrefix = label("复制推荐", "Copy recommended orchestration");
     await expect(
       page.getByRole("button", {
-        name: new RegExp(`${copyPrefix}.*Markdown / HTML`),
+        name: new RegExp(label("^复制推荐", "^Copy recommended orchestration")),
       }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await page
+      .getByLabel(label("新编排方案名称", "New orchestration name"))
+      .fill(`Workbench clone ${locale}`);
     await page
       .getByRole("button", {
-        name: new RegExp(
-          `${copyPrefix}.*${label("产物调试器示例", "Artifact debugger example")}`,
-        ),
+        name: label("新建空白编排方案", "Create blank orchestration"),
+        exact: true,
       })
       .click();
     await expect(page).toHaveURL(/#\/orchestrations\/[^/]+$/u);
     const id = decodeURIComponent(page.url().split("/").at(-1)!);
-    const original = await readPreset(id);
-    expect(original.validation).toEqual({ status: "valid" });
-    expect(Object.keys(original.files).sort()).toEqual([
-      "call-chain.yaml",
-      "frame.yaml",
-      "orchestration.yaml",
-      "prompts/debug-example.md",
-    ]);
-    expect(original.files["orchestration.yaml"]).toContain(
-      "name: artifact-debugger",
-    );
-    expect(original.structure!.followups).toHaveLength(1);
-    expect(original.structure!.followups[0]!.artifacts).toEqual([
-      expect.objectContaining({
-        name: "debug_example",
-        channel: "artifact-debugger.example",
-      }),
-    ]);
+    const initial = await readPreset(id);
+    expect(initial.validation).toEqual({ status: "valid" });
+    expect(initial.structure?.followups).toEqual([]);
+
+    await page
+      .getByText(label("编排方案操作", "Orchestration actions"), {
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("button", {
+        name: label("停用 JavaScript", "Disable JavaScript"),
+        exact: true,
+      })
+      .click();
+    const choices = page.getByRole("checkbox", {
+      name: label("启用 行动选项", "Enable Action choices"),
+      exact: true,
+    });
+    await expect(choices).not.toBeChecked();
+    await choices.check();
+    await page
+      .getByRole("button", {
+        name: new RegExp(label("^行动选项", "^Action choices")),
+      })
+      .click();
+    await page
+      .getByText(label("游玩效果预览 · 就地展开", "Play preview · expand here"))
+      .click();
+    const exampleButton = page
+      .locator(".preset-draft-preview")
+      .frameLocator("iframe")
+      .getByRole("button", {
+        name: label("示例选项 1", "Example choice 1"),
+        exact: true,
+      });
+    await exampleButton.click();
+    await expect(
+      page.getByLabel(
+        label("本页输入草稿（尚未发送）", "Local input draft (not sent)"),
+      ),
+    ).toHaveValue(label("示例行动 1", "Example action 1"));
+    await choices.uncheck();
 
     await page
       .getByRole("button", {
-        name: new RegExp(label("^发送调试示例", "^Emit debug example")),
+        name: new RegExp(label("^调试示例输出", "^Debug example output")),
+      })
+      .click();
+    await page
+      .getByRole("button", {
+        name: label("克隆后置请求", "Clone follow-up"),
+        exact: true,
       })
       .click();
     const prompt = page.getByLabel(
@@ -112,6 +144,24 @@ for (const locale of appLocales) {
         exact: true,
       }),
     ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/orchestrations/${id}$`));
+    const saved = await readPreset(id);
+    const draft = saved.draft ?? saved;
+    expect(draft.validation).toEqual({ status: "valid" });
+    expect(draft.structure!.followups).toHaveLength(1);
+    const cloned = draft.structure!.followups[0]!;
+    const artifact = cloned.artifacts[0]!;
+    expect(cloned.id).toMatch(/^request_/u);
+    expect(artifact).toMatchObject({ name: "debug_example" });
+    expect(draft.structure!.mounts).toContainEqual({
+      channel: artifact.channel,
+      mount: "debug",
+    });
+    expect(
+      draft.structure?.followupItems?.find(
+        (item) => item.id === "builtin:artifact-debugger",
+      )?.enabled,
+    ).toBe(false);
 
     await page
       .getByRole("button", {
@@ -142,7 +192,7 @@ for (const locale of appLocales) {
       test.info().outputPath(`debug-${locale}.orchestration.json`),
     );
     expect(JSON.parse(portable.toString("utf8"))).toContainEqual({
-      path: "prompts/debug-example.md",
+      path: cloned.prompt.path,
       contents: expect.stringContaining(`# Browser edit ${locale}`),
     });
     await manage.click();
@@ -284,9 +334,9 @@ for (const locale of appLocales) {
       await expect(page.locator(".is-detailed-mode")).toBeVisible();
       await expect(
         debuggerRegion.locator('[data-extension-status="completed"]'),
-      ).toContainText("emit_debug_example");
+      ).toContainText(cloned.id);
       const record = debuggerRegion.getByText(
-        "debug_example · superseded · artifact-debugger.example",
+        `debug_example · superseded · ${artifact.channel}`,
         { exact: true },
       );
       await record.click();

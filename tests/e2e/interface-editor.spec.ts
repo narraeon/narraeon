@@ -81,9 +81,40 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await page.reload();
     await openWorkspaceCreationTool(page);
     await page.getByText("编排方案管理", { exact: true }).click();
+    await page.getByLabel("新编排方案名称").fill("状态栏编辑测试");
     await page
-      .getByRole("button", { name: "复制推荐状态栏", exact: true })
+      .getByRole("button", { name: "新建空白编排方案", exact: true })
       .click();
+    const statusStyle = page.getByRole("checkbox", { name: "启用 状态栏样式" });
+    await expect(statusStyle).not.toBeChecked();
+    await statusStyle.check();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(page.getByText("编排方案已保存。")).toBeVisible();
+    await page.getByRole("button", { name: /状态栏样式/u }).click();
+    await page.getByLabel("预览世界").selectOption(worldId);
+    await page.getByRole("button", { name: "预览界面", exact: true }).click();
+    await expect(
+      page
+        .locator(".interface-extension-preview")
+        .frameLocator('iframe[title="builtin:status-panel"]')
+        .getByText("Alex is folding a jersey.", { exact: true }),
+    ).toBeVisible();
+    await statusStyle.uncheck();
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(page.getByText("编排方案已保存。")).toBeVisible();
+    const styleLibrary = await runtime<FileNativePlayPresetLibrary>(page, {
+      type: "play.read",
+    });
+    const stylePreset = styleLibrary.presets.find(
+      (preset) => preset.name === "状态栏编辑测试",
+    )!;
+    expect(
+      (stylePreset.draft ?? stylePreset).structure?.statusPanelEnabled,
+    ).toBe(false);
+    expect(requests).toBe(0);
+
+    await page.getByRole("button", { name: /状态栏样式/u }).click();
+    await page.getByRole("button", { name: "克隆状态栏", exact: true }).click();
     // Integration with #38: interface editing must retain both prompt lists.
     const authorText = `AUTHOR_INTERFACE_ROUNDTRIP_${Date.now()}`;
     await page.getByRole("tab", { name: /设定完善/u }).click();
@@ -121,7 +152,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await page.getByRole("button", { name: "预览界面", exact: true }).click();
     const preview = page
       .locator(".interface-extension-preview")
-      .frameLocator('iframe[title="current_view"]');
+      .frameLocator('iframe[title^="panel_"]');
     await expect(
       preview.getByRole("heading", { name: "未保存状态栏42" }),
     ).toBeVisible();
@@ -130,7 +161,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     ).toBeVisible();
 
     await page
-      .locator('.interface-extension-preview iframe[title="current_view"]')
+      .locator('.interface-extension-preview iframe[title^="panel_"]')
       .scrollIntoViewIfNeeded();
     await page.screenshot({
       path: test.info().outputPath("A-interface.png"),
@@ -208,7 +239,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
       .click();
     const panel = page
       .locator('[data-extension-mount="composer_above"]')
-      .frameLocator('iframe[title="current_view"]');
+      .frameLocator('iframe[title^="panel_"]');
     await expect(
       panel.getByRole("heading", { name: "已保存状态栏42" }),
     ).toBeVisible();

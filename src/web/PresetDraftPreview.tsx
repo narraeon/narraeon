@@ -7,6 +7,7 @@ import {
   validatePlayPresetArtifactPayload,
   type PlayPresetArtifactPayloadContract,
 } from "../shared/artifact-payload-contract.ts";
+import { isBuiltinExtensionFollowupId } from "../shared/ordered-followups.ts";
 import {
   ArtifactExtensionHost,
   ArtifactExtensionMount,
@@ -100,11 +101,13 @@ export function PresetDraftPreview({
       validation = String(error);
     }
   }
-  const mount = snapshot?.structure.mounts.find(
-    (m) => m.channel === artifact?.declaration.channel,
-  )?.mount;
+  const mount =
+    artifact?.mount ??
+    snapshot?.structure.mounts.find(
+      (m) => m.channel === artifact?.declaration.channel,
+    )?.mount;
   const projection: FrontendArtifactProjection | undefined =
-    artifact && mount
+    snapshot && artifact && mount
       ? {
           recordId: "preview",
           worldId: "preview",
@@ -131,7 +134,9 @@ export function PresetDraftPreview({
             regex: artifact.regex,
             ...(artifact.renderer ? { renderer: artifact.renderer } : {}),
             trustedLocalCode:
-              artifact.renderer?.trustedLocalCode === true && scriptsEnabled,
+              artifact.renderer?.trustedLocalCode === true &&
+              (isBuiltinExtensionFollowupId(artifact.requestId) ||
+                scriptsEnabled),
             fallback: "none",
           },
         }
@@ -148,7 +153,7 @@ export function PresetDraftPreview({
       <summary>{uiText("游玩效果预览 · 就地展开")}</summary>
       <p>
         {uiText(
-          "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此编排方案的脚本设置。",
+          "预览当前修改与本页样例，不调用模型，也不改变世界。自定义脚本沿用此编排方案的脚本设置。",
         )}
       </p>
       <SyncNotice

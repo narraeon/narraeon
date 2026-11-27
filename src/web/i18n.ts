@@ -396,8 +396,6 @@ const englishMessages: Record<string, string> = {
   "JavaScript 已关闭；文本、HTML 和样式仍可预览。":
     "JavaScript disabled. Text, HTML and styles can still be previewed.",
   "已复制为独立编排方案。": "Copied as an independent orchestration.",
-  "已复制推荐{name}，可独立编辑。":
-    "Copied the recommended {name} for independent editing.",
   编排方案编辑器: "Orchestration editor",
   "已加入修复草稿，保存时将检查编排方案格式。":
     "Added to the repair draft. The orchestration format will be checked when saving.",
@@ -1278,7 +1276,6 @@ const playPresetEnglishMessages: Record<string, string> = {
   新建或导入: "Create or import",
   "已新建普通编排方案。": "A regular orchestration was created.",
   新建空白编排方案: "Create blank orchestration",
-  复制推荐: "Copy recommended orchestration",
   导入编排方案文件: "Import orchestration file",
   "还没有编排方案。": "There are no orchestrations yet.",
   编排方案文件编辑器: "Orchestration file editor",
@@ -3139,11 +3136,17 @@ const orchestrationWorkbenchEnglishMessages: Record<string, string> = {
     "Generate the declared interface outputs from the settled narrative.",
   内容包后置组: "Content-package follow-ups",
   回复完成后: "After the reply",
+  "每个启用的后置请求会在回复完成后额外调用模型一次。":
+    "Each enabled follow-up makes one extra model request after the reply.",
+  "启用此项后可预览样例。": "Enable this follow-up to preview an example.",
   系统: "System",
   用户: "User",
   "纯界面 · 不调用模型": "Interface · no model",
   新增纯界面: "Add interface panel",
   世界状态栏: "World status",
+  克隆状态栏: "Clone status panel",
+  "用内置样式展示世界已有的状态视图。关闭后恢复默认卡片，不调用模型。":
+    "Apply the built-in style to the world's existing status view. Turning it off restores the default cards. No model request is needed.",
   "系统 / 内容包": "System / package",
   提示词: "Prompt",
   界面产物: "Outputs",
@@ -3185,8 +3188,8 @@ const orchestrationWorkbenchEnglishMessages: Record<string, string> = {
   "AI 必须生成此产物": "Required output",
   样例校验通过: "Sample valid",
   "游玩效果预览 · 就地展开": "Play preview · expand here",
-  "预览当前修改与本页样例，不调用模型，也不改变世界。JavaScript 是否运行沿用此编排方案的脚本设置。":
-    "Preview your current edits with this page's sample data, without model calls or world changes. JavaScript follows this orchestration's script settings.",
+  "预览当前修改与本页样例，不调用模型，也不改变世界。自定义脚本沿用此编排方案的脚本设置。":
+    "Preview your current edits with this page's sample data, without model calls or world changes. Custom scripts follow this orchestration's script settings.",
   "正在解析当前草稿…": "Resolving draft…",
   示例输入: "Sample input",
   载入当前格式样例: "Load current format sample",

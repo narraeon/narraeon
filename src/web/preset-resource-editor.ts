@@ -1,8 +1,14 @@
+import { parse } from "yaml";
 import { orchestrationManifest } from "../shared/application-preset-files.ts";
+import {
+  builtinExtensionTemplateForLocale,
+  builtinStatusPanelId,
+} from "../shared/first-party-play-preset-templates.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import {
   builtinFollowupExample,
   defaultFollowupItems,
+  isBuiltinExtensionFollowupId,
 } from "../shared/ordered-followups.ts";
 import { getWebLocale } from "./i18n.ts";
 import type {
@@ -11,6 +17,7 @@ import type {
   PlayPresetStructuredEditor,
 } from "./PlayPresetScreen.tsx";
 import type { DisplayDefinition } from "./PresetDisplayEditor.tsx";
+import type { PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 
 export interface PresetResourceDraft {
   files: Record<string, string>;
@@ -38,6 +45,7 @@ export type PresetResourceEdit =
     }
   | { type: "delete-resource"; path: string }
   | { type: "create-panel"; id: string; title: string; emptyMessage: string }
+  | { type: "clone-status-panel"; id: string }
   | { type: "remove-panel"; id: string }
   | { type: "remove-followup"; id: string }
   | { type: "remove-artifact"; requestId: string; output: string }
@@ -54,6 +62,63 @@ export type PresetResourceEdit =
       files?: Record<string, string>;
       mount?: PlayPresetStructuredEditor["mounts"][number]["mount"];
     };
+
+interface BuiltinFollowupSource {
+  body: string;
+  definition: PlayPresetFollowupDefinition;
+  files: Record<string, string>;
+  mounts: PlayPresetStructuredEditor["mounts"];
+}
+
+/** Read the same application-owned template files used for Runtime compilation. */
+export function builtinFollowupSource(
+  id: string,
+): BuiltinFollowupSource | undefined {
+  const locale = getWebLocale();
+  if (id === "builtin:summary") {
+    const recap = builtinFollowupExample(locale);
+    return {
+      ...recap,
+      files: {},
+      mounts: [{ channel: "builtin:summary", mount: "story" }],
+    };
+  }
+  if (!isBuiltinExtensionFollowupId(id)) return undefined;
+  const { files, entryId, label } = builtinExtensionTemplateForLocale(
+    id,
+    locale,
+  );
+  type PortableFollowup = Omit<PlayPresetFollowupDefinition, "prompt"> & {
+    prompt: { role: string; markdown: string };
+  };
+  const manifest = parse(files[orchestrationManifest]!) as {
+    callChain: string;
+    mounts?: Record<
+      string,
+      PlayPresetStructuredEditor["mounts"][number]["mount"]
+    >;
+  };
+  const { followups } = parse(files[manifest.callChain]!) as {
+    followups: PortableFollowup[];
+  };
+  const { prompt, ...definition } = followups.find(
+    (entry) => entry.id === entryId,
+  )!;
+  return {
+    definition: {
+      ...definition,
+      id,
+      displayName: label,
+      prompt: { role: prompt.role, path: prompt.markdown },
+    },
+    body: files[prompt.markdown]!,
+    files,
+    mounts: Object.entries(manifest.mounts ?? {}).map(([channel, mount]) => ({
+      channel,
+      mount,
+    })),
+  };
+}
 
 /** Returns a complete new draft; the caller applies files and structure together. */
 export function editPresetResources(
@@ -101,6 +166,23 @@ export function editPresetResources(
         emptyMessage: action.emptyMessage,
         groups: [],
       },
+    });
+    return next;
+  }
+  if (action.type === "clone-status-panel") {
+    const { files, entryId } = builtinExtensionTemplateForLocale(
+      builtinStatusPanelId,
+      getWebLocale(),
+    );
+    const { playerViewPanels } = parse(files[orchestrationManifest]!) as {
+      playerViewPanels: PlayPresetPlayerViewPanel[];
+    };
+    const source = playerViewPanels.find((panel) => panel.id === entryId)!;
+    const { refs } = copyResourceClosure(next, files, displayPaths(source));
+    next.structure.playerViewPanels.push({
+      ...rewriteDisplayResources(source, refs),
+      id: action.id,
+      channel: `player.view.${action.id}`,
     });
     return next;
   }
@@ -200,10 +282,7 @@ export function editPresetResources(
     return next;
   }
   if (action.type === "clone-followup") {
-    const builtin =
-      action.source === "builtin:summary"
-        ? builtinFollowupExample(getWebLocale())
-        : undefined;
+    const builtin = builtinFollowupSource(action.source);
     const original: PlayPresetFollowupDefinition | undefined =
       builtin?.definition ??
       next.structure.followups.find((request) => request.id === action.source);
@@ -211,47 +290,24 @@ export function editPresetResources(
     const clone = structuredClone(original);
     clone.id = action.id;
     clone.displayName += getWebLocale() === "zh-CN" ? " 副本" : " copy";
-    const refs = new Map<string, string>();
-    const promptBody = builtin?.body ?? draft.files[original.prompt.path];
+    const sourceFiles = builtin?.files ?? draft.files;
+    const promptBody = builtin?.body ?? sourceFiles[original.prompt.path];
     if (promptBody === undefined)
       throw new Error(`Resource does not exist: ${original.prompt.path}`);
-    const queue = [
+    const { refs, rewrite } = copyResourceClosure(next, sourceFiles, [
       ...original.artifacts.flatMap(displayPaths),
       ...localResourceReferences(promptBody),
-    ];
-    for (const path of queue) {
-      if (refs.has(path)) continue;
-      if (draft.files[path] === undefined)
-        throw new Error(`Resource does not exist: ${path}`);
-      const slash = path.lastIndexOf("/");
-      refs.set(
-        path,
-        `${path.slice(0, slash)}/${browserUUID()}-${path.slice(slash + 1)}`,
-      );
-      queue.push(...localResourceReferences(draft.files[path]));
-    }
-    const rewrite = (body: string) =>
-      body.replace(localResourcePattern(), (path) => refs.get(path) ?? path);
-    for (const [source, target] of refs)
-      next.files[target] = rewrite(draft.files[source]!);
+    ]);
     clone.prompt.path = `prompts/${action.id}.md`;
     next.files[clone.prompt.path] = rewrite(promptBody);
     const channels = new Map<string, string>();
     clone.artifacts = clone.artifacts.map((artifact) => {
-      const display = { ...artifact };
       let channel = channels.get(artifact.channel);
       if (!channel) {
         channel = `${action.id}.output_${channels.size + 1}`;
         channels.set(artifact.channel, channel);
       }
-      display.channel = channel;
-      if (artifact.renderer) display.renderer = refs.get(artifact.renderer)!;
-      if (artifact.regex) display.regex = refs.get(artifact.regex)!;
-      if (artifact.scripts)
-        display.scripts = artifact.scripts.map((path) => refs.get(path)!);
-      if (artifact.assets)
-        display.assets = artifact.assets.map((path) => refs.get(path)!);
-      return display;
+      return { ...rewriteDisplayResources(artifact, refs), channel };
     });
     next.structure.followupItems = [
       ...(next.structure.followupItems ??
@@ -260,19 +316,10 @@ export function editPresetResources(
     ];
     next.structure.followups.push(clone);
     next.structure.mounts.push(
-      ...(builtin
-        ? original.artifacts.map((artifact) => ({
-            channel: artifact.channel,
-            mount: "story" as const,
-          }))
-        : draft.structure.mounts
-      )
+      ...(builtin?.mounts ?? draft.structure.mounts)
         .filter((mount) => channels.has(mount.channel))
         .map((mount) => ({ ...mount, channel: channels.get(mount.channel)! })),
     );
-    next.structure.extensionRefs = [
-      ...new Set([...next.structure.extensionRefs, ...refs.values()]),
-    ];
     return next;
   }
   const target = action.target;
@@ -317,6 +364,50 @@ export function editPresetResources(
     ...new Set([...next.structure.extensionRefs, path]),
   ];
   return next;
+}
+
+function copyResourceClosure(
+  next: PresetResourceDraft,
+  files: Record<string, string>,
+  queue: string[],
+) {
+  const refs = new Map<string, string>();
+  for (const path of queue) {
+    if (refs.has(path)) continue;
+    if (files[path] === undefined)
+      throw new Error(`Resource does not exist: ${path}`);
+    const slash = path.lastIndexOf("/");
+    refs.set(
+      path,
+      `${path.slice(0, slash)}/${browserUUID()}-${path.slice(slash + 1)}`,
+    );
+    queue.push(...localResourceReferences(files[path]));
+  }
+  const rewrite = (body: string) =>
+    body.replace(localResourcePattern(), (path) => refs.get(path) ?? path);
+  for (const [source, target] of refs)
+    next.files[target] = rewrite(files[source]!);
+  next.structure.extensionRefs = [
+    ...new Set([...next.structure.extensionRefs, ...refs.values()]),
+  ];
+  return { refs, rewrite };
+}
+
+function rewriteDisplayResources<Display extends DisplayDefinition>(
+  display: Display,
+  refs: ReadonlyMap<string, string>,
+): Display {
+  return {
+    ...display,
+    ...(display.renderer && { renderer: refs.get(display.renderer)! }),
+    ...(display.regex && { regex: refs.get(display.regex)! }),
+    ...(display.scripts && {
+      scripts: display.scripts.map((path) => refs.get(path)!),
+    }),
+    ...(display.assets && {
+      assets: display.assets.map((path) => refs.get(path)!),
+    }),
+  };
 }
 
 function resourcePath(

@@ -78,6 +78,7 @@ interface PlayPresetWorkbenchRenderer {
 interface PlayPresetWorkbenchArtifact {
   requestId: string;
   output: string;
+  mount?: PlayPresetMount["mount"];
   declaration: {
     name: string;
     channel: string;
@@ -205,6 +206,7 @@ export interface PlayPresetStructuredEditor {
   settingImprovementPrompt?: PlayPresetPromptRef;
   mounts: PlayPresetMount[];
   playerViewPanels: PlayPresetPlayerViewPanel[];
+  statusPanelEnabled?: boolean;
   extensionRefs: string[];
   narrativePrompts: PlayPresetPromptRef[];
   followups: PlayPresetFollowupDefinition[];
@@ -246,13 +248,6 @@ export interface PlayPresetScreenLibrary {
 export interface PlayPresetReceipt {
   currentPresetId: string;
   preset: PlayPresetScreenPreset;
-}
-
-export interface RecommendedPlayPresetTemplate {
-  id: string;
-  label: string;
-  name: string;
-  files: Record<string, string>;
 }
 
 interface PlayPresetClient {
@@ -317,7 +312,6 @@ const openPresetMenus =
 export function PlayPresetScreen({
   client,
   initialLibrary,
-  recommendedTemplates = [],
   onLibraryChange,
   onNavigationProtectionChange,
   initialSelectedId,
@@ -331,7 +325,6 @@ export function PlayPresetScreen({
 }: {
   client: PlayPresetClient;
   initialLibrary: PlayPresetScreenLibrary;
-  recommendedTemplates?: RecommendedPlayPresetTemplate[];
   onLibraryChange: (library: PlayPresetScreenLibrary) => void;
   onNavigationProtectionChange: (
     protection: WorkspaceNavigationProtection,
@@ -1017,33 +1010,6 @@ export function PlayPresetScreen({
                   >
                     {uiText("新建空白编排方案")}
                   </button>
-                  {recommendedTemplates.map((template) => (
-                    <button
-                      key={template.id}
-                      type="button"
-                      className="secondary-button"
-                      disabled={pending || dirty}
-                      onClick={() =>
-                        void run(async () => {
-                          const result = await request<PlayPresetReceipt>({
-                            type: "play.create",
-                            name: template.name,
-                            files: structuredClone(template.files),
-                          });
-                          acceptPreset(result);
-                          setFeedback({
-                            kind: "status",
-                            text: uiText("已复制推荐{name}，可独立编辑。", {
-                              name: template.label,
-                            }),
-                          });
-                        })
-                      }
-                    >
-                      {uiText("复制推荐")}
-                      {template.label}
-                    </button>
-                  ))}
                   <SillyTavernImport
                     client={client}
                     disabled={pending || dirty}

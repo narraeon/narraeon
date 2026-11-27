@@ -827,3 +827,84 @@ test("cloning the system example reaches save with its production story mount", 
     { channel: structure.followups[0]!.artifacts[0]!.channel, mount: "story" },
   ]);
 });
+
+test("built-in extension defaults and independently editable copies save in the current orchestration", async () => {
+  setWebLocale("zh-CN");
+  const request = setup();
+  const labels = [
+    "行动选项",
+    "Markdown / HTML 面板",
+    "调试示例输出",
+    "状态栏样式",
+  ];
+  for (const label of labels) {
+    const checkbox = screen.getByRole("checkbox", { name: `启用 ${label}` });
+    expect(checkbox).toHaveProperty("checked", false);
+    fireEvent.click(checkbox);
+  }
+  for (const label of labels.slice(0, 3)) {
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(`^${label}\\s*系统$`) }),
+    );
+    const prompt = screen.getByLabelText("这次额外请求要做什么");
+    expect(prompt).toHaveProperty("readOnly", true);
+    fireEvent.click(screen.getByRole("button", { name: "克隆后置请求" }));
+    expect(screen.getByLabelText("这次额外请求要做什么")).toHaveProperty(
+      "readOnly",
+      false,
+    );
+  }
+  fireEvent.click(screen.getByRole("button", { name: /^状态栏样式\s*系统$/u }));
+  fireEvent.click(screen.getByRole("button", { name: "克隆状态栏" }));
+  fireEvent.change(screen.getByLabelText("玩家视图面板 1 标题"), {
+    target: { value: "自己的状态栏" },
+  });
+
+  const save = await savedRequest(request);
+  const structure = save.structure as unknown as NonNullable<
+    PlayPresetScreenPreset["structure"]
+  >;
+  expect(structure.followupItems).toEqual(
+    expect.arrayContaining(
+      ["action-choices", "generic-panels", "artifact-debugger"].map((id) => ({
+        id: `builtin:${id}`,
+        kind: "builtin",
+        enabled: true,
+      })),
+    ),
+  );
+  expect(structure.statusPanelEnabled).toBe(true);
+  expect(
+    structure.followups.map((request) =>
+      request.artifacts.map(({ name }) => name),
+    ),
+  ).toEqual([
+    ["player_options"],
+    ["markdown_panel", "html_panel", "debug_panel"],
+    ["debug_example"],
+  ]);
+  expect(structure.mounts.map(({ mount }) => mount)).toEqual([
+    "composer_below",
+    "story",
+    "sidebar",
+    "debug",
+    "debug",
+  ]);
+  const choices = structure.followups[0]!.artifacts[0]!;
+  expect(choices.payloadContract).toMatchObject({ type: "array", maxItems: 4 });
+  expect(choices.renderer).not.toBe("renderers/player-options.html");
+  expect(save.files[choices.renderer!]).toContain("player-options-root");
+  expect(save.files[choices.scripts![0]!]).toContain("composer.set_draft");
+  expect(save.files[choices.assets![0]!]).toContain(".player-option");
+  const panel = structure.playerViewPanels[0]!;
+  expect(panel).toMatchObject({
+    mount: "sidebar",
+    config: { title: "自己的状态栏", theme: "parchment" },
+  });
+  expect(save.files[panel.renderer!]).toContain("player-view-panel-root");
+  expect(save.files[panel.scripts![0]!]).toContain("render.update");
+  expect(save.files[panel.assets![0]!]).toContain("data-theme");
+  expect(
+    request.mock.calls.some(([input]) => input.type === "play.scripts"),
+  ).toBe(false);
+});

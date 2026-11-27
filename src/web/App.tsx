@@ -24,7 +24,6 @@ import {
   type AppPreferences,
 } from "../protocol/appPreferences.ts";
 import type { V1SettingImprovementOverview } from "../protocol/v1.ts";
-import { firstPartyPlayPresetTemplatesForLocale } from "../shared/first-party-play-preset-templates.ts";
 import { RuntimeRequestError, type RuntimeClient } from "./runtimeClient.ts";
 import { createClientId } from "./ClientId.ts";
 import { ReadTarget } from "./ReadTarget.ts";
@@ -1664,9 +1663,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                 "replace",
               );
             }}
-            recommendedTemplates={firstPartyPlayPresetTemplatesForLocale(
-              workspace.preferences.locale,
-            )}
             onLibraryChange={(playPresets) => {
               if (presetPageInstanceRef.current !== presetPageInstance) {
                 // A receipt from a retired editor was applied to its old library.
