@@ -99,7 +99,7 @@ export const driftlineEchoesChinese: readonly ContentTreeFile[] = [
   summary: 记录灰燕号船况补给、三道未探残响信标方向及当前支线与委托。
   aliases: []
 船况与补给: 船体完好；聚变燃料足够一趟近外环往返；备件偏紧，滤波线圈老化。
-船载星图所标信标:
+启程星图信标:
   红移-04: 位于高温尘埃带边缘，周期脉冲最清晰（星区近况待抵近或打听）。
   冰带-09: 藏在冰晶小行星环深处，信号时断时续（星图未标明细）。
   静默港-12: 最远端的废弃中继浮标方向，脉冲微弱（航路近况未知）。
@@ -135,12 +135,12 @@ export const driftlineEchoesChinese: readonly ContentTreeFile[] = [
 
 - 三个信标星区以及碎石港外侧的空白碎石带、酒馆委托人、拾荒帮、前哨遗民与可招募新船员均未预写文档。不要把玩家强行限定在“只跑三个信标”的直线流程里。
 - 当玩家回应求救、接下黑市或测绘委托、探索空白星区、结识过路船长或卷入星站派系冲突时，请现场生成质感克制、有真实太空生活细节的新星站、新人物与支线事件；只要新星站或新人物会在后续航程中继续产生影响，就调用 world_create 写入 world/locations/ 或 world/characters/，而需要共同追溯的重要事件与救援/委托结果则写入已有的 @important-events（不要尝试创建 world/events/）。
-- 让支线真正改变主线：支线里换来的滤波线圈、改装零件、星图情报、新船员或结下的仇家，都会在探索三个主信标时发挥实实在在的作用。
+- 让支线真正改变主线，并让人情与信任在稀缺瓶颈上兑现成陌生人拿不到的实质差异：当玩家带着支线里救下的人情、私密频段、换来的改装零件或星图情报面对紧俏泊位、稀缺部件、星区封锁或危险航道时，应转化为优先留位、安全捷径、免去盘查或独门条件，而不是口头致谢却给出与普通船只相同的待遇。
 
 ## 信息隔离与状态维护
 
 - @lost-survey-core 是按需读取的核心背景档，仅在玩家成功破译任一道残响信标或查到远望号旧记录时再通过 context_read 读取，严禁在玩家尚未破译前剧透科考队当年发现的实情。
-- 每次跃迁、消耗燃料、获得改装零件、推进信标破译或接下新委托时，同步更新 @current-situation（只保留眼下待决定的事项，清理已落定的旧选择）与 @star-chart；长期约定写入 @pending-matters，派系与人物关系写入 @relationships。
+- 每次跃迁、消耗燃料、获得改装零件、推进信标破译或接下新委托时，同步更新 @current-situation（只保留眼下待决定的事项，清理已落定的旧选择）与 @star-chart；长期约定写入 @pending-matters，派系与人物关系写入 @relationships；当玩家把关键航程或破译结果当面告知某位人物时，尽量在当轮同步更新该人物文档的「认知」。
 `,
     ["star-chart"],
     undefined,
@@ -159,9 +159,9 @@ export const driftlineEchoesChinese: readonly ContentTreeFile[] = [
             },
             {
               id: "beacon-vectors",
-              label: "船载星图所标信标",
+              label: "启程星图信标",
               document: "star-chart",
-              locator: ["船载星图所标信标"],
+              locator: ["启程星图信标"],
             },
             {
               id: "contracts-signals",

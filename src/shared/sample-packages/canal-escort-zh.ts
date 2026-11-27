@@ -100,7 +100,7 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
   aliases: []
 核心期限与船况: 距封河尚有 15 日；顺水号完好，盘缠与干粮够半月之用，封蜡樟木箱安放后舱暗格。
 交割约定: 封河前送抵通州官仓；凭半块刻字木牌对验交割；途中莫轻易开箱破封。
-老谭航路簿所记站点:
+老谭启程手记:
   柳湾闸: 前方首道大闸；刚才南下的过路盐船称这两天查船极严。
   白塔集: 运河中段商镇；阿砚在茶棚听说有人愿出双倍船资搭船前往。
   盐仓镇: 官盐集散旧镇，水路岔口多（近况待沿途打听）。
@@ -134,12 +134,12 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
 
 - 行程单上的柳湾闸、白塔集、盐仓镇、临清渡，以及玩家主动探访的任何茶棚、岔河小村、过路船只与搭船客，均未预写详细文档。不要因为它们不在初始文件里就把玩家硬拽回赶路。
 - 当玩家停船探访、接下搭客或私活、卷入地方纠纷、结识新人物或开辟新路线时，请结合明清运河市井质感现场生成鲜活的人物、地点与支线风波；只要新人物或新地点会在后续回合持续产生影响，就调用 world_create 将其写入 world/characters/ 或 world/locations/，而需要共同追溯的重要事件与支线结果则写入已有的 @important-events（不要尝试创建 world/events/）。
-- 支线应当与主线彼此呼吸：支线里结下的船户人情、拿到的手令、欠下的麻烦或赚到的盘缠，都可以在后续过闸、避寒、遇袭或换旱路时真正派上用场。
+- 支线应当与主线彼此呼吸，并让人情在关键瓶颈上产生陌生人拿不到的实质差异：当玩家带着支线结下的人情、荐条、手令或恩情遇到稀缺窗口（例如水位窗口只够带一艘船、紧俏车马或严格验舱）时，应兑现为留位、免去额外周折、开启私密门路或更优条件，不要只嘴上说给面子却维持与普通船客相同的待遇。
 
 ## 信息隔离与状态维护
 
 - @sealed-crate-origin 是按需读取的幕后底档，仅在玩家设法查探箱子来历、与知情者交锋或拆封查验时再通过 context_read 读取，严禁在玩家尚未查验前泄露箱内实情。
-- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation 与 @escort-manifest：过闸、盘查或交接的即时步骤进度（例如文书已验、货舱待验）只维护在 @current-situation 中，并清理已落定的旧选择；@escort-manifest 的「沿途见闻与支线」只记站点抵达、已查明传闻与支线结果（例如“第 2 日清晨抵达柳湾闸”），不重复抄写当前过闸子步骤，避免两处状态脱节；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
+- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation 与 @escort-manifest：过闸、盘查或交接的即时步骤进度（例如文书已验、货舱待验）只维护在 @current-situation 中，并清理已落定的旧选择；@escort-manifest 的「沿途见闻与支线」只记站点抵达、已查明传闻与支线结果（例如“第 2 日清晨抵达柳湾闸”），不重复抄写当前过闸子步骤，避免两处状态脱节；长期承诺写入 @pending-matters，重要人物往来写入 @relationships；当玩家把关键进展（如交镖结果或险情变化）当面告知某位人物时，尽量在当轮同步更新该人物文档的「认知」。
 `,
     ["escort-manifest"],
     undefined,
@@ -164,9 +164,9 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
             },
             {
               id: "route-rumors",
-              label: "老谭航路簿所记站点",
+              label: "老谭启程手记",
               document: "escort-manifest",
-              locator: ["老谭航路簿所记站点"],
+              locator: ["老谭启程手记"],
             },
             {
               id: "side-threads",

@@ -99,7 +99,7 @@ Fixed fittings:
   summary: Tracks ship condition, unmapped beacon vectors, and active side signals or contracts.
   aliases: []
 Ship & supplies: Hull sound; fusion fuel enough for one outer-ring loop; spare parts tight and filter coils aging.
-Charted beacon vectors:
+Departure beacon chart:
   Redshift-04: Edge of a hot dust cloud; clearest carrier pulse (local sector conditions unknown until scanned or asked about).
   Icebelt-09: Deep inside an icy asteroid ring; intermittent signal (sector uncharted on ship’s database).
   Silent Haven-12: Far-rim derelict relay vector; faint pulse (current route status unknown).
@@ -135,12 +135,12 @@ This is an open-ended frontier space exploration sandbox. The core spine is flyi
 
 - All three beacon sectors, the blank rubble belt outside Gravel Port, contract brokers, salvage outfits, outpost holdouts, and potential new crewmates are intentionally undefined. Never railroad the player into a bare three-stop checklist just because an off-route lead is not pre-written.
 - Whenever the player answers a distress call, takes a side job, explores an uncharted belt, meets a passing captain, or steps into a station dispute, invent grounded, lived-in frontier characters, stations, and side arcs on the spot. Persist enduring new characters or locations with world_create under world/locations/ or world/characters/, and record shared events, rescues, or completed jobs in the existing @important-events document (do not attempt to create world/events/).
-- Let side threads feed back into the main voyage: filter coils, salvaged upgrades, chart leads, new crew, or rivals earned off-route should materially shape how the beacon search unfolds.
+- Let side threads feed back into the main voyage with tangible, exclusive payoffs at real bottlenecks: when the player brings a rescue favor, private frequency, salvaged upgrade, or chart lead into a scarce berth, tight fuel/parts window, or sector blockade, turn it into a concrete advantage an unintroduced stranger would not get—holding a slot, opening a safer vector, or waiving a hurdle—rather than polite thanks with identical terms.
 
 ## Information Discipline & State Tracking
 
 - @lost-survey-core is an on-demand background archive; read it via context_read only after the player decodes any beacon fragment or uncovers Farsight records—never reveal what the expedition discovered early.
-- Update @current-situation (keeping only what is still undecided right now and clearing settled choices) and @star-chart whenever fuel, hull, upgrades, beacon progress, or active contracts change; record ongoing commitments in @pending-matters and faction/character ties in @relationships.
+- Update @current-situation (keeping only what is still undecided right now and clearing settled choices) and @star-chart whenever fuel, hull, upgrades, beacon progress, or active contracts change; record ongoing commitments in @pending-matters and faction/character ties in @relationships; whenever the player tells a character a major voyage or beacon outcome in person, update that character’s Knowledge in the same turn.
 `,
     ["star-chart"],
     undefined,
@@ -159,9 +159,9 @@ This is an open-ended frontier space exploration sandbox. The core spine is flyi
             },
             {
               id: "beacon-vectors",
-              label: "Charted beacon vectors",
+              label: "Departure beacon chart",
               document: "star-chart",
-              locator: ["Charted beacon vectors"],
+              locator: ["Departure beacon chart"],
             },
             {
               id: "contracts-signals",

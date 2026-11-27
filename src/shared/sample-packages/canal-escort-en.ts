@@ -100,7 +100,7 @@ Fixed fittings:
   aliases: []
 Deadline & boat status: 15 days until freeze; the Fair Current is sound, silver and rations suffice for two weeks, and the sealed chest rests in the aft locker.
 Handover terms: Deliver to Tongzhou granary before freeze-over; verify handover with the half notched tally-board; keep the wax seal unbroken in transit.
-Stops in Old Tan’s river notes:
+Old Tan’s departure notes:
   Willow Bend Lock: First major lock ahead; a southbound salt barge just reported strict hull inspections.
   White Pagoda Market: Mid-route trading town; A-Yan heard someone at Qinghe teahouse is offering double fare to ride there.
   Salt Store Town: Old salt-depot hub full of side channels (current conditions to be learned along the way).
@@ -134,12 +134,12 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
 
 - Willow Bend Lock, White Pagoda Market, Salt Store Town, Linqing Ferry, and any teahouse, side creek, passing boat, or passenger the player investigates are intentionally undefined. Never force the player back onto a bare linear rush just because a place or person is not pre-written.
 - Whenever the player stops to investigate, takes on a passenger or side job, helps a stranger, or stumbles into local trouble, invent grounded, historically textured characters, locations, and side arcs on the spot. Persist enduring new characters or locations with world_create under world/characters/ or world/locations/, and record shared events or side-thread outcomes in the existing @important-events document (do not attempt to create world/events/).
-- Let side threads feed back into the core spine: favors earned from boatmen, transit passes, extra silver, allies, or new rivals should genuinely shape later lock checks, ambushes, or winter detours.
+- Let side threads feed back into the core spine with tangible, exclusive payoffs at real bottlenecks: when the player brings a favor, referral slip, transit pass, or owed debt into a scarce window (such as a shoal or lock window that fits only one boat, scarce overland carts, or a strict hold check), turn it into a concrete advantage an unintroduced stranger would not get—holding a slot, waiving an extra hurdle, or opening a private route—rather than polite praise with identical terms.
 
 ## Information Discipline & State Tracking
 
 - @sealed-crate-origin is an on-demand background record; read it via context_read only when the player probes the chest’s origin, confronts someone who knows, or breaks the seal—never reveal the chest’s true contents early.
-- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open: track step-by-step lock, inspection, or handover progress (such as papers checked vs. hold inspection still pending) only in @current-situation while clearing settled choices; keep Side threads & notes in @escort-manifest to high-level arrivals, confirmed rumors, and side-thread outcomes (for example, arrived at Willow Bend Lock on Day 2 morning) without duplicating live sub-steps; record ongoing promises in @pending-matters and lasting ties in @relationships.
+- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open: track step-by-step lock, inspection, or handover progress (such as papers checked vs. hold inspection still pending) only in @current-situation while clearing settled choices; keep Side threads & notes in @escort-manifest to high-level arrivals, confirmed rumors, and side-thread outcomes (for example, arrived at Willow Bend Lock on Day 2 morning) without duplicating live sub-steps; record ongoing promises in @pending-matters and lasting ties in @relationships; whenever the player tells a character a major outcome in person (such as completing the delivery), update that character’s Knowledge in the same turn.
 `,
     ["escort-manifest"],
     undefined,
@@ -164,9 +164,9 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
             },
             {
               id: "route-rumors",
-              label: "Stops in Old Tan’s river notes",
+              label: "Old Tan’s departure notes",
               document: "escort-manifest",
-              locator: ["Stops in Old Tan’s river notes"],
+              locator: ["Old Tan’s departure notes"],
             },
             {
               id: "side-threads",
