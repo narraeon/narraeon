@@ -35,7 +35,7 @@ Awaiting a response:
   Speaker: { $ref: character.nora }
   Invitation: Welcome in. We're having a small mystery with a letter. Would you mind lending us a fresh pair of eyes?
 Immediate circumstances:
-  - You have just arrived at the doorway. Nora's offered towel has not been taken.
+  - The player has just arrived at the doorway. Nora's offered towel has not been taken.
   - Kit holds the ledger and has paused wiping its damp corner.
 `,
     },
