@@ -11,8 +11,11 @@ import type {
 import {
   builtinFollowupExample,
   defaultFollowupItems,
+  isBuiltinExtensionFollowupId,
+  withBuiltinExtensionFollowups,
 } from "../../shared/ordered-followups.ts";
 import type { FollowupItem } from "../../shared/ordered-followups.ts";
+import { builtinExtensionFollowup } from "../extension/BuiltinExtensions.ts";
 
 /** Strict portable permissions, shared by import and structured saves. */
 export function parseFollowupItems(
@@ -46,7 +49,12 @@ export function parseFollowupItems(
   });
   if (
     new Set(items.map((item) => item.id)).size !== items.length ||
-    items.filter((item) => item.kind === "builtin").length !== 1 ||
+    items.some(
+      (item) =>
+        item.kind === "builtin" &&
+        item.id !== "builtin:summary" &&
+        !isBuiltinExtensionFollowupId(item.id),
+    ) ||
     !items.some(
       (item) => item.kind === "builtin" && item.id === "builtin:summary",
     ) ||
@@ -72,6 +80,7 @@ export interface EffectiveFollowup {
   definition: PlayPresetFollowupDefinition;
   body: string | undefined;
   frozenResources?: Omit<FrozenArtifactPresentation, "declaration">;
+  frozenPresentations?: Record<string, FrozenArtifactPresentation>;
 }
 
 /** Resolve each source against its own files, before requests become immutable snapshots. */
@@ -82,8 +91,8 @@ export function effectiveFollowupDefinitions(
   enabled?: { packageGroup: boolean; requests: ReadonlyMap<string, boolean> },
 ): EffectiveFollowup[] {
   const packageSource = readPackageFollowups(worldFiles);
-  return (
-    definition.followupItems ?? defaultFollowupItems(definition.followups)
+  return withBuiltinExtensionFollowups(
+    definition.followupItems ?? defaultFollowupItems(definition.followups),
   ).flatMap<EffectiveFollowup>((item) => {
     if (
       !(item.kind === "content-package"
@@ -115,7 +124,12 @@ export function effectiveFollowupDefinitions(
             },
           };
         });
-    if (item.kind === "builtin") return [builtinFollowupExample(locale)];
+    if (item.kind === "builtin")
+      return [
+        isBuiltinExtensionFollowupId(item.id)
+          ? builtinExtensionFollowup(item.id, locale)
+          : builtinFollowupExample(locale),
+      ];
     const entry = definition.followups.find((entry) => entry.id === item.id);
     if (entry === undefined)
       throw new Error(`Missing follow-up definition: ${item.id}`);

@@ -19,6 +19,8 @@ export { validatePlayPresetArtifactPayload } from "../../shared/artifact-payload
 export type { PlayPresetArtifactPayloadContract } from "../../shared/artifact-payload-contract.ts";
 import {
   defaultFollowupItems,
+  isBuiltinExtensionFollowupId,
+  withBuiltinExtensionFollowups,
   type FollowupItem,
 } from "../../shared/ordered-followups.ts";
 import { parseFollowupItems } from "./OrderedFollowups.ts";
@@ -180,6 +182,13 @@ export function isFrozenArtifactPresentation(
           ...original,
           ...(original.channel === "builtin:summary" ||
           (typeof original.channel === "string" &&
+            /^builtin:[a-z-]+:[a-z][a-z0-9._/-]{1,127}$/u.test(
+              original.channel,
+            ) &&
+            isBuiltinExtensionFollowupId(
+              original.channel.slice(0, original.channel.lastIndexOf(":")),
+            )) ||
+          (typeof original.channel === "string" &&
             /^package:[a-z][a-z0-9._/-]{1,127}$/u.test(original.channel))
             ? { channel: "frozen.presentation" }
             : {}),
@@ -260,6 +269,7 @@ export interface PlayPresetPlayerViewPanel {
 
 export interface PlayPresetDefinition {
   followupItems?: FollowupItem[];
+  statusPanelEnabled?: boolean;
   format:
     | "narraeon.play-preset/v1"
     | "narraeon.play-preset/v2"
@@ -306,6 +316,7 @@ export function presetHostBinding(binding: PlayPresetBinding): {
  */
 export interface PlayPresetStructuredEditor {
   followupItems?: FollowupItem[];
+  statusPanelEnabled?: boolean;
   playPrompts?: OrderedPlayPrompt[];
   authorPrompts?: OrderedPlayPrompt[];
   mergeConsecutiveMessages?: boolean;
@@ -2246,8 +2257,11 @@ export function toPlayPresetStructuredEditor(
     narrativePrompts: structuredClone(definition.narrativePrompts),
     followups: structuredClone(definition.followups),
     followupItems: structuredClone(
-      definition.followupItems ?? defaultFollowupItems(definition.followups),
+      withBuiltinExtensionFollowups(
+        definition.followupItems ?? defaultFollowupItems(definition.followups),
+      ),
     ),
+    statusPanelEnabled: definition.statusPanelEnabled ?? false,
   };
 }
 
@@ -2322,6 +2336,11 @@ export function applyPlayPresetStructuredEditor(
     input.mounts.map(({ channel, mount }) => ({ channel, mount })),
   );
   preset.set("extensions", [...input.extensionRefs]);
+  if (input.statusPanelEnabled !== undefined) {
+    if (parseStatusPanelEnabled(input.statusPanelEnabled))
+      preset.set("statusPanelEnabled", true);
+    else preset.delete("statusPanelEnabled");
+  }
   preset.set(
     "playerViewPanels",
     input.playerViewPanels.map((panel) => structuredClone(panel)),
@@ -2478,6 +2497,11 @@ export function parsePlayPresetStructuredEditor(
     ...(value.followupItems === undefined
       ? {}
       : { followupItems: parseFollowupItems(value.followupItems, followups) }),
+    ...(value.statusPanelEnabled === undefined
+      ? {}
+      : {
+          statusPanelEnabled: parseStatusPanelEnabled(value.statusPanelEnabled),
+        }),
     name: value.name,
     ...(value.mergeConsecutiveMessages === undefined
       ? {}
@@ -2533,6 +2557,7 @@ export function parsePlayPresetFiles(
         "mergeConsecutiveMessages",
         "mounts",
         "playerViewPanels",
+        "statusPanelEnabled",
         "extensions",
       ],
       path,
@@ -2629,6 +2654,13 @@ export function parsePlayPresetFiles(
       kind: "valid",
       definition: {
         ...(followupItems === undefined ? {} : { followupItems }),
+        ...(preset.statusPanelEnabled === undefined
+          ? {}
+          : {
+              statusPanelEnabled: parseStatusPanelEnabled(
+                preset.statusPanelEnabled,
+              ),
+            }),
         format: preset.format,
         ...(preset.mergeConsecutiveMessages === undefined
           ? {}
@@ -2683,6 +2715,16 @@ export function parsePlayPresetFiles(
       ),
     };
   }
+}
+
+function parseStatusPanelEnabled(value: unknown): boolean {
+  if (typeof value !== "boolean")
+    invalid(
+      "status_panel_invalid",
+      "statusPanelEnabled must be a boolean",
+      "orchestration.yaml#statusPanelEnabled",
+    );
+  return value;
 }
 
 function parsePromptBlocks(

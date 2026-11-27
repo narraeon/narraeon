@@ -1,5 +1,6 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { WorldExtensionsView } from "../../protocol/worldExtensions.ts";
+import { builtinStatusPanelId } from "../../shared/first-party-play-preset-templates.ts";
 import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
@@ -155,8 +156,10 @@ export class WorldCommands {
             extensions: [],
             playerViewPanels,
             extensionControls,
-            suppressedPlayerViewIds:
-              await this.#suppressedPlayerViewIds(extensionControls),
+            suppressedPlayerViewIds: await this.#suppressedPlayerViewIds(
+              extensionControls,
+              playerViewPanels,
+            ),
             artifactDebug: [],
             playCallChain: null,
             playTimeline,
@@ -216,8 +219,10 @@ export class WorldCommands {
               playerViews,
               extensionControls,
             );
-            const suppressedPlayerViewIds =
-              await this.#suppressedPlayerViewIds(extensionControls);
+            const suppressedPlayerViewIds = await this.#suppressedPlayerViewIds(
+              extensionControls,
+              playerViewPanels,
+            );
             // Never attach a newer controls revision to a projection read before
             // that choice was accepted. Concurrent toggles restart this read.
             if (
@@ -405,6 +410,7 @@ export class WorldCommands {
 
   async #suppressedPlayerViewIds(
     controls: WorldExtensionsView,
+    panels: FrontendPlayerViewPanelProjection[],
   ): Promise<string[]> {
     let binding: PlayPresetBinding;
     try {
@@ -419,6 +425,9 @@ export class WorldCommands {
         ...binding.definition.playerViewPanels.map(
           (panel) => panel.source.view,
         ),
+        ...panels
+          .filter((panel) => panel.panelId === builtinStatusPanelId)
+          .map((panel) => panel.source.viewId),
         ...controls.items
           .filter((item) => item.kind === "view" && !item.enabled)
           .map((item) => item.id),
@@ -437,12 +446,29 @@ export class WorldCommands {
   ): Promise<FrontendPlayerViewPanelProjection[]> {
     try {
       const binding = await this.#services.playPresets.bindCurrent();
-      return projectPlayerViewPanels({
-        worldId,
-        head,
-        playerViews,
-        binding,
-      }).filter((panel) =>
+      return projectPlayerViewPanels(
+        {
+          worldId,
+          head,
+          playerViews,
+          binding,
+        },
+        controls.items.some(
+          (item) =>
+            item.kind === "panel" &&
+            item.id === builtinStatusPanelId &&
+            item.enabled,
+        )
+          ? {
+              locale: this.#services.locale(),
+              hiddenViewIds: new Set(
+                controls.items
+                  .filter((item) => item.kind === "view" && !item.enabled)
+                  .map((item) => item.id),
+              ),
+            }
+          : undefined,
+      ).filter((panel) =>
         controls.items.some(
           (item) =>
             item.kind === "panel" && item.id === panel.panelId && item.enabled,

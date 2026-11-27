@@ -13,6 +13,7 @@ import {
  */
 export function firstPartyGenericPanelsPresetFilesForLocale(
   locale: AppLocale,
+  mode: "app" | "document" = "app",
 ): Record<string, string> {
   const displayName =
     locale === "zh-CN" ? "发布通用面板" : "Publish generic panels";
@@ -32,8 +33,7 @@ mounts:
   generic.debug: debug
 extensions:
   - renderers/generic-html.html
-  - scripts/generic-html.js
-  - assets/generic-html.css
+${mode === "app" ? "  - scripts/generic-html.js\n" : ""}  - assets/generic-html.css
 `,
     "call-chain.yaml": `format: narraeon.play-call-chain/v2
 narrative: []
@@ -59,10 +59,8 @@ ${stringify({ followupItems: defaultFollowupItems([{ id: "publish_panels" }]) })
         contentType: text/html
         renderer: renderers/generic-html.html
         rendererRevision: v1
-        rendererMode: app
-        scripts:
-          - scripts/generic-html.js
-        assets:
+        rendererMode: ${mode}
+${mode === "app" ? "        scripts:\n          - scripts/generic-html.js\n" : ""}        assets:
           - assets/generic-html.css
         save: commit
         invalidation: new_operation
@@ -94,10 +92,12 @@ A panel may organize only established information that is appropriate for the pl
 `,
     "renderers/generic-html.html": `<!doctype html>
 <html><head><meta charset="utf-8"><title>${panelTitle}</title></head><body>
-<main id="generic-html-root" aria-label="${panelTitle}"></main>
+<main id="generic-html-root" aria-label="${panelTitle}">${mode === "document" ? "<!-- narraeon:content -->" : ""}</main>
 </body></html>
 `,
-    "scripts/generic-html.js": `(function () {
+    ...(mode === "app"
+      ? {
+          "scripts/generic-html.js": `(function () {
   var root = document.getElementById("generic-html-root");
   window.addEventListener("message", function (event) {
     if (!event.data || event.data.namespace !== "narraeon.extension.v1") return;
@@ -107,6 +107,8 @@ A panel may organize only established information that is appropriate for the pl
   });
 }());
 `,
+        }
+      : {}),
     "assets/generic-html.css": `body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #202020; }
 #generic-html-root { padding: .75rem; }
 `,

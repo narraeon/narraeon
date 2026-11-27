@@ -97,6 +97,7 @@ import {
   tabletopWorldRulesBlock,
 } from "../play/TabletopRules.ts";
 import type {
+  FrozenArtifactPresentation,
   PlayPresetBinding,
   PlayPresetFollowupDefinition,
   PlayPresetMount,
@@ -325,6 +326,7 @@ export interface PlayPresetCompilation {
 /** One post-commit derived request compiled against the main-chain prefix. */
 export interface PlayFollowupCompilation {
   extensionControl?: WorldExtensionControl;
+  frozenPresentations?: Record<string, FrozenArtifactPresentation>;
   frozenResources?: {
     files: Record<string, string>;
     mount: PlayPresetMount["mount"];
@@ -1316,54 +1318,62 @@ function compileFollowups(
               .map((item) => [item.id, item.enabled]),
           ),
         },
-  ).map(({ definition: followup, body: markdown, frozenResources }) => {
-    if (markdown === undefined || markdown.trim() === "")
-      throw new PromptCompilationError(
-        "play_preset_prompt_missing",
-        `Follow-up prompt block does not exist: ${followup.prompt.path}`,
-      );
-    const blocks = [
-      {
-        source: `${followup.id.startsWith("package:") ? "package:control" : "play"}:${followup.prompt.path}`,
-        markdown: markdown.trim(),
-      },
-      {
-        source: `runtime:followup/${followup.id}`,
-        markdown: followupRuntimeContract(followup, locale),
-      },
-    ];
-    return {
-      ...(followup.id === "builtin:summary"
-        ? { frozenResources: { files: {}, mount: "story" as const } }
-        : {}),
-      ...(frozenResources === undefined ? {} : { frozenResources }),
-      ...(controls === undefined
-        ? {}
-        : {
-            extensionControl: {
-              key: controls.items.find(
-                (item) => item.id === followup.id && item.kind === "request",
-              )!.key,
-              generation: controls.items.find(
-                (item) => item.id === followup.id && item.kind === "request",
-              )!.generation,
-            },
-          }),
-      id: followup.id,
-      displayName: followup.displayName,
-      logicalMessages: [
+  ).map(
+    ({
+      definition: followup,
+      body: markdown,
+      frozenResources,
+      frozenPresentations,
+    }) => {
+      if (markdown === undefined || markdown.trim() === "")
+        throw new PromptCompilationError(
+          "play_preset_prompt_missing",
+          `Follow-up prompt block does not exist: ${followup.prompt.path}`,
+        );
+      const blocks = [
         {
-          role: "author_instruction" as const,
-          blocks,
-          markdown: joinBlocks(blocks),
+          source: `${followup.id.startsWith("package:") ? "package:control" : "play"}:${followup.prompt.path}`,
+          markdown: markdown.trim(),
         },
-      ],
-      tools: runtimeToolsForNames(followupToolNames, locale),
-      allowedTools: [...followupToolNames],
-      artifacts: structuredClone(followup.artifacts),
-      maxArtifactBytes: followup.maxArtifactBytes,
-    };
-  });
+        {
+          source: `runtime:followup/${followup.id}`,
+          markdown: followupRuntimeContract(followup, locale),
+        },
+      ];
+      return {
+        ...(followup.id === "builtin:summary"
+          ? { frozenResources: { files: {}, mount: "story" as const } }
+          : {}),
+        ...(frozenResources === undefined ? {} : { frozenResources }),
+        ...(frozenPresentations === undefined ? {} : { frozenPresentations }),
+        ...(controls === undefined
+          ? {}
+          : {
+              extensionControl: {
+                key: controls.items.find(
+                  (item) => item.id === followup.id && item.kind === "request",
+                )!.key,
+                generation: controls.items.find(
+                  (item) => item.id === followup.id && item.kind === "request",
+                )!.generation,
+              },
+            }),
+        id: followup.id,
+        displayName: followup.displayName,
+        logicalMessages: [
+          {
+            role: "author_instruction" as const,
+            blocks,
+            markdown: joinBlocks(blocks),
+          },
+        ],
+        tools: runtimeToolsForNames(followupToolNames, locale),
+        allowedTools: [...followupToolNames],
+        artifacts: structuredClone(followup.artifacts),
+        maxArtifactBytes: followup.maxArtifactBytes,
+      };
+    },
+  );
 }
 
 const followupToolNames = [
@@ -1967,11 +1977,14 @@ function createPlayPresetPreview(
     callChainPath: binding.definition.callChainPath,
     mounts: [
       ...structuredClone(binding.definition.mounts),
-      ...(binding.definition.followupItems?.some(
-        (item) => item.kind === "builtin" && item.enabled,
-      )
-        ? [{ channel: "builtin:summary", mount: "story" as const }]
-        : []),
+      ...compilation.followups.flatMap((request) => [
+        ...(request.id === "builtin:summary"
+          ? [{ channel: "builtin:summary", mount: "story" as const }]
+          : []),
+        ...Object.values(request.frozenPresentations ?? {}).map(
+          ({ declaration, mount }) => ({ channel: declaration.channel, mount }),
+        ),
+      ]),
     ],
     extensionRefs: [...binding.definition.extensionRefs],
     toolUniverse: compilation.toolUniverse,
