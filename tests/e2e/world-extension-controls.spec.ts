@@ -204,7 +204,8 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     };
     await open();
     const menu = page.locator(".world-extension-menu");
-    await menu.locator("summary").click();
+    const openMenu = () => menu.locator("summary").click();
+    await openMenu();
     const request = menu.getByRole("checkbox", {
       name: "本轮回顾",
       exact: true,
@@ -221,6 +222,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
       .getByRole("button", { name: "从全新上下文发送行动", exact: true })
       .click();
     const pendingMain = await firstMain.promise;
+    await openMenu();
     await setChecked(request, false);
     await expect(request).toBeEnabled();
     await setChecked(request, true);
@@ -237,6 +239,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     const head = (
       await api<{ head: string }>(page, { type: "world.read", worldId })
     ).head;
+    await openMenu();
     await setChecked(request, false);
     await expect.poll(() => wasCancelled).toBe(true);
     // The HTTP response arrives after cancellation; it cannot put either output on screen.
@@ -286,6 +289,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     const observer = await context.newPage();
     await open(observer);
     await expect(observer.locator('iframe[title="one"]')).toHaveCount(2);
+    await openMenu();
     await setChecked(group, false);
     await expect(group).toBeEnabled();
     await expect(request).toBeChecked();
@@ -298,6 +302,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     expect(followupCount).toBe(3);
     await page.getByRole("button", { name: "此刻", exact: true }).click();
     await expect(page.getByText("Not set", { exact: true })).toBeVisible();
+    await openMenu();
     await setChecked(
       menu.getByRole("checkbox", { name: "当前字段", exact: true }),
       false,
@@ -339,7 +344,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
     await exited;
     child = await startRuntime();
     await open();
-    await menu.locator("summary").click();
+    await openMenu();
     await expect(request).not.toBeChecked();
     await expect(page.locator('iframe[title="one"]')).toHaveCount(0);
     const forkView = await api<WorldExtensionsView>(page, {
@@ -379,7 +384,7 @@ test("真实世界扩展菜单阻止派发、取消在途、隐藏全部输出�
         worldId: retainedWorldId,
       })
     ).head;
-    await menu.locator("summary").click();
+    await openMenu();
     await setChecked(request, false);
     await expect(page.locator('iframe[title="one"]')).toHaveCount(0);
     await expect(page.locator('iframe[title="two"]')).toHaveCount(0);

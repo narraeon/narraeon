@@ -41,18 +41,28 @@ export function PlayRunProgress({
             ? uiText("刚刚收到新数据")
             : uiText("{seconds} 秒没有新数据", { seconds: silence })}
         </span>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={progress.phase === "cancelling"}
+          onClick={onCancel}
+        >
+          {progress.phase === "cancelling"
+            ? uiText("正在取消…")
+            : uiText("取消生成")}
+        </button>
       </div>
       <dl className="model-run-counters">
+        <div>
+          <dt>{uiText("Provider 派发")}</dt>
+          <dd>{progress.dispatches}</dd>
+        </div>
         <Counter label={uiText("返回推理")} value={progress.reasoningChars} />
         <Counter label={uiText("正文")} value={progress.textChars} />
         <Counter label={uiText("工具参数")} value={progress.toolChars} />
         <div>
           <dt>{uiText("工具调用")}</dt>
           <dd>{progress.toolCalls}</dd>
-        </div>
-        <div>
-          <dt>{uiText("Provider 派发")}</dt>
-          <dd>{progress.dispatches}</dd>
         </div>
       </dl>
       <ModelRetryStatus retries={retries} active />
@@ -71,18 +81,6 @@ export function PlayRunProgress({
           )}
         </p>
       ) : null}
-      <div className="model-run-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={progress.phase === "cancelling"}
-          onClick={onCancel}
-        >
-          {progress.phase === "cancelling"
-            ? uiText("正在取消…")
-            : uiText("取消生成")}
-        </button>
-      </div>
     </section>
   );
 }

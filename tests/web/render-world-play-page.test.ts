@@ -2095,10 +2095,10 @@ describe("世界游玩页面", () => {
         action === "apply"
           ? "世界修订已应用并解锁，但刷新世界失败。请重新打开世界：暂时无法同步"
           : "这次世界修订已放弃，原世界保持不变并已解锁，但刷新世界失败。请重新打开世界：暂时无法同步";
-      expect(await screen.findByRole("alert")).toHaveProperty(
-        "textContent",
-        expected,
-      );
+      const alert = await screen.findByRole("alert");
+      expect(within(alert).getByText(expected)).toBeTruthy();
+      fireEvent.click(within(alert).getByRole("button", { name: "关闭提示" }));
+      expect(screen.queryByText(expected)).toBeNull();
       expect(
         screen.queryByRole("heading", { name: /宿舍世界.*世界修订/u }),
       ).toBeNull();

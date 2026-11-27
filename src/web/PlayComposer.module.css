@@ -17,13 +17,28 @@
   box-shadow: 0 4px 24px rgb(37 49 59 / 8%);
 }
 
+.statusArea {
+  min-width: 0;
+}
+
 .status {
-  display: grid;
   max-height: min(8rem, 21dvh);
-  gap: 0.25rem;
-  padding: 0.1rem;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.status:focus-visible {
+  outline-offset: -2px;
+}
+
+.statusContent {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.statusContent:has(> :not(.shortExplanation)),
+.statusOpen .statusContent {
+  padding: 0.25rem 0.2rem 0.15rem;
 }
 
 .statusToggle {
@@ -46,10 +61,20 @@
   font-size: 0.75rem;
 }
 
-.hint {
+.tools summary {
+  width: fit-content;
+  padding-block: 0.1rem;
+}
+
+.hint,
+.shortExplanation {
   margin: 0;
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.shortExplanation {
+  display: none;
 }
 
 .dock
@@ -138,15 +163,24 @@
 }
 
 .send {
-  border-color: var(--accent);
-  color: var(--text);
-  background: var(--surface-selected);
+  flex: none;
+  width: 8.5rem;
+  padding-inline: 0.45rem;
+  white-space: nowrap;
 }
 
-.labeledSend {
-  width: auto;
-  padding: 0 0.65rem;
-  white-space: nowrap;
+.send:lang(zh) {
+  width: 5.4rem;
+}
+
+.send.freshSend {
+  width: 2rem;
+  padding-inline: 0;
+}
+
+.send > span {
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .more > summary {
@@ -160,6 +194,7 @@
 }
 
 .more > div,
+.contextUsage > p,
 .tools :global(.world-extension-options) {
   position: absolute;
   bottom: calc(100% + 0.35rem);
@@ -178,6 +213,14 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--surface);
+}
+
+.contextUsage > p {
+  width: max-content;
+  max-width: min(24rem, calc(100% - 0.8rem));
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  color: var(--text);
 }
 
 .more > div {
@@ -290,6 +333,7 @@
 
 .dock :global(.model-required-callout),
 .dock :global(.play-call-failure),
+.dock :global(.play-plan-note),
 .dock :global(.play-retry-note) {
   margin: 0;
   padding: 0.25rem 0.45rem;
@@ -315,10 +359,15 @@
 }
 
 :where(.dock) :global(.world-fresh-context-note) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   padding: 0.35rem 0.6rem;
   border-radius: 3px;
-  color: var(--warning);
-  background: var(--danger-surface);
+  color: var(--text);
+  background: var(--surface-inset);
   font-size: 0.75rem;
 }
 
@@ -352,6 +401,10 @@
     display: block;
   }
 
+  .shortExplanation {
+    display: block;
+  }
+
   .row textarea {
     max-height: 15dvh;
   }
@@ -362,17 +415,31 @@
     grid-template-columns: max-content minmax(0, 1fr);
   }
 
-  .dock > :not(.tools, .row) {
+  .statusArea {
+    display: contents;
+  }
+
+  .dock > :not(.statusArea, .row),
+  .status {
     grid-column: 1 / -1;
+  }
+
+  .tools,
+  .row {
+    order: 1;
+    align-self: center;
   }
 
   .tools {
     grid-column: 1;
-    align-self: center;
   }
 
   .row {
     grid-column: 2;
+  }
+
+  .dock > :global(.artifact-extension-mount-composer_below) {
+    order: 2;
   }
 }
 
@@ -383,7 +450,7 @@
     min-height: 2.75rem;
   }
 
-  .tools :global(.world-extension-menu) > summary {
+  .tools summary {
     padding-block: 0.25rem;
   }
 }
@@ -391,8 +458,4 @@
 .dock textarea {
   background: transparent;
   border-color: transparent;
-}
-.row > button {
-  background: #343832;
-  color: #fff;
 }

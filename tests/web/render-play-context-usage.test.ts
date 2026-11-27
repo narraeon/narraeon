@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, Fragment } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
 import type {
@@ -9,7 +9,11 @@ import type {
   V1PlayTimelineEventSummary,
   V1PlayTimelinePage,
 } from "../../src/protocol/v1.ts";
-import { PlayContextUsage } from "../../src/web/PlayContextUsage.tsx";
+import {
+  PlayContextUsageSummary,
+  PlayContextUsageWarning,
+} from "../../src/web/PlayContextUsage.tsx";
+import { describePlayContextUsage } from "../../src/web/PlayContextUsageState.ts";
 import { setWebLocale } from "../../src/web/i18n.ts";
 
 afterEach(cleanup);
@@ -129,6 +133,30 @@ function timeline(events: V1PlayTimelineEventSummary[]): V1PlayTimelinePage {
     })),
     nextCursor: null,
   };
+}
+
+function PlayContextUsage({
+  freshContextDisabled,
+  onUseFreshContext,
+  ...context
+}: Parameters<typeof describePlayContextUsage>[0] & {
+  freshContextDisabled: boolean;
+  onUseFreshContext: () => void;
+}) {
+  const { label, explanation, warningPercent } =
+    describePlayContextUsage(context);
+  return createElement(
+    Fragment,
+    null,
+    createElement(PlayContextUsageSummary, { label, explanation }),
+    warningPercent === null
+      ? null
+      : createElement(PlayContextUsageWarning, {
+          percent: warningPercent,
+          freshContextDisabled,
+          onUseFreshContext,
+        }),
+  );
 }
 
 function show(

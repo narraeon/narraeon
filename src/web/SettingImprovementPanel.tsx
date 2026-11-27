@@ -1390,6 +1390,7 @@ export function SettingImprovementPanel({
             ) : (
               <button
                 type="button"
+                className="setting-conversation-send primary-button"
                 disabled={!canSendMessage}
                 onClick={() => void composer.submit()}
               >

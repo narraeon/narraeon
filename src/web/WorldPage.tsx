@@ -1,4 +1,5 @@
 import { ChatGptUsageLink } from "./ChatGptConnectionFields.tsx";
+import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import styles from "./PlayTimeline.module.css";
 import {
   applyPlayTimelineFrame,
@@ -105,7 +106,7 @@ import {
 } from "./ArtifactExtensionHost.tsx";
 import { ArtifactDebugger } from "./ArtifactDebugger.tsx";
 import { projectUncoveredPlayerViews } from "./PlayerViewFallback.ts";
-import { PlayContextUsage } from "./PlayContextUsage.tsx";
+import { describePlayContextUsage } from "./PlayContextUsageState.ts";
 import { ProtagonistConfirmationCard } from "./ProtagonistConfirmationCard.tsx";
 import {
   readProtagonistCustomization,
@@ -1806,7 +1807,12 @@ export function WorldPage({
           onRead={recoverPlay}
         />
         {feedback?.kind === "error" ? (
-          <p role="alert">{feedback.text}</p>
+          <DismissibleNotice
+            className="world-feedback error"
+            role="alert"
+            text={feedback.text}
+            onDismiss={() => setFeedback(null)}
+          />
         ) : !syncFailed ? (
           <p role="status">{uiText("正在打开世界…")}</p>
         ) : null}
@@ -1933,11 +1939,20 @@ export function WorldPage({
   const feedbackNotice =
     feedback === null ||
     (feedback.technical === true &&
-      !readingPreferences.showTechnicalInfo) ? null : (
-      <p
-        className={"world-feedback " + feedback.kind}
-        role={feedback.kind === "error" ? "alert" : "status"}
-      >
+      !readingPreferences.showTechnicalInfo) ? null : feedback.kind ===
+      "error" ? (
+      <DismissibleNotice
+        className="world-feedback error"
+        role="alert"
+        text={feedback.text}
+        onDismiss={() => {
+          setFeedback(null);
+          if (dialog === null)
+            composerTextareaRef.current?.focus({ preventScroll: true });
+        }}
+      />
+    ) : (
+      <p className="world-feedback status" role="status">
         {feedback.text}
       </p>
     );
@@ -1946,6 +1961,8 @@ export function WorldPage({
     : !modelConfigured
       ? uiText("配置模型")
       : visiblePlayFailure !== null ||
+          decorationFailed ||
+          syncFailed ||
           modelProtocolMismatch ||
           playRequestRecovery !== null
         ? uiText("需要处理")
@@ -2135,14 +2152,6 @@ export function WorldPage({
                   onRestartFrom={(head) => void deriveWorld(head)}
                 />
               )}
-              {playProgress === null ? null : (
-                <PlayRunProgress
-                  retries={activeModelRetries}
-                  progress={playProgress}
-                  now={playProgressNow}
-                  onCancel={() => void cancelPlayGeneration()}
-                />
-              )}
               <div ref={historyEndRef} />
               {readingPreferences.showTechnicalInfo && (
                 <>
@@ -2193,6 +2202,31 @@ export function WorldPage({
             disabled={!playIdle}
             showTechnicalInfo={readingPreferences.showTechnicalInfo}
             compactStatus={compactPlayStatus}
+            contextUsage={{
+              ...describePlayContextUsage({
+                chain:
+                  playContextUsage?.worldId === worldId
+                    ? playContextUsage
+                    : null,
+                timeline: playTimeline,
+                freshContextSelected:
+                  preferFreshContext ||
+                  activeChainStale ||
+                  pending === "play-fresh",
+              }),
+              freshContextDisabled: !playIdle || !modelConfigured,
+              onUseFreshContext: openFreshComposer,
+            }}
+            runProgress={
+              playProgress === null ? null : (
+                <PlayRunProgress
+                  retries={activeModelRetries}
+                  progress={playProgress}
+                  now={playProgressNow}
+                  onCancel={() => void cancelPlayGeneration()}
+                />
+              )
+            }
             tools={
               (displayedDecorations?.extensionControls ??
                 world.extensionControls) === undefined ? null : (
@@ -2228,7 +2262,7 @@ export function WorldPage({
             }
           >
             {usingChatGptPlan && (
-              <div className="play-retry-note">
+              <div className="play-plan-note">
                 {uiText("正在使用 ChatGPT 套餐")} <ChatGptUsageLink />
               </div>
             )}
@@ -2353,7 +2387,7 @@ export function WorldPage({
             {(modelProtocolMismatch ||
               playRequestRecovery?.kind === "protocol_mismatch") &&
             playIdle ? (
-              <div className="play-call-failure" role="status">
+              <div className="play-retry-note" role="status">
                 <p>
                   {uiText(
                     "当前模型协议与此上下文不同。切回原协议即可继续；使用新协议请开启全新上下文。",
@@ -2414,19 +2448,6 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
-            <PlayContextUsage
-              chain={
-                playContextUsage?.worldId === worldId ? playContextUsage : null
-              }
-              timeline={playTimeline}
-              freshContextSelected={
-                preferFreshContext ||
-                activeChainStale ||
-                pending === "play-fresh"
-              }
-              freshContextDisabled={!playIdle || !modelConfigured}
-              onUseFreshContext={openFreshComposer}
-            />
           </PlayComposer>
 
           <button
