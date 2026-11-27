@@ -546,35 +546,61 @@ describe("ArtifactExtensionHost React lifetime", () => {
     expect(screen.getByText("扩展首个请求失败")).toBeTruthy();
   });
 
-  test("玩家视图面板调试区显示对应 app bridge 事件", () => {
-    const panel: FrontendPlayerViewPanelProjection = {
-      panelId: "status-panel",
-      worldId: "world-1",
-      preset: { id: "preset-1", revision: "rev-1" },
-      lifecycle: "current_preset",
-      source: { kind: "player_view", viewId: "status" },
-      authority: "committed_player_view_projection",
-      head: "commit:1",
-      channel: "player.view.current",
-      key: "current",
-      contentType: "application/json",
-      payload: { viewId: "status", items: [{ id: "clothes", value: "白色" }] },
-      projection: "upsert",
-      diagnostics: [],
-      frontend: artifact().frontend,
-    };
-    render(
-      createElement(ArtifactDebugger, {
-        records: [],
-        playerViewPanels: [panel],
-        bridgeEvents: {
-          "player-view:status-panel": ["bridge.ready", "diagnostic"],
+  test.each([
+    {
+      locale: "zh-CN",
+      regionName: "玩家视图面板诊断",
+      head: "已提交玩家视图投影 · head：commit:1",
+      source: "玩家视图 ID：status · 当前编排方案：preset-1/rev-1",
+    },
+    {
+      locale: "en",
+      regionName: "Player-view panel diagnostics",
+      head: "Committed player-view projection · head: commit:1",
+      source: "Player view ID: status · Active orchestration: preset-1/rev-1",
+    },
+  ] as const)(
+    "玩家视图面板调试区显示对应 app bridge 事件 ($locale)",
+    ({ locale, regionName, head, source }) => {
+      setWebLocale(locale);
+      const panel: FrontendPlayerViewPanelProjection = {
+        panelId: "status-panel",
+        worldId: "world-1",
+        preset: { id: "preset-1", revision: "rev-1" },
+        lifecycle: "current_preset",
+        source: { kind: "player_view", viewId: "status" },
+        authority: "committed_player_view_projection",
+        head: "commit:1",
+        channel: "player.view.current",
+        key: "current",
+        contentType: "application/json",
+        payload: {
+          viewId: "status",
+          items: [{ id: "clothes", value: "白色" }],
         },
-      }),
-    );
-    expect(screen.getByText(/当前编排方案 preset-1\/rev-1/u)).toBeTruthy();
-    expect(screen.getByText("bridge 事件（2）")).toBeTruthy();
-    expect(screen.getByText("bridge.ready")).toBeTruthy();
-    expect(screen.getByText("diagnostic")).toBeTruthy();
-  });
+        projection: "upsert",
+        diagnostics: [],
+        frontend: artifact().frontend,
+      };
+      render(
+        createElement(ArtifactDebugger, {
+          records: [],
+          playerViewPanels: [panel],
+          bridgeEvents: {
+            "player-view:status-panel": ["bridge.ready", "diagnostic"],
+          },
+        }),
+      );
+      const debugPanel = within(
+        screen.getByRole("region", { name: regionName }),
+      );
+      expect(debugPanel.getByText(head)).toBeTruthy();
+      expect(debugPanel.getByText(source)).toBeTruthy();
+      expect(
+        debugPanel.getByText(/\b2\b/u, { selector: "summary" }),
+      ).toBeTruthy();
+      expect(debugPanel.getByText("bridge.ready")).toBeTruthy();
+      expect(debugPanel.getByText("diagnostic")).toBeTruthy();
+    },
+  );
 });
