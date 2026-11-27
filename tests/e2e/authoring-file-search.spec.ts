@@ -51,7 +51,11 @@ test("a long file list leaves the selected document available in both authoring 
           .getByRole("button", { name: "Revise current world", exact: true })
           .click();
       }
-      await page.getByRole("button", { name: "Files", exact: true }).click();
+      const filesOpener = page.getByRole("button", {
+        name: "Files",
+        exact: true,
+      });
+      await filesOpener.click();
       const preview = page.locator(".setting-content-preview");
       const files = preview.getByRole("navigation").getByRole("button");
       await expect(files.nth(22)).toBeAttached();
@@ -66,10 +70,16 @@ test("a long file list leaves the selected document available in both authoring 
           preview.getByRole("button", { name: "Edit this file", exact: true }),
         ).toBeInViewport();
       }
-      await preview.getByRole("button", { name: "Edit this file" }).click();
+      await preview
+        .getByRole("button", { name: "Edit this file" })
+        .press("Enter");
+      const editor = page.locator(".setting-overlay-rail-right");
       await expect(
         page.locator(".setting-overlay-rail-right.is-editing"),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(editor).toHaveAttribute("aria-hidden", "true");
+      await expect(filesOpener).toBeFocused();
     }
   }
 });

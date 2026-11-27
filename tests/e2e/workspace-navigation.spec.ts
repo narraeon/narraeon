@@ -153,12 +153,22 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
   await expect(
     tools.getByRole("button", { name: "创建世界", exact: true }),
   ).toBeEnabled();
-  await tools.getByRole("button", { name: "编辑", exact: true }).click();
+  const edit = tools.getByRole("button", { name: "编辑", exact: true });
+  await edit.click();
   await page.getByLabel("选择编辑文件").selectOption("opening.md");
-  await page.getByLabel("编辑 opening.md").fill("尚未保存的开场");
+  const openingDraft = page.getByLabel("编辑 opening.md");
+  await openingDraft.fill("尚未保存的开场");
   await expect(
     tools.getByRole("button", { name: "创建世界", exact: true }),
   ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".setting-overlay-rail-right")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  await expect(edit).toBeFocused();
+  await edit.press("Enter");
+  await expect(openingDraft).toHaveValue("尚未保存的开场");
   await expect(
     page.getByRole("button", { name: "返回工作区", exact: true }),
   ).toBeEnabled();
