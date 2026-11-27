@@ -1485,6 +1485,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           () => setNotice(""),
         )}
         notice={notice || authoring.notice}
+        savedFiles={authoring.serverFiles}
         contentEditor={{
           scriptPermission: (
             <PackageScriptPermissionControl

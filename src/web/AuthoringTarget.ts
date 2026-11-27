@@ -72,8 +72,6 @@ export interface AuthoringTargetSnapshot extends Omit<
   revision?: V1WorldRevisionOverview;
 }
 export interface AuthoringTargetMessages {
-  opened: string;
-  locked: string;
   deleted: string;
   saved: string;
   reset: string | null;
@@ -81,8 +79,6 @@ export interface AuthoringTargetMessages {
   alreadyRolledBack: string;
 }
 const contentPackageMessages: AuthoringTargetMessages = {
-  opened: "",
-  locked: "",
   deleted: "对话历史已删除；内容包当前树没有回滚。",
   saved: "内容包当前树已整批保存。",
   reset: "已放弃未保存修改；内容包当前树未改变。",
@@ -90,8 +86,6 @@ const contentPackageMessages: AuthoringTargetMessages = {
   alreadyRolledBack: "当前文件已是修改前版本。",
 };
 const worldRevisionMessages: AuthoringTargetMessages = {
-  opened: "浏览不会锁定世界；首次编辑或发送消息后才会锁定。",
-  locked: "世界已锁定到这份修订；关闭页面也会保留工作树。",
   deleted: "对话历史已删除；修订工作树中的改动没有回滚。",
   saved: "手动修改已保存到修订工作树，可以继续编辑或回滚。",
   reset: null,

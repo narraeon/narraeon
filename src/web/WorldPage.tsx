@@ -821,11 +821,11 @@ export function WorldPage({
     activeStatus === "interrupted" &&
     lastActiveEvent?.kind === "event" &&
     lastActiveEvent.event.kind === "failure";
+  const reportedRevisionEpoch =
+    revisionOverview === null ? world?.worldRevision : revisionOverview.epoch;
   const activeRevisionEpoch =
-    revisionOverview?.epoch?.locked === true
-      ? revisionOverview.epoch
-      : (world?.worldRevision ?? null);
-  const worldRevisionLocked = activeRevisionEpoch?.locked === true;
+    reportedRevisionEpoch?.locked === true ? reportedRevisionEpoch : null;
+  const worldRevisionLocked = activeRevisionEpoch !== null;
   const reportedFreshContextReason =
     playCallChain !== null
       ? playCallChain.freshContextReason
@@ -1834,12 +1834,12 @@ export function WorldPage({
           ((target) => onViewPromptOrder("authorPrompts", target))
         }
         notice={authoring.notice}
+        savedFiles={authoring.serverFiles}
         contentEditor={{
           mode: "world-revision",
           files: revisionFiles,
-          revisionBase: epoch?.locked
-            ? epoch
-            : { files: authoring.serverFiles },
+          revisionBase: epoch ?? { files: authoring.serverFiles },
+          revisionLocked: epoch !== null,
           ...(selectedDocument === ""
             ? {}
             : {
@@ -1879,31 +1879,25 @@ export function WorldPage({
             setFeedback({ kind: "error", text: errorMessage(reason) }),
           );
         }}
-        {...(protagonistCustomization !== null ||
-        epoch?.locked === true ||
-        (revisionOverview?.sealedEpochs.length ?? 0) > 0
-          ? {
-              revisionActions: {
-                discardTarget:
-                  epoch?.locked === true
-                    ? { epochId: epoch.epochId, revision: epoch.revision }
-                    : null,
-                ...(protagonistCustomization === null
-                  ? {}
-                  : { applyLabel: uiText("应用并开始游玩") }),
-                changedFileCount: epoch?.diff.length ?? 0,
-                canApply:
-                  epoch?.locked === true &&
-                  (modelConfigured || protagonistCustomization !== null) &&
-                  epoch.diagnostics.length === 0,
-                applying: authoring.applying,
-                changes: epoch?.changes ?? [],
-                sealedEpochs: revisionOverview?.sealedEpochs ?? [],
-                onApply: applyRevision,
-                onDiscard: discardRevision,
-              },
-            }
-          : {})}
+        revisionActions={{
+          discardTarget:
+            epoch === null
+              ? null
+              : { epochId: epoch.epochId, revision: epoch.revision },
+          ...(protagonistCustomization === null
+            ? {}
+            : { applyLabel: uiText("应用并开始游玩") }),
+          changedFileCount: epoch?.diff.length ?? 0,
+          canApply:
+            epoch !== null &&
+            (modelConfigured || protagonistCustomization !== null) &&
+            epoch.diagnostics.length === 0,
+          applying: authoring.applying,
+          changes: epoch?.changes ?? [],
+          sealedEpochs: revisionOverview?.sealedEpochs ?? [],
+          onApply: applyRevision,
+          onDiscard: discardRevision,
+        }}
       />
     );
   }

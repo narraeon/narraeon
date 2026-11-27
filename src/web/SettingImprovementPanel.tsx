@@ -1,4 +1,3 @@
-import styles from "./WorldHeaderChrome.module.css";
 import {
   idleWorkspaceNavigation,
   type WorkspaceNavigationProtection,
@@ -31,7 +30,7 @@ import {
 } from "./ModelSendRecovery.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
@@ -100,6 +99,7 @@ interface SettingImprovementPanelProps {
   contentEditor: Omit<ContentTreeEditorProps, "onDelete"> & {
     onDelete: () => void;
   };
+  savedFiles?: readonly ContentTreeFile[];
   conversationActions: {
     onRead?: () => void;
     onPreview?: () => Promise<V1SettingPromptPreview["compilation"] | null>;
@@ -215,6 +215,7 @@ export function SettingImprovementPanel({
   },
   notice,
   contentEditor,
+  savedFiles = contentEditor.files,
   conversationActions: {
     onRead,
     onSend,
@@ -288,6 +289,7 @@ export function SettingImprovementPanel({
     changeSetId: string;
     path: string;
   } | null>(null);
+  const rollingBackRef = useRef(false);
   const conversationRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const [composerHeight, setComposerHeight] = useState(0);
@@ -432,26 +434,49 @@ export function SettingImprovementPanel({
     titleDirty ||
     (!revisingWorld && (running || hasUnsavedFileDraft));
   const discardTarget = revisionActions?.discardTarget ?? null;
+  const revisionLocked = discardTarget !== null;
   const discardLocked =
     loading ||
     interactionLocked ||
     hasUnsavedFileDraft ||
     discardTarget === null;
-  const rollbackableChangeSetIds =
-    revisionActions === undefined
-      ? undefined
-      : new Set(revisionActions.changes.map(({ changeSetId }) => changeSetId));
+  const activeRevisionChanges = revisionActions?.changes;
+  const sealedEpochs = revisionActions?.sealedEpochs;
+  const rollbackableChangeSetIds = useMemo(
+    () =>
+      activeRevisionChanges === undefined
+        ? undefined
+        : new Set(activeRevisionChanges.map(({ changeSetId }) => changeSetId)),
+    [activeRevisionChanges],
+  );
+  const sealedChangeSetIds = useMemo(
+    () =>
+      new Set(
+        sealedEpochs?.flatMap(({ changes }) =>
+          changes.map(({ changeSetId }) => changeSetId),
+        ),
+      ),
+    [sealedEpochs],
+  );
+  const filesByPath = useMemo(
+    () => new Map(savedFiles.map((file) => [file.path, file])),
+    [savedFiles],
+  );
 
   function createWorldFromSetting(): void {
     if (createWorldDisabled || savingTitleRef.current) return;
     if (showTitleSuggestion) {
-      setLeftRailOpen(false);
-      setRightRailOpen(false);
-      titleInput.current?.scrollIntoView({ block: "center" });
-      titleInput.current?.focus({ preventScroll: true });
+      focusTitleSuggestion();
       return;
     }
     onCreateWorld?.();
+  }
+
+  function focusTitleSuggestion(): void {
+    setLeftRailOpen(false);
+    setRightRailOpen(false);
+    titleInput.current?.scrollIntoView({ block: "center" });
+    titleInput.current?.focus({ preventScroll: true });
   }
 
   function finishTitleSuggestion(): void {
@@ -714,7 +739,13 @@ export function SettingImprovementPanel({
     changeSetId: string,
     path: string,
   ): Promise<void> => {
-    if ((view === null && !revisingWorld) || rollbackDisabled) return;
+    if (
+      (view === null && !revisingWorld) ||
+      rollbackDisabled ||
+      rollingBackRef.current
+    )
+      return;
+    rollingBackRef.current = true;
     setLeftRailOpen(false);
     setRightRailOpen(false);
     setRollingBackFile({ changeSetId, path });
@@ -723,6 +754,7 @@ export function SettingImprovementPanel({
     } catch {
       // The parent projects the Runtime failure into the conversation surface.
     } finally {
+      rollingBackRef.current = false;
       setRollingBackFile(null);
     }
   };
@@ -777,135 +809,160 @@ export function SettingImprovementPanel({
       }
     >
       <div className="setting-reader-shell">
-        <nav
-          className={`world-floating-chrome world-floating-chrome-left setting-floating-chrome ${styles.chrome} ${styles.left}`}
-          aria-label={
-            revisingWorld ? uiText("世界修订导航") : uiText("设定完善导航")
-          }
-        >
-          {(revisingWorld || showWorkspaceBack) && (
-            <button
-              ref={backButton}
-              type="button"
-              disabled={navigationBusy}
-              onClick={requestBack}
-              aria-label={
-                backLabel ?? uiText(revisingWorld ? "返回游玩" : "返回工作区")
-              }
-            >
-              ←
-            </button>
-          )}
-          <button
-            ref={historyButton}
-            type="button"
-            className={leftRailOpen ? "is-current" : ""}
-            aria-pressed={leftRailOpen}
-            onClick={(event) => {
-              if (leftRailOpen) closeRail();
-              else {
-                railOpener.current = event.currentTarget;
-                setLeftRailOpen(true);
-                setRightRailOpen(false);
-              }
-            }}
-          >
-            {uiText("历史")}
-          </button>
-        </nav>
-
-        <h1
-          id="setting-improvement-title"
-          className={`world-floating-title setting-floating-title ${styles.title} ${styles.authoringTitle}`}
-          title={packageName}
-        >
-          {packageName} ·{" "}
-          {revisingWorld ? uiText("世界修订") : uiText("AI 设定完善")}
-        </h1>
-
-        <nav
-          className={`world-floating-chrome world-floating-chrome-right setting-floating-chrome ${styles.chrome} ${styles.right}`}
-          aria-label={
-            revisingWorld ? uiText("世界修订工具") : uiText("设定完善工具")
-          }
-        >
-          {!revisingWorld && onCreateWorld !== undefined && (
-            <button
-              type="button"
-              className={`setting-create-world${showCreationNextStep ? " is-ready" : ""}`}
-              disabled={createWorldDisabled}
-              onClick={createWorldFromSetting}
-            >
-              {uiText("创建世界")}
-            </button>
-          )}
-          <button
-            ref={filesButton}
-            type="button"
-            className={
-              rightRailOpen && fileRailMode === "preview" ? "is-current" : ""
+        <header className="setting-workbench-header">
+          <nav
+            className="setting-workbench-nav"
+            aria-label={
+              revisingWorld ? uiText("世界修订导航") : uiText("设定完善导航")
             }
-            aria-expanded={rightRailOpen && fileRailMode === "preview"}
-            onClick={(event) => openFileRail("preview", event.currentTarget)}
           >
-            {uiText("文件")}
-          </button>
-          <button
-            type="button"
-            className={
-              rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
-            }
-            aria-expanded={rightRailOpen && fileRailMode === "edit"}
-            disabled={interactionLocked || draftsLocked}
-            onClick={(event) => openFileRail("edit", event.currentTarget)}
-          >
-            {uiText("编辑")}
-          </button>
-          <button type="button" onClick={collapseAllTraces}>
-            {uiText("全部收起")}
-          </button>
-          <button
-            type="button"
-            disabled={interactionLocked || loading || titleDirty}
-            onClick={() => {
-              setUnconfirmedDraft(null);
-              onFreshContext();
-            }}
-          >
-            {uiText("全新上下文")}
-          </button>
-          {revisionActions === undefined ? null : (
+            {(revisingWorld || showWorkspaceBack) && (
+              <button
+                ref={backButton}
+                type="button"
+                disabled={navigationBusy}
+                onClick={requestBack}
+                aria-label={
+                  backLabel ?? uiText(revisingWorld ? "返回游玩" : "返回工作区")
+                }
+              >
+                ←
+              </button>
+            )}
             <button
+              ref={historyButton}
               type="button"
-              className="danger-button"
-              disabled={discardLocked}
-              onClick={(event) => requestRevisionDiscard(event.currentTarget)}
+              className={leftRailOpen ? "is-current" : ""}
+              aria-pressed={leftRailOpen}
+              onClick={(event) => {
+                if (leftRailOpen) closeRail();
+                else {
+                  railOpener.current = event.currentTarget;
+                  setLeftRailOpen(true);
+                  setRightRailOpen(false);
+                }
+              }}
             >
-              {uiText("放弃")}
+              {uiText("历史")}
             </button>
-          )}
-          {revisionActions === undefined ? null : (
+          </nav>
+
+          <h1 id="setting-improvement-title" title={packageName}>
+            <span>{packageName}</span>
+            {" · "}
+            <span>{uiText(revisingWorld ? "世界修订" : "AI 设定完善")}</span>
+          </h1>
+
+          <nav
+            className="setting-workbench-tools"
+            aria-label={
+              revisingWorld ? uiText("世界修订工具") : uiText("设定完善工具")
+            }
+          >
+            {!revisingWorld && onCreateWorld !== undefined && (
+              <div className="setting-create-action">
+                <button
+                  type="button"
+                  className={`setting-create-world${showCreationNextStep ? " is-ready" : ""}`}
+                  disabled={createWorldDisabled}
+                  aria-describedby={
+                    showTitleSuggestion
+                      ? "setting-create-title-note"
+                      : undefined
+                  }
+                  onClick={createWorldFromSetting}
+                >
+                  {uiText("创建世界")}
+                </button>
+                {showTitleSuggestion && (
+                  <div className="setting-title-reminder">
+                    <span id="setting-create-title-note">
+                      {uiText(
+                        titleDirty
+                          ? "创建世界前请保存书名草稿或保留当前书名。"
+                          : "创建世界前请选择书名。",
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={packageActionLocked}
+                      onClick={focusTitleSuggestion}
+                    >
+                      {uiText("处理建议书名")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <button
+              ref={filesButton}
               type="button"
-              disabled={
-                interactionLocked ||
-                hasUnsavedFileDraft ||
-                !revisionActions.canApply ||
-                revisionActions.applying
-              }
               className={
-                revisionActions.applyLabel === undefined
-                  ? undefined
-                  : "primary-button"
+                rightRailOpen && fileRailMode === "preview" ? "is-current" : ""
               }
-              onClick={() => void revisionActions.onApply()}
+              aria-expanded={rightRailOpen && fileRailMode === "preview"}
+              onClick={(event) => openFileRail("preview", event.currentTarget)}
             >
-              {revisionActions.applying
-                ? uiText("正在应用…")
-                : (revisionActions.applyLabel ?? uiText("应用并解锁"))}
+              {uiText("文件")}
             </button>
-          )}
-        </nav>
+            <button
+              type="button"
+              className={
+                rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
+              }
+              aria-expanded={rightRailOpen && fileRailMode === "edit"}
+              disabled={interactionLocked || draftsLocked}
+              onClick={(event) => openFileRail("edit", event.currentTarget)}
+            >
+              {uiText("编辑")}
+            </button>
+            <button type="button" onClick={collapseAllTraces}>
+              {uiText("全部收起")}
+            </button>
+            <button
+              type="button"
+              disabled={interactionLocked || loading || titleDirty}
+              onClick={() => {
+                setUnconfirmedDraft(null);
+                onFreshContext();
+              }}
+            >
+              {uiText("全新上下文")}
+            </button>
+            {!revisionLocked ? null : (
+              <button
+                type="button"
+                className="danger-button"
+                disabled={discardLocked}
+                onClick={(event) => requestRevisionDiscard(event.currentTarget)}
+              >
+                {uiText("放弃")}
+              </button>
+            )}
+            {revisionActions === undefined || !revisionLocked ? null : (
+              <button
+                type="button"
+                disabled={
+                  interactionLocked ||
+                  hasUnsavedFileDraft ||
+                  !revisionActions.canApply ||
+                  revisionActions.applying
+                }
+                className={
+                  revisionActions.applyLabel === undefined
+                    ? undefined
+                    : "primary-button"
+                }
+                onClick={() => void revisionActions.onApply()}
+              >
+                {revisionActions.applying
+                  ? uiText("正在应用…")
+                  : (revisionActions.applyLabel ?? uiText("应用并解锁"))}
+              </button>
+            )}
+          </nav>
+        </header>
 
         <section
           ref={conversationRef}
@@ -922,19 +979,19 @@ export function SettingImprovementPanel({
             {(view === null || view.turns.length === 0) && (
               <header className="setting-conversation-intro">
                 <h2>
-                  {revisingWorld
-                    ? uiText("手动编辑和 AI 共用一份修订")
-                    : uiText("可以从一句故事点子开始")}
+                  {uiText(
+                    revisingWorld
+                      ? "手动编辑和 AI 共用一份修订"
+                      : "可以从一句故事点子开始",
+                  )}
                 </h2>
-                <p>
-                  {revisingWorld
-                    ? uiText(
-                        "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。",
-                      )
-                    : uiText(
-                        "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。",
-                      )}
-                </p>
+                {!revisingWorld && (
+                  <p>
+                    {uiText(
+                      "成功的工具改动直接写入内容包当前树；需要核对或手动修改时，从右侧打开文件。",
+                    )}
+                  </p>
+                )}
               </header>
             )}
 
@@ -957,7 +1014,10 @@ export function SettingImprovementPanel({
                 <p>
                   {uiText(
                     revisingWorld
-                      ? "先配置并启用模型，才能让 AI 参与或应用世界修订；手动编辑和放弃仍然可用。"
+                      ? revisionLocked &&
+                        revisionActions?.applyLabel === undefined
+                        ? "先配置并启用模型，才能让 AI 参与或应用世界修订；手动编辑和放弃仍然可用。"
+                        : "先配置并启用模型，才能让 AI 参与修订。也可以先手动编辑。"
                       : "先配置并启用模型，才能开始设定完善对话。",
                   )}
                 </p>
@@ -971,28 +1031,38 @@ export function SettingImprovementPanel({
               </section>
             ) : null}
 
-            <p className="setting-current-tree-notice" role="note">
-              {revisingWorld
-                ? uiText(
-                    "所有绿色新增和红色删除都只在锁定工作树中；“应用并解锁”才会提交世界，关闭页面不会丢失修订。",
-                  )
-                : uiText(
-                    "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。",
-                  )}
-            </p>
+            {!revisingWorld && (
+              <p className="setting-current-tree-notice" role="note">
+                {uiText(
+                  "成功的 AI 改动直接写入内容包。每轮记录保留当时的差异。",
+                )}
+              </p>
+            )}
 
-            {revisionActions === undefined ? null : (
+            {revisionActions === undefined ||
+            (!revisionLocked && loading) ? null : (
               <div className="setting-history-review-banner" role="status">
                 <div>
-                  <strong>{uiText("世界游玩已锁定")}</strong>
+                  <strong>
+                    {uiText(
+                      revisionLocked ? "世界游玩已锁定" : "世界游玩未锁定",
+                    )}
+                  </strong>
                   <p>
                     {uiText(
-                      "当前累计改动 {count} 个文件。可以继续聊天、手动编辑或按文件回滚。",
-                      {
-                        count: revisionActions.changedFileCount,
-                      },
+                      revisionLocked
+                        ? "世界已锁定到这份修订；关闭页面也会保留工作树。"
+                        : "浏览不会锁定世界；首次编辑或发送消息后才会锁定。",
                     )}
                   </p>
+                  {revisionLocked && (
+                    <p>
+                      {uiText(
+                        "当前累计改动 {count} 个文件。应用会提交改动，应用或放弃都会解锁游玩。",
+                        { count: revisionActions.changedFileCount },
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -1029,7 +1099,7 @@ export function SettingImprovementPanel({
                         heading={uiText("这次修改的完整差异")}
                         rollback={{
                           changeSetId: changeSet.changeSetId,
-                          currentFiles: contentEditor.files,
+                          filesByPath,
                           disabled: rollbackDisabled,
                           rollingBackFile,
                           onRollbackFile: rollbackFile,
@@ -1053,9 +1123,11 @@ export function SettingImprovementPanel({
                   <strong>{uiText("下一条消息将开启全新上下文")}</strong>
                   <p>
                     {uiText(
-                      revisingWorld
-                        ? "新对话会从当前修订工作树开始；原有对话仍保留在历史中。"
-                        : "新对话会从内容包当前树重新编译；原有对话仍保留在历史中。",
+                      !revisingWorld
+                        ? "新对话会从内容包当前树重新编译；原有对话仍保留在历史中。"
+                        : revisionLocked
+                          ? "新对话会从当前修订工作树开始；原有对话仍保留在历史中。"
+                          : "发送时会根据世界当前文件创建修订；原有对话仍保留在历史中。",
                     )}
                   </p>
                 </div>
@@ -1122,9 +1194,10 @@ export function SettingImprovementPanel({
                       onCallContext?.(view.sessionId, callId) ??
                       Promise.resolve({ status: "unavailable", messages: [] })
                     }
-                    currentFiles={contentEditor.files}
+                    filesByPath={filesByPath}
                     rollbackDisabled={rollbackDisabled}
                     rollbackableChangeSetIds={rollbackableChangeSetIds}
+                    sealedChangeSetIds={sealedChangeSetIds}
                     rollingBackFile={rollingBackFile}
                     onRollbackFile={rollbackFile}
                     editing={
@@ -1185,7 +1258,13 @@ export function SettingImprovementPanel({
                         <p>{view.lastFailure}</p>
                       </details>
                       <p>
-                        {uiText("完整对话和已经结算的当前树改动都已保留。")}
+                        {uiText(
+                          !revisingWorld
+                            ? "完整对话和已经结算的当前树改动都已保留。"
+                            : revisionLocked
+                              ? "对话和已保存的修订改动可以继续查看。"
+                              : "可以继续查看历史对话和已封存修订。",
+                        )}
                       </p>
                     </>
                   )}
@@ -1323,7 +1402,11 @@ export function SettingImprovementPanel({
                   )}
                   {showCreationNextStep && !createWorldDisabled && (
                     <p role="status">
-                      {uiText("内容包已准备好。点击「创建世界」开始游玩。")}
+                      {uiText(
+                        showTitleSuggestion
+                          ? "内容包已准备好。先选择书名，再创建世界。"
+                          : "内容包已准备好。点击「创建世界」开始游玩。",
+                      )}
                     </p>
                   )}
                 </section>
@@ -1339,6 +1422,21 @@ export function SettingImprovementPanel({
         </section>
 
         <footer ref={composerRef} className="setting-conversation-composer">
+          {titleDirty && (
+            <div className="setting-title-reminder">
+              <span id="setting-composer-title-note" role="status">
+                {uiText("保存修改后的书名或保留当前书名后，即可继续聊天。")}
+              </span>
+              <button
+                type="button"
+                className="text-button"
+                disabled={packageActionLocked}
+                onClick={focusTitleSuggestion}
+              >
+                {uiText("处理建议书名")}
+              </button>
+            </div>
+          )}
           {hasUnsavedFileDraft && (
             <div className="setting-improvement-warning">
               <p role={fileSaveConflict ? "alert" : "status"}>
@@ -1370,6 +1468,9 @@ export function SettingImprovementPanel({
               rows={2}
               value={message}
               disabled={disabled}
+              aria-describedby={
+                titleDirty ? "setting-composer-title-note" : undefined
+              }
               placeholder={uiText(
                 revisingWorld
                   ? "可以讨论、要求它检查状态，也可以直接让它修改当前世界修订。"
@@ -1660,9 +1761,10 @@ function SettingConversationTurnView({
   turn,
   loadContext,
   revisingWorld,
-  currentFiles,
+  filesByPath,
   rollbackDisabled,
   rollbackableChangeSetIds,
+  sealedChangeSetIds,
   rollingBackFile,
   onRollbackFile,
   editing,
@@ -1678,9 +1780,10 @@ function SettingConversationTurnView({
   turn: V1SettingConversationTurn;
   loadContext: (callId: string) => Promise<PlayRequestContext>;
   revisingWorld: boolean;
-  currentFiles: readonly ContentTreeFile[];
+  filesByPath: ReadonlyMap<string, ContentTreeFile>;
   rollbackDisabled: boolean;
   rollbackableChangeSetIds: ReadonlySet<string> | undefined;
+  sealedChangeSetIds: ReadonlySet<string>;
   rollingBackFile: { changeSetId: string; path: string } | null;
   onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
   editing: { draft: string } | null;
@@ -1698,6 +1801,27 @@ function SettingConversationTurnView({
     (call) => call.id,
     (call) => call.retryOf,
   );
+  const fileChanges = turn.exchanges.flatMap((exchange) =>
+    exchange.toolCalls.flatMap(({ callId, result }) =>
+      result === null || result.isError
+        ? []
+        : result.changes.map((diff) => ({
+            key: `${exchange.id}:${callId}:${diff.path}`,
+            changeSetId: result.changeSetId,
+            diff,
+          })),
+    ),
+  );
+  const rollbackFor = (id: string | null): ChangeRollback | undefined =>
+    id === null || (revisingWorld && !rollbackableChangeSetIds?.has(id))
+      ? undefined
+      : {
+          changeSetId: id,
+          filesByPath,
+          disabled: rollbackDisabled,
+          rollingBackFile,
+          onRollbackFile,
+        };
   return (
     <section className="setting-conversation-turn">
       <article className="setting-conversation-message setting-conversation-user">
@@ -1764,6 +1888,39 @@ function SettingConversationTurnView({
           </article>
         ) : null,
       )}
+      {fileChanges.length > 0 && (
+        <section
+          className="setting-accepted-changes setting-turn-file-changes"
+          aria-label={uiText("本轮已改文件")}
+        >
+          <h5>{uiText("本轮已改文件")}</h5>
+          {fileChanges.map(({ key, changeSetId, diff }) => {
+            const rollback = rollbackFor(changeSetId);
+            const file = filesByPath.get(diff.path);
+            let status = uiText("历史改动");
+            if (changeSetId !== null && sealedChangeSetIds.has(changeSetId))
+              status = uiText("已封存修订");
+            else if (
+              rollback !== undefined &&
+              fileMatchesContents(file, diff.before)
+            )
+              status = uiText("当前文件已是修改前版本");
+            else if (
+              rollback !== undefined &&
+              fileMatchesContents(file, diff.after)
+            )
+              status = uiText(revisingWorld ? "修订工作树" : "内容包当前树");
+            return (
+              <FileChangeDiff
+                key={key}
+                diff={diff}
+                rollback={rollback}
+                status={status}
+              />
+            );
+          })}
+        </section>
+      )}
       <ModelCallDetailsGroup count={callAttempts.length}>
         {callAttempts.map((attempts) => (
           <ModelCallAttempts
@@ -1792,11 +1949,7 @@ function SettingConversationTurnView({
                     <SettingConversationTools
                       exchange={exchange}
                       revisingWorld={revisingWorld}
-                      currentFiles={currentFiles}
-                      rollbackDisabled={rollbackDisabled}
-                      rollbackableChangeSetIds={rollbackableChangeSetIds}
-                      rollingBackFile={rollingBackFile}
-                      onRollbackFile={onRollbackFile}
+                      rollbackFor={rollbackFor}
                     />
                   </ModelCallTools>
                 }
@@ -1813,19 +1966,11 @@ function SettingConversationTurnView({
 function SettingConversationTools({
   exchange,
   revisingWorld,
-  currentFiles,
-  rollbackDisabled,
-  rollbackableChangeSetIds,
-  rollingBackFile,
-  onRollbackFile,
+  rollbackFor,
 }: {
   exchange: V1SettingConversationExchange;
   revisingWorld: boolean;
-  currentFiles: readonly ContentTreeFile[];
-  rollbackDisabled: boolean;
-  rollbackableChangeSetIds: ReadonlySet<string> | undefined;
-  rollingBackFile: { changeSetId: string; path: string } | null;
-  onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
+  rollbackFor: (changeSetId: string | null) => ChangeRollback | undefined;
 }): React.JSX.Element {
   return (
     <div className="model-call-tool-list">
@@ -1861,19 +2006,7 @@ function SettingConversationTools({
               <pre>{call.result.markdown}</pre>
               <AcceptedChanges
                 changes={call.result.changes}
-                rollback={
-                  call.result.changeSetId === null ||
-                  (rollbackableChangeSetIds !== undefined &&
-                    !rollbackableChangeSetIds.has(call.result.changeSetId))
-                    ? undefined
-                    : {
-                        changeSetId: call.result.changeSetId,
-                        currentFiles,
-                        disabled: rollbackDisabled,
-                        rollingBackFile,
-                        onRollbackFile,
-                      }
-                }
+                rollback={rollbackFor(call.result.changeSetId)}
               />
             </>
           )}
@@ -1883,6 +2016,14 @@ function SettingConversationTools({
   );
 }
 
+interface ChangeRollback {
+  changeSetId: string;
+  filesByPath: ReadonlyMap<string, ContentTreeFile>;
+  disabled: boolean;
+  rollingBackFile: { changeSetId: string; path: string } | null;
+  onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
+}
+
 function AcceptedChanges({
   changes,
   heading = uiText("当时已生效差异"),
@@ -1890,35 +2031,55 @@ function AcceptedChanges({
 }: {
   changes: readonly V1SettingAuthoringDiff[];
   heading?: string;
-  rollback?:
-    | {
-        changeSetId: string;
-        currentFiles: readonly ContentTreeFile[];
-        disabled: boolean;
-        rollingBackFile: { changeSetId: string; path: string } | null;
-        onRollbackFile: (changeSetId: string, path: string) => Promise<void>;
-      }
-    | undefined;
+  rollback?: ChangeRollback | undefined;
 }): React.JSX.Element | null {
   if (changes.length === 0) return null;
   return (
     <section className="setting-accepted-changes" aria-label={heading}>
       <h5>{heading}</h5>
       {changes.map((diff) => (
-        <details
+        <FileChangeDiff
           key={`${diff.kind}-${diff.path}`}
-          className="setting-change-diff"
-        >
-          <summary>
-            <span className={`setting-diff-kind setting-diff-${diff.kind}`}>
-              {diff.kind === "create"
-                ? uiText("新增")
-                : diff.kind === "delete"
-                  ? uiText("删除")
-                  : uiText("修改")}
-            </span>
-            <code>{diff.path}</code>
-          </summary>
+          diff={diff}
+          rollback={rollback}
+        />
+      ))}
+    </section>
+  );
+}
+
+function FileChangeDiff({
+  diff,
+  rollback,
+  status,
+}: {
+  diff: V1SettingAuthoringDiff;
+  rollback: ChangeRollback | undefined;
+  status?: string;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="setting-change-diff"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span className={`setting-diff-kind setting-diff-${diff.kind}`}>
+          {uiText(
+            diff.kind === "create"
+              ? "新增"
+              : diff.kind === "delete"
+                ? "删除"
+                : "修改",
+          )}
+        </span>
+        <code>{diff.path}</code>
+        {status === undefined ? null : (
+          <small className="setting-change-status">{status}</small>
+        )}
+      </summary>
+      {(open || status === undefined) && (
+        <>
           <UnifiedTextDiff
             before={diff.before}
             after={diff.after}
@@ -1928,7 +2089,7 @@ function AcceptedChanges({
             <FileRollbackControl
               changeSetId={rollback.changeSetId}
               change={diff}
-              currentFiles={rollback.currentFiles}
+              currentFile={rollback.filesByPath.get(diff.path)}
               disabled={rollback.disabled}
               rolling={
                 rollback.rollingBackFile?.changeSetId ===
@@ -1938,9 +2099,9 @@ function AcceptedChanges({
               onRollback={rollback.onRollbackFile}
             />
           )}
-        </details>
-      ))}
-    </section>
+        </>
+      )}
+    </details>
   );
 }
 
@@ -1994,19 +2155,19 @@ function SealedWorldRevisionHistory({
 function FileRollbackControl({
   changeSetId,
   change,
-  currentFiles,
+  currentFile,
   disabled,
   rolling,
   onRollback,
 }: {
   changeSetId: string;
   change: V1SettingAuthoringDiff;
-  currentFiles: readonly ContentTreeFile[];
+  currentFile: ContentTreeFile | undefined;
   disabled: boolean;
   rolling: boolean;
   onRollback: (changeSetId: string, path: string) => Promise<void>;
 }): React.JSX.Element {
-  const alreadyRolledBack = fileMatchesDiffBefore(currentFiles, change);
+  const alreadyRolledBack = fileMatchesContents(currentFile, change.before);
   return (
     <div
       className={`setting-change-rollback ${alreadyRolledBack ? "is-already_rolled_back" : ""}`}
@@ -2027,19 +2188,13 @@ function FileRollbackControl({
   );
 }
 
-function fileMatchesDiffBefore(
-  files: readonly ContentTreeFile[],
-  change: V1SettingAuthoringDiff,
+function fileMatchesContents(
+  file: ContentTreeFile | undefined,
+  contents: string | null,
 ): boolean {
-  const byPath = new Map(files.map((file) => [file.path, file] as const));
-  const expected = change.before;
-  const current = byPath.get(change.path);
-  if (expected === null) return current === undefined;
-  return (
-    current !== undefined &&
-    current.encoding === undefined &&
-    current.contents === expected
-  );
+  return contents === null
+    ? file === undefined
+    : file?.encoding === undefined && file?.contents === contents;
 }
 
 function LegacyDraftHistory({

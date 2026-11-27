@@ -1956,8 +1956,16 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "Leave empty to keep this entry out of the turn guide",
   加入独立尾部行: "Add standalone tail line",
   " + 1 条回合提示": " + 1 round marker",
-  "这里没有隔离草稿或应用步骤：每个已完成工具响应的绿色新增和红色删除都已经生效。":
-    "There is no isolated draft or Apply step. Green additions and red removals from every completed tool response are already effective.",
+  "成功的 AI 改动直接写入内容包。每轮记录保留当时的差异。":
+    "Successful AI edits write directly to the content package. Each turn keeps a diff from the time of the edit.",
+  "创建世界前请选择书名。": "Choose a title before creating the world.",
+  "内容包已准备好。先选择书名，再创建世界。":
+    "Your content package is ready. Choose a title, then create the world.",
+  "创建世界前请保存书名草稿或保留当前书名。":
+    "Save the title draft or keep the current title before creating the world.",
+  处理建议书名: "Review suggested title",
+  "保存修改后的书名或保留当前书名后，即可继续聊天。":
+    "Save the edited title or keep the current title to continue chatting.",
   "开始后，对话、Provider 返回内容和已生效差异会保留在这里。":
     "Conversations, Provider-returned content, and effective diffs remain here after you begin.",
   当前所选: "Selected",
@@ -1982,6 +1990,8 @@ const settingImprovementEnglishMessages: Record<string, string> = {
     "You can discuss, ask it to inspect part of the setting, or tell it to edit the content package directly.",
   "当时生效 · {count} 个文件": "Effective at the time · {count} files",
   当时已生效差异: "Changes applied at the time",
+  本轮已改文件: "Files changed this turn",
+  历史改动: "Past change",
   "正在回滚…": "Rolling back…",
   回滚这个文件: "Roll back this file",
   当前文件已是修改前版本: "This file is already at its pre-edit version",
@@ -2666,6 +2676,7 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   世界修订工具: "World-revision tools",
   世界修订对话: "World-revision conversation",
   世界修订工作树: "World-revision worktree",
+  世界当前文件: "Current world files",
   世界修订文件: "World-revision files",
   世界修订文件树: "World-revision file tree",
   世界修订文件编辑: "Edit world-revision files",
@@ -2682,15 +2693,14 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   "手动编辑和 AI 共用一份修订": "Manual edits and the model share one revision",
   "保存到修订后还可以回滚。应用修订后，改动才会进入当前世界。":
     "You can roll back saved revision edits. Applying the revision puts the changes into this world.",
-  "state 和 control 已锁定到这份工作树；可逐次回滚，应用或放弃后才会解锁游玩。":
-    "State and control are locked to this worktree. Changes can be rolled back individually; play unlocks only after Apply or Discard.",
   "先配置并启用模型，才能让 AI 参与或应用世界修订；手动编辑和放弃仍然可用。":
     "Configure and enable a model to involve it in or apply the revision. Manual editing and Discard remain available.",
-  "所有绿色新增和红色删除都只在锁定工作树中；“应用并解锁”才会提交世界，关闭页面不会丢失修订。":
-    "Every green addition and red deletion remains in the locked worktree. Apply and unlock commits the world; closing this page does not lose the revision.",
+  "先配置并启用模型，才能让 AI 参与修订。也可以先手动编辑。":
+    "Configure and enable a model to use AI for revisions. You can start with manual edits.",
   世界游玩已锁定: "World play is locked",
-  "当前累计改动 {count} 个文件。可以继续聊天、手动编辑或按文件回滚。":
-    "The revision currently changes {count} file(s). You can keep chatting, edit manually, or roll back individual files.",
+  世界游玩未锁定: "World play is unlocked",
+  "当前累计改动 {count} 个文件。应用会提交改动，应用或放弃都会解锁游玩。":
+    "This revision changes {count} file(s). Applying commits the changes. Apply or discard to unlock world play.",
   修订记录: "Revision history",
   "{count} 次修改": "{count} change(s)",
   已封存修订: "Sealed revisions",
@@ -2703,6 +2713,12 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   这次修改的完整差异: "Complete diff for this change",
   "新对话会从当前修订工作树开始；原有对话仍保留在历史中。":
     "The new conversation starts from the current revision worktree. Earlier conversations remain in history.",
+  "发送时会根据世界当前文件创建修订；原有对话仍保留在历史中。":
+    "Sending starts a revision from the current world files. Earlier conversations remain in history.",
+  "对话和已保存的修订改动可以继续查看。":
+    "You can still review the conversation and the saved revision changes.",
+  "可以继续查看历史对话和已封存修订。":
+    "You can still review past conversations and sealed revisions.",
   "下一条消息会追加到原 Provider 上下文；若修订 epoch 已变化，Runtime 会要求 AI 重新读取。":
     "The next message continues the original provider context. If the revision epoch changed, Runtime requires the model to read again.",
   "正在恢复世界修订…": "Restoring the world revision…",
@@ -2715,7 +2731,11 @@ const worldRevisionEnglishMessages: Record<string, string> = {
   "开始后，对话、Provider 返回内容和修订差异会保留在这里。":
     "Conversations, provider responses, and revision diffs are retained here.",
   正在预览已保存的修订工作树: "Previewing the saved revision worktree",
+  正在浏览当前世界的已保存文件: "Browsing the world's saved files",
   "当前修订工作树还没有文件。": "The revision worktree has no files yet.",
+  "当前世界还没有文件。": "The current world has no files yet.",
+  "首次编辑会锁定世界并创建修订工作树。":
+    "The first edit locks the world and creates a revision worktree.",
   "从左侧新建状态或控制文件。": "Create a state or control file from the left.",
   "Ctrl / ⌘ + S 保存到修订工作树":
     "Ctrl / ⌘ + S saves to the revision worktree",

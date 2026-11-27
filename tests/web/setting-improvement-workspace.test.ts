@@ -258,7 +258,7 @@ test("每轮调用先折叠成窄条，再逐层展开，并可一次全部收�
   const reasoning = screen.getByText("模型推理").closest("details")!;
   const tool = screen.getByText("调用 setting_write_file").closest("details")!;
   const diff = document.querySelector<HTMLDetailsElement>(
-    ".setting-change-diff",
+    ".setting-exchange-tool .setting-change-diff",
   )!;
 
   expect(turnTrace.open).toBe(false);
@@ -341,7 +341,9 @@ test("每份历史 diff 都可单独直接回滚", async () => {
   fireEvent.click(screen.getByText("调用 setting_write_file"));
   fireEvent.click(
     document
-      .querySelector<HTMLDetailsElement>(".setting-change-diff")!
+      .querySelector<HTMLDetailsElement>(
+        ".setting-exchange-tool .setting-change-diff",
+      )!
       .querySelector("summary")!,
   );
   fireEvent.click(screen.getByRole("button", { name: "回滚这个文件" }));

@@ -16,6 +16,7 @@ export interface ContentTreeEditorProps {
   scriptPermission?: ReactNode;
   mode?: "content-package" | "world-revision";
   revisionBase?: RevisionDocumentBase;
+  revisionLocked?: boolean;
   files: readonly ContentTreeFile[];
   status: "usable" | "needs_repair";
   issues: readonly ContentTreeIssue[];
@@ -71,6 +72,7 @@ export function ContentTreeEditor({
   saving = false,
   conflict = false,
   revisionBase,
+  revisionLocked = false,
   onFilesChange,
   onSave,
   onLoadLatest,
@@ -104,17 +106,23 @@ export function ContentTreeEditor({
       <header className="section-heading-row content-tree-heading">
         <div>
           <h3 className={embedded ? "visually-hidden" : undefined}>
-            {mode === "world-revision"
-              ? uiText("世界修订工作树")
-              : uiText("内容包当前树")}
+            {uiText(
+              mode === "content-package"
+                ? "内容包当前树"
+                : revisionLocked
+                  ? "世界修订工作树"
+                  : "世界当前文件",
+            )}
           </h3>
           <details className="content-save-help">
             <summary>{uiText("保存说明")}</summary>
             <p className="field-note">
               {mode === "world-revision"
-                ? uiText(
-                    "保存到修订后还可以回滚。应用修订后，改动才会进入当前世界。",
-                  )
+                ? revisionLocked
+                  ? uiText(
+                      "保存到修订后还可以回滚。应用修订后，改动才会进入当前世界。",
+                    )
+                  : uiText("首次编辑会锁定世界并创建修订工作树。")
                 : uiText(
                     "整批保存会更新内容包。之后用这个包创建的世界会使用这些改动。",
                   )}
@@ -128,9 +136,11 @@ export function ContentTreeEditor({
           )}
         >
           <span className={`package-status ${status}`}>
-            {mode === "world-revision"
-              ? uiText("工作树：")
-              : uiText("已保存版本：")}
+            {uiText(
+              mode === "world-revision" && revisionLocked
+                ? "工作树："
+                : "已保存版本：",
+            )}
             {status === "usable" ? uiText("可用") : uiText("需要修复")}
           </span>
           <span className={dirty ? "draft-state dirty" : "visually-hidden"}>
@@ -162,6 +172,7 @@ export function ContentTreeEditor({
                 kind: "world-revision",
                 files,
                 dirty,
+                locked: revisionLocked,
                 pending: false,
                 issues,
                 onFilesChange,
@@ -216,12 +227,16 @@ export function ContentTreeEditor({
               {dirty
                 ? uiText("草稿尚未保存")
                 : mode === "world-revision"
-                  ? uiText("修订工作树已保存")
+                  ? uiText(revisionLocked ? "修订工作树已保存" : "世界当前文件")
                   : uiText("当前树已保存")}
             </strong>
             <span>
               {mode === "world-revision"
-                ? uiText("保存只更新锁定工作树并留下可回滚记录，不会提交世界。")
+                ? revisionLocked
+                  ? uiText(
+                      "保存只更新锁定工作树并留下可回滚记录，不会提交世界。",
+                    )
+                  : uiText("首次编辑会锁定世界并创建修订工作树。")
                 : uiText(
                     "保存会把整棵草稿作为一个候选原子替换，不会逐文件提交。",
                   )}

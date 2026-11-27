@@ -1,20 +1,4 @@
 @import "./breakpoints.css";
-.authoringTitle {
-  max-width: min(34rem, 48vw);
-}
-@media (max-width: 48rem) {
-  .authoringTitle {
-    display: none;
-  }
-
-  :global(.setting-floating-chrome).right {
-    top: 3.15rem;
-    right: 0.7rem;
-    left: 0.7rem;
-    justify-content: flex-end;
-  }
-}
-
 .chrome {
   position: fixed;
   z-index: var(--z-reader-controls);
@@ -115,9 +99,6 @@
   font-size: 12px;
   max-width: calc(100% - 40px);
 }
-.authoringTitle {
-  max-width: calc(100% - 40px);
-}
 @media (--workspace-mobile) {
   .chrome {
     gap: 0;
@@ -132,26 +113,8 @@
     padding: 6px;
     font-size: 12px;
   }
-  .title,
-  .authoringTitle {
-    display: block;
-  }
-  :global(.setting-floating-chrome).right {
-    left: 8px;
-    right: 8px;
-    overflow-x: auto;
-  }
-  :global(.setting-floating-chrome).right button {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
   .title {
+    display: block;
     top: 58px;
-  }
-  :global(.setting-floating-chrome).right {
-    top: 42px;
-  }
-  .authoringTitle {
-    top: 82px;
   }
 }
