@@ -282,6 +282,84 @@ test("#430 keeps context and extensions on one row and reserves the send slot", 
     .toBeGreaterThan(0);
 });
 
+test("#430 updates the first keyboard entry before resize observation", async ({
+  page,
+}) => {
+  // Hold only the status region's observations so the first Tab cannot race a frame.
+  await page.addInitScript(() => {
+    const NativeResizeObserver = window.ResizeObserver;
+    window.ResizeObserver = class extends NativeResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super((entries, observer) => {
+          const others = entries.filter(
+            ({ target }) => !target.closest('[role="region"][id$="-status"]'),
+          );
+          if (others.length > 0) callback(others, observer);
+        });
+      }
+    };
+  });
+  const { worldId } = await seed(page);
+  await page.setViewportSize({ width: 375, height: 465 });
+  await page.goto(`/#/world/${worldId}`);
+  const play = page.getByRole("textbox", { name: "你的行动" });
+  const status = page.getByRole("region", { name: "游玩状态" });
+  const extensions = page.getByText("世界扩展", { exact: true });
+  const more = page.getByLabel("更多", { exact: true });
+  const toggle = page.getByRole("button", { name: /游玩状态/u });
+  const tabFromExtensions = async () => {
+    await extensions.focus();
+    await page.keyboard.press("Tab");
+  };
+
+  await toggle.press("Enter");
+  await tabFromExtensions();
+  await expect(more).toBeFocused();
+  expect(await status.evaluate((element) => element.tabIndex)).toBe(-1);
+
+  replies.push((response) => reply(response, "The context grows.", 8500));
+  await play.fill("Look around.");
+  await page.getByRole("button", { name: "从全新上下文发送行动" }).click();
+  const useFreshContext = page.getByRole("button", {
+    name: "下一条消息使用全新上下文",
+  });
+  await expect(useFreshContext).toBeEnabled();
+  expect(
+    await status.evaluate(
+      (element) => element.scrollHeight - element.clientHeight,
+    ),
+  ).toBeGreaterThan(1);
+  await tabFromExtensions();
+  await expect(status).toBeFocused();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => status.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+
+  await toggle.press("Enter");
+  await expect(status).toBeHidden();
+  await toggle.press("Enter");
+  await tabFromExtensions();
+  await expect(status).toBeFocused();
+
+  await extensions.focus();
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.keyboard.press("Tab");
+  await expect(useFreshContext).toBeFocused();
+  expect(await status.evaluate((element) => element.tabIndex)).toBe(-1);
+  await extensions.focus();
+  await page.setViewportSize({ width: 375, height: 465 });
+  await page.keyboard.press("Tab");
+  await expect(status).toBeFocused();
+
+  replies.push((response) => reply(response, "The context gets smaller.", 100));
+  await page.getByRole("button", { name: "继续故事" }).click();
+  await expect(page.getByText("上下文 1%", { exact: true })).toBeVisible();
+  await tabFromExtensions();
+  await expect(more).toBeFocused();
+  expect(await status.evaluate((element) => element.tabIndex)).toBe(-1);
+});
+
 test("#431 shows compact live progress and keeps a world error selectable and dismissible", async ({
   page,
 }, testInfo) => {
