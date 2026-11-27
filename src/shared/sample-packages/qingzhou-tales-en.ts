@@ -7,11 +7,11 @@ export const qingzhouTalesEnglish: readonly ContentTreeFile[] = [
     path: "opening.md",
     contents: `Three days of autumn rain have turned the western road outside Qingzhou to mud. When you fold your umbrella and step into the Westgate Teahouse, the paper lanterns under the eaves sway in the damp breeze, and the kettle fills the room with the scent of ginger tea, wet firewood, and mugwort.
 
-Tea-Master Sun has barely filled your bowl when young Constable Shen Qing sighs at the window table and slaps a rain-spotted dispatch onto the wood. “Another merchant lost his birth-tally at the Dry-Well Post last night. Slept soundly in the common room, not a single copper coin touched—only the personal paper with his birth hour gone. That makes three this month.”
+Tea-Master Sun has barely filled your bowl when young Constable Shen Qing sighs at the window table and slaps a rain-spotted dispatch onto the wood. “Another merchant lost his birth-tally at the Dry-Well Post last night. Slept soundly in the common room, not a single copper coin touched—only the paper he kept close, with the date and hour of his birth, was gone. That makes three this month.”
 
-By the brazier, an elderly wandering Daoist, Master Xuanwei, lifts his eyes and sets a hairline-cracked peachwood talisman back on his tray. “Whoever works the Dry-Well Post is stealing living fortune. Meanwhile, the ruined Lanruo Temple outside town played zither music at midnight again—not like a ghost calling for blood, more like someone holding something down.”
+By the brazier, an elderly wandering Daoist, Master Xuanwei, lifts his eyes and sets a hairline-cracked peachwood talisman back on his tray. “Someone at the Dry-Well Post is stealing the fortune of the living. And last night, zither music rose from the ruined Lanruo Temple outside town again. It sounded less like a ghost calling for blood and more like someone holding something down.”
 
-At the next table, a young woman in a plain white cloak pauses mid-page at the word “Lanruo.” She raises calm, gracious eyes to you. “You’re new to the west road, traveler—bound for Qingzhou to visit friends, or passing by Willow Brook? The paths are slick tonight. Will you rest here at the teahouse, or ask more about one of these tales first?”
+At the next table, a young woman in a plain white cloak pauses mid-page at the word “Lanruo.” She raises calm, gracious eyes to you. “Yours is a new face, traveler. Are you visiting friends in Qingzhou, or passing through Willow Brook? The paths are slick tonight. Will you rest here at the teahouse, or ask more about one of these tales first?”
 `,
   },
   {
@@ -19,8 +19,8 @@ At the next table, a young woman in a plain white cloak pauses mid-page at the w
     contents: `$document:
   id: situation.qingzhou-tales
   ref: current-situation
-  title: Westgate Teahouse on a rainy night
-  summary: Three quietly linked tales surface at once in the teahouse, leaving the traveler to choose where to begin.
+  title: Current situation in Qingzhou
+  summary: Tracks the current time and place, who is present, and what awaits a response on the Qingzhou journey.
   aliases: []
 background:
   Time: Late autumn, rainy evening, first watch (Night 1)
@@ -34,8 +34,8 @@ Present:
   - { $ref: character.qingzhou-sun }
 Awaiting a response:
   Speaker: { $ref: character.qingzhou-suxin }
-  Words: You’re new to the west road, traveler—bound for Qingzhou to visit friends, or passing by Willow Brook? The paths are slick tonight. Will you rest here at the teahouse, or ask more about one of these tales first?
-  Scene: Shen Qing’s dispatch about the stolen birth-tallies lies open on his table; Master Xuanwei turns his cracked peachwood talisman by the brazier; Bai Suxin closes her book and watches you calmly.
+  Decision: The traveler can say what brings them here and decide whether to rest at the teahouse or ask about a tale first.
+  Scene: Shen Qing has the Dry-Well Post dispatch on his table. Master Xuanwei has set his cracked peachwood talisman back on his tray. The woman in the white cloak looks up from her book and waits for an answer.
 `,
   },
   {
@@ -64,12 +64,13 @@ Bearing: Free to mediate between mortals and spirits with compassion, pursue the
   id: character.qingzhou-shen
   ref: shen-qing
   title: Constable Shen Qing
-  summary: Young county runner of Qingzhou, practical and skeptical of ghosts, assigned to the stolen birth-tally cases.
+  summary: A young Qingzhou county constable who relies on witnesses and physical evidence.
   aliases: [Shen Qing]
-Motive: Three merchants have lost their birth-tallies at the Dry-Well Post in a month and the magistrate gave him five days to solve it; he suspects an insider colluding with a hedge sorcerer rather than spirits.
+Motive: Three merchants lost their birth-tallies at the Dry-Well Post in the calendar month of the first teahouse night. The latest theft was the night before. Shen Qing doubts that spirits are to blame and suspects an insider working with a hedge sorcerer.
+Deadline: The magistrate gives him five full days from the start of the first watch on Night 1 at the Westgate Teahouse. The deadline falls at the start of the first watch on Night 6.
 Behavior: Direct and evidence-minded; if the player brings concrete leads, he will share old county records or join a night visit.
 Knowledge:
-  Knows: All three victims drank warm osmanthus tea served at the Dry-Well Post and heard faint bronze bells from the courtyard’s dry well the night their tallies vanished.
+  Knows: Each victim drank warm osmanthus tea served by the postmaster and heard faint bronze bells from the courtyard’s dry well on the night their tally vanished.
   Limits: Has not connected the missing tallies to Willow Brook Manor or Lanruo Temple, and does not know Bai Suxin’s true nature.
 `,
   },
@@ -79,12 +80,12 @@ Knowledge:
   id: character.qingzhou-xuanwei
   ref: xuanwei
   title: Master Xuanwei
-  summary: Wandering Daoist versed in talismans and old steles, wise enough not to slay every spirit on sight.
+  summary: An elderly wandering Daoist versed in talismans and old steles.
   aliases: [Xuanwei]
-Motive: Senses the fortune around western Qingzhou draining unnaturally and suspects a human-built fate-siphoning rite; also wants to verify whether the Lanruo zither is predatory or protective.
+Motive: During the month leading up to the first teahouse night, he noticed fortune draining unnaturally around western Qingzhou and came to suspect a human-built fate-siphoning rite. He wants to learn whether the Lanruo zither is predatory or protective.
 Behavior: Measured and fond of tea-table conversation; if the player acts with integrity, he may offer a calming charm or teach how to tell benign spirit-aura from malice.
 Knowledge:
-  Knows: His peachwood talisman cracked without warning last night while passing the outer wall of the Dry-Well Post—a sure sign of a deliberate fate-stealing ward inside.
+  Knows: On the night before the first teahouse night, his peachwood talisman cracked without warning as he passed the Dry-Well Post’s outer wall. He takes it as a sure sign of a deliberately laid fate-stealing ward inside.
   Observation: Notices a clean herbal fragrance and faint spirit-aura around Bai Suxin, with no taint of blood or malice, so he holds his hand and watches quietly.
 `,
   },
@@ -94,12 +95,13 @@ Knowledge:
   id: character.qingzhou-suxin
   ref: bai-suxin
   title: Bai Suxin
-  summary: Gracious woman in a white cloak—in truth a century-old fox spirit quietly watching over the Zhou household at Willow Brook.
+  summary: A courteous traveler in a white cloak who frequents the roads west of Qingzhou.
   aliases: [Miss Bai]
-Motive: Ten years ago, Scholar Zhou Yan’s late father saved her when she was wounded; sensing malignant miasma from the Dry-Well Post draining Willow Brook’s fortune and weakening Zhou Yan, she came to shield the household and find the true culprit.
+Identity: A century-old fox spirit of Qingqiu who quietly watches over the Zhou household at Willow Brook.
+Motive: About ten years before the first teahouse night, Scholar Zhou Yan’s father saved her when she was wounded. Before the opening, she sensed miasma from the Dry-Well Post draining Willow Brook’s fortune, weakening Zhou Yan, and alarming his bride. She came to shield the household and find the culprit.
 Behavior: Courteous, wary of Master Xuanwei at first, yet deeply loyal to kindness and kept promises; if treated without prejudice, she will speak candidly and lend her aid.
 Knowledge:
-  Knows: She is the one playing the zither at Lanruo Temple each night to hold back the creeping miasma; she also knows Zhou Yan’s new bride is a gentle spirit rather than a mortal (see @lanruo-zither-debt and @mirror-bride-truth).
+  Knows: She is the one playing the zither at Lanruo Temple each night to hold back the creeping miasma; she also knows Zhou Yan’s new bride is a gentle spirit rather than a mortal (see @lanruo-records and @willow-manor-records).
   Limits: Does not yet know who is operating the fate-siphoning rite at the Dry-Well Post.
 `,
   },
@@ -109,12 +111,12 @@ Knowledge:
   id: character.qingzhou-zhou
   ref: zhou-yan
   title: Scholar Zhou Yan
-  summary: Modest scholar of Willow Brook Manor, wed half a year ago to his quiet wife A-Heng, lately plagued by fatigue and dreams.
+  summary: A scholar of modest means who lives at Willow Brook Old Manor.
   aliases: [Zhou Yan]
 Location: { $ref: location.qingzhou-willow-manor }
-Motive: Cherishes his gentle wife A-Heng, though he has noticed she never faces a bronze mirror and casts a faint shadow by lamplight; he wants to protect her from gossip while learning why he dreams of a dry well every night.
+Motive: He married the gentle A-Heng about half a year before the first teahouse night. He cherishes her and wants to protect her from gossip, though he has noticed she never faces a bronze mirror and casts a faint shadow by lamplight. During the month before the first teahouse night he often felt weary, and by the opening he was dreaming of a dry well every night. He wants to know why.
 Knowledge:
-  Knows: A-Heng brought only a single old portrait scroll when they wed, now hanging on the north wall of his study; lately it carries a faint lotus scent at midnight while his chest grows heavy.
+  Knows: A-Heng brought only a single old portrait scroll when they wed. It hangs on the north wall of his study. In the nights leading up to the opening, it would often give off a faint lotus scent around midnight, and his chest would grow heavy.
 `,
   },
   {
@@ -123,11 +125,11 @@ Knowledge:
   id: character.qingzhou-sun
   ref: tea-master-sun
   title: Tea-Master Sun
-  summary: Keeper of the Westgate Teahouse, walking archive of ten years of road gossip outside Qingzhou.
+  summary: Keeper of the Westgate Teahouse and a source of road lore outside Qingzhou.
   aliases: [Old Sun]
 Motive: Wishes the western road quiet again so merchants dare stop on rainy nights.
 Knowledge:
-  Old gossip: Remembers a disgraced county registry clerk named Qian Wenyuan dismissed ten years ago for altering land deeds and birth rolls, later rumored to be writing letters for travelers around the Dry-Well Post.
+  Old gossip: Qian Wenyuan, a county registry clerk, was dismissed about ten years before the first teahouse night for altering land deeds and birth rolls. Later, people said he was writing letters for travelers around the Dry-Well Post.
   Routine: Keeps two dry guest rooms upstairs and a sketched map of the western suburbs behind the counter.
 `,
   },
@@ -149,10 +151,10 @@ Use: Rest to recover Body and Composure, ask Old Sun about local history, compar
   id: location.qingzhou-lanruo
   ref: lanruo-ruin
   title: Ruined Lanruo Temple
-  summary: Abandoned hill temple deep in the pines, where clear zither music echoes after midnight.
+  summary: An abandoned hill temple deep in the pines outside Qingzhou.
   aliases: []
 Scene: Broken steles half-buried in weeds, yet the side hall is remarkably dry, holding half a stick of calming incense and a few white plum petals on a stone table.
-Clues: Inspecting the incense ash and carvings on the zither table shows a gentle warding resonance rather than a haunting (see @lanruo-zither-debt).
+Clues: Inspecting the incense ash and carvings on the zither table shows a gentle warding resonance rather than a haunting (see @lanruo-records).
 `,
   },
   {
@@ -161,10 +163,10 @@ Clues: Inspecting the incense ash and carvings on the zither table shows a gentl
   id: location.qingzhou-willow-manor
   ref: willow-manor
   title: Willow Brook Old Manor
-  summary: Whitewashed scholar’s courtyard beside the brook, where every bronze mirror is draped in plain silk.
+  summary: An old whitewashed manor beside Willow Brook.
   aliases: []
-Scene: An old willow overhangs the water; inside the study hangs an antique portrait scroll of a lady. Zhou Yan and his bride A-Heng live here.
-Clues: Examining the room with the heirloom bronze mirror or Xuanwei’s charm reveals no malice in A-Heng—instead, a hidden paper effigy slipped beneath Zhou Yan’s pillow is draining his vitality (see @mirror-bride-truth).
+Scene: An old willow overhangs the water. An antique portrait scroll of a lady hangs in the study, and every bronze mirror in the house is draped in plain silk. Zhou Yan and his bride A-Heng live here.
+Clues: Examining the room with the heirloom bronze mirror or Xuanwei’s charm reveals no malice in A-Heng—instead, a hidden paper effigy slipped beneath Zhou Yan’s pillow is draining his vitality (see @willow-manor-records).
 `,
   },
   {
@@ -173,10 +175,10 @@ Clues: Examining the room with the heirloom bronze mirror or Xuanwei’s charm r
   id: location.qingzhou-dry-well
   ref: dry-well-post
   title: Dry-Well Post
-  summary: Weathered roadside inn with a stone well in the back courtyard that has been dry for ten years.
+  summary: An old travelers’ post on the road west of Qingzhou.
   aliases: []
-Scene: Dim oil lamps; a quiet letter-writer named Qian Wenyuan dozes behind the desk. Dark moss rings the dry well, and a loose brick sits three feet down the shaft.
-Clues: Lifting the loose brick or inspecting Qian Wenyuan’s desk box exposes the three missing birth-tallies, silk-strung bronze bells, and a complete fate-siphoning ward (see @borrowed-fate-ledger).
+Scene: A quiet letter-writer named Qian Wenyuan dozes behind the desk in the dim lamplight. The courtyard’s stone well had been dry for about ten years by the first teahouse night. Dark moss rings it, and a loose brick sits three feet down the shaft.
+Clues: Lifting the loose brick or inspecting Qian Wenyuan’s desk box exposes the three missing birth-tallies, silk-strung bronze bells, and a complete fate-siphoning ward (see @dry-well-post-records).
 `,
   },
   {
@@ -185,9 +187,9 @@ Clues: Lifting the loose brick or inspecting Qian Wenyuan’s desk box exposes t
   id: location.qingzhou-shrine
   ref: city-god-shrine
   title: Old City God Shrine
-  summary: Quiet shrine on the western edge of town whose caretaker keeps burial rolls and old registry copies.
+  summary: A quiet old shrine on the western edge of Qingzhou.
   aliases: []
-Clues: Ten-year-old copies record both Qian Wenyuan’s dismissal for embezzling relief silver and Zhou Yan’s father paying to bury a nameless orphan girl with a stone marker—linking the Willow Brook scroll and the Lanruo debt.
+Clues: The caretaker keeps old burial rolls and registry copies. Two entries from about ten years before the first teahouse night record Qian Wenyuan’s dismissal for embezzling relief silver and Zhou Yan’s father paying to bury a nameless orphan girl with a stone marker. The records can help link the Willow Brook scroll and the Lanruo debt.
 Use: Drawing a fortune lot or checking the old rolls grounds the moral ties behind all three tales.
 `,
   },
@@ -197,59 +199,59 @@ Use: Drawing a fortune lot or checking the old rolls grounds the moral ties behi
   id: case.qingzhou-rumor-ledger
   ref: rumor-ledger
   title: Qingzhou ledger
-  summary: Records only rumors, causal threads, and trust actually learned by the player—never premature secrets.
+  summary: Records the tales the traveler has heard, the questions still open, and their dealings with companions.
   aliases: []
 Known rumors:
-  Missing tallies: Shen Qing reports three merchants lost their birth-tallies at the Dry-Well Post this month while their silver was untouched.
-  Lanruo zither: Master Xuanwei heard zither music from the ruined Lanruo Temple last night, sounding more like containment than menace.
-  Willow Brook lead: Bai Suxin reacted subtly to the name Lanruo and asked whether you are bound for Willow Brook.
+  Missing tallies: When the traveler first met Shen Qing at the Westgate Teahouse, he reported three thefts of merchants’ birth-tallies at the Dry-Well Post that month. In the latest theft, the night before they met, the merchant’s money was untouched.
+  Lanruo zither: Master Xuanwei said zither music rose from the ruined Lanruo Temple again on the night before they first met at the teahouse. To him it sounded like someone holding something down.
+  Woman in a white cloak: She paused mid-page at the word “Lanruo,” then asked whether the traveler was visiting friends in Qingzhou or passing through Willow Brook.
 Unresolved threads:
   - Who is stealing birth-tallies at the Dry-Well Post, and to what end?
-  - Who plays the zither at Lanruo Temple, and how is Bai Suxin involved?
-  - What quiet secret rests inside Willow Brook Old Manor?
+  - Who played the zither at Lanruo Temple, and why?
+  - Why did the woman in the white cloak pause mid-page when she heard “Lanruo”?
 Companions & trust:
-  Constable Shen Qing: Newly met, willing to share case facts
-  Master Xuanwei: Newly met, calm and observant
-  Bai Suxin: Newly met, courteous yet guarded
+  Constable Shen Qing: Newly met. Spoke of the missing birth-tallies at the teahouse.
+  Master Xuanwei: Newly met. Spoke of the zither music at the teahouse.
+  Woman in a white cloak: Newly met. Asked what brought the traveler here and what they planned to do.
 `,
   },
   {
-    path: "world/archives/lanruo-zither-debt.yaml",
+    path: "world/archives/lanruo-records.yaml",
     contents: `$document:
   id: archive.qingzhou-lanruo-debt
-  ref: lanruo-zither-debt
-  title: The Lanruo zither and an old debt
-  summary: Background record connecting the midnight zither at Lanruo Temple and the Zhou family.
+  ref: lanruo-records
+  title: Lanruo Temple records
+  summary: Records of people and past events connected to the ruined temple.
   aliases: []
 Facts:
-  Old debt: Bai Suxin is a fox spirit sheltered and healed ten years ago at Lanruo Temple by Zhou Yan’s late father, who never betrayed her secret.
-  Warding music: Sensing a fate-draining miasma drifting downstream from the Dry-Well Post toward Willow Brook, she plays a warding air at the ruined temple each night at cost to her own strength, and came to Westgate Teahouse to trace the source.
+  Old debt: Bai Suxin is a fox spirit. About ten years before the first teahouse night, Zhou Yan’s father sheltered her at Lanruo Temple, healed her with herbs, and kept her secret.
+  Warding music: In the month leading up to the first teahouse night, she sensed a fate-draining miasma creeping downstream each night from the Dry-Well Post toward Willow Brook. She began playing a warding air each night at the ruined temple at a cost to her own strength. She came in disguise to the Westgate Teahouse to track the rite to its source.
 `,
   },
   {
-    path: "world/archives/mirror-bride-truth.yaml",
+    path: "world/archives/willow-manor-records.yaml",
     contents: `$document:
   id: archive.qingzhou-mirror-bride
-  ref: mirror-bride-truth
-  title: Why the Willow Brook bride avoids mirrors
-  summary: Who A-Heng truly is and what is actually draining Zhou Yan’s strength.
+  ref: willow-manor-records
+  title: Willow Brook Old Manor records
+  summary: Records of people and past events connected to the manor.
   aliases: []
 Facts:
-  Identity: A-Heng is the gentle ghost of an orphan girl who died on the Qingzhou road ten years ago; grateful to Zhou Yan’s father for giving her a proper burial, she bound herself to the old scroll to care for his son, covering the mirrors only so her faint reflection would not frighten him.
-  Real cause: Zhou Yan’s nightly fatigue comes not from A-Heng, but from a paper fate-effigy slipped beneath his pillow by Qian Wenyuan half a month ago.
+  Identity: A-Heng is the gentle ghost of an orphan girl who died of illness on the Qingzhou road about ten years before the first teahouse night. Grateful to Zhou Yan’s father for giving her a proper burial, she bound herself to the old scroll to care for his son. She covers the mirrors so her faint reflection will not frighten him. She has harmed no one.
+  Real cause: Qian Wenyuan slipped a paper fate-effigy beneath Zhou Yan’s pillow while writing a family letter for him about half a month before the first teahouse night. It directs the household’s fortune toward the Dry-Well Post and causes Zhou Yan’s fatigue and dreams.
 `,
   },
   {
-    path: "world/archives/borrowed-fate-ledger.yaml",
+    path: "world/archives/dry-well-post-records.yaml",
     contents: `$document:
   id: archive.qingzhou-borrowed-fate
-  ref: borrowed-fate-ledger
-  title: The Dry-Well borrowed-fate ledger
-  summary: The culprit, method, and physical evidence behind the stolen birth-tallies.
+  ref: dry-well-post-records
+  title: Dry-Well Post records
+  summary: Records of people, past events, and objects connected to the post.
   aliases: []
 Facts:
-  Culprit: Qian Wenyuan, the quiet letter-writer at the post, is the disgraced clerk dismissed ten years ago for forging deeds and skimming relief silver.
-  Method and evidence: Using a fragment of a forbidden fate-siphoning rite, he drugs travelers’ tea, steals their birth-tallies, and seals them with silk-strung bronze bells behind a loose brick three feet down the dry well to siphon good fortune toward his own reinstatement.
+  Culprit: Qian Wenyuan, the quiet letter-writer at the post, is the disgraced clerk dismissed about ten years before the first teahouse night for falsifying land deeds and birth rolls and skimming relief silver.
+  Method and evidence: Using a fragment of a forbidden fate-siphoning rite, he uses his letter-writing work and drugged osmanthus tea to steal travelers’ birth-tallies as well as Zhou Yan’s. He seals them with silk-strung bronze bells behind a loose brick three feet down the dry well to siphon good fortune toward his own reinstatement.
 `,
   },
   gameplayFile({ mode: "tabletop", scheme: "bag" }),
@@ -263,12 +265,17 @@ Write in the poised, humane register of classic Chinese strange tales: not splat
 ## Chaos Bag Resolution & State Maintenance
 
 - Narrate ordinary conversation, travel, and clear observations without drawing from the Chaos bag. Call for a Chaos bag draw only when venturing into the ruined temple at night, piercing illusions, prying into the dry well, persuading guarded allies under pressure, or confronting the fate-siphoning ward—interpreting the draw as fortune, serendipity, or an eerie twist.
+- Use the default bag by omitting tokens in bag_check. Set numbers for the action in front of the traveler without adding numerical character stats.
+- Start at value 3. Use 4 when relevant preparation, gear, or an ally helps, and 2 when exhaustion or another limitation hinders the traveler.
+- For a risky action, set difficulty 2 if conditions favor the traveler, 3 for a clear obstacle, or 4 for strong pressure or danger. Set the goal and numbers before drawing.
+- For example, use value 4 and difficulty 3 to keep your footing on rain-slick stone while entering the ruined temple’s side hall at night with light from your tinder tube. Use value 3 and difficulty 4 to lean out alone in the rain and examine the inside of the dry well.
 - Always fail forward: a harsh draw brings an ill omen, lost time, alerted suspicions at the post, or a temporary misunderstanding among allies, never a dead end.
-- Update @protagonist whenever Body, Composure, Ill omen, or Satchel items change; update @current-situation as time and location move; record only player-verified leads in @rumor-ledger.
+- Update @protagonist when Body, Composure, Ill omen, or Satchel items change. As the scene moves, update the body of @current-situation and keep its title and summary stable.
+- Keep @rumor-ledger to what the traveler has heard, seen, or verified. Attribute rumors to their speakers and use the traveler’s own description of anyone who has yet to introduce themselves. Date durable clues relative to a fixed event such as Night 1 at the Westgate Teahouse.
 
 ## On-Demand Reading & Unfolding Causality
 
-- Beyond the @westgate-teahouse hub, read the other four locations and the three archive documents (@lanruo-zither-debt, @mirror-bride-truth, @borrowed-fate-ledger) on demand via context_read only when the player visits or probes those leads—never spoil them early.
+- Beyond the @westgate-teahouse hub, read the other four locations and the three archive documents (@lanruo-records, @willow-manor-records, @dry-well-post-records) on demand via context_read only when the player visits or probes those leads—never spoil them early.
 - Let the player return to the teahouse across several days to rest, compare notes, ease the quiet tension between Master Xuanwei and Bai Suxin, and reach an ending shaped by their own judgment.
 `,
     ["rumor-ledger"],
