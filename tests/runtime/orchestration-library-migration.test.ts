@@ -13,6 +13,7 @@ import {
   type FileNativePlayPresetView,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { V1Runtime } from "../../src/runtime/V1Runtime.ts";
+import { withBuiltinExtensionFollowups } from "../../src/shared/ordered-followups.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -87,7 +88,13 @@ test("released v3 keeps current and draft policies, post-requests, panels, permi
     [current.draft!, fixture.validDraft],
   ] as const) {
     expect(live.revision).not.toBe(released.revision);
-    expect(live.structure).toEqual(released.structure);
+    expect(live.structure).toEqual({
+      ...released.structure,
+      statusPanelEnabled: false,
+      followupItems: withBuiltinExtensionFollowups(
+        released.structure!.followupItems!,
+      ),
+    });
     const { "preset.yaml": manifest, ...resources } = released.files;
     expect(live.files).toEqual({
       ...resources,

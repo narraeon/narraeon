@@ -9,6 +9,7 @@ import {
   type PlayPresetStructuredEditor,
   FileNativePlayPresetStore,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
+import { withBuiltinExtensionFollowups } from "../../src/shared/ordered-followups.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -52,6 +53,10 @@ test("v0.7.10 current and draft convert once without changing historical revisio
     [preset.draft!.structure!, fixture.draftStructure],
   ] as const) {
     const expected = structuredClone(released);
+    expected.statusPanelEnabled = false;
+    expected.followupItems = withBuiltinExtensionFollowups(
+      expected.followupItems!,
+    );
     for (const [key, surface] of [
       ["playPrompts", "play"],
       ["authorPrompts", "author"],

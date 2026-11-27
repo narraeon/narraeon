@@ -16,6 +16,7 @@ import {
   FileNativePlayPresetStore,
   applyPlayPresetStructuredEditor,
   isFrozenArtifactPresentation,
+  isPlayPresetBinding,
   parsePlayPresetFiles,
   toPlayPresetStructuredEditor,
 } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
@@ -33,6 +34,9 @@ describe("后置请求编排", () => {
       { id: "player_options", kind: "user", enabled: true },
       { id: "builtin:summary", kind: "builtin", enabled: false },
       { id: "package:followups", kind: "content-package", enabled: true },
+      { id: "builtin:action-choices", kind: "builtin", enabled: false },
+      { id: "builtin:generic-panels", kind: "builtin", enabled: false },
+      { id: "builtin:artifact-debugger", kind: "builtin", enabled: false },
     ]);
     structure.followupItems![0]!.enabled = false;
     const files = applyPlayPresetStructuredEditor(
@@ -276,7 +280,8 @@ test("系统身份实际派发并冷恢复产物；应用修改产物声明不�
   if (parsed.kind !== "valid") throw parsed.error;
   const structure = toPlayPresetStructuredEditor(parsed.definition);
   structure.followupItems!.forEach((item) => {
-    item.enabled = item.kind !== "user";
+    item.enabled =
+      item.id === "builtin:summary" || item.kind === "content-package";
   });
   const files = applyPlayPresetStructuredEditor(
     firstPartyActionChoicesPresetFiles,
@@ -406,6 +411,97 @@ test("系统身份实际派发并冷恢复产物；应用修改产物声明不�
     } finally {
       spy.mockRestore();
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("旧推荐方案稳定保留，内置默认范围经便携导入导出保留且不授予方案脚本权限", async () => {
+  const root = await mkdtemp(
+    join(tmpdir(), "narraeon-builtin-extensions-portable-"),
+  );
+  try {
+    const store = new FileNativePlayPresetStore(root);
+    const source = (
+      await store.create(
+        "Old complete action choices",
+        firstPartyActionChoicesPresetFiles,
+      )
+    ).preset;
+    const legacy = await store.bindRevision(source.id, source.revision);
+    const structure = toPlayPresetStructuredEditor(legacy.definition);
+    expect(isPlayPresetBinding(legacy)).toBe(true);
+    expect(
+      legacy.definition.followupItems?.find(
+        (item) => item.id === "builtin:action-choices",
+      ),
+    ).toBeUndefined();
+    expect(
+      structure.followupItems?.find(
+        (item) => item.id === "builtin:action-choices",
+      ),
+    ).toMatchObject({ enabled: false });
+    const preview = (binding: typeof legacy) =>
+      new FileNativePromptCompiler().previewPlayPreset(
+        createMinimalFileNativePreviewInput({
+          provider: "chat_completions",
+          modelId: "test",
+          contextWindowTokens: 64000,
+          maxOutputTokens: 8192,
+          playerInput: "Hello",
+          playerInputPlacement: "append",
+        }),
+        binding,
+      ).playPreset!;
+    expect(preview(legacy).followups.map(({ id }) => id)).toEqual([
+      "player_options",
+    ]);
+    structure.followupItems!.find(
+      (item) => item.id === "builtin:generic-panels",
+    )!.enabled = true;
+    structure.statusPanelEnabled = true;
+    const saved = await store.save({
+      presetId: source.id,
+      files: source.files,
+      structure,
+      name: source.name,
+    });
+    const exported = await store.exportPortable(saved.preset.id);
+    const imported = (
+      await store.importPortable({ name: "Portable", files: exported })
+    ).preset;
+    const restored = await store.bindRevision(imported.id, imported.revision);
+    expect(restored.scriptsEnabled).toBe(false);
+    expect(restored.definition.statusPanelEnabled).toBe(true);
+    expect(restored.definition.followups).toEqual(legacy.definition.followups);
+    expect(restored.files["scripts/player-options.js"]).toBe(
+      legacy.files["scripts/player-options.js"],
+    );
+    const compiled = preview(restored);
+    expect(compiled.followups.map(({ id }) => id)).toEqual([
+      "player_options",
+      "builtin:generic-panels",
+    ]);
+    expect(compiled.followups.every(validPlayFollowup)).toBe(true);
+    expect(
+      compiled.mounts.filter(({ channel }) =>
+        channel.startsWith("builtin:generic-panels:"),
+      ),
+    ).toEqual([
+      { channel: "builtin:generic-panels:generic.markdown", mount: "story" },
+      { channel: "builtin:generic-panels:generic.html", mount: "sidebar" },
+      { channel: "builtin:generic-panels:generic.debug", mount: "debug" },
+    ]);
+    expect(
+      parsePlayPresetFiles({
+        ...restored.files,
+        "orchestration.yaml": restored.files["orchestration.yaml"]!.replace(
+          "statusPanelEnabled: true",
+          "statusPanelEnabled: yes",
+        ),
+      }).kind,
+    ).toBe("invalid");
+    expect(isPlayPresetBinding(legacy)).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
