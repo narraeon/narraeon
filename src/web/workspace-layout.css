@@ -565,7 +565,7 @@
   height: 100%;
 }
 .world-reader-page {
-  --world-header-height: 80px;
+  --world-header-height: 56px;
   --world-composer-inset: 1.1rem;
 }
 @media (--world-reader-narrow) {
@@ -578,25 +578,53 @@
     --world-composer-inset: 8px;
   }
 }
-@media (--world-reader-resizable) and (max-height: 32rem) {
+@media (min-width: 641px) and (max-height: 32rem) {
   .world-reader-page {
-    --world-header-height: 54px;
-  }
-
-  .world-reader-page .world-floating-title {
-    top: 22px;
-    max-width: 25vw;
+    --world-header-height: 48px;
   }
 }
-/* Cover the story between the floating controls and behind the title. */
-.world-reader-shell::before {
-  content: "";
-  position: absolute;
-  z-index: var(--z-reader-header-mask);
-  inset: 0 0 auto;
-  height: var(--world-header-height);
-  background: var(--surface);
-  pointer-events: none;
+@media (--workspace-desktop) {
+  .world-reader-shell {
+    --world-left-reserved: 0px;
+    --world-right-reserved: 0px;
+    --world-min-center-width: min(30rem, 40vw);
+    --world-left-rail-size: min(
+      var(--world-left-rail-width),
+      calc(
+        100vw - var(--world-right-reserved) - var(--world-min-center-width) -
+          var(--world-rail-inline-inset)
+      )
+    );
+    display: grid;
+    grid-template-columns:
+      var(--world-left-reserved) minmax(0, 1fr)
+      var(--world-right-reserved);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .world-reader-shell[data-left-rail-open="true"] {
+    --world-left-reserved: calc(
+      var(--world-left-rail-size) + var(--world-rail-inline-inset)
+    );
+  }
+
+  .world-reader-shell[data-right-rail-open="true"] {
+    --world-right-reserved: calc(
+      var(--world-right-rail-width) + var(--world-rail-inline-inset)
+    );
+  }
+
+  .world-reader-header {
+    grid-area: 1 / 1 / 2 / -1;
+  }
+
+  .world-reader-scroll {
+    grid-area: 2 / 2;
+  }
+
+  .world-composer-dock {
+    grid-area: 3 / 2;
+  }
 }
 .setting-story-column {
   min-height: 100%;
@@ -663,8 +691,10 @@
 }
 .setting-overlay-rail,
 .world-overlay-rail {
-  top: 52px;
   background: var(--surface);
+}
+.setting-overlay-rail {
+  top: 52px;
 }
 .setting-overlay-rail-right.is-editing {
   width: min(1260px, calc(100% - 24px));
@@ -1409,10 +1439,6 @@
   .setting-conversation-composer {
     bottom: 8px;
   }
-  .setting-overlay-rail,
-  .world-overlay-rail {
-    top: 54px;
-  }
   .setting-overlay-rail {
     top: 78px;
   }
@@ -1474,7 +1500,7 @@
   .world-overlay-rail-left {
     --world-rail-handle-width: 12px;
     grid-template-columns: minmax(0, 1fr) var(--world-rail-handle-width);
-    width: min(var(--world-left-rail-width, 320px), calc(100vw - 1.4rem));
+    width: var(--world-left-rail-size);
   }
 }
 @media (--world-reader-resizable) and (any-pointer: coarse) {

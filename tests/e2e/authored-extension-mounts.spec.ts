@@ -57,7 +57,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     const root = await mkdtemp(join(tmpdir(), "narraeon-authored-mounts-"));
     const servers = new RuntimeServerPool();
     try {
-      const worldId = await seedWorld(join(root, "data"));
+      const worldId = await seedWorld(join(root, "data"), narrow);
       const port = await availableRuntimePort();
       const origin = `http://127.0.0.1:${port}`;
       await servers.start(root, port);
@@ -158,16 +158,27 @@ for (const locale of ["en", "zh-CN"] as const) {
           .contentFrame()
           .getByText("Authored sidebar"),
       ).toHaveCount(1);
+      const leftRail = page.locator(".world-overlay-rail-left");
+      const fallbacks = leftRail.locator(".player-view-card");
+      if (narrow) await expect(fallbacks).toHaveCount(0);
+      else await expect(fallbacks.first()).toBeVisible();
+      await activate(
+        leftRail.getByRole("button", { name: t("Collapse all", "全部收起") }),
+      );
+      await expect(sidebarFrames.first()).toBeHidden();
+      await activate(
+        leftRail.getByRole("button", { name: t("Expand all", "全部展开") }),
+      );
+      await expect(sidebarFrames.first()).toBeVisible();
       await verifyFold(
         groupToggle(sidebar),
         sidebarFrames.first(),
         sidebarFrames.last(),
         itemToggle(sidebar).last(),
         activate,
-        () =>
-          expect(
-            page.locator(".world-overlay-rail-left .player-view-card").first(),
-          ).toBeVisible(),
+        async () => {
+          if (!narrow) await expect(fallbacks.first()).toBeVisible();
+        },
       );
       await expect(itemToggle(laterReply)).toHaveAttribute(
         "aria-expanded",
@@ -378,7 +389,7 @@ async function verifyFold(
   await expect(second).toBeHidden();
 }
 
-async function seedWorld(dataRoot: string) {
+async function seedWorld(dataRoot: string, extensionOnly: boolean) {
   const worlds = new FileNativeWorldStore(dataRoot);
   const sample = sampleContentPackageForLocale("en");
   const files = legacyDefaultPlayPresetFilesForLocale("en");
@@ -397,7 +408,16 @@ async function seedWorld(dataRoot: string) {
     sourcePackageId: "authored-mounts",
     sourcePackageTitle: "Authored mounts",
     packageFiles: [
-      ...sample.files.filter(({ path }) => path !== "control/followups.yaml"),
+      ...sample.files
+        .filter(({ path }) => path !== "control/followups.yaml")
+        .map((file) =>
+          extensionOnly && file.path === "control/player-views.yaml"
+            ? {
+                ...file,
+                contents: "format: narraeon.player-views/v1\nviews: []\n",
+              }
+            : file,
+        ),
       {
         path: "control/prompts/authored-mount.md",
         contents: "Fill the configured panel.",

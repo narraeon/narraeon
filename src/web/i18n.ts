@@ -2606,6 +2606,9 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
   次成功记录: "successful reads",
   "正在检查 AI 读过的世界文档…": "Checking which world files the AI read…",
   正文宽度: "Text width",
+  较窄: "Narrow",
+  适中: "Medium",
+  较宽: "Wide",
   此刻: "Now",
   最近一次请求的材料未列出这份文档:
     "This document is absent from the latest request materials",

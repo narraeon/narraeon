@@ -107,7 +107,7 @@
 :where(.column) :global(.story-context-boundary)::after {
   height: 1px;
   flex: 1;
-  background: var(--surface);
+  background: var(--border);
   content: "";
 }
 
@@ -667,11 +667,6 @@
   gap: 0;
 }
 
-:global(.is-story-mode) .column :global(.story-context-boundary)::before,
-:global(.is-story-mode) .column :global(.story-context-boundary)::after {
-  background: var(--border);
-}
-
 .column :global(.story-context-boundary) :global(.call-chain-summary) {
   display: block;
   gap: 0;
@@ -737,9 +732,6 @@
 }
 .column :global(.story-heading) h1 {
   font-size: 28px;
-}
-.column :global(.player-message) {
-  border-left: 2px solid var(--border);
 }
 .column :global(.player-message) > article {
   background: var(--surface-muted);

@@ -155,3 +155,59 @@
     top: 82px;
   }
 }
+
+.readerHeader {
+  display: grid;
+  flex: none;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: var(--world-header-height);
+  padding: 0.4rem 20px;
+  background: var(--surface);
+}
+
+.readerHeader .chrome {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+}
+
+.readerTitle {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 1.25rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (--workspace-mobile) {
+  .readerHeader {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 0.3rem;
+    row-gap: 0;
+    padding-inline: 8px;
+  }
+
+  .readerHeader .right {
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: end;
+  }
+
+  .readerHeader .chrome button {
+    min-width: 1.9rem;
+    padding-inline: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .readerTitle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    font-size: 1.05rem;
+  }
+}

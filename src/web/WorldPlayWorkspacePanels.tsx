@@ -2,12 +2,14 @@ import { WorldControlFilesEditor } from "./WorldControlFilesEditor.tsx";
 import { WorldPromptDiagnosticsPanel } from "./WorldPromptDiagnosticsPanel.tsx";
 import { WorldMaintenancePanel } from "./WorldMaintenancePanel.tsx";
 import {
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type MouseEventHandler,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 import {
@@ -351,56 +353,71 @@ function WorldPlayDialog({
 }
 
 export function ReadingPreferencesPopover({
+  id,
+  triggerRef,
   value,
   saving,
+  syncNotice,
   onChange,
   onClose,
 }: {
+  id: string;
+  triggerRef: RefObject<HTMLButtonElement | null>;
   value: AppReadingPreferences;
   saving: boolean;
+  syncNotice: ReactNode;
   onChange: (value: AppReadingPreferences) => void;
   onClose: () => void;
 }): React.JSX.Element {
   useAndroidBack(true, onClose);
+  const close = useEffectEvent(onClose);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+    function dismissOutside(event: MouseEvent): void {
+      if (
+        event.target instanceof Node &&
+        !panelRef.current?.contains(event.target) &&
+        !triggerRef.current?.contains(event.target)
+      )
+        close();
+    }
+    function dismissEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      close();
+    }
+    document.addEventListener("click", dismissOutside, true);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("click", dismissOutside, true);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [triggerRef]);
+
+  const widthDescription = uiText(
+    value.measure <= 40 ? "较窄" : value.measure >= 58 ? "较宽" : "适中",
+  );
   return (
-    <aside className="world-reading-popover" aria-label={uiText("阅读设置")}>
+    <aside
+      id={id}
+      ref={panelRef}
+      className="world-reading-popover"
+      aria-label={uiText("阅读设置")}
+    >
       <header>
         <strong>{uiText("阅读设置")}</strong>
-        <button type="button" onClick={onClose} aria-label={uiText("关闭")}>
+        <button
+          ref={closeRef}
+          type="button"
+          onClick={onClose}
+          aria-label={uiText("关闭")}
+        >
           ×
         </button>
       </header>
-      <label className="world-reading-technical-toggle">
-        <input
-          type="checkbox"
-          checked={value.showTechnicalInfo}
-          onChange={(event) =>
-            onChange({ ...value, showTechnicalInfo: event.target.checked })
-          }
-        />
-        <span>{uiText("显示技术信息")}</span>
-      </label>
-      <div className="world-density-picker">
-        <span>{uiText("排版密度")}</span>
-        <div>
-          {(
-            [
-              ["compact", uiText("紧凑")],
-              ["standard", uiText("标准")],
-              ["relaxed", uiText("舒展")],
-            ] as const
-          ).map(([density, label]) => (
-            <button
-              key={density}
-              type="button"
-              className={value.density === density ? "is-current" : ""}
-              onClick={() => onChange({ ...value, density })}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {syncNotice}
       <ReadingRange
         label={uiText("字号")}
         value={value.fontSize}
@@ -431,12 +448,45 @@ export function ReadingPreferencesPopover({
       <ReadingRange
         label={uiText("正文宽度")}
         value={value.measure}
-        output={value.measure + "rem"}
+        output={widthDescription}
+        valueText={widthDescription}
         min={32}
         max={72}
         step={2}
         onChange={(measure) => onChange({ ...value, measure })}
       />
+      <div className="world-density-picker">
+        <span>{uiText("排版密度")}</span>
+        <div role="group" aria-label={uiText("排版密度")}>
+          {(
+            [
+              ["compact", uiText("紧凑")],
+              ["standard", uiText("标准")],
+              ["relaxed", uiText("舒展")],
+            ] as const
+          ).map(([density, label]) => (
+            <button
+              key={density}
+              type="button"
+              className={value.density === density ? "is-current" : ""}
+              aria-pressed={value.density === density}
+              onClick={() => onChange({ ...value, density })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="world-reading-technical-toggle">
+        <input
+          type="checkbox"
+          checked={value.showTechnicalInfo}
+          onChange={(event) =>
+            onChange({ ...value, showTechnicalInfo: event.target.checked })
+          }
+        />
+        <span>{uiText("显示技术信息")}</span>
+      </label>
       <button
         type="button"
         className="secondary-button world-reading-reset"
@@ -455,6 +505,7 @@ function ReadingRange({
   label,
   value,
   output,
+  valueText,
   min,
   max,
   step,
@@ -463,6 +514,7 @@ function ReadingRange({
   label: string;
   value: number;
   output: string;
+  valueText?: string;
   min: number;
   max: number;
   step: number;
@@ -475,6 +527,7 @@ function ReadingRange({
       <input
         type="range"
         aria-label={label}
+        aria-valuetext={valueText}
         value={value}
         min={min}
         max={max}
