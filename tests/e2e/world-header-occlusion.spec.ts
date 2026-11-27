@@ -131,7 +131,11 @@ for (const width of [1440, 375]) {
       });
 
       const clip = { x: 0, y: 0, width, height: chromeBottom };
-      for (const scrollTop of [160, 600, 1100]) {
+      const endOfStory = await scroller.evaluate(
+        (element) => element.scrollHeight - element.clientHeight,
+      );
+      expect(endOfStory).toBeGreaterThan(600);
+      for (const scrollTop of [160, 600, endOfStory]) {
         await scroller.evaluate(
           (element, top) => (element.scrollTop = top),
           scrollTop,

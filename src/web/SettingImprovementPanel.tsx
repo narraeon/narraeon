@@ -31,7 +31,13 @@ import {
 } from "./ModelSendRecovery.ts";
 import { useConversationComposer } from "./useConversationComposer.ts";
 import { useAutosizeTextarea } from "./useAutosizeTextarea.ts";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
 import type {
@@ -739,11 +745,7 @@ export function SettingImprovementPanel({
     } else onBack();
   }
 
-  // World revision is a panel within play. Content authoring has its own address.
-  useAndroidBack(revisingWorld, requestBack);
-  useAndroidBack(leftRailOpen || rightRailOpen, closeRail);
-
-  function closeRail(): void {
+  const closeRail = useCallback((): void => {
     setLeftRailOpen(false);
     setRightRailOpen(false);
     const opener = railOpener.current;
@@ -751,25 +753,35 @@ export function SettingImprovementPanel({
       preventScroll: true,
     });
     railOpener.current = null;
-  }
+  }, []);
+
+  const railOpen = leftRailOpen || rightRailOpen;
+  // A rail action can replace the focused element and leave focus on the body.
+  useEffect(() => {
+    if (!railOpen || confirmation !== null) return;
+    function dismissRail(event: KeyboardEvent): void {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        (event.target instanceof Element &&
+          event.target.closest('dialog, [role="dialog"]'))
+      )
+        return;
+      event.preventDefault();
+      closeRail();
+    }
+    document.addEventListener("keydown", dismissRail);
+    return () => document.removeEventListener("keydown", dismissRail);
+  }, [closeRail, confirmation, railOpen]);
+
+  // World revision is a panel within play. Content authoring has its own address.
+  useAndroidBack(revisingWorld, requestBack);
+  useAndroidBack(railOpen, closeRail);
 
   return (
     <main
       className="setting-reader-page"
       aria-labelledby="setting-improvement-title"
-      onKeyDown={(event) => {
-        if (
-          event.key !== "Escape" ||
-          event.defaultPrevented ||
-          (!leftRailOpen && !rightRailOpen) ||
-          (event.target instanceof Element &&
-            event.target.closest('dialog, [role="dialog"]'))
-        )
-          return;
-        event.preventDefault();
-        event.stopPropagation();
-        closeRail();
-      }}
       style={
         {
           "--setting-composer-height": `${composerHeight}px`,

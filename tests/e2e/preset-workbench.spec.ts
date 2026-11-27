@@ -9,7 +9,7 @@ import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNat
 test("orchestration management opens within the viewport and restores keyboard focus", async ({
   page,
 }) => {
-  await page.goto("/");
+  // Set up the route and locale before the browser reads the workspace.
   await runtime(page, { type: "preferences.save", locale: "en" });
   const name =
     "Fogbell Harbor tabletop orchestration for the lighthouse, guild records, and coastal investigations";
@@ -495,16 +495,12 @@ async function runtime<T = unknown>(
   page: Page,
   request: V1Request,
 ): Promise<T> {
-  return page.evaluate(async (request) => {
-    const response = await fetch("/api/runtime/v1", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ protocol: "narraeon.runtime/v1", request }),
-    });
-    const body = (await response.json()) as { result: T; error: unknown };
-    if (!response.ok) throw new Error(JSON.stringify(body.error));
-    return body.result;
-  }, request);
+  const response = await page.request.post("/api/runtime/v1", {
+    data: { protocol: "narraeon.runtime/v1", request },
+  });
+  const body = (await response.json()) as { result: T; error: unknown };
+  if (!response.ok()) throw new Error(JSON.stringify(body.error));
+  return body.result;
 }
 
 function contentFiles() {
