@@ -452,7 +452,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     }),
   ).toBeVisible();
   await expect(page.locator(".setting-current-tree-notice")).toContainText(
-    "已经生效",
+    "成功的 AI 改动直接写入内容包",
   );
   await page.getByRole("button", { name: "全部收起" }).click();
   await expect(repairedTrace).not.toHaveAttribute("open", "");
@@ -577,7 +577,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   ).toContainText("pass the automatic review");
   const authoredTurn = page.locator(".setting-conversation-turn").last();
   await authoredTurn.locator(".model-call-details > summary").click();
-  const acceptedChanges = page.locator(".setting-accepted-changes");
+  const acceptedChanges = authoredTurn.locator(
+    ".setting-exchange-tool .setting-accepted-changes",
+  );
   await expect(
     acceptedChanges.filter({ hasText: "world/events/training.yaml" }),
   ).toHaveCount(1);
@@ -593,7 +595,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
       .filter({ hasText: /当前树自动检查通过|Current-tree review passed/u }),
   ).toHaveCount(1);
   await expect(page.locator(".setting-current-tree-notice")).toContainText(
-    "已经生效",
+    "成功的 AI 改动直接写入内容包",
   );
 
   const worldRuleWrite = authoredTurn

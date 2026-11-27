@@ -289,8 +289,8 @@ for (const { locale, decision } of scenarios) {
       await expect(
         page.getByText(
           t(
-            "内容包已准备好。点击「创建世界」开始游玩。",
-            "Your content package is ready. Select “Create world” to start playing.",
+            "内容包已准备好。先选择书名，再创建世界。",
+            "Your content package is ready. Choose a title, then create the world.",
           ),
           { exact: true },
         ),
@@ -309,10 +309,22 @@ for (const { locale, decision } of scenarios) {
         ),
       );
 
+      if (decision === "adopt")
+        await page.setViewportSize({ width: 980, height: 420 });
       await page.reload();
       await expect(title).toHaveValue(suggestedTitle);
       expect(commands).toEqual([]);
       if (decision === "adopt") {
+        const createAction = createWorld.locator("..");
+        const titleChoice = createAction.getByRole("button", {
+          name: "处理建议书名",
+          exact: true,
+        });
+        await expect(createAction).toContainText("创建世界前请选择书名。");
+        await expect(titleChoice).toBeVisible();
+        await expect(
+          page.locator(".setting-conversation-composer").getByRole("textbox"),
+        ).toBeEnabled();
         await createWorld.click();
         await expect(title).toBeFocused();
         expect(commands).toEqual([]);
@@ -320,6 +332,16 @@ for (const { locale, decision } of scenarios) {
         await button("采用建议书名", "Use suggested title").click();
       } else if (decision === "edit") {
         await title.fill(editedTitle);
+        const composer = page.locator(".setting-conversation-composer");
+        await expect(composer.getByRole("textbox")).toBeDisabled();
+        await expect(composer).toContainText(
+          "Save the edited title or keep the current title to continue chatting.",
+        );
+        await composer
+          .getByRole("button", { name: "Review suggested title" })
+          .click();
+        await expect(title).toBeFocused();
+        await expect(title).toHaveValue(editedTitle);
         const save = button("保存书名", "Save title");
         try {
           await expect(createWorld).toBeDisabled();

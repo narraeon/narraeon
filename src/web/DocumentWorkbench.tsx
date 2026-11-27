@@ -46,6 +46,7 @@ interface WorldRevisionWorkspace {
   kind: "world-revision";
   files: readonly ContentTreeFile[];
   dirty: boolean;
+  locked: boolean;
   pending: boolean;
   issues: readonly DocumentWorkbenchIssue[];
   onFilesChange: (files: ContentTreeFile[]) => void;
@@ -233,9 +234,13 @@ export function DocumentWorkbench({
         <header>
           <div>
             <span className="content-editor-kicker">
-              {workspace.kind === "content-package"
-                ? uiText("当前草稿")
-                : uiText("修订工作树")}
+              {uiText(
+                workspace.kind === "content-package"
+                  ? "当前草稿"
+                  : workspace.locked
+                    ? "修订工作树"
+                    : "世界当前文件",
+              )}
             </span>
             <h4>{uiText("文件")}</h4>
           </div>

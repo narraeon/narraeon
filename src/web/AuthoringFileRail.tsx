@@ -89,6 +89,7 @@ export function AuthoringFileRail({
             target={target}
             fileView={fileView}
             dirty={contentEditor.dirty}
+            revisionLocked={contentEditor.revisionLocked === true}
             onEdit={() => onModeChange("edit")}
             editDisabled={editDisabled}
           />
@@ -110,12 +111,14 @@ function SettingContentPreview({
   target,
   fileView,
   dirty,
+  revisionLocked,
   onEdit,
   editDisabled,
 }: {
   target: "content-package" | "world-revision";
   fileView: AuthoringFileView;
   dirty: boolean;
+  revisionLocked: boolean;
   onEdit: () => void;
   editDisabled: boolean;
 }): React.JSX.Element {
@@ -128,15 +131,23 @@ function SettingContentPreview({
       <header>
         <div>
           <strong>
-            {uiText(revisingWorld ? "世界修订工作树" : "内容包当前树")}
+            {uiText(
+              !revisingWorld
+                ? "内容包当前树"
+                : revisionLocked
+                  ? "世界修订工作树"
+                  : "世界当前文件",
+            )}
           </strong>
           <small>
             {dirty
               ? uiText("正在预览未保存的文件草稿")
               : uiText(
-                  revisingWorld
-                    ? "正在预览已保存的修订工作树"
-                    : "正在预览已保存的当前树",
+                  !revisingWorld
+                    ? "正在预览已保存的当前树"
+                    : revisionLocked
+                      ? "正在预览已保存的修订工作树"
+                      : "正在浏览当前世界的已保存文件",
                 )}
           </small>
         </div>
@@ -174,9 +185,11 @@ function SettingContentPreview({
         <div className="setting-content-preview-empty">
           <p>
             {uiText(
-              revisingWorld
-                ? "当前修订工作树还没有文件。"
-                : "当前内容包还没有文件。",
+              !revisingWorld
+                ? "当前内容包还没有文件。"
+                : revisionLocked
+                  ? "当前修订工作树还没有文件。"
+                  : "当前世界还没有文件。",
             )}
           </p>
           <button type="button" disabled={editDisabled} onClick={onEdit}>

@@ -7,7 +7,10 @@ import {
 } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import type { AuthoringConversationView } from "../../src/web/AuthoringTarget.ts";
-import type { V1Request } from "../../src/protocol/v1.ts";
+import type {
+  V1Request,
+  V1WorldRevisionOverview,
+} from "../../src/protocol/v1.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
 
 test.use({ runtimeScope: "authoring-sync" });
@@ -113,13 +116,40 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const kind of ["setting", "revision"] as const) {
+  test(`${kind} keeps the workbench header above the scrolling conversation`, async ({
+    page,
+  }) => {
+    await prepare(page, kind);
+    const title = page.getByRole("heading", { level: 1 });
+    const scroll = page.locator(".setting-reader-scroll");
+    const intro = scroll.locator(".setting-conversation-intro");
+    for (const width of [980, 656, 400]) {
+      await page.setViewportSize({ width, height: 420 });
+      await scroll.evaluate((element) => (element.scrollTop = 0));
+      await expect(title).toBeVisible();
+      const titleBox = (await title.boundingBox())!;
+      const introBox = (await intro.boundingBox())!;
+      expect(introBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+      await scroll.evaluate((element) => (element.scrollTop = 22));
+      expect(await scroll.evaluate((element) => element.scrollTop)).toBe(22);
+      expect((await scroll.boundingBox())!.y).toBeGreaterThanOrEqual(
+        titleBox.y + titleBox.height,
+      );
+      expect((await title.boundingBox())!.y).toBe(titleBox.y);
+    }
+  });
+
   test(`${kind} patches one Markdown section and restores its exact before-image`, async ({
     page,
   }) => {
     const relativePath = "rules/section-rules.md";
     const path = `${kind === "setting" ? "world" : "state"}/${relativePath}`;
     const oldBody = "The harbor bell sounds at dusk.";
-    const newBody = "The harbor bell sounds at dawn.";
+    const newBody =
+      "The harbor bell sounds at dawn. " +
+      "The watch records each passing vessel in the harbor log. "
+        .repeat(7)
+        .trimEnd();
     const longBody = Array.from(
       { length: 240 },
       (_, index) => `Archive entry ${index + 1} stays exactly as written.`,
@@ -145,6 +175,19 @@ for (const kind of ["setting", "revision"] as const) {
       markdown: `### Watch\n\n${newBody}`,
     });
     const read = { name: `${prefix}_read`, arguments: { path } };
+    const draftPath = "control/blocks/world.md";
+    const initialFiles =
+      kind === "setting"
+        ? await target.files()
+        : await runtime<{ path: string; contents: string }[]>(page, {
+            type: "world.surface.read",
+            worldId: target.id,
+            surface: "revision",
+          });
+    const originalControl = initialFiles.find(
+      (file) => file.path === draftPath,
+    )!.contents;
+    const updatedControl = `${originalControl}\n\nThe harbor archives record watches.\n`;
     const after = source.replace(oldBody, newBody);
     const readCommitted = async () =>
       (
@@ -163,6 +206,11 @@ for (const kind of ["setting", "revision"] as const) {
         markdown: "### Watch\n\nThis would duplicate the existing heading.",
       }),
       exact,
+      { name: `${prefix}_read`, arguments: { path: draftPath } },
+      {
+        name: `${prefix}_write_file`,
+        arguments: { path: draftPath, contents: updatedControl },
+      },
     ]);
     const requestText = "Change just the harbor watch rule.";
     const view = await sendFreshConversation(page, target.prefix, requestText);
@@ -176,6 +224,12 @@ for (const kind of ["setting", "revision"] as const) {
     expect(calls[2]?.result?.markdown).toContain("Harbor > Watch");
     expect(calls[2]?.result?.markdown).toContain("唯一");
     expect(calls[2]?.result?.changes).toEqual([]);
+    expect(calls[5]?.result, calls[5]?.result?.markdown).toMatchObject({
+      isError: false,
+      changes: [
+        { path: draftPath, before: originalControl, after: updatedControl },
+      ],
+    });
     expect(
       (await target.files()).find((file) => file.path === path)?.contents,
     ).toBe(after);
@@ -184,6 +238,43 @@ for (const kind of ["setting", "revision"] as const) {
     await page.reload();
     if (kind === "revision") await target.open();
     await expect(userText(page, requestText)).toBeVisible();
+    const turn = page
+      .locator(".setting-conversation-turn")
+      .filter({ hasText: requestText });
+    const turnChanges = turn.getByRole("region", { name: "本轮已改文件" });
+    const fileChanges = turnChanges.locator(".setting-change-diff");
+    await expect(fileChanges).toHaveCount(2);
+    const turnDiff = fileChanges.filter({ hasText: path });
+    const otherDiff = fileChanges.filter({ hasText: draftPath });
+    await expect(turnDiff).toContainText(
+      kind === "setting" ? "内容包当前树" : "修订工作树",
+    );
+    await expect(otherDiff).toContainText(
+      kind === "setting" ? "内容包当前树" : "修订工作树",
+    );
+    await turnDiff.locator("summary").click();
+    await page.setViewportSize({ width: 400, height: 650 });
+    const diffTable = turnDiff.getByRole("table");
+    await expect(diffTable).toBeVisible();
+    const longLine = diffTable
+      .locator(".unified-diff-add")
+      .filter({ hasText: newBody });
+    await expect(
+      longLine.getByRole("cell", { name: /新文件第/u }),
+    ).toBeVisible();
+    const sizes = await diffTable.evaluate((element) => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(sizes.scrollWidth).toBeLessThanOrEqual(sizes.width + 1);
+    const lineSizes = await longLine.evaluate((line) => ({
+      height: line.getBoundingClientRect().height,
+      textLineHeight: parseFloat(
+        getComputedStyle(line.querySelector("code")!).lineHeight,
+      ),
+    }));
+    expect(lineSizes.height).toBeGreaterThan(lineSizes.textLineHeight * 2);
+    await page.setViewportSize({ width: 1280, height: 720 });
     const accepted = page.locator(".setting-exchange-tool.is-ok").filter({
       hasText: `${prefix}_patch`,
     });
@@ -198,7 +289,6 @@ for (const kind of ["setting", "revision"] as const) {
     await expect(diff.locator(".unified-diff-add")).toContainText(newBody);
     await expect(diff.locator(".unified-diff-remove")).toContainText(oldBody);
     const editor = await openEditor(page, kind);
-    const draftPath = "control/blocks/world.md";
     const draft = `${await editor.inputValue()}\nKeep this editor draft.\n`;
     await editor.fill(draft);
     await page
@@ -218,8 +308,20 @@ for (const kind of ["setting", "revision"] as const) {
     );
     await revealDiff();
     await expect(rollback).toBeEnabled();
-    await rollback.click();
+    await expect(otherDiff).toContainText("历史改动");
+    await openDetails(turnDiff.locator(":scope > summary"));
+    const providerRequestsBeforeRollback = providerCalls;
+    let rollbackRequests = 0;
+    await page.route("**/api/runtime/v1", async (route) => {
+      if (runtimeInput(route)?.type === `${target.prefix}.rollback`)
+        rollbackRequests++;
+      await route.continue();
+    });
+    await turnDiff.getByRole("button", { name: "回滚这个文件" }).click();
     await expect(accepted).toContainText("当前文件已是修改前版本");
+    await expect(turnDiff).toContainText("当前文件已是修改前版本");
+    expect(providerCalls).toBe(providerRequestsBeforeRollback);
+    expect(rollbackRequests).toBe(1);
     await page.reload();
     if (kind === "revision") await target.open();
     await expect(userText(page, requestText)).toBeVisible();
@@ -270,6 +372,19 @@ for (const kind of ["setting", "revision"] as const) {
       );
       await page.reload();
       expect(await readCommitted()).toBe(finished);
+      await target.open();
+      const historicalDiff = page
+        .locator(".setting-conversation-turn")
+        .filter({ hasText: followUp })
+        .getByRole("region", { name: "本轮已改文件" })
+        .locator(".setting-change-diff")
+        .first();
+      await expect(historicalDiff).toContainText("已封存修订");
+      await historicalDiff.locator("summary").click();
+      await expect(historicalDiff.getByRole("table")).toBeVisible();
+      await expect(
+        historicalDiff.getByRole("button", { name: "回滚这个文件" }),
+      ).toHaveCount(0);
     }
   });
 
@@ -1235,6 +1350,88 @@ test("a conflicting content-package save explains the rejection with the drawer 
   await expect(composer(page)).toBeEnabled();
   await openEditor(page, "setting");
   await expect(editor).toHaveValue(laterEdit);
+});
+
+test("world revision reflects the lock before and after a discarded epoch", async ({
+  page,
+}) => {
+  const target = await prepare(page, "revision");
+  const overview = () =>
+    runtime<V1WorldRevisionOverview>(page, {
+      type: "world.revision.overview",
+      worldId: target.id,
+    });
+  const commands: V1Request["type"][] = [];
+  await page.route("**/api/runtime/v1", async (route) => {
+    const input = runtimeInput(route);
+    if (input !== undefined) commands.push(input.type);
+    await route.continue();
+  });
+  const tools = page.getByRole("navigation", { name: "世界修订工具" });
+  const locked = page.getByText("世界游玩已锁定", { exact: true });
+  const unlocked = page.getByText("世界游玩未锁定", { exact: true });
+  const history = page.getByText("已封存修订", { exact: true });
+  await expect(unlocked).toBeVisible();
+  await expect(locked).toHaveCount(0);
+  await expect(history).toHaveCount(0);
+  await expect(
+    tools.getByRole("button", { name: "放弃", exact: true }),
+  ).toHaveCount(0);
+  expect(await overview()).toMatchObject({ epoch: null, sealedEpochs: [] });
+
+  const editor = await openEditor(page, "revision");
+  expect((await overview()).epoch).toBeNull();
+  await editor.fill(
+    `${await editor.inputValue()}\n\nA draft started the epoch.\n`,
+  );
+  await expect(locked).toBeVisible();
+  await expect(unlocked).toHaveCount(0);
+  expect((await overview()).epoch?.locked).toBe(true);
+  await page.getByRole("button", { name: "保存到修订", exact: true }).click();
+  await expect(
+    page.getByText("修订工作树已保存", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "收起文件面板", exact: true }).click();
+  await tools.getByRole("button", { name: "放弃", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "放弃", exact: true })
+    .click();
+  await expect(
+    page.getByText("这次世界修订已放弃，原世界保持不变并已解锁。"),
+  ).toBeVisible();
+  const sealed = await overview();
+  expect(sealed.epoch?.locked ?? false).toBe(false);
+  expect(sealed.sealedEpochs).toMatchObject([{ lifecycle: "discarded" }]);
+
+  commands.length = 0;
+  await target.open();
+  await expect(unlocked).toBeVisible();
+  await expect(locked).toHaveCount(0);
+  await expect(
+    tools.getByRole("button", { name: "应用并解锁", exact: true }),
+  ).toHaveCount(0);
+  await history.click();
+  await expect(page.getByText("已放弃修订", { exact: true })).toBeVisible();
+  await tools.getByRole("button", { name: "文件", exact: true }).click();
+  const preview = page.getByRole("complementary", { name: "世界修订文件预览" });
+  await expect(
+    preview.getByText("世界当前文件", { exact: true }),
+  ).toBeVisible();
+  expect(await overview()).toEqual(sealed);
+  expect(commands.filter((type) => type.startsWith("world.revision."))).toEqual(
+    expect.arrayContaining(["world.revision.overview"]),
+  );
+  expect(commands.filter((type) => type.startsWith("world.revision."))).toEqual(
+    commands.filter((type) =>
+      [
+        "world.revision.overview",
+        "world.revision.session.read",
+        "world.revision.status",
+      ].includes(type),
+    ),
+  );
+  expect(providerCalls).toBe(0);
 });
 
 test("world revision first-edit lock receipt is never replayed during read recovery", async ({

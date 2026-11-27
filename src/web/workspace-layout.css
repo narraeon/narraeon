@@ -635,9 +635,7 @@
 }
 .setting-story-column {
   min-height: 100%;
-  padding-top: 90px;
 }
-.setting-reader-scroll,
 .setting-conversation-composer,
 .setting-panel-scrim,
 .setting-overlay-rail,
@@ -700,8 +698,9 @@
 .world-overlay-rail {
   background: var(--surface);
 }
-.setting-overlay-rail {
-  top: 52px;
+.setting-reader-shell > .setting-overlay-rail {
+  grid-row: 2 / 3;
+  top: 0;
 }
 .setting-overlay-rail-right.is-editing {
   width: min(1260px, calc(100% - 24px));
@@ -1433,14 +1432,8 @@
     padding: 12px 16px;
     font-size: 12px;
   }
-  .setting-story-column {
-    padding-top: 86px;
-  }
   .world-reader-page {
     --world-header-height: 76px;
-  }
-  .setting-story-column {
-    padding-top: 110px;
   }
   .setting-conversation-intro h2 {
     font-size: 20px;
@@ -1450,9 +1443,6 @@
   }
   .setting-conversation-composer {
     bottom: 8px;
-  }
-  .setting-overlay-rail {
-    top: 78px;
   }
 }
 

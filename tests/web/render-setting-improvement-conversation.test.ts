@@ -14,7 +14,7 @@ test("首屏说明直接写当前树，并提供显式全新上下文而没有 A
 
   expect(html).toContain("直接说你现在想做什么");
   expect(html).toContain("全新上下文");
-  expect(html).toContain("没有隔离草稿或应用步骤");
+  expect(html).toContain("成功的 AI 改动直接写入内容包");
   expect(html).toContain(">发送<");
   expect(html).not.toContain("应用当前草稿");
   expect(html).not.toContain("放弃对话");
@@ -172,9 +172,9 @@ test("最新书名建议显示当前标题和可编辑建议，建世界仍需�
   expect(html).toContain('value="无人报站的夜班车"');
   expect(html).toContain("采用建议书名");
   expect(html).toContain("保留当前书名");
-  expect(html).toContain("内容包已准备好。点击「创建世界」开始游玩。");
+  expect(html).toContain("内容包已准备好。先选择书名，再创建世界。");
   expect(html).toMatch(
-    /<button type="button" class="setting-create-world is-ready">创建世界<\/button>/u,
+    /<button type="button" class="setting-create-world is-ready" aria-describedby="setting-create-title-note">创建世界<\/button>/u,
   );
 
   const withDraft = renderWith({
@@ -184,7 +184,7 @@ test("最新书名建议显示当前标题和可编辑建议，建世界仍需�
     offerTitle: true,
     hasUnsavedFileDraft: true,
   });
-  expect(withDraft).toContain('disabled="">创建世界');
+  expect(withDraft).toMatch(/<button[^>]* disabled=""[^>]*>创建世界/u);
   expect(withDraft).toContain('disabled="">采用建议书名');
   expect(withDraft).not.toContain("内容包已准备好");
 });

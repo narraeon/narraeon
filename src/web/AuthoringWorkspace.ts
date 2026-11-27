@@ -294,13 +294,6 @@ export class AuthoringWorkspace {
     const valid = this.current();
     await this.reader.read();
     if (!valid() || this.state.target === null) return;
-    this.update({
-      notice: uiText(
-        this.state.target?.revision?.epoch?.locked
-          ? this.target.messages.locked
-          : this.target.messages.opened,
-      ),
-    });
     this.observeSelection();
   }
   private observeSelection(): void {
@@ -700,12 +693,7 @@ export class AuthoringWorkspace {
     this.update({ loading: true, requestFailure: null });
     const pending = opening
       .then((next) => {
-        if (valid()) {
-          this.accept(next);
-          this.update({
-            notice: uiText(this.target.messages.locked),
-          });
-        }
+        if (valid()) this.accept(next);
       })
       .catch(async (error: unknown) => {
         if (valid()) {

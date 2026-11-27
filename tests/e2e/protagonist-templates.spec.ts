@@ -522,6 +522,18 @@ test("English template revision can be discarded and choosing None retains mecha
   ).toBeVisible();
   await card.getByRole("button", { name: "Advanced world revision" }).click();
   await expect(
+    page.getByText("World play is unlocked", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Apply and start playing" }),
+  ).toHaveCount(0);
+  const untouchedWorldId = await createdWorldId(page, title);
+  const untouched = await runtime<{ worldRevision: unknown }>(page, {
+    type: "world.read",
+    worldId: untouchedWorldId,
+  });
+  expect(untouched.worldRevision).toBeNull();
+  await expect(
     page.getByRole("button", { name: "Return to protagonist confirmation" }),
   ).toBeVisible();
   await page
