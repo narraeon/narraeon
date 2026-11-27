@@ -1,6 +1,14 @@
 import type { FrontendArtifactExtensionSummary } from "./ArtifactDebugger.tsx";
 import { BuiltinPlayerViewPanel } from "./BuiltinPlayerViewPanel.tsx";
+import { assistantResponseKind } from "./WorldPlayStore.ts";
+import { useAndroidBack } from "./androidBridge.ts";
 import { uiText } from "./i18n.ts";
+import {
+  mountLabel,
+  mountOrder,
+  type ArtifactMountName,
+} from "./playPresetEditorLabels.ts";
+import type { V1PlayTimelineItem } from "../protocol/v1.ts";
 /* eslint-disable react-refresh/only-export-components */
 
 import {
@@ -8,6 +16,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -38,13 +47,8 @@ export interface FrontendExtensionBundle {
   source?: "artifact" | "player_view";
   authority?: "non_authoritative_artifact" | "committed_player_view_projection";
   lifecycle?: "operation_frozen" | "current_preset";
-  mount?:
-    | "story"
-    | "sidebar"
-    | "composer_above"
-    | "composer_below"
-    | "overlay"
-    | "debug";
+  displayName?: string;
+  mount?: ArtifactMountName;
   declaration?: {
     outputName: string;
     channel: string;
@@ -150,26 +154,46 @@ export interface RegexPipelineResult {
   error?: string;
 }
 
-export function artifactInstanceKey(
-  artifact: Pick<
-    FrontendArtifactProjection,
-    | "worldId"
-    | "channel"
-    | "key"
-    | "output"
-    | "projection"
-    | "recordId"
-    | "frontend"
-  >,
-): string {
-  const base = `${artifact.worldId}\0${artifact.channel}\0${artifact.key ?? ""}\0${artifact.output}`;
+type ArtifactItemIdentity = Pick<
+  FrontendArtifactProjection,
+  | "worldId"
+  | "playPresetId"
+  | "requestId"
+  | "channel"
+  | "key"
+  | "output"
+  | "projection"
+  | "recordId"
+  | "frontend"
+>;
+
+function artifactItemKey(artifact: ArtifactItemIdentity): string {
+  if (artifact.frontend.source === "player_view")
+    return JSON.stringify([
+      artifact.worldId,
+      artifact.playPresetId,
+      "player_view",
+      artifact.output,
+    ]);
+  const keepsMultipleRecords =
+    artifact.projection === "append" ||
+    artifact.projection === "transient" ||
+    artifact.projection === "hidden";
+  return JSON.stringify([
+    artifact.worldId,
+    artifact.playPresetId,
+    artifact.requestId,
+    artifact.channel,
+    artifact.key ?? "",
+    artifact.output,
+    artifact.projection,
+    keepsMultipleRecords ? artifact.recordId : null,
+  ]);
+}
+
+export function artifactInstanceKey(artifact: ArtifactItemIdentity): string {
+  const base = artifactItemKey(artifact);
   const renderer = artifact.frontend.renderer;
-  if (artifact.projection === "append") {
-    const append = `${base}\0append\0${artifact.recordId}`;
-    return renderer?.mode === "app"
-      ? `${append}\0app\0${renderer.revision ?? "builtin"}`
-      : `${append}\0document`;
-  }
   if (renderer?.mode === "app")
     return `${base}\0app\0${renderer.revision ?? "builtin"}`;
   return `${base}\0document`;
@@ -620,13 +644,7 @@ function countOccurrences(value: string, needle: string): number {
 
 export const extensionBridgeNamespace = "narraeon.extension.v1" as const;
 
-export type ArtifactMountName =
-  | "story"
-  | "sidebar"
-  | "composer_above"
-  | "composer_below"
-  | "overlay"
-  | "debug";
+export type { ArtifactMountName } from "./playPresetEditorLabels.ts";
 
 export type ExtensionBridgeCommand =
   | "read_channel"
@@ -756,6 +774,7 @@ export interface ArtifactExtensionHostProps {
   artifacts: FrontendArtifactProjection[];
   playerViewPanels?: FrontendPlayerViewPanelProjection[];
   playerViews: { views: unknown[] };
+  showTechnicalInfo?: boolean;
   /** Generic interaction gate used while the owning composer is submitting. */
   interactionDisabled?: boolean;
   onSetComposerDraft: (text: string) => void;
@@ -764,18 +783,15 @@ export interface ArtifactExtensionHostProps {
   children?: ReactNode;
 }
 
-export const mountOrder = [
-  "story",
-  "sidebar",
-  "composer_above",
-  "composer_below",
-  "overlay",
-  "debug",
-] as const;
+export { mountOrder } from "./playPresetEditorLabels.ts";
 
 interface ArtifactExtensionContextValue extends ArtifactExtensionHostProps {
   interactionDisabled: boolean;
   byMount: Map<ArtifactMountName, FrontendArtifactProjection[]>;
+  unambiguousRequestNames: ReadonlyMap<string, string>;
+  hostId: string;
+  folds: ReadonlyMap<string, boolean>;
+  setFoldOpen: (key: string, open: boolean) => void;
   disabled: Set<string>;
   errors: Map<string, string>;
   bridgeEvents: Map<string, string[]>;
@@ -794,12 +810,20 @@ export function ArtifactExtensionHost({
   extensions = [],
   playerViewPanels = [],
   playerViews,
+  showTechnicalInfo = true,
   interactionDisabled = false,
   onSetComposerDraft,
   onRefresh,
   onBridgeEvent,
   children,
 }: ArtifactExtensionHostProps): React.JSX.Element {
+  const hostId = useId();
+  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  const setFoldOpen = useCallback((key: string, open: boolean) => {
+    setFolds((current) => new Map(current).set(key, open));
+  }, []);
   const [disabled, setDisabled] = useState<Set<string>>(() => new Set());
   const [errors, setErrors] = useState<Map<string, string>>(() => new Map());
   const [bridgeEvents, setBridgeEvents] = useState<Map<string, string[]>>(
@@ -825,6 +849,20 @@ export function ArtifactExtensionHost({
     }
     return grouped;
   }, [artifacts, playerViewPanels]);
+  const unambiguousRequestNames = useMemo(() => {
+    const outputs = new Map<string, Set<string>>();
+    for (const { requestId, output } of artifacts) {
+      const matching = outputs.get(requestId) ?? new Set<string>();
+      matching.add(output);
+      outputs.set(requestId, matching);
+    }
+    const names = new Map<string, string>();
+    for (const extension of extensions)
+      for (const { requestId, displayName } of extension.requests ?? [])
+        if (outputs.get(requestId)?.size === 1)
+          names.set(requestId, displayName);
+    return names;
+  }, [artifacts, extensions]);
   const value = useMemo<ArtifactExtensionContextValue>(
     () => ({
       worldId,
@@ -832,12 +870,17 @@ export function ArtifactExtensionHost({
       extensions,
       playerViewPanels,
       playerViews,
+      showTechnicalInfo,
       interactionDisabled,
       onSetComposerDraft,
       onRefresh,
       ...(onBridgeEvent === undefined ? {} : { onBridgeEvent }),
       children,
       byMount,
+      unambiguousRequestNames,
+      hostId,
+      folds,
+      setFoldOpen,
       disabled,
       errors,
       bridgeEvents,
@@ -873,12 +916,17 @@ export function ArtifactExtensionHost({
       children,
       disabled,
       errors,
+      folds,
+      hostId,
       onBridgeEvent,
       onRefresh,
       onSetComposerDraft,
       playerViews,
       playerViewPanels,
+      showTechnicalInfo,
       interactionDisabled,
+      setFoldOpen,
+      unambiguousRequestNames,
       worldId,
     ],
   );
@@ -889,26 +937,114 @@ export function ArtifactExtensionHost({
   );
 }
 
+type StoryReply = NonNullable<FrontendArtifactProjection["reply"]>;
+
+function storyReplyBodyId(hostId: string, reply: StoryReply): string {
+  return `${hostId}-story-${encodeURIComponent(reply.chainId)}-${reply.eventId}`;
+}
+
+function visibleStoryBodies(
+  hostId: string,
+  entries: FrontendArtifactProjection[],
+  timeline: readonly V1PlayTimelineItem[],
+): Set<string> {
+  const timelineBodies = new Set(
+    timeline.flatMap((item) =>
+      item.kind === "event" &&
+      item.event.kind === "assistant" &&
+      item.event.committedHead !== undefined &&
+      (item.event.status === "streaming" ||
+        assistantResponseKind(item.event) === "narrative")
+        ? [
+            storyReplyBodyId(hostId, {
+              chainId: item.chainId,
+              eventId: item.event.id,
+            }),
+          ]
+        : [],
+    ),
+  );
+  return new Set(
+    entries.flatMap(({ reply }) => {
+      if (reply === undefined) return [];
+      const id = storyReplyBodyId(hostId, reply);
+      return timelineBodies.has(id) ? [id] : [];
+    }),
+  );
+}
+
+function artifactName(
+  artifact: FrontendArtifactProjection,
+  requestName: string | undefined,
+): string {
+  if (
+    artifact.frontend.source === "player_view" &&
+    isRecord(artifact.payload) &&
+    typeof artifact.payload.title === "string"
+  )
+    return artifact.payload.title;
+  return artifact.frontend.displayName ?? requestName ?? artifact.output;
+}
+
+function rendersNativePlayerView(
+  artifact: FrontendArtifactProjection,
+): boolean {
+  return (
+    artifact.frontend.source === "player_view" &&
+    artifact.frontend.renderer === undefined &&
+    artifact.frontend.fallback === "none"
+  );
+}
+
 export function ArtifactExtensionMount({
   mount,
   reply,
+  storyTimeline,
+  preview = false,
 }: {
   mount: ArtifactMountName;
-  reply?: { chainId: string; eventId: number };
-}): React.JSX.Element {
+  reply?: StoryReply;
+  /** The story's single control also covers attachments on these loaded replies. */
+  storyTimeline?: readonly V1PlayTimelineItem[] | undefined;
+  preview?: boolean;
+}): React.JSX.Element | null {
   const context = useContext(ArtifactExtensionContext);
+  const id = useId();
+  const groupButton = useRef<HTMLButtonElement>(null);
   if (context === null)
     throw new Error(
       uiText("ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内"),
     );
-  const entries = (context.byMount.get(mount) ?? []).filter(
+  const mountedEntries = context.byMount.get(mount) ?? [];
+  const entriesAtLocation = mountedEntries.filter(
     (artifact) =>
       mount !== "story" ||
       (reply === undefined
-        ? artifact.frontend.source === "player_view"
+        ? artifact.frontend.source === "player_view" ||
+          (preview && artifact.reply === undefined)
         : artifact.reply?.chainId === reply.chainId &&
           artifact.reply.eventId === reply.eventId),
   );
+  const nativeEntries = entriesAtLocation.filter(rendersNativePlayerView);
+  const entries = entriesAtLocation.filter(
+    (artifact) => !rendersNativePlayerView(artifact),
+  );
+  const storyBodyIds =
+    mount === "story" && storyTimeline !== undefined && reply === undefined
+      ? visibleStoryBodies(context.hostId, mountedEntries, storyTimeline)
+      : new Set<string>();
+  const managedEntries =
+    storyBodyIds.size === 0
+      ? entries
+      : mountedEntries.filter(
+          (artifact) =>
+            (artifact.frontend.source === "player_view" &&
+              !rendersNativePlayerView(artifact)) ||
+            (artifact.reply !== undefined &&
+              storyBodyIds.has(
+                storyReplyBodyId(context.hostId, artifact.reply),
+              )),
+        );
   const progress = new Map<string, { name: string; state: string }>();
   if (mount !== "story" && mount !== "debug")
     for (const extension of context.extensions ?? [])
@@ -933,43 +1069,221 @@ export function ArtifactExtensionMount({
                 : "生成未完成";
         progress.set(request.requestId, { name: request.displayName, state });
       }
-  return (
+
+  if (
+    managedEntries.length === 0 &&
+    nativeEntries.length === 0 &&
+    progress.size === 0
+  )
+    return null;
+  const groupKey = JSON.stringify([context.worldId, mount]);
+  const isComposerMount =
+    mount === "composer_above" || mount === "composer_below";
+  const groupOpen =
+    mount === "overlay" ||
+    (context.folds.get(groupKey) ?? (preview || !isComposerMount));
+  const hasGroupControl =
+    mount !== "overlay" && reply === undefined && managedEntries.length > 0;
+  const bodyId =
+    reply === undefined ? id : storyReplyBodyId(context.hostId, reply);
+  const groupLabel = uiText("扩展面板 · {position}", {
+    position: mountLabel(mount),
+  });
+  const nameFor = (artifact: FrontendArtifactProjection) =>
+    artifactName(
+      artifact,
+      context.unambiguousRequestNames.get(artifact.requestId),
+    );
+  const names = new Set(managedEntries.map(nameFor));
+  const groupSummary = [
+    ...names,
+    ...Array.from(progress.values())
+      .filter(({ state }) => state !== "已更新")
+      .map(({ name, state }) =>
+        names.has(name) ? uiText(state) : `${name} · ${uiText(state)}`,
+      ),
+  ].join(" · ");
+  const renderEntry = (artifact: FrontendArtifactProjection) => {
+    const key = artifactInstanceKey(artifact);
+    const foldKey = JSON.stringify([
+      context.worldId,
+      mount,
+      reply?.chainId,
+      reply?.eventId,
+      artifactItemKey(artifact),
+    ]);
+    const open = context.folds.get(foldKey) ?? true;
+    return (
+      <ArtifactExtensionInstance
+        key={key}
+        artifact={artifact}
+        fold={
+          rendersNativePlayerView(artifact)
+            ? undefined
+            : {
+                name: nameFor(artifact),
+                open,
+                onToggle: () => context.setFoldOpen(foldKey, !open),
+              }
+        }
+        worldId={context.worldId}
+        channelArtifacts={context.artifacts.filter(
+          ({ channel }) => channel === artifact.channel,
+        )}
+        playerViews={context.playerViews.views}
+        interactionDisabled={context.interactionDisabled}
+        disabled={context.disabled.has(key)}
+        error={context.errors.get(key)}
+        events={
+          context.showTechnicalInfo ? (context.bridgeEvents.get(key) ?? []) : []
+        }
+        onDisable={() => context.disable(key)}
+        onEnable={() => context.enable(key)}
+        onError={(message) => context.error(key, message)}
+        onBridgeEvent={(event) =>
+          context.bridgeEvent(key, artifact.recordId, event)
+        }
+        onSetComposerDraft={context.onSetComposerDraft}
+        onRefresh={context.onRefresh}
+      />
+    );
+  };
+  const content = (
     <div
       className={`artifact-extension-mount artifact-extension-mount-${mount}`}
       data-extension-mount={mount}
-    >
-      {[...progress].map(([id, item]) => (
-        <p key={id} role="status" className="artifact-generation-status">
-          {item.name} · {uiText(item.state)}
-        </p>
-      ))}
-      {entries.map((artifact) => {
-        const key = artifactInstanceKey(artifact);
-        return (
-          <ArtifactExtensionInstance
-            key={key}
-            artifact={artifact}
-            worldId={context.worldId}
-            channelArtifacts={context.artifacts.filter(
-              ({ channel }) => channel === artifact.channel,
-            )}
-            playerViews={context.playerViews.views}
-            interactionDisabled={context.interactionDisabled}
-            disabled={context.disabled.has(key)}
-            error={context.errors.get(key)}
-            events={context.bridgeEvents.get(key) ?? []}
-            onDisable={() => context.disable(key)}
-            onEnable={() => context.enable(key)}
-            onError={(message) => context.error(key, message)}
-            onBridgeEvent={(event) =>
-              context.bridgeEvent(key, artifact.recordId, event)
+      onKeyDown={
+        isComposerMount && groupOpen && hasGroupControl
+          ? (event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              context.setFoldOpen(groupKey, false);
+              groupButton.current?.focus();
             }
-            onSetComposerDraft={context.onSetComposerDraft}
-            onRefresh={context.onRefresh}
-          />
-        );
-      })}
+          : undefined
+      }
+    >
+      {hasGroupControl ? (
+        <button
+          ref={groupButton}
+          type="button"
+          className="artifact-extension-group-toggle"
+          aria-label={groupLabel}
+          aria-describedby={groupOpen ? undefined : `${id}-summary`}
+          aria-expanded={groupOpen}
+          aria-controls={[
+            ...(entries.length > 0 ? [bodyId] : []),
+            ...storyBodyIds,
+          ].join(" ")}
+          onClick={() => context.setFoldOpen(groupKey, !groupOpen)}
+        >
+          <span aria-hidden="true">{groupOpen ? "▾" : "▸"}</span>
+          <span className="artifact-extension-group-label">{groupLabel}</span>
+          {groupOpen ? null : (
+            <span
+              className="artifact-extension-group-summary"
+              id={`${id}-summary`}
+              title={groupSummary}
+            >
+              {groupSummary}
+            </span>
+          )}
+        </button>
+      ) : null}
+      {entries.length > 0 || progress.size > 0 ? (
+        <div
+          id={bodyId}
+          className="artifact-extension-group-content"
+          hidden={entries.length > 0 && !groupOpen}
+          role={isComposerMount && entries.length > 0 ? "region" : undefined}
+          aria-label={
+            isComposerMount && entries.length > 0 ? groupLabel : undefined
+          }
+          tabIndex={isComposerMount && entries.length > 0 ? 0 : undefined}
+        >
+          {[...progress].map(([requestId, item]) => (
+            <p
+              key={requestId}
+              role="status"
+              className="artifact-generation-status"
+            >
+              {item.name} · {uiText(item.state)}
+            </p>
+          ))}
+          {entries.map(renderEntry)}
+        </div>
+      ) : null}
+      {nativeEntries.map(renderEntry)}
     </div>
+  );
+  return mount === "overlay" ? (
+    <ArtifactOverlay>{content}</ArtifactOverlay>
+  ) : (
+    content
+  );
+}
+
+function ArtifactOverlay({ children }: { children: ReactNode }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [hasOpened, setHasOpened] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const label = uiText("浮层");
+  function closeAndFocus() {
+    panelRef.current?.hidePopover();
+    triggerRef.current?.focus({ preventScroll: true });
+  }
+  useAndroidBack(open, closeAndFocus);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        popoverTarget={id}
+        aria-controls={id}
+        aria-expanded={open}
+        onClick={(event) => event.currentTarget.focus({ preventScroll: true })}
+      >
+        {label}
+      </button>
+      <section
+        ref={panelRef}
+        className="artifact-overlay"
+        id={id}
+        popover="auto"
+        role="dialog"
+        aria-labelledby={`${id}-title`}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          closeAndFocus();
+        }}
+        onToggle={(event) => {
+          const isOpen = event.newState === "open";
+          setOpen(isOpen);
+          if (isOpen) {
+            setHasOpened(true);
+            closeRef.current?.focus({ preventScroll: true });
+          }
+        }}
+      >
+        <header>
+          <h2 id={`${id}-title`}>{label}</h2>
+          <button
+            ref={closeRef}
+            type="button"
+            tabIndex={0}
+            onClick={closeAndFocus}
+          >
+            {uiText("关闭")}
+          </button>
+        </header>
+        {hasOpened ? children : null}
+      </section>
+    </>
   );
 }
 
@@ -999,6 +1313,7 @@ function playerViewPanelAsArtifact(
 
 function ArtifactExtensionInstance({
   artifact,
+  fold,
   worldId,
   channelArtifacts,
   playerViews,
@@ -1014,6 +1329,7 @@ function ArtifactExtensionInstance({
   onRefresh,
 }: {
   artifact: FrontendArtifactProjection;
+  fold: { name: string; open: boolean; onToggle: () => void } | undefined;
   worldId: string;
   channelArtifacts: FrontendArtifactProjection[];
   playerViews: unknown[];
@@ -1028,6 +1344,7 @@ function ArtifactExtensionInstance({
   onSetComposerDraft: (text: string) => void;
   onRefresh: () => void | Promise<void>;
 }): React.JSX.Element {
+  const bodyId = useId();
   const instanceKey = artifactInstanceKey(artifact);
   const instanceId = `extension-${hashForDom(instanceKey)}`;
   const [lifecycle, setLifecycle] = useState(() => ({
@@ -1261,14 +1578,21 @@ function ArtifactExtensionInstance({
 
   const fallbackReason =
     instanceError ?? pipeline.error ?? artifact.frontend.diagnostic;
-  return (
-    <article
-      className={`artifact-extension-instance${instanceError ? " has-error" : ""}`}
-      data-artifact-output={artifact.output}
-      data-artifact-status={artifact.frontend.status}
-      data-extension-authority={
-        artifact.frontend.authority ?? "non_authoritative_artifact"
-      }
+  const showFallback =
+    disabled ||
+    instanceError !== undefined ||
+    artifact.frontend.fallback === "raw" ||
+    pipeline.fallback;
+  const itemStatus = disabled
+    ? uiText("已停用")
+    : showFallback
+      ? uiText("纯文本显示")
+      : undefined;
+  const body = (
+    <div
+      id={bodyId}
+      className="artifact-extension-item-content"
+      hidden={fold?.open === false}
     >
       {refreshFailure !== null && (
         <div role="alert">
@@ -1278,10 +1602,7 @@ function ArtifactExtensionInstance({
           </button>
         </div>
       )}
-      {disabled ||
-      instanceError ||
-      artifact.frontend.fallback === "raw" ||
-      pipeline.fallback ? (
+      {showFallback ? (
         <div className="artifact-extension-fallback" role="status">
           {(artifact.frontend.fallback === "raw" ||
             fallbackReason === undefined) && (
@@ -1353,6 +1674,35 @@ function ArtifactExtensionInstance({
           </ul>
         </details>
       )}
+    </div>
+  );
+  return (
+    <article
+      className={`artifact-extension-instance${instanceError ? " has-error" : ""}`}
+      data-artifact-output={artifact.output}
+      data-artifact-status={artifact.frontend.status}
+      data-extension-authority={
+        artifact.frontend.authority ?? "non_authoritative_artifact"
+      }
+    >
+      {fold === undefined ? null : (
+        <button
+          type="button"
+          className="artifact-extension-item-toggle"
+          aria-expanded={fold.open}
+          aria-controls={bodyId}
+          onClick={fold.onToggle}
+        >
+          <span aria-hidden="true">{fold.open ? "▾" : "▸"}</span>
+          <span>{fold.name}</span>
+          {!fold.open && itemStatus !== undefined ? (
+            <small className="artifact-extension-item-status">
+              {itemStatus}
+            </small>
+          ) : null}
+        </button>
+      )}
+      {body}
     </article>
   );
 }

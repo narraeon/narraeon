@@ -25,7 +25,7 @@ playPrompts: {}
 authorPrompts: {}
 mergeConsecutiveMessages: false
 mounts:
-  player.options: composer_below
+  player.options: composer_above
 extensions:
   - renderers/player-options.html
   - scripts/player-options.js
@@ -46,7 +46,7 @@ ${stringify({ followupItems: defaultFollowupItems([{ id: "player_options" }]) })
         strategy: replace
         contentType: application/json
         renderer: renderers/player-options.html
-        rendererRevision: v1
+        rendererRevision: v2
         rendererMode: app
         scripts:
           - scripts/player-options.js
@@ -156,10 +156,15 @@ Use only information the player can already know, and suggest only actions the p
   });
 }());
 `,
-    "assets/player-options.css": `body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #202020; }
-#player-options-root { display: grid; gap: .5rem; }
-.player-option { display: grid; gap: .15rem; padding: .65rem .75rem; border: 1px solid #c9c0b1; border-radius: .65rem; background: #fffaf1; color: inherit; text-align: left; cursor: pointer; }
-.player-option:hover { border-color: #a66a42; }
+    "assets/player-options.css": `body { margin: 0; padding: .2rem; font: 14px/1.4 system-ui, sans-serif; color: #202020; overscroll-behavior: contain; }
+#player-options-root { display: grid; gap: .4rem; }
+@media (min-width: 30rem) {
+  #player-options-root { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.player-option { display: grid; align-content: start; gap: .15rem; min-height: 44px; padding: .4rem .6rem; border: 1px solid #c9c0b1; border-radius: .5rem; background: #fffaf1; color: inherit; font: inherit; text-align: start; overflow-wrap: anywhere; cursor: pointer; }
+.player-option:not(:disabled):hover, .player-option:focus-visible { border-color: #a66a42; }
+.player-option:focus-visible { outline: 2px solid #a66a42; outline-offset: 1px; }
+.player-option:disabled { cursor: default; opacity: .6; }
 .player-option small { color: #6c6259; }
 `,
   };

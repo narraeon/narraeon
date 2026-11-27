@@ -561,10 +561,15 @@
     --world-composer-inset: 8px;
   }
 }
-.world-reader-scroll {
-  /* Keep scroll targets clear of the floating header and composer. */
-  scroll-padding-block: var(--world-header-height)
-    calc(var(--world-composer-height) + var(--world-composer-inset));
+@media (--world-reader-resizable) and (max-height: 32rem) {
+  .world-reader-page {
+    --world-header-height: 54px;
+  }
+
+  .world-reader-page .world-floating-title {
+    top: 22px;
+    max-width: 25vw;
+  }
 }
 /* Cover the story between the floating controls and behind the title. */
 .world-reader-shell::before {
@@ -581,7 +586,6 @@
   padding-top: 90px;
 }
 .setting-reader-scroll,
-.world-reader-scroll,
 .setting-conversation-composer,
 .setting-panel-scrim,
 .setting-overlay-rail,

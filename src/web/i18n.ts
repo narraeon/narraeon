@@ -726,6 +726,8 @@ const englishMessages: Record<string, string> = {
   已关闭: "Disabled",
   系统示例: "System example",
   世界扩展: "World extensions",
+  游玩状态: "Play status",
+  需要处理: "Action needed",
   "界面显示（不调用模型）": "Interface display (no model requests)",
   "选择仅用于当前世界。后置请求重新开启后，从下一次正常发送生效；界面显示直接读取当前字段。":
     "Choices apply only to this world. Re-enabled requests take effect on the next normal send; interface displays read current fields immediately.",
@@ -945,6 +947,8 @@ const englishMessages: Record<string, string> = {
   更新中: "Updating",
   生成中: "Generating",
   生成未完成: "Generation incomplete",
+  "扩展面板 · {position}": "Extension panels · {position}",
+  纯文本显示: "Plain-text display",
   "ArtifactExtensionMount 必须位于 ArtifactExtensionHost 内":
     "ArtifactExtensionMount must be inside ArtifactExtensionHost",
   "文档 renderer 无效": "Invalid document renderer",
@@ -2795,7 +2799,7 @@ const dynamicEnglishMessages: Record<string, string> = {
   "删除后置请求 {id}": "Delete follow-up {id}",
   剧情内容区: "Story area",
   跟随剧情正文显示: "Displayed with the story",
-  右侧栏: "Sidebar",
+  此刻侧栏: "Now sidebar",
   适合持续状态面板: "Suitable for persistent status panels",
   输入框上方: "Above composer",
   适合行动建议或临时提示: "Suitable for action suggestions or temporary notes",

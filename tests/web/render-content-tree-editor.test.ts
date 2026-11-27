@@ -246,7 +246,21 @@ test("English authors can edit package requests and explicitly grant and revoke 
   expect(
     screen.getByLabelText<HTMLTextAreaElement>("Package request prompt").value,
   ).toBe("Use artifact_emit to emit output_1 based on the settled story.");
-  expect(screen.getByRole("option", { name: "Story content" })).toBeTruthy();
+  const placement = screen.getByRole("combobox", {
+    name: "Package request display location",
+  });
+  expect(
+    within(placement)
+      .getAllByRole("option")
+      .map((option) => option.textContent?.split(" — ")[0]),
+  ).toEqual([
+    "Story area",
+    "Now sidebar",
+    "Above composer",
+    "Below composer",
+    "Overlay",
+    "Debug area",
+  ]);
   const client = {
     request: vi
       .fn()

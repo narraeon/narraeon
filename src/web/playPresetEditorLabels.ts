@@ -1,31 +1,42 @@
 import { orchestrationManifest } from "../shared/application-preset-files.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import type { ArtifactMountName } from "./ArtifactExtensionHost.tsx";
 import { defaultSettingImprovementPromptPath } from "../shared/default-setting-improvement-prompt.ts";
-export const mountChoices: {
-  value: ArtifactMountName;
-  label: string;
-  description: string;
-}[] = [
-  { value: "story", label: "剧情内容区", description: "跟随剧情正文显示" },
-  { value: "sidebar", label: "右侧栏", description: "适合持续状态面板" },
-  {
-    value: "composer_above",
+export const mountOrder = [
+  "story",
+  "sidebar",
+  "composer_above",
+  "composer_below",
+  "overlay",
+  "debug",
+] as const;
+
+export type ArtifactMountName = (typeof mountOrder)[number];
+
+const mountCopy: Record<
+  ArtifactMountName,
+  { label: string; description: string }
+> = {
+  story: { label: "剧情内容区", description: "跟随剧情正文显示" },
+  sidebar: { label: "此刻侧栏", description: "适合持续状态面板" },
+  composer_above: {
     label: "输入框上方",
     description: "适合行动建议或临时提示",
   },
-  {
-    value: "composer_below",
+  composer_below: {
     label: "输入框下方",
     description: "适合不打断输入的辅助内容",
   },
-  { value: "overlay", label: "浮层", description: "覆盖在游玩页面上方" },
-  { value: "debug", label: "调试区", description: "只用于检查原始产物" },
-];
+  overlay: { label: "浮层", description: "覆盖在游玩页面上方" },
+  debug: { label: "调试区", description: "只用于检查原始产物" },
+};
+
+export const mountChoices = mountOrder.map((value) => ({
+  value,
+  ...mountCopy[value],
+}));
 
 export function mountLabel(mount: ArtifactMountName): string {
-  const label = mountChoices.find(({ value }) => value === mount)?.label;
-  return label === undefined ? mount : uiText(label);
+  return uiText(mountCopy[mount].label);
 }
 
 export function withCurrentPath(paths: string[], current?: string): string[] {

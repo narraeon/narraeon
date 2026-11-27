@@ -52,6 +52,7 @@ export interface FrontendExtensionBundle {
   source?: "artifact" | "player_view";
   authority?: "non_authoritative_artifact" | "committed_player_view_projection";
   lifecycle?: "operation_frozen" | "current_preset";
+  displayName?: string;
   mount?: PlayPresetMount["mount"];
   declaration?: FrontendExtensionDeclaration;
   regex: PlayPresetRegexRule[];
@@ -157,6 +158,9 @@ export function projectArtifactForFrontend(
       source: "artifact",
       authority: "non_authoritative_artifact",
       lifecycle: "operation_frozen",
+      ...(declaration.displayName === undefined
+        ? {}
+        : { displayName: declaration.displayName }),
       ...(mount === undefined ? {} : { mount }),
       declaration: declarationView(declaration),
       regex,

@@ -509,7 +509,7 @@ test("旧推荐方案稳定保留，内置默认范围经便携导入导出保�
         ({ requestId }) => requestId === "builtin:action-choices",
       )!;
       expect(shipped).toMatchObject({
-        mount: "composer_below",
+        mount: "composer_above",
         renderer: { trustedLocalCode: true },
       });
       expect(

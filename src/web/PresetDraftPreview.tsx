@@ -130,6 +130,9 @@ export function PresetDraftPreview({
           frontend: {
             status: "ready",
             preset: { id: presetId, revision: snapshot.revision },
+            ...(artifact.declaration.displayName === undefined
+              ? {}
+              : { displayName: artifact.declaration.displayName }),
             mount,
             regex: artifact.regex,
             ...(artifact.renderer ? { renderer: artifact.renderer } : {}),
@@ -238,7 +241,7 @@ export function PresetDraftPreview({
             onSetComposerDraft={setDraft}
             onRefresh={() => setSample(sample)}
           >
-            <ArtifactExtensionMount mount={mount!} />
+            <ArtifactExtensionMount mount={mount!} preview />
           </ArtifactExtensionHost>
         </section>
       ) : artifact ? (

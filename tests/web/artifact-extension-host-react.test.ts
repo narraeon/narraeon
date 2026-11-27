@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -70,6 +77,89 @@ function host(
 }
 
 describe("ArtifactExtensionHost React lifetime", () => {
+  test("folds are isolated by world, mount, and each displayed record", () => {
+    setWebLocale("en");
+    const tree = (worldId: string, payload: string) => {
+      const first = artifact({ worldId, payload, projection: "transient" });
+      const second = artifact({
+        ...first,
+        recordId: "record-2",
+        sequence: 2,
+        frontend: { ...first.frontend, displayName: "Second record" },
+      });
+      const below = artifact({
+        ...second,
+        frontend: { ...second.frontend, mount: "composer_below" },
+      });
+      return createElement(
+        ArtifactExtensionHost,
+        {
+          worldId,
+          artifacts: [first, second, below],
+          playerViews: { views: [] },
+          onSetComposerDraft: vi.fn(),
+          onRefresh: vi.fn(),
+        },
+        createElement(ArtifactExtensionMount, { mount: "sidebar" }),
+        createElement(ArtifactExtensionMount, { mount: "composer_below" }),
+        createElement(ArtifactExtensionMount, { mount: "debug" }),
+      );
+    };
+    const view = render(tree("world-1", "Initial"));
+    const mount = (name: string) =>
+      within(
+        view.container.querySelector<HTMLElement>(
+          `[data-extension-mount="${name}"]`,
+        )!,
+      );
+    const sidebar = mount("sidebar");
+    const below = mount("composer_below");
+    const first = sidebar.getByRole("button", { name: "panel" });
+    const second = sidebar.getByRole("button", { name: "Second record" });
+    const sidebarGroup = sidebar.getByRole("button", {
+      name: /^Extension panels/u,
+    });
+    const belowGroup = below.getByRole("button", {
+      name: /^Extension panels/u,
+    });
+    const [firstFrame, secondFrame] = sidebar.getAllByTitle("panel");
+    expect(
+      view.container.querySelector('[data-extension-mount="debug"]'),
+    ).toBeNull();
+    fireEvent.click(belowGroup);
+    fireEvent.click(second);
+    fireEvent.click(sidebarGroup);
+    expect(firstFrame?.closest("[hidden]")).not.toBeNull();
+    expect(secondFrame?.closest("[hidden]")).not.toBeNull();
+    expect(
+      below
+        .getByRole("button", { name: "Second record" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    view.rerender(tree("world-1", "SSE update"));
+    fireEvent.click(sidebarGroup);
+    expect(first.getAttribute("aria-expanded")).toBe("true");
+    expect(second.getAttribute("aria-expanded")).toBe("false");
+    expect(sidebar.getAllByTitle("panel")).toEqual([firstFrame, secondFrame]);
+    expect(firstFrame?.getAttribute("srcdoc")).toContain("SSE update");
+    expect(secondFrame?.closest("[hidden]")).not.toBeNull();
+
+    view.rerender(tree("world-2", "Another world"));
+    expect(
+      sidebar
+        .getByRole("button", { name: "Second record" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(belowGroup.getAttribute("aria-expanded")).toBe("false");
+    view.rerender(tree("world-1", "Return"));
+    expect(
+      sidebar
+        .getByRole("button", { name: "Second record" })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(belowGroup.getAttribute("aria-expanded")).toBe("true");
+  });
+
   test.each([
     ["zh-CN", "扩展卡片暂时无法渲染，已切换为纯文本显示。"],
     ["en", "Extension card unavailable; showing plain text instead."],
@@ -140,6 +230,7 @@ describe("ArtifactExtensionHost React lifetime", () => {
     expect(screen.getByRole("status").textContent).toBe("状态面板 · 生成中");
     view.rerender(tree("running", true));
     expect(screen.getByRole("status").textContent).toBe("状态面板 · 更新中");
+    expect(screen.getByRole("button", { name: "状态面板" })).toBeTruthy();
     view.rerender(tree("failed", true));
     expect(screen.getByRole("status").textContent).toBe("状态面板 · 生成失败");
     expect(screen.getByTitle("panel").getAttribute("srcdoc")).toContain(

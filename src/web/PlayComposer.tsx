@@ -2,6 +2,7 @@ import styles from "./PlayComposer.module.css";
 import {
   useId,
   useRef,
+  useState,
   type Dispatch,
   type ReactNode,
   type RefObject,
@@ -29,6 +30,8 @@ const currentActionCopy = {
 
 export function PlayComposer({
   children,
+  tools,
+  compactStatus,
   dockRef,
   action,
   note,
@@ -37,6 +40,8 @@ export function PlayComposer({
   showTechnicalInfo,
 }: {
   children: ReactNode;
+  tools: ReactNode;
+  compactStatus?: string | undefined;
   dockRef: RefObject<HTMLElement | null>;
   action: {
     text: string;
@@ -88,14 +93,35 @@ export function PlayComposer({
     onSubmitAlternate,
   } = submission;
   const submissionModeId = useId();
+  const statusId = submissionModeId + "-status";
+  const [shortStatusOpen, setShortStatusOpen] = useState(false);
   const composerMoreRef = useRef<HTMLDetailsElement>(null);
   const primaryLabel = uiText(primaryLabels[primaryAction]);
   const iconOnly = primaryAction === "fresh" || primaryAction === "append";
   const [currentLabel, currentDescription] = currentActionCopy[currentAction];
   return (
     <footer ref={dockRef} className={`world-composer-dock ${styles.dock}`}>
+      <div
+        id={statusId}
+        className={`${styles.status}${shortStatusOpen ? ` ${styles.statusOpen}` : ""}`}
+        role="region"
+        aria-label={uiText("游玩状态")}
+        tabIndex={0}
+      >
+        {children}
+        {showTechnicalInfo ? (
+          <p className={styles.hint}>
+            {uiText(
+              currentAction === "retry"
+                ? "原样重试使用已保存请求，不采用新编排方案。"
+                : currentAction === "resume"
+                  ? "继续本轮沿用暂停前保存的请求。"
+                  : "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
+            )}
+          </p>
+        ) : null}
+      </div>
       <ArtifactExtensionMount mount="composer_above" />
-      {children}
       {turnNoteOpen ? (
         <div className={`world-turn-note ${styles.turnNote}`}>
           <div className={`world-turn-note-field ${styles.turnNoteField}`}>
@@ -142,9 +168,23 @@ export function PlayComposer({
           ) : null}
         </div>
       ) : null}
+      <div className={styles.tools}>
+        <button
+          className={styles.statusToggle}
+          type="button"
+          aria-expanded={shortStatusOpen}
+          aria-controls={statusId}
+          onClick={() => setShortStatusOpen((open) => !open)}
+        >
+          {uiText("游玩状态")}
+          {compactStatus === undefined ? "" : ` · ${compactStatus}`}
+        </button>
+        {tools}
+      </div>
       <div className={`world-composer-row ${styles.row}`}>
         <details
           ref={composerMoreRef}
+          name="world-composer-menu"
           className={`world-composer-mode ${styles.more}`}
           onKeyDown={(event) => {
             if (event.key !== "Escape" || !event.currentTarget.open) return;
@@ -298,17 +338,6 @@ export function PlayComposer({
           )}
         </button>
       </div>
-      {showTechnicalInfo ? (
-        <p className={`world-composer-hint ${styles.hint}`}>
-          {uiText(
-            currentAction === "retry"
-              ? "原样重试使用已保存请求，不采用新编排方案。"
-              : currentAction === "resume"
-                ? "继续本轮沿用暂停前保存的请求。"
-                : "正常发送和空输入续写使用最新编排方案；本轮工具执行期间保持不变。",
-          )}
-        </p>
-      ) : null}
       <ArtifactExtensionMount mount="composer_below" />
     </footer>
   );

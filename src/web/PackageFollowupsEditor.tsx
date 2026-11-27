@@ -4,6 +4,11 @@ import { parseDocument, stringify } from "yaml";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import { FollowupListEditor } from "./FollowupListEditor.tsx";
 import { FollowupResourcesEditor } from "./FollowupResourcesEditor.tsx";
+import { MountSelect } from "./PlayPresetEditorControls.tsx";
+import {
+  mountOrder,
+  type ArtifactMountName,
+} from "./ArtifactExtensionHost.tsx";
 import {
   ArtifactDefinitionEditor,
   type PlayPresetFollowupDefinition,
@@ -12,13 +17,7 @@ import { uiText } from "./i18n.ts";
 
 type PackageRequest = PlayPresetFollowupDefinition & {
   enabled: boolean;
-  mount:
-    | "story"
-    | "sidebar"
-    | "composer_above"
-    | "composer_below"
-    | "overlay"
-    | "debug";
+  mount: ArtifactMountName;
 };
 const declarationPath = "control/followups.yaml";
 
@@ -180,27 +179,17 @@ export function PackageFollowupsEditor({
                     </label>
                     <label>
                       {uiText("包请求显示位置")}
-                      <select
+                      <MountSelect
+                        ariaLabel={uiText("包请求显示位置")}
                         value={current.mount}
-                        onChange={(event) =>
+                        onChange={(mount) => {
+                          if (mount === "") return;
                           update(current.id, (request) => ({
                             ...request,
-                            mount: event.target
-                              .value as PackageRequest["mount"],
-                          }))
-                        }
-                      >
-                        <option value="story">{uiText("故事正文")}</option>
-                        <option value="sidebar">{uiText("侧栏")}</option>
-                        <option value="composer_above">
-                          {uiText("输入框上方")}
-                        </option>
-                        <option value="composer_below">
-                          {uiText("输入框下方")}
-                        </option>
-                        <option value="overlay">{uiText("浮层")}</option>
-                        <option value="debug">{uiText("调试区")}</option>
-                      </select>
+                            mount,
+                          }));
+                        }}
+                      />
                     </label>
                     {current.artifacts.map((artifact, index) => (
                       <section key={index}>
@@ -374,14 +363,7 @@ function readEditor(
         typeof entry.displayName !== "string" ||
         typeof entry.enabled !== "boolean" ||
         typeof entry.mount !== "string" ||
-        ![
-          "story",
-          "sidebar",
-          "composer_above",
-          "composer_below",
-          "overlay",
-          "debug",
-        ].includes(entry.mount) ||
+        !mountOrder.some((mount) => mount === entry.mount) ||
         !record(entry.prompt) ||
         typeof entry.prompt.markdown !== "string" ||
         typeof entry.prompt.role !== "string" ||

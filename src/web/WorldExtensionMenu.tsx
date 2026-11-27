@@ -82,7 +82,16 @@ export function WorldExtensionMenu({
     </div>
   );
   return (
-    <details className="world-extension-menu">
+    <details
+      name="world-composer-menu"
+      className="world-extension-menu"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.open) return;
+        event.preventDefault();
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector("summary")?.focus();
+      }}
+    >
       <summary>{uiText("世界扩展")}</summary>
       <div className="world-extension-options">
         <p>

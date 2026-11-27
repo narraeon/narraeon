@@ -460,7 +460,7 @@ test("旧世界可组合打开内置扩展，选择仅影响当前世界，状�
     projections.find(({ output }) => output === "player_options"),
   ).toMatchObject({
     payload: optionsPayload,
-    frontend: { mount: "composer_below", trustedLocalCode: true },
+    frontend: { mount: "composer_above", trustedLocalCode: true },
   });
   expect(
     projections.find(({ output }) => output === "markdown_panel"),
@@ -493,6 +493,27 @@ test("旧世界可组合打开内置扩展，选择仅影响当前世界，状�
   const frozen = (await artifacts.readDebug(worldId)).find(
     ({ output }) => output === "player_options",
   )!;
+  // A saved v1 record keeps its original mount and still runs its reviewed code.
+  const legacy = structuredClone(frozen);
+  legacy.rendererRevision = "v1";
+  legacy.frozenPresentation!.mount = "composer_below";
+  legacy.frozenPresentation!.declaration.rendererRevision = "v1";
+  legacy.frozenPresentation!.files["assets/player-options.css"] =
+    `body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #202020; }
+#player-options-root { display: grid; gap: .5rem; }
+.player-option { display: grid; gap: .15rem; padding: .65rem .75rem; border: 1px solid #c9c0b1; border-radius: .65rem; background: #fffaf1; color: inherit; text-align: left; cursor: pointer; }
+.player-option:hover { border-color: #a66a42; }
+.player-option small { color: #6c6259; }
+`;
+  expect(projectArtifactForFrontend(legacy, preset)).toMatchObject({
+    status: "ready",
+    mount: "composer_below",
+    trustedLocalCode: true,
+    renderer: {
+      revision: "v1",
+      scripts: [legacy.frozenPresentation!.files["scripts/player-options.js"]],
+    },
+  });
   const tampered = structuredClone(frozen);
   tampered.frozenPresentation!.files["scripts/player-options.js"] =
     "throw new Error('foreign code')";
@@ -527,7 +548,7 @@ test("旧世界可组合打开内置扩展，选择仅影响当前世界，状�
     ),
   ).toMatchObject({
     payload: optionsPayload,
-    frontend: { mount: "composer_below", trustedLocalCode: true },
+    frontend: { mount: "composer_above", trustedLocalCode: true },
   });
   const set = (id: string, value: "on" | "off" | "default") =>
     cold.handle({

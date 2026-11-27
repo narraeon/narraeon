@@ -1,4 +1,5 @@
 import styles from "./WorldHeaderChrome.module.css";
+import { ArtifactExtensionMount } from "./ArtifactExtensionHost.tsx";
 import { uiText } from "./i18n.ts";
 
 export type WorldReadingRail = "documents" | "ai-reading";
@@ -57,6 +58,7 @@ export function WorldHeaderChrome({
         className={`world-floating-chrome world-floating-chrome-right ${styles.chrome} ${styles.right}`}
         aria-label={uiText("世界阅读工具")}
       >
+        <ArtifactExtensionMount mount="overlay" />
         <button
           type="button"
           className={rightRail === "documents" ? "is-current" : ""}

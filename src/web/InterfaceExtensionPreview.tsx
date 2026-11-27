@@ -196,7 +196,7 @@ export function InterfaceExtensionPreview({
               .map((mount) => (
                 <section key={mount} aria-label={mountLabel(mount)}>
                   <h5>{mountLabel(mount)}</h5>
-                  <ArtifactExtensionMount mount={mount} />
+                  <ArtifactExtensionMount mount={mount} preview />
                 </section>
               ))}
           </ArtifactExtensionHost>

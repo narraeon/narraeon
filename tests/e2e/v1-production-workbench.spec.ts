@@ -800,12 +800,14 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "sidebar",
     "composer_above",
     "composer_below",
-    "overlay",
     "debug",
   ])
     await expect(
       page.locator(`[data-extension-mount="${mount}"]`),
     ).toBeAttached();
+  await expect(
+    page.getByRole("button", { name: "浮层", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "此刻" }).click();
   await expect(page.getByLabel("当前情景")).toContainText(
     "Dark blue athletic tank top",

@@ -120,6 +120,30 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
     await page
       .getByLabel("HTML", { exact: true })
       .fill("<h2>SECOND TEMPLATE</h2><!-- narraeon:content -->");
+    await page.getByLabel("产物显示位置").selectOption("overlay");
+    await page.getByText("游玩效果预览 · 就地展开", { exact: true }).click();
+    const overlayPreview = page.locator(
+      ".preset-preview-position.position-overlay",
+    );
+    await expect(
+      overlayPreview.getByRole("heading", { name: "浮层" }),
+    ).toBeVisible();
+    await expect(overlayPreview.locator("iframe")).toHaveCount(0);
+    await overlayPreview
+      .getByRole("button", { name: "浮层", exact: true })
+      .click();
+    const overlayDialog = overlayPreview.getByRole("dialog", { name: "浮层" });
+    await expect(
+      overlayDialog
+        .frameLocator("iframe")
+        .getByRole("heading", { name: "SECOND TEMPLATE" }),
+    ).toBeVisible();
+    await overlayDialog
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    await expect(overlayDialog).toHaveCount(0);
+    await page.getByText("游玩效果预览 · 就地展开", { exact: true }).click();
+    await page.getByLabel("产物显示位置").selectOption("sidebar");
     await page.getByLabel("运行方式", { exact: true }).selectOption("app");
     await page.getByLabel("显示方式", { exact: true }).selectOption("");
     await expect(page.getByLabel("运行方式", { exact: true })).toHaveValue(
@@ -359,7 +383,9 @@ test("A 工作台真实保存、独立三产物、正则、JS、导入及下一�
         .frameLocator(`iframe[title="${names[1]}"]`)
         .getByText("second independent", { exact: true }),
     ).toBeVisible();
-    await page
+    const choices = page.locator('[data-extension-mount="composer_above"]');
+    await choices.locator(".artifact-extension-group-toggle").click();
+    await choices
       .frameLocator(`iframe[title="${names[2]}"]`)
       .getByRole("button", { name: "Choose A45" })
       .click();

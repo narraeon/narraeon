@@ -527,7 +527,7 @@ export function PresetWorkbenchEditor({
                             requestId: followup.id,
                             ...example,
                             mount:
-                              kind === "actions" ? "composer_below" : "story",
+                              kind === "actions" ? "composer_above" : "story",
                           });
                           setOutput(example.artifact.name);
                         }}

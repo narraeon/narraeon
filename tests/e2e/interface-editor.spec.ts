@@ -143,7 +143,7 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await page.getByLabel("玩家视图面板 1 标题").fill("未保存状态栏42");
     await page
       .getByLabel("玩家视图面板 1 显示位置")
-      .selectOption("composer_above");
+      .selectOption("composer_below");
     await page.getByText("player-view-status.css", { exact: true }).click();
     await page
       .getByLabel("player-view-status.css", { exact: true })
@@ -237,9 +237,18 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     await page
       .getByRole("button", { name: `打开世界：${worldTitle}`, exact: true })
       .click();
-    const panel = page
-      .locator('[data-extension-mount="composer_above"]')
-      .frameLocator('iframe[title^="panel_"]');
+    const composerBelow = page.locator(
+      '.world-composer-dock [data-extension-mount="composer_below"]',
+    );
+    const panelToggle = composerBelow.locator(
+      ".artifact-extension-group-toggle",
+    );
+    await expect(panelToggle).toHaveAttribute("aria-expanded", "false");
+    await panelToggle.click();
+    const belowPanel = (await composerBelow.boundingBox())!;
+    const actionBox = (await page.getByLabel("你的行动").boundingBox())!;
+    expect(belowPanel.y).toBeGreaterThanOrEqual(actionBox.y + actionBox.height);
+    const panel = composerBelow.frameLocator('iframe[title^="panel_"]');
     await expect(
       panel.getByRole("heading", { name: "已保存状态栏42" }),
     ).toBeVisible();
@@ -269,6 +278,8 @@ test("纯界面编辑、草稿预览和游玩显示不增加模型调用，字�
     ).toBeVisible();
     await page.reload();
     await expect(page).toHaveURL(/#\/world\//u);
+    await expect(panelToggle).toHaveAttribute("aria-expanded", "false");
+    await panelToggle.click();
     await expect(
       panel.getByText("Updated saved field 42", { exact: true }),
     ).toBeVisible();

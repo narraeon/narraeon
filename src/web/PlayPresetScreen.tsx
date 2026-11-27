@@ -34,6 +34,7 @@ import {
 import { type FollowupItem } from "../shared/ordered-followups.ts";
 import { type PlayPresetPlayerViewPanel } from "./PlayerViewPanelsEditor.tsx";
 import { InterfaceExtensionPreview } from "./InterfaceExtensionPreview.tsx";
+import type { ArtifactMountName } from "./ArtifactExtensionHost.tsx";
 import { PathChecklist } from "./PlayPresetEditorControls.tsx";
 import {
   artifactOptionLabel,
@@ -57,13 +58,7 @@ import type { V1Request } from "../protocol/v1.ts";
 
 interface PlayPresetMount {
   channel: string;
-  mount:
-    | "story"
-    | "sidebar"
-    | "composer_above"
-    | "composer_below"
-    | "overlay"
-    | "debug";
+  mount: ArtifactMountName;
 }
 
 interface PlayPresetWorkbenchRenderer {
@@ -81,6 +76,7 @@ interface PlayPresetWorkbenchArtifact {
   mount?: PlayPresetMount["mount"];
   declaration: {
     name: string;
+    displayName?: string;
     channel: string;
     strategy: "append" | "replace" | "upsert" | "transient" | "hidden";
     key?: string;

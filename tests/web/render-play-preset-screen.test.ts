@@ -443,6 +443,12 @@ test("script examples create independent output resources without enabling scrip
   >;
   const artifacts = structure.followups[0]!.artifacts;
   expect(artifacts).toHaveLength(3);
+  expect(structure.mounts).toEqual(
+    expect.arrayContaining([
+      { channel: artifacts[1]!.channel, mount: "composer_above" },
+      { channel: artifacts[2]!.channel, mount: "story" },
+    ]),
+  );
   expect(artifacts[1]!.renderer).not.toBe(artifacts[2]!.renderer);
   expect(saved.files[artifacts[1]!.scripts![0]!]).toContain(
     "composer.set_draft",
@@ -884,7 +890,7 @@ test("built-in extension defaults and independently editable copies save in the 
     ["debug_example"],
   ]);
   expect(structure.mounts.map(({ mount }) => mount)).toEqual([
-    "composer_below",
+    "composer_above",
     "story",
     "sidebar",
     "debug",

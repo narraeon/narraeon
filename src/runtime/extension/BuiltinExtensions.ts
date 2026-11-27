@@ -25,6 +25,8 @@ const catalog = new Map<
 const trustedActionRendererRevisions = new Set([
   "rev-39e4dd3fc00a95434c024dc502a73ba646cdf57771dab41887379f20d293abb2", // en
   "rev-7bc2f4c0f7ed35a7abe34dade3c8eba4e9e862e65526e516bc93513794a194a6", // zh-CN
+  "rev-f7c0494d862df82c7a902b770543d777515ac1529d03de8a646474e626ee30ac", // en, two-column layout
+  "rev-09b986cc71226a498c1f792e570001148160726ed6ff605cec362daa969bed54", // zh-CN, two-column layout
 ]);
 
 function shippedDefinition(

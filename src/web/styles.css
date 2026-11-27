@@ -43,6 +43,7 @@
   --z-world-rail: 31;
   --z-reader-controls: 36;
   --z-composer: 40;
+  --z-world-desktop-rail: 41;
   --z-authoring-scrim: 42;
   --z-authoring-rail: 45;
   --z-workspace-header: 50;
@@ -6144,14 +6145,105 @@ summary {
   display: none;
 }
 
-.artifact-extension-mount-overlay,
-.artifact-extension-mount-debug {
-  grid-column: 1 / -1;
+.artifact-extension-group-toggle,
+.artifact-extension-item-toggle {
+  display: flex;
+  min-width: 0;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.6rem;
+  color: var(--text);
+  background: var(--field-surface);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.artifact-extension-group-toggle {
+  max-width: 100%;
+}
+
+.artifact-extension-group-label {
+  white-space: nowrap;
+}
+
+.artifact-extension-item-toggle {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.artifact-extension-item-toggle[aria-expanded="true"] {
+  border-bottom: 1px solid var(--border);
+}
+
+.artifact-extension-item-toggle:focus-visible {
+  outline-offset: -3px;
+}
+
+.artifact-extension-group-content[hidden],
+.artifact-extension-item-content[hidden] {
+  display: none;
+}
+
+.artifact-extension-group-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-extension-item-status {
+  color: var(--muted);
+}
+
+.artifact-overlay {
+  --overlay-top: min(calc(var(--workspace-header-height) + 3.25rem), 35dvh);
+  position: fixed;
+  inset: var(--overlay-top) 0.75rem auto auto;
+  width: min(32rem, calc(100vw - 1.5rem));
+  max-height: min(32rem, calc(100dvh - var(--overlay-top) - 0.75rem));
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 8px 24px rgb(37 49 59 / 18%);
+}
+
+.artifact-overlay > header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.artifact-overlay > header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.artifact-overlay > header button {
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .artifact-extension-mount-overlay {
-  position: relative;
-  z-index: 2;
+  padding: 0 0.85rem;
+}
+
+.artifact-extension-mount-overlay .artifact-extension-frame {
+  height: clamp(8rem, 30dvh, 17rem);
 }
 
 .artifact-extension-instance {
@@ -7439,15 +7531,20 @@ summary {
 
 .world-reader-shell {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100dvh;
   overflow: hidden;
 }
 
 .world-reader-scroll {
-  position: fixed;
+  position: relative;
   z-index: var(--z-reader-content);
-  inset: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  margin-block-start: var(--world-header-height);
   overflow: hidden auto;
+  scroll-padding-block-end: 1.1rem;
   scrollbar-gutter: stable both-edges;
 }
 
@@ -7495,7 +7592,7 @@ summary {
   position: fixed;
   z-index: var(--z-world-rail);
   top: 3.35rem;
-  bottom: calc(var(--world-composer-height) + 2.1rem);
+  bottom: 0.7rem;
   display: grid;
   width: min(
     21rem,
@@ -7513,6 +7610,12 @@ summary {
   transition:
     transform 180ms ease,
     opacity 140ms ease;
+}
+
+@media (--workspace-desktop) {
+  .world-overlay-rail {
+    z-index: var(--z-world-desktop-rail);
+  }
 }
 
 .world-overlay-rail-left {
@@ -8474,24 +8577,9 @@ dialog.world-dialog-scrim::backdrop {
   overflow-wrap: anywhere;
 }
 
-.world-extension-menu {
-  position: relative;
-  margin-block: 0.4rem;
-}
 .world-extension-menu summary {
   cursor: pointer;
   width: fit-content;
-}
-.world-extension-options {
-  position: absolute;
-  bottom: calc(100% + 0.5rem);
-  width: 100%;
-  max-height: min(22rem, calc(100dvh - 10rem));
-  background: var(--surface);
-  overflow-y: auto;
-  padding: 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
 }
 .world-extension-options fieldset {
   margin-block: 0.6rem;

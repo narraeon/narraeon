@@ -141,9 +141,7 @@ type PendingAction =
 function captureTimelineAnchor(
   reader: HTMLElement,
 ): { id: string; top: number } | null {
-  const headerInset =
-    parseFloat(getComputedStyle(reader).scrollPaddingTop) || 0;
-  const visibleTop = reader.getBoundingClientRect().top + headerInset;
+  const visibleTop = reader.getBoundingClientRect().top;
   let anchor: { id: string; top: number } | null = null;
   for (const item of reader.querySelectorAll<HTMLElement>(
     "[data-timeline-item]",
@@ -665,9 +663,21 @@ export function WorldPage({
 
   useLayoutEffect(() => {
     const composer = composerRef.current;
-    if (composer === null) return;
-    const publish = (): void =>
+    const reader = readerRef.current;
+    if (composer === null || reader === null) return;
+    let previousReaderHeight = reader.clientHeight;
+    const publish = () => {
+      // A panel or notice can resize the viewport. Keep the end in view only
+      // when the player was already reading there.
+      const readerHeight = reader.clientHeight;
+      if (
+        readerHeight !== previousReaderHeight &&
+        reader.scrollHeight - reader.scrollTop - previousReaderHeight <= 2
+      )
+        reader.scrollTop = reader.scrollHeight;
+      previousReaderHeight = readerHeight;
       setComposerHeight(composer.getBoundingClientRect().height);
+    };
     publish();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(publish);
@@ -1931,6 +1941,15 @@ export function WorldPage({
         {feedback.text}
       </p>
     );
+  const compactPlayStatus = worldRevisionLocked
+    ? uiText("继续修订")
+    : !modelConfigured
+      ? uiText("配置模型")
+      : visiblePlayFailure !== null ||
+          modelProtocolMismatch ||
+          playRequestRecovery !== null
+        ? uiText("需要处理")
+        : undefined;
 
   return (
     <main
@@ -1966,6 +1985,7 @@ export function WorldPage({
         }
         extensions={displayedDecorations?.extensions ?? []}
         playerViews={world.playerViews}
+        showTechnicalInfo={readingPreferences.showTechnicalInfo}
         interactionDisabled={pending !== null || worldRevisionLocked}
         onSetComposerDraft={setPlayerText}
         onRefresh={async () => {
@@ -2008,7 +2028,10 @@ export function WorldPage({
               aria-busy={pending !== null || activeStatus === "running"}
               aria-label={uiText("故事时间线")}
             >
-              <ArtifactExtensionMount mount="story" />
+              <ArtifactExtensionMount
+                mount="story"
+                storyTimeline={playTimeline?.items}
+              />
               {timelineCursor === null ? null : (
                 <>
                   <SyncNotice
@@ -2122,16 +2145,19 @@ export function WorldPage({
               )}
               <div ref={historyEndRef} />
               {readingPreferences.showTechnicalInfo && (
-                <ArtifactDebugger
-                  records={displayedDecorations?.artifactDebug ?? []}
-                  extensions={displayedDecorations?.extensions ?? []}
-                  playerViewPanels={
-                    displayedDecorations?.playerViewPanels ??
-                    world.playerViewPanels ??
-                    []
-                  }
-                  bridgeEvents={bridgeEvents}
-                />
+                <>
+                  <ArtifactExtensionMount mount="debug" />
+                  <ArtifactDebugger
+                    records={displayedDecorations?.artifactDebug ?? []}
+                    extensions={displayedDecorations?.extensions ?? []}
+                    playerViewPanels={
+                      displayedDecorations?.playerViewPanels ??
+                      world.playerViewPanels ??
+                      []
+                    }
+                    bridgeEvents={bridgeEvents}
+                  />
+                </>
               )}
             </article>
           </section>
@@ -2166,6 +2192,40 @@ export function WorldPage({
             }}
             disabled={!playIdle}
             showTechnicalInfo={readingPreferences.showTechnicalInfo}
+            compactStatus={compactPlayStatus}
+            tools={
+              (displayedDecorations?.extensionControls ??
+                world.extensionControls) === undefined ? null : (
+                <WorldExtensionMenu
+                  view={
+                    (displayedDecorations?.extensionControls ??
+                      world.extensionControls)!
+                  }
+                  onChange={async (key, value) => {
+                    const receipt = await decorationTarget.command(() =>
+                      requestRuntime<WorldExtensionsView>(client, {
+                        type: "world.extensions.set",
+                        worldId,
+                        key,
+                        value,
+                      }),
+                    );
+                    decorationTarget.accept({ complete: false });
+                    setDecorations((current) =>
+                      current?.worldId === worldId
+                        ? { ...current, extensionControls: receipt }
+                        : current,
+                    );
+                    setWorld((current) =>
+                      current === null
+                        ? null
+                        : { ...current, extensionControls: receipt },
+                    );
+                    await decorationTarget.read();
+                  }}
+                />
+              )
+            }
           >
             {usingChatGptPlan && (
               <div className="play-retry-note">
@@ -2177,37 +2237,6 @@ export function WorldPage({
               reason={decorationError}
               onRead={() => void decorationTarget.recover()}
             />
-            {(displayedDecorations?.extensionControls ??
-              world.extensionControls) === undefined ? null : (
-              <WorldExtensionMenu
-                view={
-                  (displayedDecorations?.extensionControls ??
-                    world.extensionControls)!
-                }
-                onChange={async (key, value) => {
-                  const receipt = await decorationTarget.command(() =>
-                    requestRuntime<WorldExtensionsView>(client, {
-                      type: "world.extensions.set",
-                      worldId,
-                      key,
-                      value,
-                    }),
-                  );
-                  decorationTarget.accept({ complete: false });
-                  setDecorations((current) =>
-                    current?.worldId === worldId
-                      ? { ...current, extensionControls: receipt }
-                      : current,
-                  );
-                  setWorld((current) =>
-                    current === null
-                      ? null
-                      : { ...current, extensionControls: receipt },
-                  );
-                  await decorationTarget.read();
-                }}
-              />
-            )}
             {worldRevisionLocked ? (
               <div className="model-required-callout" role="status">
                 <p>
@@ -2289,7 +2318,9 @@ export function WorldPage({
                 <ModelRecoveryActions
                   disabled={failureRecovery.playDisabled}
                   freshContextReason={freshContextReason}
-                  onFreshContext={openFreshComposer}
+                  onFreshContext={
+                    modelConfigured ? openFreshComposer : undefined
+                  }
                   onContinue={
                     activeCanContinuePartial
                       ? failureRecovery.onContinuePartial
@@ -2762,11 +2793,6 @@ export function WorldPage({
           ) : null}
 
           {dialog === null ? feedbackNotice : null}
-
-          <ArtifactExtensionMount mount="overlay" />
-          {readingPreferences.showTechnicalInfo && (
-            <ArtifactExtensionMount mount="debug" />
-          )}
         </div>
       </ArtifactExtensionHost>
     </main>

@@ -33,11 +33,13 @@ export function ModelRecoveryActions({
     return (
       <>
         <p>{uiText(reasons[freshContextReason])}</p>
-        <div className="play-failure-actions">
-          <button type="button" disabled={disabled} onClick={onFreshContext}>
-            {uiText("用新上下文")}
-          </button>
-        </div>
+        {onFreshContext !== undefined && (
+          <div className="play-failure-actions">
+            <button type="button" disabled={disabled} onClick={onFreshContext}>
+              {uiText("用新上下文")}
+            </button>
+          </div>
+        )}
       </>
     );
   if (!onContinue && !onResend && !children) return null;

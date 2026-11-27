@@ -330,11 +330,23 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     await expect(
       page.getByText("second · 生成中", { exact: true }),
     ).toBeVisible();
+    const sidebar = page.locator('[data-extension-mount="sidebar"]');
+    const outputToggle = sidebar
+      .locator('[data-artifact-output="output_3"]')
+      .locator(".artifact-extension-item-toggle");
+    const sidebarToggle = sidebar.locator(".artifact-extension-group-toggle");
+    await page.getByRole("button", { name: "此刻", exact: true }).click();
+    await outputToggle.click();
+    await sidebarToggle.click();
     // A second follow-up fails after the first content has become visible.
     send(pending.shift()!, { content: "No required artifact emitted." });
     await expect(
       page.getByRole("button", { name: "继续故事", exact: true }),
     ).toBeEnabled();
+    await expect(sidebarToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(sidebarToggle).toContainText("生成失败");
+    await sidebarToggle.click();
+    await expect(outputToggle).toHaveAttribute("aria-expanded", "false");
     await expect(
       panel.getByText("Saved panel at the same head", { exact: true }),
     ).toBeVisible();
@@ -364,6 +376,17 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
         '[data-extension-mount="composer_above"] iframe[title="suggestions"]',
       ),
     ).toHaveCount(1);
+    const composerAbove = page.locator(
+      '.world-composer-dock [data-extension-mount="composer_above"]',
+    );
+    const aboveToggle = composerAbove.locator(
+      ":scope > .artifact-extension-group-toggle",
+    );
+    await expect(aboveToggle).toHaveAttribute("aria-expanded", "false");
+    await aboveToggle.click();
+    const abovePanel = (await composerAbove.boundingBox())!;
+    const actionBox = (await page.getByLabel("你的行动").boundingBox())!;
+    expect(abovePanel.y + abovePanel.height).toBeLessThanOrEqual(actionBox.y);
     await page
       .frameLocator('iframe[title="suggestions"]')
       .getByRole("button", { name: "敲门询问" })
@@ -489,7 +512,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
     ).toBe(finalHead);
     expect(requests).toBe(27);
   } catch (error: unknown) {
-    throw new Error(serverLog, { cause: error });
+    throw new Error(`${String(error)}\n${serverLog}`, { cause: error });
   } finally {
     await page.goto("about:blank").catch(() => undefined);
     await stop();
