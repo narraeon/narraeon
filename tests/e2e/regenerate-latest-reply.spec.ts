@@ -317,10 +317,17 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(actions).toBeVisible();
     await page.getByLabel("你的行动").fill("");
     await page.getByRole("button", { name: "继续故事", exact: true }).click();
-    await expect(
-      page.getByText("空输入续写回复", { exact: true }),
-    ).toBeVisible();
-    await actions.click();
+    const continuation = page
+      .locator(".call-chain-assistant.is-completed")
+      .filter({
+        has: page.getByText("空输入续写回复", { exact: true }),
+      });
+    await continuation
+      .getByRole("button", {
+        name: "主持消息操作",
+        exact: true,
+      })
+      .click();
     await expect(rewrite).toBeVisible();
     await expect(redo).toHaveCount(0);
     await rewrite.click();
