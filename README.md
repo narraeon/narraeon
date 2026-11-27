@@ -123,6 +123,12 @@ node dist/node/cli/main.js web
 5. **Create a world.** Copy a usable content package into a new independent world. You can save it, reopen it, and read the opening before connecting a model. If you select a protagonist template, review it in the new world and choose **Confirm and customize** or **Skip and read opening**. Customization becomes part of the world when you review and apply it.
 6. **Connect a model when you’re ready to play.** Open **Configure model** from the world. Choose a provider profile or custom endpoint, enter the API key and model ID, and set the model's context-window and maximum-output limits. For a local Chat Completions server on `localhost`, `127.0.0.0/8`, or `[::1]`, choose **No API key** to list and use its models without a key. **Send a test message** checks the current settings before you save. Your provider may charge for the message. Save and enable the connection to return to the same world with your draft. Send the action when you’re ready.
 
+### Play using your ChatGPT plan
+
+When running Narraeon locally, choose a ChatGPT plan connection in model settings. Sign in to OpenAI in your system browser and authorize plan usage. Select a model available to that account, then save and enable the connection. Your world stays on your device. You can review usage and limits in ChatGPT settings.
+
+Sending a test message also uses plan allowance. OpenAI's plan route does not accept a per-request output token cap. To use the plan for automatic follow-up requests such as suggested actions, enable them separately in the connection settings. Scene illustrations require a separate connection that supports image generation. [OpenAI guide for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source)
+
 ### Try a narrative style
 
 - [Download the Simplified Chinese narrative style trial](https://raw.githubusercontent.com/narraeon/narraeon/refs/heads/main/docs/orchestrations/chinese-prose-trial.orchestration.json)
