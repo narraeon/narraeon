@@ -226,6 +226,9 @@ describe("世界工作区主页", () => {
     );
 
     fireEvent.click(
+      screen.getByRole("button", { name: "世界操作：雾港第一夜" }),
+    );
+    fireEvent.click(
       screen.getByRole("button", { name: "重命名世界：雾港第一夜" }),
     );
     fireEvent.change(screen.getByLabelText("世界名称"), {
@@ -320,6 +323,9 @@ describe("世界工作区主页", () => {
 
     await screen.findByRole("button", { name: "打开世界：雾港第一夜" });
     fireEvent.click(
+      screen.getByRole("button", { name: "世界操作：雾港第一夜" }),
+    );
+    fireEvent.click(
       screen.getByRole("button", { name: "重命名世界：雾港第一夜" }),
     );
     fireEvent.change(screen.getByLabelText("世界名称"), {
@@ -397,6 +403,7 @@ describe("世界工作区主页", () => {
       createElement(App, { client: { request } as unknown as RuntimeClient }),
     );
     await screen.findByRole("button", { name: "打开内容包：待改名" });
+    fireEvent.click(screen.getByRole("button", { name: "内容包操作：待改名" }));
     fireEvent.click(
       screen.getByRole("button", { name: "重命名内容包：待改名" }),
     );
@@ -412,6 +419,7 @@ describe("世界工作区主页", () => {
       packageId: "package-target",
       name: "新标题",
     });
+    fireEvent.click(screen.getByRole("button", { name: "内容包操作：新标题" }));
     const opener = screen.getByRole("button", { name: "删除内容包：新标题" });
     const confirmation = () =>
       within(screen.getByRole("dialog", { name: /删除内容包“新标题”/ }));

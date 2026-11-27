@@ -348,34 +348,51 @@
   right: 6px;
   top: 14px;
 }
-.home-world-card-actions > summary {
+.home-world-card-actions > button {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
-  list-style: none;
+  padding: 0;
+  border: 0;
   color: var(--muted);
 }
-.home-world-card-actions > summary::-webkit-details-marker {
-  display: none;
+.home-world-card-actions > button[aria-expanded="true"] {
+  background: var(--surface-selected);
 }
-.home-world-card-actions[open] {
-  z-index: 2;
-}
-.home-world-card-actions > div {
-  position: absolute;
-  right: 0;
-  top: 34px;
+.home-card-actions-panel:not([hidden]) {
   display: grid;
+}
+.home-card-actions-panel {
+  position: fixed;
+  z-index: 3;
+  width: 14rem;
   padding: 5px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
   background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: 4px;
   box-shadow: 0 8px 20px rgb(37 49 59 / 10%);
 }
-.home-world-card-actions button {
-  text-align: left;
-  white-space: nowrap;
+.home-card-actions-panel button {
+  width: 100%;
+  text-align: start;
   border: 0;
+}
+.home-card-actions-panel p {
+  margin: 0.3rem 0.45rem;
+  font-size: 0.8rem;
+}
+@media (pointer: coarse) {
+  .home-world-card-actions > button {
+    width: 44px;
+    height: 44px;
+  }
+  .home-card-actions-panel button {
+    min-height: 44px;
+  }
 }
 .home-world-delete {
   color: var(--danger);

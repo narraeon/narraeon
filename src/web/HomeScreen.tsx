@@ -4,6 +4,7 @@ import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
 import { useState, type ReactNode } from "react";
 import { relativeActivityTime } from "./worldActivityPresentation.ts";
+import { HomeCardActions } from "./HomeCardActions.tsx";
 import {
   ConfirmationDialog,
   type ConfirmationRequest,
@@ -119,11 +120,18 @@ export function HomeScreen({
   const [sampleOpener, setSampleOpener] = useState<HTMLButtonElement | null>(
     null,
   );
+  const [openCardActions, setOpenCardActions] = useState<string | null>(null);
   const pending = importPending || samplePending;
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
   ).length;
   const repairPackageCount = contentPackages.length - usablePackageCount;
+
+  function toggleCardActions(id: string, open: boolean): void {
+    setOpenCardActions((current) =>
+      open ? id : current === id ? null : current,
+    );
+  }
 
   function requestDeletion(
     action: HomeDeletion,
@@ -132,7 +140,10 @@ export function HomeScreen({
     setConfirmation({
       action,
       opener,
-      fallback: opener.closest("details")?.querySelector("summary") ?? null,
+      fallback:
+        opener
+          .closest(".home-world-card-actions")
+          ?.querySelector<HTMLButtonElement>("button[aria-expanded]") ?? null,
       message: uiText(
         action.kind === "world"
           ? "删除世界“{title}”？它的全部提交、历史和存档都会从本机移除，且无法撤销。"
@@ -253,53 +264,54 @@ export function HomeScreen({
                       <span aria-hidden="true">→</span>
                     </span>
                   </button>
-                  <details className="home-world-card-actions">
-                    <summary
-                      aria-label={uiText("世界操作：{title}", {
+                  <HomeCardActions
+                    label={uiText("世界操作：{title}", { title: world.title })}
+                    open={
+                      !libraryOnly &&
+                      openCardActions === `world:${world.worldId}`
+                    }
+                    onToggle={(open) =>
+                      toggleCardActions(`world:${world.worldId}`, open)
+                    }
+                  >
+                    {renderWorldBackupExport?.(world)}
+                    <button
+                      className="home-world-rename"
+                      type="button"
+                      aria-label={uiText("重命名世界：{title}", {
                         title: world.title,
                       })}
+                      disabled={pending}
+                      onClick={() => {
+                        setOpenCardActions(null);
+                        setRenameFailure("");
+                        setRenamingWorldId(world.worldId);
+                        setWorldNameDraft(world.title);
+                      }}
                     >
-                      •••
-                    </summary>
-                    <div>
-                      {renderWorldBackupExport?.(world)}
-                      <button
-                        className="home-world-rename"
-                        type="button"
-                        aria-label={uiText("重命名世界：{title}", {
-                          title: world.title,
-                        })}
-                        disabled={pending}
-                        onClick={() => {
-                          setRenameFailure("");
-                          setRenamingWorldId(world.worldId);
-                          setWorldNameDraft(world.title);
-                        }}
-                      >
-                        {uiText("重命名")}
-                      </button>
-                      <button
-                        className="home-world-delete"
-                        type="button"
-                        aria-label={uiText("删除世界：{title}", {
-                          title: world.title,
-                        })}
-                        disabled={pending}
-                        onClick={(event) =>
-                          requestDeletion(
-                            {
-                              kind: "world",
-                              id: world.worldId,
-                              title: world.title,
-                            },
-                            event.currentTarget,
-                          )
-                        }
-                      >
-                        {uiText("删除")}
-                      </button>
-                    </div>
-                  </details>
+                      {uiText("重命名")}
+                    </button>
+                    <button
+                      className="home-world-delete"
+                      type="button"
+                      aria-label={uiText("删除世界：{title}", {
+                        title: world.title,
+                      })}
+                      disabled={pending}
+                      onClick={(event) =>
+                        requestDeletion(
+                          {
+                            kind: "world",
+                            id: world.worldId,
+                            title: world.title,
+                          },
+                          event.currentTarget,
+                        )
+                      }
+                    >
+                      {uiText("删除")}
+                    </button>
+                  </HomeCardActions>
                   {renamingWorldId === world.worldId ? (
                     <form
                       className="home-world-rename-form"
@@ -442,52 +454,52 @@ export function HomeScreen({
                             : uiText("打开并修复内容包中的问题")}
                         </span>
                       </button>
-                      <details className="home-world-card-actions">
-                        <summary
-                          aria-label={uiText("内容包操作：{title}", {
+                      <HomeCardActions
+                        label={uiText("内容包操作：{title}", {
+                          title: item.title,
+                        })}
+                        open={openCardActions === `package:${item.localId}`}
+                        onToggle={(open) =>
+                          toggleCardActions(`package:${item.localId}`, open)
+                        }
+                      >
+                        <button
+                          className="home-world-rename"
+                          type="button"
+                          aria-label={uiText("重命名内容包：{title}", {
                             title: item.title,
                           })}
+                          disabled={pending}
+                          onClick={() => {
+                            setOpenCardActions(null);
+                            setRenameFailure("");
+                            setRenamingPackageId(item.localId);
+                            setPackageNameDraft(item.title);
+                          }}
                         >
-                          •••
-                        </summary>
-                        <div>
-                          <button
-                            className="home-world-rename"
-                            type="button"
-                            aria-label={uiText("重命名内容包：{title}", {
-                              title: item.title,
-                            })}
-                            disabled={pending}
-                            onClick={() => {
-                              setRenameFailure("");
-                              setRenamingPackageId(item.localId);
-                              setPackageNameDraft(item.title);
-                            }}
-                          >
-                            {uiText("重命名")}
-                          </button>
-                          <button
-                            className="home-world-delete"
-                            type="button"
-                            aria-label={uiText("删除内容包：{title}", {
-                              title: item.title,
-                            })}
-                            disabled={pending}
-                            onClick={(event) =>
-                              requestDeletion(
-                                {
-                                  kind: "package",
-                                  id: item.localId,
-                                  title: item.title,
-                                },
-                                event.currentTarget,
-                              )
-                            }
-                          >
-                            {uiText("删除")}
-                          </button>
-                        </div>
-                      </details>
+                          {uiText("重命名")}
+                        </button>
+                        <button
+                          className="home-world-delete"
+                          type="button"
+                          aria-label={uiText("删除内容包：{title}", {
+                            title: item.title,
+                          })}
+                          disabled={pending}
+                          onClick={(event) =>
+                            requestDeletion(
+                              {
+                                kind: "package",
+                                id: item.localId,
+                                title: item.title,
+                              },
+                              event.currentTarget,
+                            )
+                          }
+                        >
+                          {uiText("删除")}
+                        </button>
+                      </HomeCardActions>
                       {renamingPackageId === item.localId ? (
                         <form
                           className="home-world-rename-form"
