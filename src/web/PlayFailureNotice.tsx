@@ -1,3 +1,4 @@
+import { ChatGptUsageLink } from "./ChatGptConnectionFields.tsx";
 import { ModelRetryLimitNotice } from "./ModelRetryStatus.tsx";
 import {
   ModelRecoveryActions,
@@ -32,7 +33,10 @@ export function PlayFailureNotice({
 }): React.JSX.Element {
   const kind = failureKind ?? (canRetry ? "retryable" : "other");
   const canResend = canRetry && (recovery?.canRetry ?? true);
-  const canConfigure = kind === "provider_error" || kind === "output_limit";
+  const canConfigure =
+    kind === "provider_error" ||
+    kind === "output_limit" ||
+    kind === "chatgpt_plan_authorization";
   const text = failureText[kind === "retryable" && !canResend ? "other" : kind];
   return (
     <>
@@ -45,6 +49,11 @@ export function PlayFailureNotice({
             canResend,
             recovery?.canContinuePartial,
           )}
+        </p>
+      )}
+      {kind === "chatgpt_plan_quota" && (
+        <p>
+          <ChatGptUsageLink />
         </p>
       )}
       {recovery && (

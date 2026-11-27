@@ -7,6 +7,72 @@ import {
 let activeLocale: AppLocale = defaultAppLocale;
 
 const englishMessages: Record<string, string> = {
+  "ChatGPT 套餐使用达到上限": "ChatGPT plan usage limit reached",
+  "请在 ChatGPT 设置中查看套餐或此应用的用量。":
+    "Review the usage limit for your plan or this app in ChatGPT settings.",
+  "ChatGPT 套餐授权不可用": "ChatGPT plan authorization unavailable",
+  "请在模型连接中检查 ChatGPT 账号，并刷新授权或重新登录。":
+    "Check your ChatGPT account in Model Connections, then refresh authorization or sign in again.",
+  "使用 ChatGPT 继续": "Continue with ChatGPT",
+  "ChatGPT 套餐": "ChatGPT plan",
+  "正在使用 ChatGPT 套餐": "Using ChatGPT plan",
+  "需要启用 ChatGPT 套餐": "ChatGPT plan needs authorization",
+  "管理 ChatGPT 用量": "Manage ChatGPT usage",
+  "已退出 ChatGPT": "Signed out of ChatGPT",
+  "已登录 ChatGPT，尚未授权使用套餐":
+    "Signed in to ChatGPT. Plan usage is awaiting authorization.",
+  "已授权使用 ChatGPT 套餐": "ChatGPT plan usage is authorized",
+  "ChatGPT 授权已失效，请重新登录":
+    "ChatGPT authorization has expired. Sign in again.",
+  "符合条件的请求将使用你的 ChatGPT 套餐或额度。":
+    "Eligible requests will use your ChatGPT plan or credits.",
+  "ChatGPT 账号": "ChatGPT account",
+  "选择 ChatGPT 账号": "Choose a ChatGPT account",
+  "正在读取 ChatGPT 账号…": "Loading ChatGPT accounts…",
+  "尚未选择 ChatGPT 账号": "No ChatGPT account selected",
+  "授权使用 ChatGPT 套餐": "Enable ChatGPT plan usage",
+  "登录另一个 ChatGPT 账号": "Sign in to another ChatGPT account",
+  "刷新 ChatGPT 授权": "Refresh ChatGPT authorization",
+  "断开 ChatGPT 账号": "Disconnect ChatGPT account",
+  "已刷新 ChatGPT 授权。": "ChatGPT authorization refreshed.",
+  "已断开此工作区的 ChatGPT 账号。":
+    "The ChatGPT account was disconnected from this workspace.",
+  "已从本机移除 ChatGPT 凭据。请在 ChatGPT 设置中确认授权已撤销。":
+    "ChatGPT credentials were removed locally. In ChatGPT settings, confirm that access was revoked.",
+  "请在系统浏览器完成 ChatGPT 登录。":
+    "Finish signing in to ChatGPT in your system browser.",
+  "正在打开系统浏览器…": "Opening your system browser…",
+  "正在刷新 ChatGPT 授权…": "Refreshing ChatGPT authorization…",
+  "正在断开 ChatGPT 账号…": "Disconnecting the ChatGPT account…",
+  "ChatGPT 登录已取消。": "ChatGPT sign-in was canceled.",
+  "ChatGPT 模型": "ChatGPT model",
+  "此账号没有可用的 ChatGPT 模型。":
+    "No ChatGPT models are available for this account.",
+  "重新加载 ChatGPT 模型": "Reload ChatGPT models",
+  "断开这个 ChatGPT 账号？使用它的模型连接需要重新登录。":
+    "Disconnect this ChatGPT account? Model connections using it will require sign-in again.",
+  断开: "Disconnect",
+  "你已授权使用 ChatGPT 套餐": "You’ve enabled ChatGPT plan usage",
+  "启用这份连接后，符合条件的请求将使用你的 ChatGPT 套餐或额度。":
+    "When you enable this connection, eligible requests will use your ChatGPT plan or credits.",
+  知道了: "Got it",
+  "ChatGPT 账号操作失败。": "The ChatGPT account action failed.",
+  "请在运行 Narraeon 的同一台电脑上直接打开本地工作区，再使用 ChatGPT 套餐。":
+    "Open the local workspace directly on the computer running Narraeon to use a ChatGPT plan.",
+  "允许此连接在每轮游玩结束后自动发送额外请求，使用我的 ChatGPT 套餐或额度。":
+    "Allow this connection to automatically send extra requests after each play turn using my ChatGPT plan or credits.",
+  "试发会发送一条短消息，使用你的 ChatGPT 套餐或额度。输出上限由 ChatGPT 决定。":
+    "The test sends one short message using your ChatGPT plan or credits. ChatGPT sets the output limit.",
+  "ChatGPT 套餐或此应用的使用已达到上限。":
+    "Your ChatGPT plan or this app has reached its usage limit.",
+  "ChatGPT 拒绝了此次授权。请刷新授权或重新登录。":
+    "ChatGPT rejected this authorization. Refresh authorization or sign in again.",
+  "ChatGPT 达到了输出上限，未能确认模型正文。":
+    "ChatGPT reached its output limit before a model reply could be confirmed.",
+  "已克隆为「{name}」。副本使用同一个 ChatGPT 账号，自动后置请求默认关闭。":
+    "Cloned as “{name}”. The copy uses the same ChatGPT account, with automatic follow-ups off.",
+  "删除模型连接“{name}”？如需退出 ChatGPT，请另外断开账号。":
+    "Delete model connection “{name}”? Disconnect the account separately to sign out of ChatGPT.",
   "AI 编辑": "AI editing",
   设定完善与世界修订: "Setting improvement and world revision",
   "正在生成预览…": "Generating preview…",

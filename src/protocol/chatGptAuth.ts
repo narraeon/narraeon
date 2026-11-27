@@ -1,3 +1,5 @@
+export const chatGptUsageUrl = "https://chatgpt.com/settings/usage";
+
 export const chatGptPlanBaseUrl = "https://api.openai.com/v1";
 
 export type ChatGptAuthErrorCode =
@@ -18,10 +20,7 @@ export interface ChatGptAccount {
   label: string;
   email?: string;
   status:
-    | "signed_out"
-    | "signed_in"
-    | "plan_authorized"
-    | "reauthorization_required";
+    "signed_out" | "signed_in" | "plan_authorized" | "reauthorization_required";
 }
 
 export interface ChatGptModel {
@@ -33,6 +32,7 @@ export interface ChatGptSignInResult {
   status: "pending" | "completed" | "denied" | "failed" | "expired";
   account?: ChatGptAccount;
   error?: ChatGptAuthErrorCode;
+  message?: string;
 }
 
 export interface ChatGptDisconnectResult {

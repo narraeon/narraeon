@@ -1379,6 +1379,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         worldTitle={selectedWorld?.title ?? uiText("未命名世界")}
         modelConfigured={workspace.model.configured}
         activeModelProtocol={activeModel?.provider}
+        usingChatGptPlan={
+          workspace.model.configured &&
+          activeModel?.chatGptAccountId !== undefined
+        }
         onBack={() => navigate("home")}
         onConfigureModel={() => navigate("model")}
         onViewPromptOrder={openPromptOrder}

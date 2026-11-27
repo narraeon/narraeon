@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 
 import type { GenerationActivity } from "../runtime/GenerationActivity.ts";
@@ -5,6 +6,7 @@ import {
   fingerprintDataRoot,
   type AppPaths,
 } from "../runtime/config/appPaths.ts";
+import { ChatGptAuth } from "../runtime/model/ChatGptAuth.ts";
 import { prepareDataRoot } from "../runtime/config/dataRootCleanup.ts";
 import { createRuntime } from "./createRuntime.ts";
 import { createServer } from "./createServer.ts";
@@ -31,9 +33,29 @@ export async function startWebServer(
 ): Promise<FastifyInstance> {
   await prepareDataRoot(input.paths.dataRoot);
   const dataRootFingerprint = await fingerprintDataRoot(input.paths.dataRoot);
+  const localChatGpt =
+    input.host === defaultWebHost &&
+    (input.trustedOrigins?.length ?? 0) === 0 &&
+    input.mobileStartupKey === undefined;
+  const chatGptAuth = localChatGpt
+    ? new ChatGptAuth({
+        workspaceDirectory: join(
+          input.paths.configRoot,
+          "chatgpt",
+          dataRootFingerprint,
+        ),
+        localEnabled: true,
+      })
+    : undefined;
   let server: FastifyInstance | undefined;
   try {
-    const runtime = await createRuntime(input.paths, generationActivity);
+    const runtime = await createRuntime(
+      {
+        ...input.paths,
+        ...(chatGptAuth === undefined ? {} : { chatGptAuth }),
+      },
+      generationActivity,
+    );
     server = await createServer({
       runtime,
       dataRootFingerprint,
@@ -47,10 +69,12 @@ export async function startWebServer(
         : { mobileStartupKey: input.mobileStartupKey }),
       ...(input.logger === undefined ? {} : { logger: input.logger }),
     });
+    server.addHook("onClose", async () => chatGptAuth?.close());
     await server.listen({ host: input.host, port: input.port });
     return server;
   } catch (error: unknown) {
     if (server !== undefined) await server.close().catch(() => undefined);
+    else chatGptAuth?.close();
     throw error;
   }
 }

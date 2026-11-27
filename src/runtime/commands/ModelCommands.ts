@@ -1,3 +1,4 @@
+import { chatGptMessage } from "./ChatGptMessages.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ModelConnectionStore } from "../model/ModelConnectionStore.ts";
 import type { CommandFor } from "./Command.ts";
@@ -8,6 +9,27 @@ export function handleModelCommand(
   locale: AppLocale,
 ): unknown {
   switch (request.type) {
+    case "model.chatgpt.accounts":
+      return models.requireChatGpt().listAccounts();
+    case "model.chatgpt.sign-in":
+      return models.requireChatGpt().startSignIn({
+        ...(request.accountId === undefined
+          ? {}
+          : { accountId: request.accountId }),
+        requestPlanConsent: request.requestPlanConsent,
+      });
+    case "model.chatgpt.sign-in-status": {
+      const result = models.requireChatGpt().signInStatus(request.attemptId);
+      return result.error === undefined
+        ? result
+        : { ...result, message: chatGptMessage(result.error, locale) };
+    }
+    case "model.chatgpt.models":
+      return models.requireChatGpt().listModels(request.accountId);
+    case "model.chatgpt.refresh":
+      return models.requireChatGpt().refresh(request.accountId);
+    case "model.chatgpt.disconnect":
+      return models.requireChatGpt().disconnect(request.accountId);
     case "model.read":
       return models.view();
     case "model.save":
