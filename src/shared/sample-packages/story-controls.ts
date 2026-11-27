@@ -1,18 +1,60 @@
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import type { ContentTreeFile } from "../../protocol/v1.ts";
 
+export interface PlayerViewItemSpec {
+  id: string;
+  label: string;
+  document: string;
+  locator: readonly string[];
+}
+
+export interface PlayerViewSpec {
+  id: string;
+  title: string;
+  items: readonly PlayerViewItemSpec[];
+}
+
+export interface StoryControlOptions {
+  catalogDirectories?: readonly { directory: string; maxEntries: number }[];
+  extraViews?: readonly PlayerViewSpec[];
+}
+
+function renderPlayerViewItem(item: PlayerViewItemSpec): string {
+  return `      - id: ${item.id}
+        label: ${item.label}
+        select:
+          document: "@${item.document}"
+          locator: { yaml: [${item.locator.join(", ")}] }
+`;
+}
+
+function renderPlayerView(view: PlayerViewSpec): string {
+  return `  - id: ${view.id}
+    title: ${view.title}
+    items:
+${view.items.map(renderPlayerViewItem).join("")}`;
+}
+
 export function storyControlFiles(
   locale: AppLocale,
   location: string,
   guidance: string,
   documents: readonly string[] = [],
   publicClues?: { document: string; key: string },
+  options: StoryControlOptions = {},
 ): ContentTreeFile[] {
   const zh = locale === "zh-CN";
   const background = zh ? "背景" : "background";
   const time = zh ? "时间" : "Time";
   const place = zh ? "地点" : "Place";
   const present = zh ? "在场" : "Present";
+  const extraCatalogs = (options.catalogDirectories ?? [])
+    .map(
+      ({ directory, maxEntries }) =>
+        `  - slot: { kind: catalog, directory: ${directory}, maxEntries: ${maxEntries} }\n`,
+    )
+    .join("");
+  const extraViews = (options.extraViews ?? []).map(renderPlayerView).join("");
   return [
     {
       path: "control/frame.yaml",
@@ -24,7 +66,7 @@ instructions:
 context:
   - slot: { kind: catalog, directory: characters, maxEntries: 8 }
   - slot: { kind: catalog, directory: locations, maxEntries: 8 }
-  - slot: { kind: document, document: "@${location}" }
+${extraCatalogs}  - slot: { kind: document, document: "@${location}" }
 ${documents.map((ref) => `  - slot: { kind: document, document: "@${ref}" }\n`).join("")}  - slot:
       kind: reference_targets
       from:
@@ -64,7 +106,7 @@ ${
           document: "@${publicClues.document}"
           locator: { yaml: [${publicClues.key}] }
 `
-}`,
+}${extraViews}`,
     },
   ];
 }

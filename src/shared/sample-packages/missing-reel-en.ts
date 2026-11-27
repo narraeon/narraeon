@@ -66,7 +66,7 @@ Authority: Here as a guest. May ask Mara for access or for help preserving mater
   summary: Archivist and event organizer. She was responsible for the reel.
   aliases: []
 Motive: Wants the singers and their families to hear the whole recording. She will delay the program if she has a concrete reason to give the waiting families.
-Behavior: Speaks in measured times and dates when anxious. Answers direct questions about the key or the paperwork.
+Behavior: Speaks in measured times and dates when anxious. Answers direct questions about the key or the paperwork. If pressed on why the donor sent an unsigned short cut, she remembers a donor addendum tucked in the reading-room cabinet.
 Knowledge:
   Saw: She checked the brass hub at 5:20 p.m. and left the glass case on the courtesy latch for the scheduled microphone test.
   Assumes: Suspects an innocent move during setup. She has not heard the rehearsal file from start to finish.
@@ -142,7 +142,7 @@ Use after tonight: Staff check in loan gear and post work and collection notices
   summary: Public reading tables where staff keep cue sheets, approvals, and recording credits.
   aliases: []
 Access: The desk copy of event paperwork can be consulted by any visitor during the event or with Mara before opening.
-Records: The original cue sheet names Ada Santos in the roll call. Mara signed approval for the full-length playback, with the spoken credits included. A separate donor proof calls the short cut “final” but has no archive signature.
+Records: The original cue sheet names Ada Santos in the roll call. Mara signed approval for the full-length playback, with the spoken credits included. A separate donor proof calls the short cut “final” but has no archive signature. A donor correspondence folder in the cabinet behind the table holds an accompanying memo (see @donor-transfer-addendum).
 Daily life: Visitors listen to digitized recordings, help transcribe names, and can arrange to record their own interviews.
 `,
   },
@@ -156,6 +156,9 @@ Daily life: Visitors listen to digitized recordings, help transcribe names, and 
   aliases: []
 Known clues:
   Empty case: Mara says she saw the master at 5:20 p.m. The player can see its empty place on the blue felt.
+Key deadlines: 6:00 p.m. scheduled doors open (first guest already waiting outside)
+Master reel status: Unaccounted for (last seen by Mara in the display case at 5:20 p.m.)
+Open questions: Who approached the case between 5:20 and 5:32 p.m.; how the rehearsal file differs from the master
 `,
   },
   {
@@ -178,6 +181,22 @@ Verification:
   Witness: Noel can trace who carried the case toward Bay C. Viv can admit her action, with inspection of the hub still available to corroborate it.
 `,
   },
+  {
+    path: "world/archives/donor-transfer-addendum.yaml",
+    contents: `$document:
+  id: archive.missing-reel-donor-addendum
+  ref: donor-transfer-addendum
+  title: Donor transfer addendum and edit memo
+  summary: Second-layer secret revealed only when probing why the donor cut the spoken roll call or checking the donor folder.
+  aliases: []
+Discovery condition: The player notices the donor's short-cut proof lacks an archive signature and presses why, or asks Mara to check the donor correspondence folder in the reading-room cabinet.
+Hidden truth:
+  Stated reason: The Harbor Shipping Heritage Trust (successor to the old stevedoring firm) asked to trim Ada Santos's spoken roll call for "tighter pacing."
+  Real concern: In that opening roll call thirty years ago, Ada reads out the names of three temporary night-shift loaders who were omitted from the company's official safety roster after a crane mishap the same year, leaving their families without proof of shift hours.
+Dilemma:
+  - Recovering the master solves only the first layer; deciding whether to play the full unedited roll call before forty families tonight, share a transcript, or negotiate first with the Trust (which funds next year's climate-control upgrade for the archive) is left to the player and Mara.
+`,
+  },
   ...storyControlFiles(
     "en",
     "exhibition-room",
@@ -185,9 +204,38 @@ Verification:
 
 Use the custody record as the established past. Let the player discover it by examining the exhibit, listening, comparing records, speaking to people, or another justified route. A detail in a host document is not something the player or another person automatically knows. Describe evidence when the player has access. A witness can give an incomplete but honest account. The reel and the short playback file have different contents and uses.
 
-Keep @case-notes#/Known clues limited to observations or attributed statements actually shared with the player. Once found, the reel's custody belongs in @reel-custody. Advance the current situation as people make decisions. If the collection actually occurs, record where the case went so pursuit remains possible. Let the player decide whom to tell and whether to negotiate credit, preserve evidence, run the listening party, or leave the investigation. A correct account can be pieced together without a confession. There is room for further archive work after this case.
+Keep @case-notes#/Known clues limited to observations or attributed statements actually shared with the player, and update Key deadlines, Master reel status, and Open questions in @case-notes only as the player learns them (for instance, add the 5:50 p.m. gear pickup only after the player discovers it). Once found, the reel's custody belongs in @reel-custody. @donor-transfer-addendum is a second-layer hidden clue: read it on demand via context_read only when the player investigates why the donor cut the spoken roll call or inspects the donor folder. Advance the current situation as people make decisions. If the collection actually occurs, record where the case went so pursuit remains possible. Let the player decide whom to tell and whether to negotiate credit, preserve evidence, run the listening party, or leave the investigation. A correct account can be pieced together without a confession. There is room for further archive work after this case.
 `,
     ["case-notes", "reel-custody"],
     { document: "case-notes", key: "Known clues" },
+    {
+      catalogDirectories: [{ directory: "archives", maxEntries: 4 }],
+      extraViews: [
+        {
+          id: "case-status",
+          title: "Deadlines & status",
+          items: [
+            {
+              id: "deadlines",
+              label: "Key deadlines",
+              document: "case-notes",
+              locator: ["Key deadlines"],
+            },
+            {
+              id: "reel-status",
+              label: "Master reel status",
+              document: "case-notes",
+              locator: ["Master reel status"],
+            },
+            {
+              id: "open-questions",
+              label: "Open questions",
+              document: "case-notes",
+              locator: ["Open questions"],
+            },
+          ],
+        },
+      ],
+    },
   ),
 ];
