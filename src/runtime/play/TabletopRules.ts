@@ -40,6 +40,7 @@ function tabletopBindingContract(
   return locale === "zh-CN"
     ? `- 已有材料足够时直接使用，缺少判定依据时先读取相关角色或状态文档，再在参数中写明行动目标及本方案要求的数值；只有有成败不确定性或对抗的行动才需要判定。
 - 必须先调用判定工具并取得回执，再叙述结果。
+- 公开判定的目标只写玩家已知的行动。若目标、机械细节或结果会透露玩家尚不知道的事，调用前选暗骰（\`visibility: "hidden"\`），正文只呈现玩家当下能感知的后果。
 - 判定成功必须实现已声明的目标，失败则不实现，不论情节是否看似合理。
 - 大成功与大失败按工具的固定规则兑现，不能由叙述改写。
 - 取得回执后不得更改该行动的目标或判定数值，也不得为同一行动重掷。
@@ -47,6 +48,7 @@ function tabletopBindingContract(
 ${bagLine}- 参数不合法属于工具错误，不等于行动失败；修正参数后重新调用即可。`
     : `- Use available materials when sufficient; read relevant character or state documents first when check inputs are missing, then supply the action's goal and the scheme's required numeric inputs in the arguments. Only actions with uncertain success or opposition need a check.
 - Call the check tool and receive its receipt before narrating the outcome.
+- Phrase public goals using only actions known to the player. If a goal, mechanical detail, or outcome would reveal something unknown to the player, choose a hidden roll (\`visibility: "hidden"\`) before resolving and narrate only consequences the player can perceive now.
 - A success must fulfil the declared goal and a failure must not, regardless of whether the story seems plausible.
 - Critical outcomes follow the tool's fixed rules and cannot be rewritten by narration.
 - After a draw, never change that action's goal or check inputs, and never reroll the same action.

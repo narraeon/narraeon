@@ -13454,6 +13454,144 @@ test("持久化判定回执被篡改后，时间线读取拒绝该回执", async
   ).rejects.toThrow("Invalid resolution receipt");
 });
 
+test("暗骰结算后冷重试与归档保留原回执，全新对话重放排除它", async () => {
+  const chainId = "hidden-resolution-replay";
+  const { worlds, worldId, root } = await createWorld(
+    chainId,
+    tabletopWorldFiles(),
+  );
+  const goal = "The courier hands over a forged key offstage";
+  const host = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      {
+        outcome: "response",
+        toolCalls: [
+          {
+            id: "hidden",
+            name: "d20_check",
+            arguments: {
+              goal,
+              modifier: 3,
+              difficulty: 15,
+              visibility: "hidden",
+            },
+          },
+        ],
+      },
+      { outcome: "failure", message: "Rejected before completing the prose." },
+    ],
+  });
+  const interrupted = await new PlayCallChain(
+    worlds,
+    resolutionCompiler(),
+  ).start({
+    worldId,
+    chainId,
+    exchangeId: "initial",
+    playerText: "I wait in the inn.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: host,
+  });
+  expect(interrupted).toMatchObject({ status: "interrupted", canRetry: true });
+  const settled = interrupted.events.find(
+    (event) => event.kind === "tool_result" && event.callId === "hidden",
+  )!;
+  expect(settled).toMatchObject({ ok: true, hiddenResolution: true });
+  expect(settled).not.toHaveProperty("resolution");
+  const coldWorlds = new FileNativeWorldStore(root);
+  const detail = await coldWorlds.playTimeline.readDetail(
+    worldId,
+    chainId,
+    settled.id,
+  );
+  expect(detail).toMatchObject({
+    kind: "tool_result",
+    resolution: { goal, visibility: "hidden" },
+  });
+  if (detail.kind !== "tool_result" || detail.resolution?.kind !== "d20")
+    throw new Error("Hidden d20 receipt is missing");
+  expect(detail.resolution.dice).toHaveLength(1);
+
+  const coldChains = new PlayCallChain(
+    coldWorlds,
+    new FileNativePromptCompiler({ locale: "zh-CN" }),
+  );
+  const coldHost = new ScriptedModelHost({
+    binding: modelBinding(),
+    steps: [
+      { outcome: "response", text: "I hear the floorboards creak." },
+      { outcome: "response", text: "The inn goes quiet." },
+    ],
+  });
+  const resumed = await coldChains.append({
+    worldId,
+    chainId,
+    exchangeId: "retry",
+    playerText: "",
+    modelHost: coldHost,
+  });
+  expect(resumed.status).toBe("ready");
+  expect(coldHost.requests[0]!.appended).toEqual(host.requests[1]!.appended);
+  expect(
+    await coldWorlds.playTimeline.readDetail(worldId, chainId, settled.id),
+  ).toEqual(detail);
+  expect(
+    resumed.events.filter((event) => event.kind === "tool_result"),
+  ).toEqual([settled]);
+
+  await coldChains.start({
+    worldId,
+    chainId: "fresh-context",
+    exchangeId: "fresh-action",
+    playerText: "I look around.",
+    hostBinding: hostBinding(),
+    playPreset: playPreset(),
+    modelBinding: modelBinding(),
+    modelHost: coldHost,
+  });
+  expect(JSON.stringify(coldHost.requests[1]!)).toContain(
+    "I hear the floorboards creak.",
+  );
+  expect(JSON.stringify(coldHost.requests[1]!)).not.toContain(goal);
+
+  const source = archiveStores(root);
+  await source.archives.initialize();
+  await source.archives.exportWorld({ worldId, operationId: "hidden-export" });
+  const targetRoot = await mkdtemp(join(tmpdir(), "hidden-resolution-import-"));
+  roots.push(targetRoot);
+  const target = archiveStores(targetRoot);
+  await target.archives.initialize();
+  const imported = await target.archives.importWorld({
+    operationId: "hidden-import",
+    ...(await target.archives.upload(
+      createReadStream(
+        join(root, "world-archives/exports/hidden-export/archive.zip"),
+      ),
+    )),
+  });
+  const importedId = imported.world.worldId;
+  const page = await target.worlds.playTimeline.readPage(importedId, 100);
+  expect(JSON.stringify(page)).not.toContain(goal);
+  const importedResult = page.items.find(
+    (item) =>
+      item.kind === "event" &&
+      item.event.kind === "tool_result" &&
+      item.event.callId === "hidden",
+  );
+  if (importedResult?.kind !== "event")
+    throw new Error("Hidden result was not imported");
+  expect(importedResult.event).toMatchObject({ hiddenResolution: true });
+  const importedDetail = await target.worlds.playTimeline.readDetail(
+    importedId,
+    importedResult.chainId,
+    importedResult.event.id,
+  );
+  expect(importedDetail).toEqual({ ...detail, id: importedDetail.id });
+});
+
 test("判定工具不在冻结宇宙中时被拒绝，非法参数只产生工具错误", async () => {
   const rejected = await createWorld("play-chain-resolution-gating");
   const rejectedHost = new ScriptedModelHost({

@@ -68,7 +68,7 @@ export function runtimeToolNamesForGameplay(
 }
 
 /** Changes only when the executable Runtime tool universe or schemas change. */
-export const runtimeToolRegistryRevision = "runtime-tools-v10";
+export const runtimeToolRegistryRevision = "runtime-tools-v11";
 
 export type RegisteredRuntimeToolName =
   (typeof registeredRuntimeToolNames)[number];

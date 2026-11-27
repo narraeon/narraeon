@@ -18,6 +18,7 @@ import {
   type ArithmeticReceipt,
   type DiceReceipt,
   type ResolutionReceipt,
+  type ResolutionVisibility,
 } from "../../protocol/resolution.ts";
 
 export const resolutionToolNames = [
@@ -53,6 +54,7 @@ const integer = (minimum: number, maximum: number) => ({
 });
 const number = { type: "number", minimum: -1_000_000, maximum: 1_000_000 };
 const goal = { type: "string", minLength: 1, maxLength: 1000, pattern: "\\S" };
+const visibility = { enum: ["public", "hidden"] };
 const object = (properties: Record<string, object>, required: string[]) => ({
   type: "object",
   additionalProperties: false,
@@ -63,6 +65,7 @@ const resolutionSchemas: Record<ResolutionToolName, object> = {
   d20_check: object(
     {
       goal,
+      visibility,
       modifier: integer(-1_000_000, 1_000_000),
       difficulty: integer(-1_000_000, 1_000_000),
       mode: { enum: ["normal", "advantage", "disadvantage"] },
@@ -72,6 +75,7 @@ const resolutionSchemas: Record<ResolutionToolName, object> = {
   percentile_check: object(
     {
       goal,
+      visibility,
       target: integer(0, 100),
       bonusDice: integer(0, 2),
       penaltyDice: integer(0, 2),
@@ -81,6 +85,7 @@ const resolutionSchemas: Record<ResolutionToolName, object> = {
   bag_check: object(
     {
       goal,
+      visibility,
       value: number,
       difficulty: number,
       tokens: {
@@ -101,12 +106,19 @@ const resolutionSchemas: Record<ResolutionToolName, object> = {
     ["goal", "value", "difficulty"],
   ),
   roll_dice: object(
-    { goal, count: integer(1, 100), sides: integer(2, 1000), modifier: number },
+    {
+      goal,
+      visibility,
+      count: integer(1, 100),
+      sides: integer(2, 1000),
+      modifier: number,
+    },
     ["goal", "count", "sides"],
   ),
   calculate: object(
     {
       goal,
+      visibility,
       left: number,
       right: number,
       operation: { enum: ["add", "subtract", "multiply", "divide"] },
@@ -138,13 +150,19 @@ const descriptions: Record<ResolutionToolName, [string, string]> = {
   ],
 };
 
+const visibilityGuidance = {
+  "zh-CN":
+    '公开判定（visibility: "public"，省略时默认）会在故事显示。公开 goal 只写玩家已知的行动，例如「请求船夫载我过河」，不写对方的隐情。若目标、机械细节（如标记名称）或结果会泄露幕后行动或未知事实，调用前选 visibility: "hidden"（暗骰）。主持收到完整回执，只叙述玩家当下能感知的后果。',
+  en: 'Public resolution (visibility: "public", the default) appears in the story. Write a public goal using only the player-known action, such as "Ask the ferryman for passage." Leave out the ferryman\'s private motives. Choose visibility: "hidden" before resolving if the goal, mechanical details (such as token labels), or outcome would reveal offstage actions or unknown facts. You receive the full receipt. Narrate only consequences the player can perceive now.',
+} as const;
+
 export function resolutionToolDefinition(
   name: ResolutionToolName,
   locale: AppLocale,
 ) {
   return {
     name,
-    description: descriptions[name][locale === "zh-CN" ? 0 : 1],
+    description: `${descriptions[name][locale === "zh-CN" ? 0 : 1]} ${visibilityGuidance[locale]}`,
     inputSchema: structuredClone(resolutionSchemas[name]),
   };
 }
@@ -197,7 +215,8 @@ export function resolveTabletop(
       `Invalid ${name} parameters: ${ajv.errorsText(validators[name].errors)}`,
     );
   const input = args as Record<string, unknown>;
-  const receipt =
+  const visibility = input.visibility as ResolutionVisibility | undefined;
+  const mechanics =
     name === "d20_check"
       ? resolveD20(input, random)
       : name === "percentile_check"
@@ -207,6 +226,8 @@ export function resolveTabletop(
           : name === "roll_dice"
             ? resolveDice(input, random)
             : resolveArithmetic(input);
+  const receipt =
+    visibility === undefined ? mechanics : { ...mechanics, visibility };
   if (!isResolutionReceipt(receipt))
     throw new Error("Calculation produced an invalid resolution receipt");
   return receipt;
@@ -383,6 +404,8 @@ export function resolutionMarkdown(
   const signed = (value: number) => (value >= 0 ? `+${value}` : `${value}`);
   const list = (values: readonly (number | string)[]) => values.join(", ");
   const lines: string[] = [`# ${receipt.goal}`, ""];
+  if (receipt.visibility === "hidden")
+    lines.push(zh ? "可见性：暗骰，仅供主持" : "Visibility: hidden (GM only)");
   if (receipt.kind === "d20") {
     const modes = zh
       ? { normal: "普通", advantage: "优势", disadvantage: "劣势" }

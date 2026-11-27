@@ -1,8 +1,8 @@
 /**
  * Structured mechanical receipts for tabletop resolution tools.
  *
- * Receipts store numbers and identifiers only. Localized prose is rendered by
- * Runtime for the model and by the UI from these fields, never stored as text.
+ * Mechanical receipts store structured fields. Runtime and the UI use them
+ * to render localized text for their respective audiences.
  */
 
 export type ResolutionOutcome =
@@ -17,9 +17,16 @@ export type D20Mode = "normal" | "advantage" | "disadvantage";
 
 export type ArithmeticOperation = "add" | "subtract" | "multiply" | "divide";
 
-export interface D20Receipt {
-  kind: "d20";
+export type ResolutionVisibility = "public" | "hidden";
+
+interface ResolutionReceiptBase {
   goal: string;
+  /** Absent on legacy receipts, which are public. */
+  visibility?: ResolutionVisibility;
+}
+
+export interface D20Receipt extends ResolutionReceiptBase {
+  kind: "d20";
   modifier: number;
   difficulty: number;
   mode: D20Mode;
@@ -31,9 +38,8 @@ export interface D20Receipt {
   outcome: ResolutionOutcome;
 }
 
-export interface D100Receipt {
+export interface D100Receipt extends ResolutionReceiptBase {
   kind: "d100";
-  goal: string;
   target: number;
   bonusDice: number;
   penaltyDice: number;
@@ -57,9 +63,8 @@ export interface BagToken {
 /** The token that was drawn. Its count belongs to the bag, not the draw. */
 export type BagDraw = Omit<BagToken, "count">;
 
-export interface BagReceipt {
+export interface BagReceipt extends ResolutionReceiptBase {
   kind: "bag";
-  goal: string;
   value: number;
   difficulty: number;
   defaultBag: boolean;
@@ -74,9 +79,8 @@ export interface BagReceipt {
   outcome: ResolutionOutcome;
 }
 
-export interface DiceReceipt {
+export interface DiceReceipt extends ResolutionReceiptBase {
   kind: "dice";
-  goal: string;
   count: number;
   sides: number;
   modifier: number;
@@ -84,9 +88,8 @@ export interface DiceReceipt {
   total: number;
 }
 
-export interface ArithmeticReceipt {
+export interface ArithmeticReceipt extends ResolutionReceiptBase {
   kind: "arithmetic";
-  goal: string;
   left: number;
   right: number;
   operation: ArithmeticOperation;
@@ -159,6 +162,12 @@ export function isResolutionReceipt(
   value: unknown,
 ): value is ResolutionReceipt {
   if (!isRecord(value)) return false;
+  if (
+    value.visibility !== undefined &&
+    value.visibility !== "public" &&
+    value.visibility !== "hidden"
+  )
+    return false;
   switch (value.kind) {
     case "d20":
       return isD20Receipt(value);
@@ -191,7 +200,7 @@ function isD20Receipt(value: Record<string, unknown>): boolean {
         "margin",
         "outcome",
       ],
-      [],
+      ["visibility"],
     ) ||
     !isGoal(value.goal) ||
     !isInteger(value.modifier, -maximumMagnitude, maximumMagnitude) ||
@@ -235,7 +244,7 @@ function isD100Receipt(value: Record<string, unknown>): boolean {
         "margin",
         "outcome",
       ],
-      [],
+      ["visibility"],
     ) ||
     !isGoal(value.goal) ||
     !isInteger(value.target, 0, 100) ||
@@ -282,7 +291,7 @@ function isBagReceipt(value: Record<string, unknown>): boolean {
         "drawn",
         "outcome",
       ],
-      ["total", "margin"],
+      ["total", "margin", "visibility"],
     ) ||
     !isGoal(value.goal) ||
     !isNumber(value.value) ||
@@ -333,7 +342,7 @@ function isDiceReceipt(value: Record<string, unknown>): boolean {
     !hasShape(
       value,
       ["kind", "goal", "count", "sides", "modifier", "dice", "total"],
-      [],
+      ["visibility"],
     ) ||
     !isGoal(value.goal) ||
     !isInteger(value.count, 1, 100) ||
@@ -353,7 +362,7 @@ function isArithmeticReceipt(value: Record<string, unknown>): boolean {
     !hasShape(
       value,
       ["kind", "goal", "left", "right", "operation", "total"],
-      [],
+      ["visibility"],
     ) ||
     !isGoal(value.goal) ||
     !isNumber(value.left) ||

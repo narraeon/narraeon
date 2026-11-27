@@ -23,6 +23,7 @@ import type {
   RenderedPlayerView,
 } from "../protocol/playerViews.ts";
 import type { WorldExtensionsView } from "../protocol/worldExtensions.ts";
+import { projectPlayToolResult } from "../shared/play-tool-result-projection.ts";
 import type {
   FrontendArtifactProjection,
   FrontendPlayerViewPanelProjection,
@@ -797,11 +798,8 @@ function summarizeTimelineEvent(
     void _arguments;
     return { ...summary, detailsAvailable: true };
   }
-  if (event.kind === "tool_result") {
-    const { markdown: _markdown, ...summary } = event;
-    void _markdown;
-    return { ...summary, detailsAvailable: true };
-  }
+  if (event.kind === "tool_result")
+    return { ...projectPlayToolResult(event), detailsAvailable: true };
   return {
     id: event.id,
     kind: "followup",
