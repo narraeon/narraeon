@@ -5023,8 +5023,8 @@ test.each([
       .find(({ toolCallId }) => toolCallId === "edit-lantern");
     expect(rejectedWrite?.markdown).toContain(
       locale === "zh-CN"
-        ? "写入前请精确读取 @lantern"
-        : "Read @lantern exactly",
+        ? "写入 @lantern 超出了当前授权"
+        : "exceeds the current write scope for @lantern",
     );
     const files = await coldWorlds.readSurface(worldId, "state");
     expect(
@@ -6894,6 +6894,221 @@ test("长调用轨迹按稳定游标读取摘要，重型详情与旧事件不�
     result: { artifacts: [], extensions: [], artifactDebug: [] },
   });
 });
+
+test.each(["en", "zh-CN"] as const)(
+  "%s play preload and read receipts explain actual write scopes",
+  async (locale) => {
+    const zh = locale === "zh-CN";
+    const files = worldFiles();
+    files.find(({ path }) => path === "control/frame.yaml")!.contents +=
+      "  - slot: { kind: catalog, directory: records, maxEntries: 10 }\n" +
+      "  - slot: { kind: node, document: '@ledger', locator: { yaml: [公开] } }\n";
+    files.find(({ path }) => path === "control/player-views.yaml")!.contents =
+      `format: narraeon.player-views/v1
+views:
+  - id: status
+    title: 状态面板
+    items:
+      - id: place
+        label: 宿舍门边
+        select: { document: '@current-situation', locator: { yaml: [情况] } }
+`;
+    files.push(
+      {
+        path: "world/records/ledger.yaml",
+        contents: `$document:
+  id: record.ledger
+  ref: ledger
+  title: 留校登记
+  summary: 检查进度。
+  aliases: [值班记录]
+公开:
+  名单: 初始名单
+内情: 未预载的记录
+`,
+      },
+      {
+        path: "world/records/archive.md",
+        contents: `---
+$document:
+  id: record.archive
+  ref: archive
+  title: 校园档案
+  summary: 窗边的备用记录。
+  aliases: [Window archive]
+---
+# 校园档案
+
+## Notes
+
+Original 档案正文。
+`,
+      },
+    );
+    const chainId = `preload-read-scopes-${locale}`;
+    const { worlds, worldId } = await createWorld(chainId, files);
+    const patch = (
+      id: string,
+      target: string,
+      edits: Record<string, unknown>[],
+    ) => ({ id, name: "world_patch", arguments: { target, edits } });
+    const set = (yaml: string[], value: string) => ({
+      op: "replace",
+      locator: { yaml },
+      value,
+    });
+    const read = (id: string, ref: string) => ({
+      id,
+      name: "context_read",
+      arguments: { ref },
+    });
+    const host = new ScriptedModelHost({
+      binding: modelBinding(),
+      steps: [
+        {
+          outcome: "response",
+          toolCalls: [
+            patch("preloaded-document-write", "@current-situation", [
+              set(["情况"], "Alex挪到窗边。"),
+              { op: "set_metadata", summary: "新的情境摘要。" },
+            ]),
+            patch("preloaded-node-write", "@ledger", [
+              set(["公开", "名单"], "更新名单"),
+            ]),
+            patch("unread-sibling-write", "@ledger", [
+              set(["内情"], "不得写入"),
+            ]),
+            patch("node-metadata-write", "@ledger", [
+              { op: "set_metadata", summary: "不得写入" },
+            ]),
+            {
+              id: "root",
+              name: "state_list",
+              arguments: { parent: "@dir-/" },
+            },
+            {
+              id: "catalog",
+              name: "state_list",
+              arguments: { parent: "@dir-/records" },
+            },
+            patch("catalog-only-write", "@archive", [
+              { op: "set_metadata", summary: "不得写入" },
+            ]),
+            read("read-node", "@ledger#/内情"),
+            read("read-yaml", "@current-situation"),
+            read("read-markdown", "@archive"),
+            patch("read-node-write", "@ledger", [set(["内情"], "精读后更新")]),
+            patch("read-document-write", "@archive", [
+              { op: "set_metadata", summary: "精读后更新" },
+            ]),
+          ],
+        },
+        { outcome: "response", text: "Alex把值班记录放回窗台。" },
+      ],
+    });
+    const preset = builtinDefaultPlayPresetBinding(locale);
+    const view = await new PlayCallChain(
+      worlds,
+      new FileNativePromptCompiler({ locale }),
+    ).start({
+      worldId,
+      chainId,
+      exchangeId: "first",
+      playerText: "看向宿舍窗边。",
+      hostBinding: presetHostBinding(preset),
+      playPreset: preset,
+      modelBinding: modelBinding(),
+      modelHost: host,
+    });
+
+    const preload = host.requests[0]!.bootstrap.provider.preload?.markdown;
+    expect(preload).toContain("@current-situation · resolved");
+    expect(preload).toContain(
+      zh
+        ? "整份正文可直接写入，无需精读"
+        : "write anywhere in its body without another read",
+    );
+    expect(preload).toContain("@ledger · yaml:公开 · resolved");
+    expect(preload).toContain(
+      zh ? "仅该节点及其子节点可直接写入" : "write only within this node",
+    );
+    expect(preload).toContain(
+      zh
+        ? "目录摘要不授予写入资格"
+        : "Catalog summaries grant no write authorization",
+    );
+    expect(preload).toContain("情况: Alex守在宿舍门边。");
+    expect(preload).toContain("名单: 初始名单");
+    expect(preload).toContain("@archive");
+    expect(preload).not.toContain("内情: 未预载的记录");
+    expect(preload).not.toContain("Original 档案正文。");
+
+    for (const [callId, ok] of [
+      ["preloaded-document-write", true],
+      ["preloaded-node-write", true],
+      ["unread-sibling-write", false],
+      ["node-metadata-write", false],
+      ["catalog-only-write", false],
+      ["read-node-write", true],
+      ["read-document-write", true],
+    ] as const)
+      expect(view.events).toContainEqual(
+        expect.objectContaining({ kind: "tool_result", callId, ok }),
+      );
+
+    const receipt = (id: string) => {
+      const item = sent(host.requests[1]!).find(
+        (entry) => entry.kind === "tool" && entry.toolCallId === id,
+      );
+      if (item?.kind !== "tool") throw new Error(`Missing receipt ${id}`);
+      return item.markdown;
+    };
+    expect(receipt("root")).toContain(
+      zh ? "- 目录 @dir-/records" : "- Directory @dir-/records",
+    );
+    expect(receipt("catalog")).toContain(
+      zh
+        ? "# 目录列表\n\n范围：状态 · @dir-/records\n覆盖：完整"
+        : "# Directory listing\n\nScope: state · @dir-/records\nCoverage: complete",
+    );
+    expect(receipt("catalog")).toContain(
+      `- ${zh ? "文档" : "Document"} @ledger · 留校登记 · YAML · 检查进度。`,
+    );
+    expect(receipt("catalog")).toContain(zh ? "完整返回：是" : "Complete: yes");
+    expect(receipt("read-yaml")).toContain(
+      zh ? "# 精确读取 @current-situation" : "# Exact read @current-situation",
+    );
+    expect(receipt("read-yaml")).toContain(
+      zh ? "## 玩家视图读取绑定" : "## Player-view read bindings",
+    );
+    expect(receipt("read-yaml")).toContain(
+      '宿舍门边 → @current-situation#yaml:["情况"]',
+    );
+    expect(receipt("read-yaml")).toContain(
+      "title: 当前情境\nsummary: 新的情境摘要。",
+    );
+    expect(receipt("read-yaml")).toContain("情况: Alex挪到窗边。");
+    expect(receipt("read-yaml")).not.toContain("$document");
+    expect(receipt("read-markdown")).toContain(
+      zh
+        ? "[可写正文开始，定位从此处起算]\n# 校园档案\n\n## Notes\n\nOriginal 档案正文。\n[可写正文结束]"
+        : "[Writable body starts; locators are relative to this point]\n# 校园档案\n\n## Notes\n\nOriginal 档案正文。\n[Writable body ends]",
+    );
+    expect(receipt("read-markdown")).toContain(
+      zh ? "写入范围：整份文档" : "Write scope: whole document",
+    );
+    expect(receipt("read-node")).toContain(
+      zh ? "# 精确读取 @ledger#/内情" : "# Exact read @ledger#/内情",
+    );
+    expect(receipt("read-node")).toContain("未预载的记录");
+    expect(receipt("read-node")).not.toContain("更新名单");
+    expect(receipt("read-node")).toContain(
+      zh
+        ? "写入范围：该节点及其子节点"
+        : "Write scope: this node and its descendants",
+    );
+  },
+);
 
 test("新调用链拒绝未冻结的旧 context_list 名称", async () => {
   const { worlds, worldId } = await createWorld(

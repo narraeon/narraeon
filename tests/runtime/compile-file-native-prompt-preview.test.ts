@@ -2283,10 +2283,10 @@ context:
       /^- (current_situation|document|node): .*continue with context_read$/mu,
     );
     expect(worldContext).toContain(
-      "`full body injected` covers the entire supplied body and authorizes writing it.",
+      "`full body injected`: write anywhere in its body without another read, and update document metadata.",
     );
     expect(worldContext).toContain(
-      "`node injected` covers only the named node and authorizes writing that scope.",
+      "`node injected`: write only within this node and its descendants.",
     );
     // Injected text is already writable; headings expose the codec needed for locators.
     expect(worldContext).toContain(
