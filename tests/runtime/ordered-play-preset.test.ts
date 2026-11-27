@@ -578,6 +578,28 @@ test.each(["en", "zh-CN"] as const)(
     expect(JSON.stringify(results.setting.provider)).not.toContain(
       writeGuidance,
     );
+    const sceneGuidance =
+      locale === "en"
+        ? [
+            "Check the recent scene before revising it.",
+            "Preserve still-valid constraints, unresolved matters, available choices",
+            "use append with world_revision_patch and point the locator at the list itself",
+            "Replace only entries that have become stale or conflict with verified facts.",
+            "Independent edits outside the scene need no history lookup.",
+          ]
+        : [
+            "涉及眼前现场时，先核对再修订。",
+            "保留仍有效的条件、未决事项、可选行动",
+            "用 world_revision_patch 的 append，locator 指向列表本身",
+            "只替换已失效或与核实事实冲突的旧条目。",
+            "不涉及现场的独立改动无需查历史。",
+          ];
+    const revisionProvider = JSON.stringify(results["world-revision"].provider);
+    const settingProvider = JSON.stringify(results.setting.provider);
+    for (const guidance of sceneGuidance) {
+      expect(revisionProvider).toContain(guidance);
+      expect(settingProvider).not.toContain(guidance);
+    }
     for (const target of ["setting", "world-revision"] as const) {
       const result = results[target];
       const builtin = builtinAuthorPrompts(locale, target).find(
@@ -587,6 +609,8 @@ test.each(["en", "zh-CN"] as const)(
         ({ promptId }) => promptId === "author.mechanics",
       );
       expect(mechanics?.markdown).toBe(builtin?.body);
+      if (target === "world-revision")
+        expect(mechanics?.markdown).toContain('{"latest":4}');
       const encoded = JSON.stringify(result.provider);
       expect(encoded).toContain("ONLY_ENABLED_PLAY_POLICY");
       expect(encoded).not.toContain("# Player-visible narrative rules");

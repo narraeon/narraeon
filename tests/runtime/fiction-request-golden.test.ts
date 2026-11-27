@@ -116,6 +116,8 @@ import { worldRevisionToolDefinitions } from "../../src/runtime/world-revision/W
  * #398 distinguishes intended speech from private action limits in the default
  * continuation block and turn guide. The 52 chain, preview and authoring
  * digests moved; preset-free bootstraps stay unchanged.
+ * #397 adds bounded scene verification and scoped edits to world revision.
+ * Only the two revision digests moved.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -408,9 +410,9 @@ const expectedDigests: Record<string, string> = {
   "preview/zh-CN/ordered-default/openai_responses/bootstrap":
     "15ae7446a5b225e241ca9d9e92b889a2f8b3e5c175ded60ee6f9dc01a0c93d28",
   "revision/en":
-    "cea8c7f8c028e6b20d4e14365714519cad598cdbbceaca7e2ef9d3204ef0808a",
+    "9f35bc9f65c5172f1bb947ab291a2626595f2c94569d7a99851a119173b40028",
   "revision/zh-CN":
-    "30a4d3b5245a9f59cdd060897e0e7031462c37b980e47359ace2dd74c4a1f836",
+    "2253e3f51c89306864a3dc772d5d4831cfac3bb09922d4cd8d244d2b6ea6ecc3",
   "setting/en":
     "010bc4da02c9fd401bc12ef664f624878e12e8ea9cc65c7e56ecb5bdd0eb660c",
   "setting/zh-CN":

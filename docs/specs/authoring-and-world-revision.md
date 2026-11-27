@@ -109,6 +109,7 @@ AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `se
 
 - **编排复用与预载授权**：复用当前编排方案的 `authorPrompts`（无后置请求），替换为世界修订机械说明与 epoch 目标。每次发送的 bootstrap 在全部作者提示之后预载工作树目录、控制文档全文与世界框架注入的文档全文——这些预载文档在该次编译所属 revision 内视为已完整读取，无需再读即可修改。
 - **只读历史导航**：修订对话支持调用 `history_list`、`history_search`、`history_read` 只读导航该 epoch 固定端点处的已提交历史（与游玩共用 `HistoryQuery` 与渲染）；不产生 revision 变更、改动历史或写入授权，不可改写历史。
+- 用户要求保留刚发生的事，且修订会引用或修改当前情境中的眼前行动、待回应或安排时，编排提示模型**先核对眼前现场**，用 `history_read({"latest":4})` 按需读取近期原文。修订以当前工作树为底，保留仍有效的条件、未决事项、可选行动及角色原先所知。既有 YAML 列表中的独立进展用 `world_revision_patch` 的 `append` 在列表本身追加，过时或与核实事实冲突的条目才局部替换。独立于现场的修改无需查历史。
 - **跨 Epoch 边界**：应用或放弃后可继续原对话；下一条新消息从届时最新世界建立新 epoch，在 Runtime-system 层追加明确 epoch 边界（Google Interactions 将可信当前边界提升至 `system_instruction` 并在原位留 Runtime 通知），同时清空此前 list／search 游标与读取授权，保留旧 Provider 续传，要求 AI 重新读取后再写。
 - **历史用户消息修改与恢复**：支持保留文件 vs 撤回文件（仅逆序撤回当前活动 epoch 中被替换部分的本对话 AI 变化，跨已封存改动时拒绝撤回并提示保留文件继续；工作树、rollback 历史与对话替换共享持久恢复意图；修改本身不提交 Authority）。支持 64 步暂停继续（仅同活动 epoch）与普通失败重发（要求同活动 epoch、冻结请求与续传可用、连接兼容且文件未被他方改动）。旧 schema 1 会话可精确读取，下次新发送原子升级至 schema 2 并保留原 bootstrap 与历史。
 

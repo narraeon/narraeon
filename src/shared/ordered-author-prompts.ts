@@ -105,6 +105,9 @@ export function authoringMechanics(
           zh
             ? "已完整读取且仍获授权的独立修改可在同一响应发出。跳过已确认不变的值；需要新读取或前一步结果时，先等对应回执再决定。"
             : "You can send independent edits to fully read, still-authorized files in one response. Skip confirmed unchanged values. Wait for required reads or prerequisite results before deciding.",
+          zh
+            ? '涉及眼前现场时，先核对再修订。若用户要求保留刚发生的事，而修订会引用或改写当前情境中的眼前行动、待回应或现场安排，先用 history_read（{"latest":4}）核对最近已提交原文，已有足够原文则复用。以当前树为底，只局部修改用户要求的事实及本次涉及、原文证实已过时的待回应或眼前行动。保留仍有效的条件、未决事项、可选行动、角色原先所知及未兑现的承诺。向既有 YAML 列表补录独立进展时，用 world_revision_patch 的 append，locator 指向列表本身。只替换已失效或与核实事实冲突的旧条目。按原文区分玩家和其他角色做过什么，原文没有交代的行动、执行者或进展不要补写。不涉及现场的独立改动无需查历史。'
+            : 'Check the recent scene before revising it. If the user asks to preserve what just happened and the revision would refer to or change immediate actions, pending responses, or arrangements in the current situation, first check the latest committed originals with history_read ({"latest":4}). Reuse sufficient evidence already obtained. Use the current worktree as the basis for local edits to the requested facts and any in-scope pending response or immediate action the originals show is stale. Preserve still-valid constraints, unresolved matters, available choices, prior character knowledge, and unfulfilled commitments. For separate progress in an existing YAML list, use append with world_revision_patch and point the locator at the list itself. Replace only entries that have become stale or conflict with verified facts. Keep each action attributed to the person who did it. Leave actions, actors, and progress unspecified where the originals do. Independent edits outside the scene need no history lookup.',
         ]
       : []),
     boundary,

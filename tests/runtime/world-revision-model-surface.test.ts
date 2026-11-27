@@ -167,6 +167,26 @@ test("world-revision delete description uses the worktree vocabulary in English"
   expect(description).toContain("world revision worktree");
 });
 
+test.each([
+  [
+    "en",
+    "independent locations in the same document can go in one response",
+    "entire body",
+  ],
+  ["zh-CN", "同一文档的多个独立位置可在同一响应中分别调用 patch", "整文重写"],
+] as const)(
+  "world-revision write tool guides scoped %s edits to patches",
+  (locale, batchGuide, wholeBodyGuide) => {
+    const description = worldRevisionToolDefinitions(
+      locale,
+      fictionGameplay,
+    ).find(({ name }) => name === "world_revision_write_file")?.description;
+    expect(description).toContain("world_revision_patch");
+    expect(description).toContain(batchGuide);
+    expect(description).toContain(wholeBodyGuide);
+  },
+);
+
 test("world-revision runtime contract names the content package only in its contrast sentence", () => {
   for (const locale of appLocales)
     for (const gameplay of [fictionGameplay, tabletopGameplay]) {
