@@ -381,7 +381,7 @@ export function ModelConnectionScreen({
           connectionId: form.connectionId,
           name: form.connectionId === null ? preset.name : form.name,
           modelPrompt: form.modelPrompt,
-          presetId: preset.id,
+          presetId,
           provider: preset.provider,
           baseUrl: preset.baseUrl,
         },

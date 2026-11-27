@@ -245,21 +245,30 @@ export class ModelConnectionStore {
   }
 
   async bind(): Promise<FileNativeModelConnection> {
-    const connection = await this.bindActiveIfPresent();
-    if (connection === null) throw new ModelConnectionUnavailableError();
-    return connection;
-  }
-
-  async bindActiveIfPresent(): Promise<FileNativeModelConnection | null> {
-    await this.#mutationTail;
-    const document = await this.#readDocument();
-    const connection = document.connections.find(
-      ({ id }) => id === document.activeConnectionId,
-    );
-    if (connection === undefined) return null;
+    const connection = await this.#readActiveConnection();
+    if (connection === undefined) throw new ModelConnectionUnavailableError();
     if (connection.chatGptAccountId !== undefined)
       await this.#requirePlanAccount(connection.chatGptAccountId);
     return this.#bind(connection);
+  }
+
+  async bindActiveIfPresent(): Promise<FileNativeModelConnection | null> {
+    const connection = await this.#readActiveConnection();
+    if (connection === undefined) return null;
+    if (
+      connection.chatGptAccountId !== undefined &&
+      !(await this.#planAccountAvailable(connection.chatGptAccountId))
+    )
+      return null;
+    return this.#bind(connection);
+  }
+
+  async #readActiveConnection(): Promise<StoredModelConnection | undefined> {
+    await this.#mutationTail;
+    const document = await this.#readDocument();
+    return document.connections.find(
+      ({ id }) => id === document.activeConnectionId,
+    );
   }
 
   /** Resolve a frozen logical operation without changing the active model. */
@@ -415,10 +424,7 @@ export class ModelConnectionStore {
     const configured =
       active !== undefined &&
       (active.chatGptAccountId === undefined ||
-        (await auth?.listAccounts().catch(() => undefined))?.some(
-          ({ id, status }) =>
-            id === active.chatGptAccountId && status === "plan_authorized",
-        ) === true);
+        (await this.#planAccountAvailable(active.chatGptAccountId)));
     return {
       configured,
       ...(auth === undefined ? {} : { chatGptAvailable: true }),
@@ -432,6 +438,15 @@ export class ModelConnectionStore {
     const auth = this.#localChatGpt?.();
     if (auth === undefined) throw new ChatGptAuthError("local_only");
     return auth;
+  }
+
+  async #planAccountAvailable(accountId: string): Promise<boolean> {
+    const auth = this.#localChatGpt?.();
+    if (auth === undefined) return false;
+    const accounts = await auth.listAccounts().catch(() => []);
+    return accounts.some(
+      ({ id, status }) => id === accountId && status === "plan_authorized",
+    );
   }
 
   async #requirePlanAccount(accountId: string): Promise<void> {
