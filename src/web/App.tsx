@@ -1673,7 +1673,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             }}
             model={{
               modelConfigured: workspace.model.configured,
-              activeModelName: activeModel?.name ?? null,
               onConfigureModel: () => navigate("model"),
             }}
             currentPresetName={currentPresetName}

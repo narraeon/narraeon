@@ -17,6 +17,7 @@ const englishMessages: Record<string, string> = {
   "ChatGPT 套餐": "ChatGPT plan",
   "正在使用 ChatGPT 套餐": "Using ChatGPT plan",
   "需要启用 ChatGPT 套餐": "ChatGPT plan needs authorization",
+  "ChatGPT 需授权": "Authorize ChatGPT",
   "管理 ChatGPT 用量": "Manage ChatGPT usage",
   "已退出 ChatGPT": "Signed out of ChatGPT",
   "已登录 ChatGPT，尚未授权使用套餐":
@@ -337,6 +338,7 @@ const englishMessages: Record<string, string> = {
   我的世界: "My worlds",
   内容库: "Content library",
   模型设置: "Model settings",
+  "当前连接：{name}": "Current connection: {name}",
   创作工具: "Creation tools",
   切换页面: "Switch page",
   内容包读取失败: "Could not load content package",
@@ -1139,7 +1141,6 @@ const englishMessages: Record<string, string> = {
   "选好题材，读开场再创建世界。你也可以新建或导入自己的内容包。":
     "Pick a genre and read the opening before creating a world. You can also create or import your own content package.",
   待修复: "Needs repair",
-  "可编辑、预览并创建新世界": "Ready to edit, preview, and create a world",
   打开并修复内容包中的问题: "Open and fix issues in this content package",
   从一个故事开始: "Start with a story",
   "内容包由 opening.md、world 与 control 组成，可以从空白新建，也可以上传一份内容包 ZIP。":

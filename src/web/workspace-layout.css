@@ -184,13 +184,23 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  padding-block: 4px;
   white-space: nowrap;
 }
-.workspace-model-label {
+.workspace-model-button-text {
   min-width: 0;
-  overflow: hidden;
+  display: grid;
+  line-height: 1.15;
   text-align: start;
+}
+.workspace-model-label,
+.workspace-model-plan-status {
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.workspace-model-plan-status {
+  color: #cfbea0;
+  font-size: 11px;
 }
 .workspace-model-dot {
   flex: none;
@@ -420,12 +430,9 @@
   overflow-wrap: anywhere;
 }
 .home-package-state {
-  color: var(--muted);
+  color: var(--danger);
   font-size: 12px;
   white-space: nowrap;
-}
-.home-package-state.needs_repair {
-  color: var(--danger);
 }
 .home-package-card-gameplay {
   display: block;

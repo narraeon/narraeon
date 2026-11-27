@@ -62,7 +62,7 @@ export function HomeScreen({
     onImportArchiveChange,
     onImportPackage,
   },
-  model: { modelConfigured, activeModelName, onConfigureModel },
+  model: { modelConfigured, onConfigureModel },
   currentPresetName,
   onOpenPlayPresets = () => undefined,
 }: {
@@ -101,7 +101,6 @@ export function HomeScreen({
   };
   model: {
     modelConfigured: boolean;
-    activeModelName: string | null;
     onConfigureModel: () => void;
   };
   currentPresetName: string | null;
@@ -433,26 +432,37 @@ export function HomeScreen({
                         aria-label={uiText("打开内容包：{name}", {
                           name: item.title,
                         })}
+                        aria-describedby={
+                          item.status === "needs_repair"
+                            ? `home-package-gameplay-${item.localId} home-package-repair-${item.localId}`
+                            : `home-package-gameplay-${item.localId}`
+                        }
                         aria-pressed={item.localId === selectedPackageId}
                         disabled={pending}
                         onClick={() => onOpenPackage(item.localId)}
                       >
                         <span className="home-package-card-heading">
                           <strong>{item.title}</strong>
-                          <span className={`home-package-state ${item.status}`}>
-                            {item.status === "usable"
-                              ? uiText("可用")
-                              : uiText("待修复")}
-                          </span>
+                          {item.status === "needs_repair" && (
+                            <span className="home-package-state">
+                              {uiText("待修复")}
+                            </span>
+                          )}
                         </span>
-                        <span className="home-package-card-gameplay">
+                        <span
+                          className="home-package-card-gameplay"
+                          id={`home-package-gameplay-${item.localId}`}
+                        >
                           {gameplayLabel(item.gameplay, getWebLocale())}
                         </span>
-                        <span className="home-package-card-copy">
-                          {item.status === "usable"
-                            ? uiText("可编辑、预览并创建新世界")
-                            : uiText("打开并修复内容包中的问题")}
-                        </span>
+                        {item.status === "needs_repair" && (
+                          <span
+                            className="home-package-card-copy"
+                            id={`home-package-repair-${item.localId}`}
+                          >
+                            {uiText("打开并修复内容包中的问题")}
+                          </span>
+                        )}
                       </button>
                       <HomeCardActions
                         label={uiText("内容包操作：{title}", {
@@ -644,10 +654,6 @@ export function HomeScreen({
         </section>
       </div>
       <footer className="home-status-line" aria-label={uiText("工作区状态")}>
-        <span>
-          {uiText("模型连接")} ·{" "}
-          {modelConfigured ? activeModelName : uiText("尚未配置")}
-        </span>
         <button type="button" disabled={pending} onClick={onOpenPlayPresets}>
           {uiText("当前编排方案")} · {currentPresetName ?? uiText("尚未选择")}
         </button>
