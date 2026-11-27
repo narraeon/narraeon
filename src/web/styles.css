@@ -3763,7 +3763,6 @@ summary {
 @media (max-width: 48rem) {
   .content-workbench-header,
   .content-tree-heading,
-  .content-save-boundary,
   .world-frame-editor-header,
   .world-frame-repair-callout,
   .world-frame-malformed,
@@ -3801,14 +3800,19 @@ summary {
   }
 
   .content-save-boundary {
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    align-items: center;
+    gap: 0.35rem 0.7rem;
     padding-inline: 1rem;
   }
 
   .content-save-boundary .button-row {
+    min-width: 0;
     flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .content-save-boundary .button-row button {
+    padding-inline: 0.65rem;
+    font-size: 0.84rem;
   }
 
   .content-package-diagnostics li {

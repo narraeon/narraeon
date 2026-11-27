@@ -175,6 +175,23 @@
   font-weight: 500;
 }
 
+.fileActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+  margin-bottom: 0.45rem;
+}
+
+.fileActions > :global(.content-rename-file) {
+  min-width: 0;
+  margin: 0;
+}
+
+.fileActions > details[open] {
+  flex-basis: 100%;
+}
+
 .editor > [role="alert"] {
   margin: 0.45rem 0 0;
   font-size: 0.75rem;
@@ -186,22 +203,6 @@
   }
 }
 
-@media (max-width: 48rem) {
-  .workspace {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .sidebar {
-    grid-template-rows: auto auto auto auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  :where(.workspace) :global(.content-file-list) {
-    max-height: 15rem;
-  }
-}
 :global(.content-tree-editor) .workbench {
   border: 0;
   border-radius: 0;
@@ -213,6 +214,16 @@
   background: var(--surface);
 }
 @media (--workspace-mobile) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
   :where(.workspace)
     :global(.content-mobile-file-picker)
     > :global(.content-file-filter) {

@@ -43,7 +43,7 @@ test.afterAll(async () => {
 const widths = [
   375, 639, 640, 641, 959, 960, 961, 1050, 1172, 1173, 1200, 1201, 1440,
 ];
-const editorWidths = [375, 640, 960, 1200, 1440];
+const editorWidths = [375, 640, 641, 768, 960, 1200, 1440];
 
 for (const locale of ["zh-CN", "en"] as const) {
   test.describe(locale, () => {
@@ -199,23 +199,65 @@ for (const locale of ["zh-CN", "en"] as const) {
       }
 
       await page.goto(`/#/content/${packageId}`);
-      const files = page.getByRole("button", {
-        name: t("编辑", "Edit"),
+      const files = page
+        .getByRole("navigation", {
+          name: t("设定完善工具", "Setting-improvement tools"),
+        })
+        .getByRole("button", { name: t("编辑", "Edit"), exact: true });
+      const rail = page.getByRole("complementary", {
+        name: t("内容包文件编辑", "Content-package file editing"),
+      });
+      const fileEditor = rail.getByRole("textbox", {
+        name: t("编辑 opening.md", "Edit opening.md"),
+        exact: true,
+      });
+      const save = rail.getByRole("button", {
+        name: t("整批保存", "Save all changes"),
+        exact: true,
+      });
+      const close = rail.getByRole("button", {
+        name: t("收起文件面板", "Close file panel"),
         exact: true,
       });
       await files.click();
-      const fileEditor = page.locator(".content-file-editor textarea").first();
-      await expect(fileEditor).toBeVisible();
+      const draft = `${await fileEditor.inputValue()}\nKeep this draft while resizing.\n`;
+      const sourcePoint = { x: 24, y: 24 };
       for (const width of editorWidths) {
-        await page.setViewportSize({ width, height: 880 });
-        await expect(fileEditor).toBeInViewport();
-        await fileEditor.click();
-        await expect(fileEditor).toBeFocused();
-        await page.screenshot({
-          path: testInfo.outputPath(`editor-${width}.png`),
-          animations: "disabled",
+        await test.step(`editing opens and stays usable at ${width}px`, async () => {
+          await page.setViewportSize({ width, height: 880 });
+          await expect(fileEditor).toBeInViewport();
+          await expectHit(fileEditor, sourcePoint);
+          await close.click();
+          await files.click();
+          await expect(fileEditor).toBeInViewport();
+          await expectHit(fileEditor, sourcePoint);
+          await expect(
+            width <= 640
+              ? rail.getByRole("combobox", {
+                  name: t("选择编辑文件", "Choose a file to edit"),
+                })
+              : rail.getByRole("navigation", {
+                  name: t("内容包文件树", "Content-package file tree"),
+                }),
+          ).toBeInViewport();
+          await fileEditor.click({ position: sourcePoint });
+          await expect(fileEditor).toBeFocused();
+          if (width === editorWidths[0]) await fileEditor.fill(draft);
+          await expect(fileEditor).toHaveValue(draft);
+          await expect(save).toBeInViewport();
+          await expectHit(save);
+          await page.screenshot({
+            path: testInfo.outputPath(`editor-${width}.png`),
+            animations: "disabled",
+          });
         });
       }
+      await save.click();
+      await expect(
+        rail.getByText(t("当前树已保存", "Current tree saved"), {
+          exact: true,
+        }),
+      ).toBeVisible();
     });
 
     test("keyboard focus is visible on both composer fields", async ({
