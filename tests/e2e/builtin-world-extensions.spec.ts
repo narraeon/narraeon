@@ -229,6 +229,9 @@ for (const locale of appLocales) {
       expect(fixture.calls[4]?.body).toContain(draft);
 
       await page.goto(worldUrl(otherId));
+      await expect(
+        page.getByRole("heading", { name: "Other inn" }),
+      ).toBeVisible();
       await toggleMenu();
       for (const item of allToggles) await expect(item).not.toBeChecked();
       await toggleMenu();
@@ -241,6 +244,9 @@ for (const locale of appLocales) {
       expect(requestKinds().slice(7)).toEqual(["main"]);
 
       await page.goto(worldUrl(worldId));
+      await expect(
+        page.getByRole("heading", { name: "Existing inn" }),
+      ).toBeVisible();
       await toggleMenu();
       for (const item of [choices, debug, status])
         await expect(item).toBeChecked();
