@@ -125,8 +125,16 @@ for (const locale of ["zh-CN", "en"] as const) {
     });
 
     await page.goto("/#/models");
+    const settings = page.getByRole("button", {
+      name: t("模型设置", "Model settings"),
+      exact: true,
+    });
+    const connectionName = "Plan fixture";
     const form = page.locator("form.config-form");
     await form.locator("#model-preset").selectOption("chatgpt-plan");
+    await form
+      .getByLabel(t("配置名称", "Configuration name"))
+      .fill(connectionName);
     const signIn = form.getByRole("button", {
       name: t("使用 ChatGPT 继续", "Continue with ChatGPT"),
     });
@@ -209,6 +217,16 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(
       page.locator(".model-active-summary").getByText("account-model"),
     ).toBeVisible();
+    await expect(settings.getByText(connectionName)).toBeVisible();
+    await expect(
+      settings.getByText(t("ChatGPT 套餐", "ChatGPT plan")),
+    ).toBeVisible();
+    await expect(settings).toHaveAccessibleDescription(
+      t(
+        `当前连接：${connectionName} · 正在使用 ChatGPT 套餐`,
+        `Current connection: ${connectionName} · Using ChatGPT plan`,
+      ),
+    );
     expect(saved).not.toHaveProperty("chatGptAllowFollowups");
     await page.reload();
     await expect(model).toHaveValue("account-model");
@@ -236,6 +254,16 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(
       form.getByText(t("已退出 ChatGPT", "Signed out of ChatGPT")),
     ).toBeVisible();
+    await expect(settings.getByText(connectionName)).toBeVisible();
+    await expect(
+      settings.getByText(t("ChatGPT 需授权", "Authorize ChatGPT")),
+    ).toBeVisible();
+    await expect(settings).toHaveAccessibleDescription(
+      t(
+        `当前连接：${connectionName} · 需要启用 ChatGPT 套餐`,
+        `Current connection: ${connectionName} · ChatGPT plan needs authorization`,
+      ),
+    );
     await expect(probe).toBeDisabled();
     await expect(save).toBeDisabled();
     expect(probes).toBe(1);

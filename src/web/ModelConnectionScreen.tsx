@@ -425,9 +425,12 @@ export function ModelConnectionScreen({
   }
 
   function showFormFromSavedConfigurations(): void {
-    if (!showingSavedConfigurations) return;
-    focusFormOnReturn.current = true;
-    setSavedConfigurationsOpen(false);
+    if (showingSavedConfigurations) {
+      focusFormOnReturn.current = true;
+      setSavedConfigurationsOpen(false);
+    } else {
+      formHeading.current?.focus();
+    }
   }
 
   function startNew(): void {
@@ -754,6 +757,155 @@ export function ModelConnectionScreen({
         className="config-layout"
         data-narrow-view={showingSavedConfigurations ? "saved" : "form"}
       >
+        <section
+          className="config-list"
+          id="saved-model-configurations"
+          aria-label={uiText("已保存模型配置")}
+        >
+          <div className="section-heading-row">
+            <h3>{uiText("已保存配置")}</h3>
+            <span>
+              {library.connections.length} {uiText("份")}
+            </span>
+          </div>
+          {library.connections.length === 0 && (
+            <p className="panel-card">{uiText("尚未保存模型配置。")}</p>
+          )}
+          {library.connections.map((connection) => {
+            const isActive = connection.id === library.activeConnectionId;
+            return (
+              <article
+                className={`config-card panel-card${isActive ? " active-model-config" : ""}`}
+                key={connection.id}
+              >
+                <div className="section-heading-row">
+                  <div>
+                    <p className="eyebrow">
+                      {connection.chatGptAccountId === undefined
+                        ? providerLabel(connection.provider)
+                        : uiText("ChatGPT 套餐")}
+                    </p>
+                    <h3>{connection.name}</h3>
+                  </div>
+                  {isActive && (
+                    <span className="active-config">
+                      {uiText(
+                        library.configured
+                          ? "当前使用"
+                          : "需要启用 ChatGPT 套餐",
+                      )}
+                    </span>
+                  )}
+                </div>
+                <details className="model-connection-details">
+                  <summary>{connection.modelId}</summary>
+                  <dl>
+                    <div>
+                      <dt>{uiText("模型")}</dt>
+                      <dd>{connection.modelId}</dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("端点")}</dt>
+                      <dd>{connection.baseUrl}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {uiText(
+                          connection.chatGptAccountId === undefined
+                            ? "窗口 / 输出"
+                            : "真实 context window",
+                        )}
+                      </dt>
+                      <dd>
+                        {connection.contextWindowTokens.toLocaleString()}
+                        {connection.chatGptAccountId === undefined &&
+                          ` / ${connection.maxOutputTokens.toLocaleString()}`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("方言 / Effort / Thinking")}</dt>
+                      <dd>
+                        {connection.dialect} / {connection.reasoningEffort} /{" "}
+                        {connection.thinkingMode}
+                        {connection.thinkingBudgetTokens === null
+                          ? ""
+                          : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
+                        / {connection.reasoningSummary}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("凭据")}</dt>
+                      <dd>
+                        {connection.chatGptAccountId !== undefined
+                          ? uiText("ChatGPT 账号")
+                          : connection.hasApiKey
+                            ? uiText("已保存在本机")
+                            : uiText("无需 API Key")}
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
+                <div className="form-actions">
+                  {!isActive && (
+                    <button
+                      disabled={pending !== null}
+                      onClick={() => void select(connection.id)}
+                      type="button"
+                    >
+                      {pending === connection.id
+                        ? uiText("正在切换…")
+                        : uiText("切换到此配置")}
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button"
+                    disabled={pending !== null || dirty}
+                    onClick={() => void copy(connection)}
+                    type="button"
+                  >
+                    {pending === `copy:${connection.id}`
+                      ? uiText("正在克隆…")
+                      : uiText("克隆配置")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={
+                      pending !== null ||
+                      dirty ||
+                      form.connectionId === connection.id
+                    }
+                    onClick={() => {
+                      edit(connection);
+                      showFormFromSavedConfigurations();
+                    }}
+                    type="button"
+                  >
+                    {form.connectionId === connection.id
+                      ? uiText("正在编辑")
+                      : uiText("编辑")}
+                  </button>
+                  <button
+                    className="danger-button"
+                    disabled={!canDelete(connection.id)}
+                    onClick={(event) =>
+                      requestDeletion(connection, event.currentTarget)
+                    }
+                    type="button"
+                  >
+                    {pending === `delete:${connection.id}`
+                      ? uiText("正在删除…")
+                      : uiText("删除")}
+                  </button>
+                </div>
+                {isActive && library.connections.length > 1 && (
+                  <p className="field-note">
+                    {uiText("先切换到另一份配置，才能删除当前配置。")}
+                  </p>
+                )}
+              </article>
+            );
+          })}
+        </section>
         <form
           className="config-form panel-card"
           onSubmit={(event) => void save(event)}
@@ -993,15 +1145,26 @@ export function ModelConnectionScreen({
             </>
           )}
 
-          <div>
-            <label htmlFor="model-prompt">{uiText("模型提示词（可选）")}</label>
+          <details
+            className="model-prompt-options"
+            key={`model-prompt:${form.connectionId}`}
+          >
+            <summary>
+              <span id="model-prompt-title">
+                {uiText("模型提示词（可选）")}
+              </span>
+              {form.modelPrompt.trim() !== "" && (
+                <small>{uiText("已填写")}</small>
+              )}
+            </summary>
             <textarea
               id="model-prompt"
+              aria-labelledby="model-prompt-title"
               rows={5}
               value={form.modelPrompt}
               onChange={(event) => change({ modelPrompt: event.target.value })}
             />
-          </div>
+          </details>
 
           <div className="two-column-fields">
             <label>
@@ -1557,156 +1720,6 @@ export function ModelConnectionScreen({
             )}
           </div>
         </form>
-
-        <section
-          className="config-list"
-          id="saved-model-configurations"
-          aria-label={uiText("已保存模型配置")}
-        >
-          <div className="section-heading-row">
-            <h3>{uiText("已保存配置")}</h3>
-            <span>
-              {library.connections.length} {uiText("份")}
-            </span>
-          </div>
-          {library.connections.length === 0 && (
-            <p className="panel-card">{uiText("尚未保存模型配置。")}</p>
-          )}
-          {library.connections.map((connection) => {
-            const isActive = connection.id === library.activeConnectionId;
-            return (
-              <article
-                className={`config-card panel-card${isActive ? " active-model-config" : ""}`}
-                key={connection.id}
-              >
-                <div className="section-heading-row">
-                  <div>
-                    <p className="eyebrow">
-                      {connection.chatGptAccountId === undefined
-                        ? providerLabel(connection.provider)
-                        : uiText("ChatGPT 套餐")}
-                    </p>
-                    <h3>{connection.name}</h3>
-                  </div>
-                  {isActive && (
-                    <span className="active-config">
-                      {uiText(
-                        library.configured
-                          ? "当前使用"
-                          : "需要启用 ChatGPT 套餐",
-                      )}
-                    </span>
-                  )}
-                </div>
-                <details className="model-connection-details">
-                  <summary>{connection.modelId}</summary>
-                  <dl>
-                    <div>
-                      <dt>{uiText("模型")}</dt>
-                      <dd>{connection.modelId}</dd>
-                    </div>
-                    <div>
-                      <dt>{uiText("端点")}</dt>
-                      <dd>{connection.baseUrl}</dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {uiText(
-                          connection.chatGptAccountId === undefined
-                            ? "窗口 / 输出"
-                            : "真实 context window",
-                        )}
-                      </dt>
-                      <dd>
-                        {connection.contextWindowTokens.toLocaleString()}
-                        {connection.chatGptAccountId === undefined &&
-                          ` / ${connection.maxOutputTokens.toLocaleString()}`}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{uiText("方言 / Effort / Thinking")}</dt>
-                      <dd>
-                        {connection.dialect} / {connection.reasoningEffort} /{" "}
-                        {connection.thinkingMode}
-                        {connection.thinkingBudgetTokens === null
-                          ? ""
-                          : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
-                        / {connection.reasoningSummary}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{uiText("凭据")}</dt>
-                      <dd>
-                        {connection.chatGptAccountId !== undefined
-                          ? uiText("ChatGPT 账号")
-                          : connection.hasApiKey
-                            ? uiText("已保存在本机")
-                            : uiText("无需 API Key")}
-                      </dd>
-                    </div>
-                  </dl>
-                </details>
-                <div className="form-actions">
-                  {!isActive && (
-                    <button
-                      disabled={pending !== null}
-                      onClick={() => void select(connection.id)}
-                      type="button"
-                    >
-                      {pending === connection.id
-                        ? uiText("正在切换…")
-                        : uiText("切换到此配置")}
-                    </button>
-                  )}
-                  <button
-                    className="secondary-button"
-                    disabled={pending !== null || dirty}
-                    onClick={() => void copy(connection)}
-                    type="button"
-                  >
-                    {pending === `copy:${connection.id}`
-                      ? uiText("正在克隆…")
-                      : uiText("克隆配置")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={
-                      pending !== null ||
-                      dirty ||
-                      form.connectionId === connection.id
-                    }
-                    onClick={() => {
-                      edit(connection);
-                      showFormFromSavedConfigurations();
-                    }}
-                    type="button"
-                  >
-                    {form.connectionId === connection.id
-                      ? uiText("正在编辑")
-                      : uiText("编辑")}
-                  </button>
-                  <button
-                    className="danger-button"
-                    disabled={!canDelete(connection.id)}
-                    onClick={(event) =>
-                      requestDeletion(connection, event.currentTarget)
-                    }
-                    type="button"
-                  >
-                    {pending === `delete:${connection.id}`
-                      ? uiText("正在删除…")
-                      : uiText("删除")}
-                  </button>
-                </div>
-                {isActive && library.connections.length > 1 && (
-                  <p className="field-note">
-                    {uiText("先切换到另一份配置，才能删除当前配置。")}
-                  </p>
-                )}
-              </article>
-            );
-          })}
-        </section>
       </fieldset>
       {deletion !== null && (
         <ConfirmationDialog request={deletion} onDecision={decideDeletion} />

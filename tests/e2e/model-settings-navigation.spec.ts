@@ -115,6 +115,133 @@ test("narrow model settings reach saved configurations without scrolling the for
   ]);
 });
 
+test.describe("desktop model settings", () => {
+  test.use({
+    viewport: { width: 1440, height: 900 },
+    hasTouch: false,
+  });
+
+  test("follows the saved list, discloses each model prompt, and focuses hidden invalid fields", async ({
+    page,
+  }) => {
+    await runtime(page, { type: "preferences.save", locale: "en" });
+    const longName = "ConnectionLongName".repeat(7);
+    const prefilledPrompt = "A saved connection prompt.";
+    for (let index = 0; index < 12; index += 1) {
+      await runtime(page, {
+        type: "model.save",
+        connection: {
+          name: index === 0 ? longName : `Connection ${index}`,
+          presetId: "custom",
+          provider: "chat_completions",
+          baseUrl: "http://127.0.0.1:9/v1",
+          authMode: "none",
+          modelId: `fixture-${index}`,
+          modelPrompt: index === 11 ? prefilledPrompt : "",
+          contextWindowTokens: 64_000,
+          maxOutputTokens: 8_192,
+        },
+      });
+    }
+    await page.goto("/#/models");
+    const list = page.getByRole("region", {
+      name: "Saved model configurations",
+    });
+    const form = page.locator("form.config-form");
+    const heading = form.getByRole("heading", { name: "Edit configuration" });
+    const createAnother = form.getByRole("button", { name: "Create another" });
+    await expect(createAnother).toBeVisible();
+    for (const width of [1440, 960, 641]) {
+      await page.setViewportSize({ width, height: 900 });
+      const boxes = await Promise.all(
+        [
+          "model-preset",
+          "model-name",
+          "model-base-url",
+          "model-auth-mode",
+          "model-id",
+        ].map(async (id) => ({
+          label: (await form.locator(`label[for="${id}"]`).boundingBox())!,
+          control: (await form.locator(`#${id}`).boundingBox())!,
+        })),
+      );
+      const x = boxes[0]!.label.x;
+      for (const { label, control } of boxes) {
+        expect(label.x).toBe(x);
+        expect(control.x).toBe(x);
+        expect(label.y + label.height).toBeLessThanOrEqual(control.y);
+      }
+      expect(await list.evaluate((element) => element.scrollWidth)).toBe(
+        await list.evaluate((element) => element.clientWidth),
+      );
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    expect(
+      await list.evaluate((element) => element.scrollHeight),
+    ).toBeGreaterThan(await list.evaluate((element) => element.clientHeight));
+    expect((await list.boundingBox())!.x).toBeLessThan(
+      (await form.boundingBox())!.x,
+    );
+
+    await createAnother.focus();
+    await page.keyboard.press("Shift+Tab");
+    expect(
+      await list.evaluate((element) =>
+        element.contains(document.activeElement),
+      ),
+    ).toBe(true);
+    await page.keyboard.press("Tab");
+    await expect(createAnother).toBeFocused();
+
+    const summary = form
+      .locator("summary")
+      .filter({ hasText: "Model prompt (optional)" });
+    const prompt = form.getByLabel("Model prompt (optional)", { exact: true });
+    await expect(summary).toContainText("Filled in");
+    await expect(prompt).toBeHidden();
+    await summary.focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(prompt).toBeFocused();
+    await expect(prompt).toHaveValue(prefilledPrompt);
+    await prompt.fill("");
+    await expect(summary).not.toContainText("Filled in");
+
+    const otherEdit = list
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("heading", { name: longName, exact: true }),
+      })
+      .getByRole("button", { name: "Edit", exact: true });
+    await expect(otherEdit).toBeDisabled();
+    await form.getByRole("button", { name: "Discard changes" }).click();
+    await expect(summary).toContainText("Filled in");
+    await otherEdit.focus();
+    await page.keyboard.press("Enter");
+    await expect(heading).toBeFocused();
+    await expect(form.getByLabel("Configuration name")).toHaveValue(longName);
+    await expect(summary).not.toContainText("Filled in");
+    await expect(prompt).toBeHidden();
+
+    const advanced = form.getByText("Advanced protocol options", {
+      exact: true,
+    });
+    await advanced.click();
+    await form.locator("#model-provider").selectOption("anthropic_messages");
+    await form.getByLabel("API Key", { exact: true }).fill("fixture-secret");
+    await form.locator("#model-thinking-mode").selectOption("enabled");
+    const budget = form.getByLabel("Thinking budget tokens");
+    await budget.fill("600");
+    await advanced.click();
+    await expect(budget).toBeHidden();
+    await form
+      .getByRole("button", { name: "Save and enable model connection" })
+      .click();
+    await expect(budget).toBeFocused();
+    await expect(budget).toBeVisible();
+  });
+});
+
 async function runtime<T = unknown>(
   page: Page,
   request: V1Request,

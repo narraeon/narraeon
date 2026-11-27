@@ -130,6 +130,11 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(fetched.locator("option")).toHaveCount(3);
     await fetched.selectOption(modelId);
     await expect(model).toHaveValue(modelId);
+    await form
+      .getByText(t("模型提示词（可选）", "Model prompt (optional)"), {
+        exact: true,
+      })
+      .click();
     await label("模型提示词（可选）", "Model prompt (optional)").fill(
       "Fixture prompt",
     );

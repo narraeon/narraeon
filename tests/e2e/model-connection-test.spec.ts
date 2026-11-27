@@ -46,6 +46,11 @@ for (const { provider, locale, path } of protocols) {
         .getByLabel(t("模型 ID", "Model ID"), { exact: true })
         .fill(`unsaved-${provider}`);
       await form
+        .getByText(t("模型提示词（可选）", "Model prompt (optional)"), {
+          exact: true,
+        })
+        .click();
+      await form
         .getByLabel(t("模型提示词（可选）", "Model prompt (optional)"))
         .fill("This connection prompt must stay out of the probe");
       await form

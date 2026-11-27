@@ -79,7 +79,6 @@ describe("世界工作区主页", () => {
         },
         model: {
           modelConfigured: true,
-          activeModelName: "本地主持模型",
           onConfigureModel: vi.fn(),
         },
       }),
@@ -89,7 +88,7 @@ describe("世界工作区主页", () => {
     expect(screen.queryByRole("heading", { name: "创作工作台" })).toBeNull();
     expect(screen.getByRole("button", { name: "新建世界" })).toBeTruthy();
     expect(screen.getByText(/1 份待修复/u)).toBeTruthy();
-    expect(screen.getByText(/本地主持模型/u)).toBeTruthy();
+    expect(screen.getByText(/可用内容包 · 1/u)).toBeTruthy();
     expect(screen.getByText("刚刚")).toBeTruthy();
     expect(screen.getByText("6 回合")).toBeTruthy();
     expect(screen.getByText("船长把灯挂在舱门前。")).toBeTruthy();
@@ -150,7 +149,6 @@ describe("世界工作区主页", () => {
         },
         model: {
           modelConfigured: false,
-          activeModelName: null,
           onConfigureModel,
         },
       }),
@@ -158,7 +156,6 @@ describe("世界工作区主页", () => {
 
     expect(screen.getByText("还没有正在游玩的世界")).toBeTruthy();
     expect(screen.getByText("从一个故事开始")).toBeTruthy();
-    expect(screen.getAllByText(/尚未配置/u).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "挑一个故事开玩" }));
     expect(screen.getByRole("dialog", { name: "选择一个故事" })).toBeTruthy();
     expect(onCreateSamplePackage).not.toHaveBeenCalled();
@@ -219,7 +216,6 @@ describe("世界工作区主页", () => {
         },
         model: {
           modelConfigured: true,
-          activeModelName: "本地主持模型",
           onConfigureModel: vi.fn(),
         },
       }),
@@ -530,7 +526,6 @@ describe("世界工作区主页", () => {
         },
         model: {
           modelConfigured: true,
-          activeModelName: "本地主持模型",
           onConfigureModel: vi.fn(),
         },
       }),

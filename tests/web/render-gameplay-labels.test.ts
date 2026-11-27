@@ -78,7 +78,6 @@ describe("玩法标签", () => {
         },
         model: {
           modelConfigured: true,
-          activeModelName: null,
           onConfigureModel: vi.fn(),
         },
       }),

@@ -49,8 +49,20 @@ export function WorkspaceHeader({
     ({ id }) => id === model.activeConnectionId,
   );
   const activeModelName = activeModel?.name ?? null;
-  const usingChatGptPlan =
-    model.configured && activeModel?.chatGptAccountId !== undefined;
+  const chatGptPlan = activeModel?.chatGptAccountId !== undefined;
+  const modelDescription =
+    activeModelName === null
+      ? uiText("尚未配置")
+      : uiText("当前连接：{name}", { name: activeModelName });
+  const planStatus = chatGptPlan
+    ? uiText(
+        model.configured ? "正在使用 ChatGPT 套餐" : "需要启用 ChatGPT 套餐",
+      )
+    : null;
+  const modelStatus =
+    planStatus === null
+      ? modelDescription
+      : `${modelDescription} · ${planStatus}`;
   const [menuOpen, setMenuOpen] = useState(false);
   const [creationOpen, setCreationOpen] = useState(false);
   const mobileToggle = useRef<HTMLButtonElement>(null);
@@ -231,12 +243,9 @@ export function WorkspaceHeader({
               type="button"
               className="workspace-model-button"
               aria-label={uiText("模型设置")}
+              aria-describedby="workspace-model-status"
               aria-current={screen === "model" ? "page" : undefined}
-              title={
-                usingChatGptPlan
-                  ? uiText("正在使用 ChatGPT 套餐")
-                  : (activeModelName ?? uiText("尚未配置"))
-              }
+              title={modelStatus}
               disabled={navigationLocked}
               onClick={() => navigate("model")}
             >
@@ -244,13 +253,23 @@ export function WorkspaceHeader({
                 className={`workspace-model-dot ${!model.configured ? "needs-attention" : "is-ready"}`}
                 aria-hidden="true"
               />
-              {uiText("模型设置")}
-              {activeModelName !== null && (
-                <span className="workspace-model-label" aria-hidden="true">
-                  {usingChatGptPlan ? uiText("ChatGPT 套餐") : activeModelName}
+              <span className="workspace-model-button-text" aria-hidden="true">
+                <span>{uiText("模型设置")}</span>
+                <span className="workspace-model-label">
+                  {activeModelName ?? uiText("尚未配置")}
                 </span>
-              )}
+                {chatGptPlan && (
+                  <span className="workspace-model-plan-status">
+                    {uiText(
+                      model.configured ? "ChatGPT 套餐" : "ChatGPT 需授权",
+                    )}
+                  </span>
+                )}
+              </span>
             </button>
+            <span id="workspace-model-status" hidden>
+              {modelStatus}
+            </span>
             {model.connections.some(
               ({ id }) => id !== model.activeConnectionId,
             ) && (
