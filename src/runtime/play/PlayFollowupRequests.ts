@@ -194,6 +194,8 @@ async function runOne(
   prefix: ModelHostAppendItem[],
   requestSignal?: AbortSignal,
 ): Promise<PlayFollowupOutcome> {
+  const frozenPresentations =
+    input.presentations?.[followup.id] ?? followup.frozenPresentations;
   const outcome: PlayFollowupOutcome = {
     id: followup.id,
     displayName: followup.displayName,
@@ -205,9 +207,7 @@ async function runOne(
     ...(followup.extensionControl === undefined
       ? {}
       : { extensionControl: structuredClone(followup.extensionControl) }),
-    ...(input.presentations?.[followup.id] === undefined
-      ? {}
-      : { frozenPresentations: input.presentations[followup.id] }),
+    ...(frozenPresentations === undefined ? {} : { frozenPresentations }),
     requestId: followup.id,
     displayName: followup.displayName,
     requestAttempt: 1,

@@ -1,5 +1,13 @@
 import { resolveArtifactRenderer } from "../extension/FrontendExtensionBundle.ts";
-import { builtinFollowupExample } from "../../shared/ordered-followups.ts";
+import {
+  builtinFollowupExample,
+  isBuiltinExtensionFollowupId,
+} from "../../shared/ordered-followups.ts";
+import {
+  builtinExtensionFollowup,
+  trustedBuiltinFollowupCode,
+} from "../extension/BuiltinExtensions.ts";
+import type { AppLocale } from "../../protocol/appPreferences.ts";
 import {
   projectPlayerViewPanels,
   type PlayerViewPanelProjectionInput,
@@ -16,6 +24,8 @@ import {
   type PlayPresetArtifactPayloadContract,
   type PlayPresetBinding,
   type PlayPresetFollowupDefinition,
+  type PlayPresetMount,
+  type FrozenArtifactPresentation,
   type PlayPresetRegexRule,
   type PlayPresetStructuredEditor,
 } from "./FileNativePlayPresetStore.ts";
@@ -37,6 +47,7 @@ export interface PlayPresetWorkbenchArtifactPreview {
   rawText: string;
   regex: PlayPresetRegexRule[];
   renderer?: PlayPresetWorkbenchRendererPreview;
+  mount?: PlayPresetMount["mount"];
   activeProjection: {
     status: "active";
     channel: string;
@@ -84,6 +95,7 @@ export function buildPlayPresetWorkbenchSnapshot(
   binding: PlayPresetBinding,
   playerViewContext?: Omit<PlayerViewPanelProjectionInput, "binding">,
   draft?: { files: Record<string, string>; structure?: unknown },
+  locale: AppLocale = "en",
 ): PlayPresetWorkbenchSnapshot {
   if (draft !== undefined) {
     const files =
@@ -106,19 +118,37 @@ export function buildPlayPresetWorkbenchSnapshot(
   const structure = toPlayPresetStructuredEditor(binding.definition);
   const staticErrors: PlayPresetWorkbenchSnapshot["staticErrors"] = [];
   const artifactPreviews: PlayPresetWorkbenchArtifactPreview[] = [];
-  const previewFollowups: PlayPresetFollowupDefinition[] = [
-    ...binding.definition.followups,
+  const previewFollowups: {
+    definition: PlayPresetFollowupDefinition;
+    frozenPresentations?: Record<string, FrozenArtifactPresentation>;
+  }[] = [
+    ...binding.definition.followups.map((definition) => ({ definition })),
     ...(binding.definition.followupItems === undefined
       ? []
-      : [builtinFollowupExample("en").definition]),
+      : [builtinFollowupExample(locale)]),
+    ...(binding.definition.followupItems ?? []).flatMap((item) =>
+      item.enabled && isBuiltinExtensionFollowupId(item.id)
+        ? [builtinExtensionFollowup(item.id, locale)]
+        : [],
+    ),
   ];
-  for (const followup of previewFollowups)
+  for (const { definition: followup, frozenPresentations } of previewFollowups)
     for (const declaration of followup.artifacts) {
+      const presentation = frozenPresentations?.[declaration.name];
+      const rendererBinding =
+        presentation === undefined
+          ? binding
+          : {
+              files: presentation.files,
+              scriptsEnabled:
+                isBuiltinExtensionFollowupId(followup.id) &&
+                trustedBuiltinFollowupCode(followup.id, presentation),
+            };
       const diagnostics: string[] = [];
       let regex: PlayPresetRegexRule[] = [];
       if (declaration.regex !== undefined) {
         try {
-          const source = binding.files[declaration.regex];
+          const source = rendererBinding.files[declaration.regex];
           if (source === undefined)
             throw new Error("The regex resource does not exist");
           regex = parsePlayPresetRegexAsset(source, declaration.regex);
@@ -135,10 +165,20 @@ export function buildPlayPresetWorkbenchSnapshot(
           });
         }
       }
-      const rawPayload = samplePayload(
-        declaration.payloadContract,
-        declaration.contentType,
-      );
+      const rawPayload =
+        followup.id === "builtin:action-choices"
+          ? Array.from({ length: 4 }, (_, index) => ({
+              id: `example-${index + 1}`,
+              label:
+                locale === "zh-CN"
+                  ? `示例选项 ${index + 1}`
+                  : `Example choice ${index + 1}`,
+              prompt:
+                locale === "zh-CN"
+                  ? `示例行动 ${index + 1}`
+                  : `Example action ${index + 1}`,
+            }))
+          : samplePayload(declaration.payloadContract, declaration.contentType);
       const rawText =
         declaration.contentType === "application/json"
           ? JSON.stringify(rawPayload, null, 2)
@@ -149,7 +189,7 @@ export function buildPlayPresetWorkbenchSnapshot(
               : "This is a local text workbench sample.";
       let renderer: PlayPresetWorkbenchRendererPreview | undefined;
       try {
-        renderer = resolveArtifactRenderer(declaration, binding);
+        renderer = resolveArtifactRenderer(declaration, rendererBinding);
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "Invalid renderer resources";
@@ -167,6 +207,7 @@ export function buildPlayPresetWorkbenchSnapshot(
         rawPayload,
         rawText,
         regex,
+        ...(presentation === undefined ? {} : { mount: presentation.mount }),
         ...(renderer === undefined ? {} : { renderer }),
         activeProjection: {
           status: "active",
@@ -198,7 +239,10 @@ export function buildPlayPresetWorkbenchSnapshot(
       : {
           playerViewPreview: {
             ...playerViewContext,
-            panels: projectPlayerViewPanels({ ...playerViewContext, binding }),
+            panels: projectPlayerViewPanels(
+              { ...playerViewContext, binding },
+              binding.definition.statusPanelEnabled ? { locale } : undefined,
+            ),
           },
         }),
     staticErrors,

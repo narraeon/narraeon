@@ -5,6 +5,33 @@ export interface FollowupItem {
   enabled: boolean;
 }
 
+export const builtinExtensionFollowupIds = [
+  "builtin:action-choices",
+  "builtin:generic-panels",
+  "builtin:artifact-debugger",
+] as const;
+
+export type BuiltinExtensionFollowupId =
+  (typeof builtinExtensionFollowupIds)[number];
+
+export function isBuiltinExtensionFollowupId(
+  id: string,
+): id is BuiltinExtensionFollowupId {
+  return builtinExtensionFollowupIds.some((builtin) => id === builtin);
+}
+
+/** Older portable files and frozen bindings keep the entries they recorded. */
+export function withBuiltinExtensionFollowups(
+  items: FollowupItem[],
+): FollowupItem[] {
+  return [
+    ...items,
+    ...builtinExtensionFollowupIds
+      .filter((id) => !items.some((item) => item.id === id))
+      .map((id): FollowupItem => ({ id, kind: "builtin", enabled: false })),
+  ];
+}
+
 export function defaultFollowupItems(
   definitions: readonly { id: string }[],
 ): FollowupItem[] {

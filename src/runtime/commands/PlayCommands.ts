@@ -213,6 +213,7 @@ export class PlayCommands {
             binding,
             undefined,
             request.draft,
+            this.#services.locale(),
           );
         const { worldId } = request;
         return readingCurrentEndpoint(async () => {
@@ -223,6 +224,7 @@ export class PlayCommands {
             binding,
             { worldId, head, playerViews },
             request.draft,
+            this.#services.locale(),
           );
         });
       }

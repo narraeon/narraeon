@@ -2,6 +2,8 @@ import type {
   ArtifactDebugRecord,
   ArtifactProjectionItem,
 } from "../artifact/FileNativeArtifactStore.ts";
+import { isBuiltinExtensionFollowupId } from "../../shared/ordered-followups.ts";
+import { trustedBuiltinFollowupCode } from "./BuiltinExtensions.ts";
 import {
   parsePlayPresetRegexAsset,
   type PlayPresetArtifactDeclaration,
@@ -124,9 +126,14 @@ export function projectArtifactForFrontend(
 
   try {
     const frozenBinding = {
-      scriptsEnabled: artifact.requestId.startsWith("package:")
-        ? packageScriptsEnabled && declaration.rendererMode === "app"
-        : artifact.playPresetScriptsEnabled,
+      scriptsEnabled: isBuiltinExtensionFollowupId(artifact.requestId)
+        ? trustedBuiltinFollowupCode(
+            artifact.requestId,
+            artifact.frozenPresentation,
+          )
+        : artifact.requestId.startsWith("package:")
+          ? packageScriptsEnabled && declaration.rendererMode === "app"
+          : artifact.playPresetScriptsEnabled,
       files: artifact.frozenPresentation?.files ?? binding?.files ?? {},
     };
     const regex = declaration.regex

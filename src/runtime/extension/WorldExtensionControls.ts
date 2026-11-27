@@ -11,7 +11,13 @@ import type { PlayPresetBinding } from "../play/FileNativePlayPresetStore.ts";
 import {
   builtinFollowupExample,
   defaultFollowupItems,
+  isBuiltinExtensionFollowupId,
+  withBuiltinExtensionFollowups,
 } from "../../shared/ordered-followups.ts";
+import {
+  builtinExtensionLabel,
+  builtinStatusPanelId,
+} from "../../shared/first-party-play-preset-templates.ts";
 import { readPackageFollowups } from "../content/PackageFollowups.ts";
 import type { ContentTreeFile } from "../content/ContentTreeFile.ts";
 import type { RenderedPlayerView } from "../../protocol/playerViews.ts";
@@ -156,8 +162,10 @@ export function extensionDefinitions(
   locale: AppLocale,
 ): Definition[] {
   const items: Definition[] = [];
-  for (const item of binding.definition.followupItems ??
-    defaultFollowupItems(binding.definition.followups)) {
+  for (const item of withBuiltinExtensionFollowups(
+    binding.definition.followupItems ??
+      defaultFollowupItems(binding.definition.followups),
+  )) {
     const group = item.kind === "content-package";
     const request = binding.definition.followups.find(
       (def) => def.id === item.id,
@@ -170,7 +178,9 @@ export function extensionDefinitions(
           ? "内容包后置请求"
           : "Content package requests"
         : item.kind === "builtin"
-          ? builtinFollowupExample(locale).definition.displayName
+          ? isBuiltinExtensionFollowupId(item.id)
+            ? builtinExtensionLabel(item.id, locale)
+            : builtinFollowupExample(locale).definition.displayName
           : request!.displayName,
       kind: group ? "group" : "request",
       source: group
@@ -204,6 +214,14 @@ export function extensionDefinitions(
       source: "preset",
       defaultEnabled: true,
     });
+  items.push({
+    key: `preset:${binding.id}:panel:${builtinStatusPanelId}`,
+    id: builtinStatusPanelId,
+    name: builtinExtensionLabel(builtinStatusPanelId, locale),
+    kind: "panel",
+    source: "builtin",
+    defaultEnabled: binding.definition.statusPanelEnabled ?? false,
+  });
   const covered = new Set(
     binding.definition.playerViewPanels.map((panel) => panel.source.view),
   );

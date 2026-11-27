@@ -1,4 +1,9 @@
 import type { ArtifactPayload } from "../artifact/FileNativeArtifactStore.ts";
+import type { AppLocale } from "../../protocol/appPreferences.ts";
+import {
+  builtinStatusPanel,
+  builtinStatusPanelView,
+} from "./BuiltinExtensions.ts";
 import type {
   PlayerViewDiagnostic,
   RenderedPlayerView,
@@ -47,10 +52,23 @@ export interface PlayerViewPanelProjectionInput {
  */
 export function projectPlayerViewPanels(
   input: PlayerViewPanelProjectionInput,
+  statusStyle?: { locale: AppLocale; hiddenViewIds?: ReadonlySet<string> },
 ): FrontendPlayerViewPanelProjection[] {
-  return input.binding.definition.playerViewPanels.map((panel) =>
+  const panels = input.binding.definition.playerViewPanels.map((panel) =>
     projectPanel(panel, input),
   );
+  if (statusStyle !== undefined) {
+    const view = builtinStatusPanelView(input.binding, input.playerViews.views);
+    if (view !== undefined && !statusStyle.hiddenViewIds?.has(view.id)) {
+      const { panel, binding } = builtinStatusPanel(
+        input.binding,
+        view.id,
+        statusStyle.locale,
+      );
+      panels.push(projectPanel(panel, { ...input, binding }));
+    }
+  }
+  return panels;
 }
 
 function projectPanel(

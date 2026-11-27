@@ -4409,42 +4409,43 @@ function frozenFollowupPresentations(
   return Object.fromEntries(
     (currentPlayPrompt(session).followups ?? []).map((followup) => [
       followup.id,
-      Object.fromEntries(
-        followup.artifacts.flatMap((declaration) => {
-          const resources = followup.frozenResources;
-          const mount =
-            resources?.mount ??
-            definition.mounts.find(
-              (item) => item.channel === declaration.channel,
-            )?.mount;
-          return mount === undefined
-            ? []
-            : [
-                [
-                  declaration.name,
-                  {
-                    ...resources,
-                    declaration: structuredClone(declaration),
-                    files:
-                      resources?.files ??
-                      Object.fromEntries(
-                        [
-                          declaration.renderer,
-                          declaration.regex,
-                          ...(declaration.scripts ?? []),
-                          ...(declaration.assets ?? []),
-                        ].flatMap((path) =>
-                          path === undefined
-                            ? []
-                            : [[path, (resources?.files ?? files)[path]!]],
+      followup.frozenPresentations ??
+        Object.fromEntries(
+          followup.artifacts.flatMap((declaration) => {
+            const resources = followup.frozenResources;
+            const mount =
+              resources?.mount ??
+              definition.mounts.find(
+                (item) => item.channel === declaration.channel,
+              )?.mount;
+            return mount === undefined
+              ? []
+              : [
+                  [
+                    declaration.name,
+                    {
+                      ...resources,
+                      declaration: structuredClone(declaration),
+                      files:
+                        resources?.files ??
+                        Object.fromEntries(
+                          [
+                            declaration.renderer,
+                            declaration.regex,
+                            ...(declaration.scripts ?? []),
+                            ...(declaration.assets ?? []),
+                          ].flatMap((path) =>
+                            path === undefined
+                              ? []
+                              : [[path, (resources?.files ?? files)[path]!]],
+                          ),
                         ),
-                      ),
-                    mount,
-                  },
-                ],
-              ];
-        }),
-      ),
+                      mount,
+                    },
+                  ],
+                ];
+          }),
+        ),
     ]),
   );
 }

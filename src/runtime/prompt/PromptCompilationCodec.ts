@@ -3,6 +3,8 @@ import { isPromptMessageRole } from "../../shared/ordered-play-prompts.ts";
 import { isWorldExtensionControl } from "../../protocol/worldExtensions.ts";
 import type { PromptCompilation } from "./FileNativePromptCompiler.ts";
 import { isWorldPromptMaintenance } from "../../protocol/worldMaintenance.ts";
+import { isFrozenArtifactPresentation } from "../play/FileNativePlayPresetStore.ts";
+import { isDeepStrictEqual } from "node:util";
 
 /** Canonical validators for saved compiler output. Validate without projecting or rebuilding it. */
 export function validPlayFollowup(value: unknown): boolean {
@@ -19,7 +21,7 @@ export function validPlayFollowup(value: unknown): boolean {
         "artifacts",
         "maxArtifactBytes",
       ],
-      ["frozenResources", "extensionControl"],
+      ["frozenResources", "frozenPresentations", "extensionControl"],
     ) &&
     (value.extensionControl === undefined ||
       isWorldExtensionControl(value.extensionControl)) &&
@@ -46,7 +48,32 @@ export function validPlayFollowup(value: unknown): boolean {
     validStringArray(value.allowedTools) &&
     Array.isArray(value.artifacts) &&
     value.artifacts.every(validPlayArtifact) &&
+    (value.frozenPresentations === undefined ||
+      validFrozenPresentations(value.frozenPresentations, value.artifacts)) &&
     validCount(value.maxArtifactBytes)
+  );
+}
+
+function validFrozenPresentations(
+  value: unknown,
+  artifacts: unknown[],
+): boolean {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === artifacts.length &&
+    artifacts.every((artifact) => {
+      if (
+        !isRecord(artifact) ||
+        typeof artifact.name !== "string" ||
+        !Object.hasOwn(value, artifact.name)
+      )
+        return false;
+      const presentation = value[artifact.name];
+      return (
+        isFrozenArtifactPresentation(presentation) &&
+        isDeepStrictEqual(presentation.declaration, artifact)
+      );
+    })
   );
 }
 
