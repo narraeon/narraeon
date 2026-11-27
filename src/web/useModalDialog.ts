@@ -1,6 +1,45 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useAndroidBack } from "./androidBridge.ts";
 
+function isVisible(element: HTMLElement): boolean {
+  if (
+    element.getClientRects().length === 0 ||
+    getComputedStyle(element).visibility !== "visible"
+  )
+    return false;
+
+  // WebKit can give children of collapsed disclosures a layout rectangle.
+  for (
+    let parent = element.parentElement;
+    parent !== null;
+    parent = parent.parentElement
+  ) {
+    if (parent instanceof HTMLDialogElement) break;
+    if (
+      parent instanceof HTMLDetailsElement &&
+      !parent.open &&
+      !parent.querySelector(":scope > summary")?.contains(element)
+    )
+      return false;
+  }
+  return true;
+}
+
+function isRadio(control: HTMLElement): control is HTMLInputElement {
+  return control instanceof HTMLInputElement && control.type === "radio";
+}
+
+function isRadioTabStop(control: HTMLElement, ordered: HTMLElement[]): boolean {
+  if (!isRadio(control) || control.name === "") return true;
+  const group = ordered.filter(
+    (other): other is HTMLInputElement =>
+      isRadio(other) &&
+      other.name === control.name &&
+      other.form === control.form,
+  );
+  return (group.find((radio) => radio.checked) ?? group[0]) === control;
+}
+
 export function useModalDialog({
   open,
   busy,
@@ -34,10 +73,15 @@ export function useModalDialog({
   }, [open, opener, initialFocus]);
 
   useLayoutEffect(() => {
-    // Starting a command can disable the control that had focus.
-    if (open && busy && !ref.current?.contains(document.activeElement))
-      initialFocus.current?.focus();
+    // Move focus before the browser reacts to the disabled controls.
+    if (open && busy) initialFocus.current?.focus();
   }, [open, busy, initialFocus]);
+
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    if (open && (focused === document.body || focused === ref.current))
+      initialFocus.current?.focus();
+  });
 
   function dismiss(): void {
     if (!busy) onDismiss();
@@ -52,7 +96,14 @@ export function useModalDialog({
       dismiss();
     },
     onKeyDown(event) {
-      if (event.key !== "Tab" || event.defaultPrevented) return;
+      if (
+        event.key !== "Tab" ||
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return;
       const stops = Array.from(
         event.currentTarget.querySelectorAll<HTMLElement>(
           "button, input, select, textarea, a[href], summary, [tabindex]",
@@ -61,14 +112,17 @@ export function useModalDialog({
         (element) =>
           (element.tabIndex >= 0 || element.matches("summary:first-of-type")) &&
           !element.matches(":disabled") &&
-          element.getClientRects().length > 0 &&
-          getComputedStyle(element).visibility === "visible",
+          isVisible(element),
       );
-      const edge = event.shiftKey ? stops[0] : stops.at(-1);
-      // Native modality makes the page inert, but Tab can still reach browser chrome.
-      if (event.target !== edge && event.target !== event.currentTarget) return;
+      // WebKit's native sequence can omit buttons. Use the same order on every Tab.
+      if (event.shiftKey) stops.reverse();
+      const focused = stops.findIndex((stop) => stop === event.target);
+      const cycle = [
+        ...stops.slice(focused + 1),
+        ...stops.slice(0, focused + 1),
+      ];
       event.preventDefault();
-      (event.shiftKey ? stops.at(-1) : stops[0])?.focus();
+      cycle.find((stop) => isRadioTabStop(stop, stops))?.focus();
     },
   };
 }

@@ -213,6 +213,9 @@ test("template manager contains focus and dismisses only the topmost dialog", as
     name: "Manage protagonist templates",
   });
   const close = manager.getByRole("button", { name: "Close", exact: true });
+  const newTemplate = manager.getByRole("button", {
+    name: "New protagonist template",
+  });
   const name = manager.getByLabel("Template name");
   const body = manager.getByLabel("Template body");
   const androidBack = () =>
@@ -224,10 +227,15 @@ test("template manager contains focus and dismisses only the topmost dialog", as
 
   await opener.click();
   await expect(close).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(body).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(close).toBeFocused();
+  for (const [key, stops] of [
+    ["Tab", [newTemplate, name, body, close]],
+    ["Shift+Tab", [body, name, newTemplate, close]],
+  ] as const) {
+    for (const stop of [...stops, ...stops]) {
+      await page.keyboard.press(key);
+      await expect(stop).toBeFocused();
+    }
+  }
   await opener.evaluate((button) => button.focus());
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
@@ -249,10 +257,12 @@ test("template manager contains focus and dismisses only the topmost dialog", as
     exact: true,
   });
   await expect(cancel).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(discard).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(cancel).toBeFocused();
+  for (const key of ["Tab", "Shift+Tab"]) {
+    for (const stop of [discard, cancel, discard, cancel]) {
+      await page.keyboard.press(key);
+      await expect(stop).toBeFocused();
+    }
+  }
   await page.keyboard.press("Escape");
   await expect(confirmation).toHaveCount(0);
   await expect(close).toBeFocused();
@@ -282,6 +292,11 @@ test("template manager contains focus and dismisses only the topmost dialog", as
   try {
     await save.click();
     await expect(close).toBeDisabled();
+    await expect(close).toBeFocused();
+    for (const key of ["Tab", "Shift+Tab", "Tab", "Shift+Tab"]) {
+      await page.keyboard.press(key);
+      await expect(close).toBeFocused();
+    }
     await page.keyboard.press("Escape");
     expect(await androidBack()).toBe(true);
     await expect(manager).toBeVisible();

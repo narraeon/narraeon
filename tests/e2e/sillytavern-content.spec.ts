@@ -27,6 +27,66 @@ const worldBookFile = {
   buffer: Buffer.from(JSON.stringify(worldBook)),
 };
 
+test("content import cycles through visible controls in both Tab directions", async ({
+  page,
+}) => {
+  await page.goto("/#/library");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await page
+    .getByLabel("Import SillyTavern character card or world book")
+    .setInputFiles({
+      ...worldBookFile,
+      buffer: Buffer.from(
+        JSON.stringify({
+          entries: {
+            0: { uid: 0, key: ["世界"], content: "样本", comment: "样本" },
+          },
+        }),
+      ),
+    });
+  const dialog = page.getByRole("dialog", {
+    name: "SillyTavern content import wizard",
+  });
+  const beforeRules = [
+    dialog.getByRole("button", { name: "Close import wizard" }),
+    dialog.getByRole("textbox", { name: "Content-package title" }),
+    dialog.getByRole("button", { name: /^样本/u }),
+    dialog.getByRole("combobox", { name: "样本 Destination" }),
+    dialog.getByRole("button", { name: "Complete source fields" }),
+    dialog.getByText("All source rules", { exact: true }),
+  ];
+  const json = dialog.getByText("Source rules JSON", { exact: true });
+  const preview = dialog.getByRole("button", { name: "Preview target files" });
+  const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+  const allRules = beforeRules.at(-1)!;
+
+  for (const expanded of [false, true, false]) {
+    await allRules.focus();
+    const disclosure = allRules.locator("..");
+    const open = await disclosure.evaluate((details) =>
+      details.hasAttribute("open"),
+    );
+    if (open !== expanded) await page.keyboard.press("Enter");
+    await expect(disclosure).toHaveJSProperty("open", expanded);
+
+    const stops = [
+      ...beforeRules,
+      ...(expanded ? [json] : []),
+      preview,
+      cancel,
+    ];
+    await cancel.focus();
+    for (const key of ["Tab", "Shift+Tab"]) {
+      const cycle =
+        key === "Tab" ? stops : [...stops.slice(0, -1).reverse(), cancel];
+      for (const stop of [...cycle, ...cycle]) {
+        await page.keyboard.press(key);
+        await expect(stop).toBeFocused();
+      }
+    }
+  }
+});
+
 test("content import contains focus, respects pending work, and restores the file picker", async ({
   page,
 }) => {
@@ -75,6 +135,14 @@ test("content import contains focus, respects pending work, and restores the fil
     await dialog.getByRole("button", { name: "Preview target files" }).click();
     await expect(cancel).toBeDisabled();
     await expect(close).toBeDisabled();
+    await expect(close).toBeFocused();
+    const allRules = dialog.getByText("All source rules", { exact: true });
+    for (const key of ["Tab", "Shift+Tab"]) {
+      for (const stop of [allRules, close, allRules, close]) {
+        await page.keyboard.press(key);
+        await expect(stop).toBeFocused();
+      }
+    }
     await page.keyboard.press("Escape");
     expect(await androidBack()).toBe(true);
     await expect(dialog).toBeVisible();
@@ -82,6 +150,10 @@ test("content import contains focus, respects pending work, and restores the fil
     releasePreview();
   }
   await expect(cancel).toBeEnabled();
+  const backToSource = dialog.getByRole("button", { name: "Back to source" });
+  await backToSource.focus();
+  await page.keyboard.press("Enter");
+  await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(picker).toBeFocused();
@@ -296,6 +368,20 @@ for (const locale of ["zh-CN", "en"] as const)
       const opening2 = dialog.getByLabel(
         locale === "en" ? "Choose one opening 2" : "选择一个开场白 2",
       );
+      if (locale === "en" && !mobile) {
+        const afterFirstOpening = dialog.getByRole("button", {
+          name: "Default opening",
+        });
+        await afterFirstOpening.focus();
+        await page.keyboard.press("Tab");
+        await expect(
+          dialog.getByRole("button", { name: "Alternative opening 1" }),
+        ).toBeFocused();
+        await opening2.check();
+        await afterFirstOpening.focus();
+        await page.keyboard.press("Tab");
+        await expect(opening2).toBeFocused();
+      }
       await opening1.check();
       await opening2.check();
       await expect(opening1).not.toBeChecked();
