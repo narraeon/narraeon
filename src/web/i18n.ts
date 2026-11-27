@@ -1241,6 +1241,7 @@ const englishMessages: Record<string, string> = {
   重置新配置: "Reset new configuration",
   已保存模型配置: "Saved model configurations",
   已保存配置: "Saved configurations",
+  返回配置表单: "Back to configuration form",
   "尚未保存模型配置。": "No model configurations saved yet.",
   当前使用: "In use",
   模型: "Model",

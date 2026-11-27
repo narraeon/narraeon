@@ -190,6 +190,12 @@ export function ModelConnectionScreen({
   const localPending = useState<string | null>(null);
   const [pending, setPending] = pendingState ?? localPending;
   const [dirty, setDirty] = useState(false);
+  const [savedConfigurationsOpen, setSavedConfigurationsOpen] = useState(false);
+  const hasSavedConfigurations = library.connections.length > 0;
+  const showingSavedConfigurations =
+    hasSavedConfigurations && savedConfigurationsOpen;
+  const formHeading = useRef<HTMLHeadingElement>(null);
+  const focusFormOnReturn = useRef(false);
   const [deletion, setDeletion] = useState<ConfirmationRequest<
     Pick<ModelConnectionView, "id" | "name">
   > | null>(null);
@@ -236,6 +242,11 @@ export function ModelConnectionScreen({
     target.accept();
     refreshForm(library);
   }, [library, target, refreshForm]);
+  useLayoutEffect(() => {
+    if (showingSavedConfigurations || !focusFormOnReturn.current) return;
+    focusFormOnReturn.current = false;
+    formHeading.current?.focus();
+  }, [showingSavedConfigurations]);
   const active = library.connections.find(
     ({ id }) => id === library.activeConnectionId,
   );
@@ -413,6 +424,12 @@ export function ModelConnectionScreen({
     onNotice("");
   }
 
+  function showFormFromSavedConfigurations(): void {
+    if (!showingSavedConfigurations) return;
+    focusFormOnReturn.current = true;
+    setSavedConfigurationsOpen(false);
+  }
+
   function startNew(): void {
     setForm(emptyConnectionForm());
     setChatGptCatalog(null);
@@ -526,6 +543,7 @@ export function ModelConnectionScreen({
         throw new Error(uiText("Runtime 没有返回已克隆的模型配置"));
       acceptLibrary(result.library);
       edit(copied);
+      showFormFromSavedConfigurations();
       onNotice(
         uiText(
           copied.chatGptAccountId !== undefined
@@ -593,6 +611,7 @@ export function ModelConnectionScreen({
       );
       acceptLibrary(next);
       if (form.connectionId === connectionId) startNew();
+      if (next.connections.length === 0) showFormFromSavedConfigurations();
       onNotice(uiText("模型配置已从本机删除。"));
     } catch (error: unknown) {
       onNotice(errorMessage(error));
@@ -712,13 +731,35 @@ export function ModelConnectionScreen({
 
       <SyncNotice failed={syncFailed} onRead={() => void target.recover()} />
 
-      <fieldset disabled={pending !== null} className="config-layout">
+      {hasSavedConfigurations ? (
+        <div className="model-config-mobile-navigation">
+          <button
+            type="button"
+            className="secondary-button"
+            aria-controls="saved-model-configurations"
+            aria-expanded={showingSavedConfigurations}
+            disabled={pending !== null}
+            onClick={() =>
+              setSavedConfigurationsOpen(!showingSavedConfigurations)
+            }
+          >
+            {showingSavedConfigurations
+              ? uiText("返回配置表单")
+              : `${uiText("已保存配置")} (${library.connections.length})`}
+          </button>
+        </div>
+      ) : null}
+      <fieldset
+        disabled={pending !== null}
+        className="config-layout"
+        data-narrow-view={showingSavedConfigurations ? "saved" : "form"}
+      >
         <form
           className="config-form panel-card"
           onSubmit={(event) => void save(event)}
         >
           <div className="section-heading-row">
-            <h3>
+            <h3 ref={formHeading} tabIndex={-1}>
               {form.connectionId === null
                 ? uiText("新建配置")
                 : uiText("编辑配置")}
@@ -1517,7 +1558,11 @@ export function ModelConnectionScreen({
           </div>
         </form>
 
-        <section className="config-list" aria-label={uiText("已保存模型配置")}>
+        <section
+          className="config-list"
+          id="saved-model-configurations"
+          aria-label={uiText("已保存模型配置")}
+        >
           <div className="section-heading-row">
             <h3>{uiText("已保存配置")}</h3>
             <span>
@@ -1630,7 +1675,10 @@ export function ModelConnectionScreen({
                       dirty ||
                       form.connectionId === connection.id
                     }
-                    onClick={() => edit(connection)}
+                    onClick={() => {
+                      edit(connection);
+                      showFormFromSavedConfigurations();
+                    }}
                     type="button"
                   >
                     {form.connectionId === connection.id

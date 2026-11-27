@@ -868,6 +868,9 @@
   background: transparent;
   font-size: 12px;
 }
+.model-config-mobile-navigation {
+  display: none;
+}
 .model-connection-screen .config-layout {
   border: 0;
   margin: 0;
@@ -1324,6 +1327,13 @@
     display: flex;
     flex-direction: column;
   }
+  .model-config-mobile-navigation {
+    display: block;
+    padding: 12px 20px 0;
+  }
+  .model-config-mobile-navigation button {
+    min-height: 40px;
+  }
   .model-connection-screen .config-form {
     display: flex;
     flex-direction: column;
@@ -1333,8 +1343,16 @@
     margin-top: 8px;
   }
   .model-connection-screen .config-list {
+    max-block-size: 65dvh;
+    overflow-y: auto;
+    scroll-padding-block: 12px;
     border: 0;
-    border-top: 1px solid var(--border);
+  }
+  .model-connection-screen .config-layout[data-narrow-view="form"] .config-list,
+  .model-connection-screen
+    .config-layout[data-narrow-view="saved"]
+    .config-form {
+    display: none;
   }
   .prompt-preview-screen {
     padding: 18px 16px;
