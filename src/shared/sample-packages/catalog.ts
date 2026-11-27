@@ -101,6 +101,48 @@ const descriptions = {
         "冰雾封港七天。你受雇核查失踪守塔人的旧账，刚登岸的深夜，无风的港口雾钟却自己响了三声。",
     },
   },
+  "qingzhou-tales": {
+    en: {
+      genre: "Tabletop · Chaos bag",
+      title: "Night Tales of Qingzhou",
+      premise:
+        "Autumn rain strands you outside Qingzhou. A ruined temple plays at midnight, a new bride avoids every mirror, and travelers lose their birth-tallies at an old post—three strange tales quietly entwined.",
+    },
+    "zh-CN": {
+      genre: "跑团志怪 · 混乱袋",
+      title: "聊斋行脚：青州夜话",
+      premise:
+        "秋雨困住青州西郊。城外废寺夜闻琴声、旧宅新妇不照镜、枯井驿站屡失生辰帖——三桩异闻彼此暗牵，由你择路查访。",
+    },
+  },
+  "treasure-island": {
+    en: {
+      genre: "Tabletop · d20",
+      title: "Treasure Island: Aboard the Hispaniola",
+      premise:
+        "On the eve of sailing for Skeleton Island, Captain Smollett distrusts the crew while genial one-legged cook Long John Silver offers a warm mug—and hides a mutiny.",
+    },
+    "zh-CN": {
+      genre: "跑团航海 · d20",
+      title: "金银岛：暗流航程",
+      premise:
+        "伊斯帕尼奥拉号启航前夜，斯莫莱特船长对新水手满怀戒心，热情的独脚厨师西尔弗却笑盈盈递来热酒——一场跨海寻宝与兵变暗流就此展开。",
+    },
+  },
+  "baker-street-fog": {
+    en: {
+      genre: "Long-form detective",
+      title: "A Study in Grey Fog",
+      premise:
+        "November fog traps London. With Holmes and Watson south of the Thames, three urgent leads—a pawned anchor coin, a missing clerk, and a stolen museum almanac—land on your desk at 221B.",
+    },
+    "zh-CN": {
+      genre: "长线侦探 · 互动小说",
+      title: "贝克街的灰雾委托",
+      premise:
+        "十一月浓雾封锁伦敦。福尔摩斯与华生外出盯梢，海锚暗记金币、失踪航运文书与博物馆海事年鉴三条急件同时汇到贝克街 221B。",
+    },
+  },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, { genre: string; title: string; premise: string }>
