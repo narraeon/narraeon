@@ -99,6 +99,7 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
   summary: 记录核心押镖期限、船况盘缠、沿途未探水镇传闻及玩家已接支线。
   aliases: []
 核心期限与船况: 距封河尚有 15 日；顺水号完好，盘缠与干粮够半月之用，封蜡樟木箱安放后舱暗格。
+交割约定: 封河前送抵通州官仓；凭半块刻字木牌对验交割；途中莫轻易开箱破封。
 老谭航路簿所记站点:
   柳湾闸: 前方首道大闸；刚才南下的过路盐船称这两天查船极严。
   白塔集: 运河中段商镇；阿砚在茶棚听说有人愿出双倍船资搭船前往。
@@ -138,7 +139,7 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
 ## 信息隔离与状态维护
 
 - @sealed-crate-origin 是按需读取的幕后底档，仅在玩家设法查探箱子来历、与知情者交锋或拆封查验时再通过 context_read 读取，严禁在玩家尚未查验前泄露箱内实情。
-- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation（只保留眼下仍未决定的事项，移除已落定的旧选择）与 @escort-manifest；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
+- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation（只保留眼下仍未决定的事项，移除已落定的旧选择；若过闸盘查或交接只完成了一半，例如文书已验而货舱待验，应分开写明已完成与待处理部分）与 @escort-manifest；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
 `,
     ["escort-manifest"],
     undefined,
@@ -154,6 +155,12 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
               label: "核心期限与船况",
               document: "escort-manifest",
               locator: ["核心期限与船况"],
+            },
+            {
+              id: "handover-terms",
+              label: "交割约定",
+              document: "escort-manifest",
+              locator: ["交割约定"],
             },
             {
               id: "route-rumors",

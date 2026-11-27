@@ -121,7 +121,7 @@ Facts:
   What each beacon proves on its own:
     Redshift-04: Holds the corridor entry ephemeris, the first checksum, and a brief voice log from the expedition lead proving the withdrawal was deliberate evasion of corporate trackers rather than a mishap—without revealing the stability window or exit.
     Icebelt-09: Holds the internal gravity stability window, the second checksum, and a heated log between the lead and deputy over whether to publish or seal the corridor, pointing toward the third beacon for the crew’s final heading.
-    Silent Haven-12: Holds the far-side exit coordinates, the third checksum, and the team’s final pre-transit self-check proving they crossed safely—though without the first two checksums the entry remains unsafe to attempt.
+    Silent Haven-12: Holds the far-side exit coordinates, the third checksum, and an arrival ping logged by the exit buoy confirming the main expedition emerged safely here before cutting transponders and heading deeper out—though without the entry ephemeris and stability window from the other two beacons, the corridor cannot be entered safely.
 `,
   },
   ...storyControlFiles(

@@ -99,6 +99,7 @@ Fixed fittings:
   summary: Tracks the core freeze deadline, boat condition, unmapped canal-town rumors, and active side threads.
   aliases: []
 Deadline & boat status: 15 days until freeze; the Fair Current is sound, silver and rations suffice for two weeks, and the sealed chest rests in the aft locker.
+Handover terms: Deliver to Tongzhou granary before freeze-over; verify handover with the half notched tally-board; keep the wax seal unbroken in transit.
 Stops in Old Tan’s river notes:
   Willow Bend Lock: First major lock ahead; a southbound salt barge just reported strict hull inspections.
   White Pagoda Market: Mid-route trading town; A-Yan heard someone at Qinghe teahouse is offering double fare to ride there.
@@ -138,7 +139,7 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
 ## Information Discipline & State Tracking
 
 - @sealed-crate-origin is an on-demand background record; read it via context_read only when the player probes the chest’s origin, confronts someone who knows, or breaks the seal—never reveal the chest’s true contents early.
-- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation (keeping only what is still undecided right now and clearing settled choices) and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open; record ongoing promises in @pending-matters and lasting ties in @relationships.
+- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation (keeping only what is still undecided right now, clearing settled choices, and splitting partially completed steps such as papers checked vs. hold inspection still pending) and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open; record ongoing promises in @pending-matters and lasting ties in @relationships.
 `,
     ["escort-manifest"],
     undefined,
@@ -154,6 +155,12 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
               label: "Deadline & boat status",
               document: "escort-manifest",
               locator: ["Deadline & boat status"],
+            },
+            {
+              id: "handover-terms",
+              label: "Handover terms",
+              document: "escort-manifest",
+              locator: ["Handover terms"],
             },
             {
               id: "route-rumors",
