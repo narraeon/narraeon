@@ -333,10 +333,13 @@ test("暗骰实时与历史均只在调用详情可查，重写正文保留原�
     await expect(story.getByText(narrative, { exact: true })).toBeVisible();
     await expect(card).toHaveCount(0);
     await expect(story).not.toContainText(hiddenGoal);
-    const regenerate = story.getByRole("button", {
-      name: "重新生成",
-      exact: true,
-    });
+    const regenerate = story
+      .locator(".call-chain-assistant.is-completed")
+      .last()
+      .getByRole("button", {
+        name: "主持消息操作",
+        exact: true,
+      });
     await regenerate.focus();
     await regenerate.press("Enter");
     const menu = story.getByRole("group", { name: "重新生成", exact: true });

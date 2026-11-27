@@ -1272,6 +1272,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
   const playerBranchPoint = page
     .locator(".call-chain-player")
     .filter({ hasText: "Where should we meet beforehand?" });
+  await playerBranchPoint
+    .getByRole("button", { name: "玩家消息操作", exact: true })
+    .click();
   await playerBranchPoint.getByRole("button", { name: "创建分叉" }).click();
   await expect(
     page.getByRole("heading", { name: "Dormitory World · 分叉", exact: true }),

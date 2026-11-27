@@ -6,7 +6,7 @@ export function StorySourceCopy({
   className,
 }: {
   text: string;
-  className: string;
+  className?: string;
 }): React.JSX.Element {
   const [status, setStatus] = useState<"copied" | "failed" | null>(null);
   return (

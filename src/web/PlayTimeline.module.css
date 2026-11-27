@@ -92,27 +92,6 @@
   line-height: 1.65;
 }
 
-:where(.column) :global(.history-restart-button) {
-  min-width: auto;
-  padding: 0.28rem 0.5rem;
-  border-color: currentcolor;
-  color: inherit;
-  background: transparent;
-  font-size: 0.75rem;
-}
-
-:where(.column) :global(.history-restart-button):hover:not(:disabled) {
-  color: var(--text);
-  background: var(--surface-selected);
-}
-
-:where(.column) :global(.history-message-actions) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-}
-
 :where(.column) :global(.story-context-boundary) {
   display: flex;
   align-items: center;
@@ -174,60 +153,73 @@
   font-size: 0.75rem;
 }
 
-.events > li > article > header span {
+.events > li > article > header > span:not(.messageActions) {
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 650;
 }
 
-.events article > header:has(.regenerationTrigger) {
-  flex-wrap: wrap;
-  row-gap: 0.35rem;
+.messageActions {
+  display: inline-flex;
+  flex: none;
+  margin-inline-start: auto;
 }
 
-.events article > header:has(.regenerationTrigger[aria-expanded="true"]) {
+.messageActionsTrigger {
+  display: grid;
+  place-items: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.messageActionsTrigger > span,
+.column article header .messageActionsTrigger > span {
+  color: inherit;
+  font:
+    700 1.35rem / 1 system-ui,
+    sans-serif;
+  letter-spacing: normal;
   opacity: 1;
 }
 
-.events :global(.history-message-actions):has(.regenerationOptions) {
-  display: grid;
-  flex: 1 1 100%;
-  grid-template-columns: repeat(3, minmax(0, max-content)) minmax(0, 1fr);
+.messageActionsTrigger:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--surface-selected);
 }
 
-.regenerationControl {
-  display: contents;
-}
-
-.regenerationTrigger::after {
-  display: inline-block;
-  width: 0.35rem;
-  height: 0.35rem;
-  margin-inline-start: 0.45rem;
-  border: solid currentColor;
-  border-width: 0 1px 1px 0;
-  transform: translateY(-2px) rotate(45deg);
-  content: "";
-}
-
-.regenerationTrigger[aria-expanded="true"]::after {
-  transform: translateY(1px) rotate(225deg);
-}
-
-.regenerationOptions {
-  display: grid;
-  grid-row: 2;
-  grid-column: 1 / -1;
-  gap: 0.15rem;
-  width: min(22rem, 100%);
+.messageActionsPanel {
+  position: fixed;
+  inset: auto;
+  width: max-content;
+  margin: 0;
   padding: 0.25rem;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: 5px;
+  color: var(--text);
   background: var(--surface);
-  scroll-margin-block: 1rem 2rem;
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 16%, transparent);
+  font:
+    0.85rem / 1.35 system-ui,
+    sans-serif;
+  letter-spacing: normal;
 }
 
-.regenerationOptions button {
+.messageActionsPanel:is(:popover-open, :not([popover])) {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.messageActionsPanel:not([popover]) {
+  z-index: 1;
+}
+
+.messageActionsPanel button {
   display: grid;
   gap: 0.2rem;
   min-width: 0;
@@ -235,31 +227,54 @@
   border: 0;
   color: var(--text);
   background: transparent;
-  letter-spacing: normal;
-  line-height: 1.35;
   text-align: start;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.regenerationOptions strong {
-  font-size: 0.85rem;
+.messageActionsPanel
+  button:not(:disabled, [aria-disabled="true"]):is(:hover, :focus-visible) {
+  background: var(--surface-selected);
 }
 
-.regenerationOptions .regenerationDescription {
+.messageActionsPanel button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.regenerationActions {
+  display: grid;
+  min-width: 0;
+  margin-block-start: 0.25rem;
+  padding-block-start: 0.25rem;
+  border-block-start: 1px solid var(--border);
+}
+
+.regenerationActions > strong {
+  padding: 0.25rem 0.65rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.messageActionsPanel .regenerationDescription {
   color: var(--muted);
   font-weight: 400;
 }
 
-.regenerationOptions
-  button:not([aria-disabled="true"]):is(:hover, :focus-visible) {
-  background: var(--surface-selected);
+.column .narratorWithMarginActions {
+  position: relative;
 }
 
-.regenerationTrigger[aria-disabled="true"],
-.regenerationOptions button[aria-disabled="true"] {
-  color: var(--muted);
-  cursor: not-allowed;
+.narratorMarginActions {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: calc(100% + 0.15rem);
+}
+
+@media (--world-reader-narrow) {
+  .column .narratorWithMarginActions {
+    margin-inline-end: 2.5rem;
+  }
 }
 
 .events article > p,
@@ -278,7 +293,11 @@
 }
 
 :where(.column) :global(.call-chain-player) article header,
-:where(.column) :global(.call-chain-player) article header span {
+:where(.column)
+  :global(.call-chain-player)
+  article
+  header
+  > span:not(.messageActions) {
   color: var(--text);
 }
 
@@ -575,7 +594,15 @@
 .column :global(.call-chain-assistant) article > header,
 .column :global(.narrator-message) article > header {
   margin-bottom: 0.4em;
-  opacity: 0.46;
+}
+
+.column
+  :global(.call-chain-assistant)
+  article
+  > header
+  > :is(strong, span:not(.messageActions)),
+.column :global(.narrator-message) article > header > strong {
+  opacity: 0.7;
 }
 
 .column :global(.call-chain-assistant) article > p,
@@ -606,9 +633,21 @@
 }
 
 .column :global(.call-chain-player) article header,
-.column :global(.call-chain-player) article header span,
+.column :global(.call-chain-player) article header > span:not(.messageActions),
 .column :global(.player-message) article header {
   color: var(--accent);
+}
+
+.column
+  :global(.call-chain-player)
+  article
+  > header
+  > :is(strong, span:not(.messageActions)),
+.column
+  :global(.player-message)
+  article
+  > header
+  > :is(strong, span:not(.messageActions)) {
   opacity: 0.68;
 }
 
@@ -631,24 +670,6 @@
 :global(.is-story-mode) .column :global(.story-context-boundary)::before,
 :global(.is-story-mode) .column :global(.story-context-boundary)::after {
   background: var(--border);
-}
-
-:global(.is-story-mode) .column :global(.history-restart-button) {
-  opacity: 0;
-}
-
-:global(.is-story-mode) .column article:hover :global(.history-restart-button),
-:global(.is-story-mode)
-  .column
-  article:focus-within
-  :global(.history-restart-button) {
-  opacity: 1;
-}
-
-@media (max-width: 720px), (hover: none), (pointer: coarse) {
-  :global(.is-story-mode) .column :global(.history-restart-button) {
-    opacity: 1;
-  }
 }
 
 .column :global(.story-context-boundary) :global(.call-chain-summary) {

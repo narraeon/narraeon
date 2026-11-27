@@ -1,12 +1,5 @@
 import styles from "./PlayTimeline.module.css";
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useCallback, useId, useState } from "react";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainView,
@@ -25,7 +18,7 @@ import { ResolutionCard } from "./ResolutionCard.tsx";
 import { StoryMarkdown } from "./StoryMarkdown.tsx";
 import { StorySourceCopy } from "./StorySourceCopy.tsx";
 import { SyncNotice } from "./SyncNotice.tsx";
-import { useAndroidBack } from "./androidBridge.ts";
+import { TimelineMessageMenu } from "./TimelineMessageMenu.tsx";
 import { useReadTarget } from "./useReadTarget.ts";
 import {
   assistantResponseKind,
@@ -278,10 +271,9 @@ export function PlayTimeline({
                     {item.role === "player" ? uiText("你") : uiText("主持")}
                   </strong>
                   {item.role === "narrator" ? (
-                    <StorySourceCopy
-                      text={item.exactText}
-                      className="history-restart-button"
-                    />
+                    <TimelineMessageMenu label={uiText("主持消息操作")}>
+                      <StorySourceCopy text={item.exactText} />
+                    </TimelineMessageMenu>
                   ) : null}
                 </header>
                 {item.role === "narrator" ? (
@@ -387,7 +379,7 @@ function timelineEventBelongsInStory(
   );
 }
 
-function RegenerationMenu({
+function RegenerationActions({
   restartDisabled,
   freshContextDisabled,
   onRegenerate,
@@ -398,10 +390,6 @@ function RegenerationMenu({
   onRegenerate: (() => void) | undefined;
   onRegenerateNarrative: (() => void) | undefined;
 }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLSpanElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const panel = useRef<HTMLSpanElement>(null);
   const optionsId = useId();
   const options = [
     {
@@ -418,91 +406,38 @@ function RegenerationMenu({
       disabled: restartDisabled,
       run: onRegenerate,
     },
-  ].filter(({ run }) => run !== undefined);
-  const cannotOpen = options.every(({ disabled }) => disabled);
-
-  function closeAndFocus(): void {
-    setOpen(false);
-    trigger.current?.focus();
-  }
-
-  useAndroidBack(open, closeAndFocus);
-  useEffect(() => {
-    if (!open) return;
-    // The story scrolls behind the fixed composer.
-    panel.current?.scrollIntoView?.({ block: "nearest" });
-    function dismiss(event: PointerEvent): void {
-      if (event.target instanceof Node && !root.current?.contains(event.target))
-        setOpen(false);
-    }
-    document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
-  }, [open]);
+  ];
 
   return (
     <span
-      className={styles.regenerationControl}
-      ref={root}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-      onKeyDown={(event) => {
-        if (!open || event.key !== "Escape") return;
-        event.preventDefault();
-        event.stopPropagation();
-        closeAndFocus();
-      }}
+      className={styles.regenerationActions}
+      role="group"
+      aria-labelledby={optionsId}
     >
-      <button
-        type="button"
-        className={`history-restart-button ${styles.regenerationTrigger}`}
-        ref={trigger}
-        id={`${optionsId}-trigger`}
-        aria-expanded={open}
-        aria-controls={open ? optionsId : undefined}
-        aria-disabled={!open && cannotOpen}
-        onClick={(event) => {
-          if (open) closeAndFocus();
-          else if (!cannotOpen) {
-            event.currentTarget.focus();
-            setOpen(true);
-          }
-        }}
-      >
-        {uiText("重新生成")}
-      </button>
-      {open ? (
-        <span
-          className={styles.regenerationOptions}
-          id={optionsId}
-          ref={panel}
-          role="group"
-          aria-labelledby={`${optionsId}-trigger`}
-        >
-          {options.map(({ key, label, description, disabled, run }) => (
-            <button
-              key={key}
-              type="button"
-              aria-disabled={disabled}
-              aria-labelledby={`${optionsId}-${key}-label`}
-              aria-describedby={`${optionsId}-${key}-description`}
-              onClick={() => {
-                if (disabled) return;
-                closeAndFocus();
-                run?.();
-              }}
+      <strong id={optionsId}>{uiText("重新生成")}</strong>
+      {options.map(({ key, label, description, disabled, run }) =>
+        run === undefined ? null : (
+          <button
+            key={key}
+            type="button"
+            aria-disabled={disabled}
+            aria-labelledby={`${optionsId}-${key}-label`}
+            aria-describedby={`${optionsId}-${key}-description`}
+            data-close-message-menu
+            onClick={() => {
+              if (!disabled) run();
+            }}
+          >
+            <strong id={`${optionsId}-${key}-label`}>{label}</strong>
+            <span
+              className={styles.regenerationDescription}
+              id={`${optionsId}-${key}-description`}
             >
-              <strong id={`${optionsId}-${key}-label`}>{label}</strong>
-              <span
-                className={styles.regenerationDescription}
-                id={`${optionsId}-${key}-description`}
-              >
-                {description}
-              </span>
-            </button>
-          ))}
-        </span>
-      ) : null}
+              {description}
+            </span>
+          </button>
+        ),
+      )}
     </span>
   );
 }
@@ -586,12 +521,12 @@ function TimelineEvent({
               </span>
             ) : null}
             {event.committedHead === undefined ? null : (
-              <span className="history-message-actions">
+              <TimelineMessageMenu label={uiText("玩家消息操作")}>
                 {event.committedHead === "genesis" ? null : (
                   <button
                     type="button"
-                    className="history-restart-button"
                     disabled={restartDisabled}
+                    data-close-message-menu
                     onClick={() => {
                       setEditedText(event.text);
                       setRevisionContinuation("auto");
@@ -602,13 +537,13 @@ function TimelineEvent({
                 )}
                 <button
                   type="button"
-                  className="history-restart-button"
                   disabled={restartDisabled}
+                  data-close-message-menu
                   onClick={() => onRestartFrom(event.committedHead!)}
                 >
                   {uiText("创建分叉")}
                 </button>
-              </span>
+              </TimelineMessageMenu>
             )}
           </header>
           {editedText === null ? (
@@ -741,57 +676,69 @@ function TimelineEvent({
     const responseKind = assistantResponseKind(event);
     const responseClass =
       responseKind === "tool_step" ? "tool-step" : responseKind;
+    const committedHead = event.committedHead;
+    const hasHeading = showTechnicalInfo || event.status === "interrupted";
+    const marginActions = !hasHeading && committedHead !== undefined;
+    const actions =
+      committedHead === undefined ? null : (
+        <TimelineMessageMenu
+          label={uiText("主持消息操作")}
+          className={marginActions ? styles.narratorMarginActions : undefined}
+        >
+          {responseKind === "narrative" && event.text.length > 0 ? (
+            <StorySourceCopy text={event.text} />
+          ) : null}
+          <button
+            type="button"
+            disabled={restartDisabled}
+            data-close-message-menu
+            onClick={() => onRestartFrom(committedHead)}
+          >
+            {uiText("创建分叉")}
+          </button>
+          {onRegenerateNarrative !== undefined || onRegenerate !== undefined ? (
+            <RegenerationActions
+              restartDisabled={restartDisabled}
+              freshContextDisabled={freshContextDisabled}
+              onRegenerate={onRegenerate}
+              onRegenerateNarrative={onRegenerateNarrative}
+            />
+          ) : null}
+        </TimelineMessageMenu>
+      );
     return (
       <li
         className={`call-chain-assistant is-${event.status} is-${responseClass}`}
         data-timeline-item={timelineItem}
       >
-        <article>
-          <header>
-            {showTechnicalInfo ? (
-              <>
-                <strong>
-                  {event.status === "streaming"
-                    ? uiText("模型响应中")
-                    : responseKind === "tool_step"
-                      ? uiText("模型工具步骤")
-                      : responseKind === "empty"
-                        ? uiText("空模型响应")
-                        : uiText("AI 响应")}
-                </strong>
-                <span>{callChainAssistantStatusLabel(event.status)}</span>
-              </>
-            ) : event.status === "interrupted" ? (
-              <strong>{uiText("中断片段")}</strong>
-            ) : null}
-            {event.committedHead === undefined ? null : (
-              <span className="history-message-actions">
-                {responseKind === "narrative" && event.text.length > 0 ? (
-                  <StorySourceCopy
-                    text={event.text}
-                    className="history-restart-button"
-                  />
-                ) : null}
-                {onRegenerateNarrative !== undefined ||
-                onRegenerate !== undefined ? (
-                  <RegenerationMenu
-                    restartDisabled={restartDisabled}
-                    freshContextDisabled={freshContextDisabled}
-                    onRegenerate={onRegenerate}
-                    onRegenerateNarrative={onRegenerateNarrative}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(event.committedHead!)}
-                >
-                  {uiText("创建分叉")}
-                </button>
-              </span>
-            )}
-          </header>
+        <article
+          className={
+            marginActions ? styles.narratorWithMarginActions : undefined
+          }
+        >
+          {hasHeading ? (
+            <header>
+              {showTechnicalInfo ? (
+                <>
+                  <strong>
+                    {event.status === "streaming"
+                      ? uiText("模型响应中")
+                      : responseKind === "tool_step"
+                        ? uiText("模型工具步骤")
+                        : responseKind === "empty"
+                          ? uiText("空模型响应")
+                          : uiText("AI 响应")}
+                  </strong>
+                  <span>{callChainAssistantStatusLabel(event.status)}</span>
+                </>
+              ) : (
+                <strong>{uiText("中断片段")}</strong>
+              )}
+              {actions}
+            </header>
+          ) : (
+            actions
+          )}
           {responseKind === "tool_step" && event.text.length > 0 ? (
             <details className="call-chain-tool-step-text">
               <summary>{uiText("查看工具步骤文本（未进入故事）")}</summary>
@@ -929,23 +876,31 @@ export function Transcript({
                 {message.role === "player" ? uiText("你") : uiText("主持")}
               </strong>
               {message.pending ? <span>{uiText("未结算")}</span> : null}
-              {message.role === "narrator" && !message.pending ? (
-                <StorySourceCopy
-                  text={message.exactText}
-                  className="history-restart-button"
-                />
-              ) : null}
-              {message.head === undefined ||
-              onRestartFrom === undefined ? null : (
-                <button
-                  type="button"
-                  className="history-restart-button"
-                  disabled={restartDisabled}
-                  onClick={() => onRestartFrom(message.head!)}
+              {(message.role === "narrator" && !message.pending) ||
+              (message.head !== undefined && onRestartFrom !== undefined) ? (
+                <TimelineMessageMenu
+                  label={
+                    message.role === "player"
+                      ? uiText("玩家消息操作")
+                      : uiText("主持消息操作")
+                  }
                 >
-                  {uiText("创建分叉")}
-                </button>
-              )}
+                  {message.role === "narrator" && !message.pending ? (
+                    <StorySourceCopy text={message.exactText} />
+                  ) : null}
+                  {message.head === undefined ||
+                  onRestartFrom === undefined ? null : (
+                    <button
+                      type="button"
+                      disabled={restartDisabled}
+                      data-close-message-menu
+                      onClick={() => onRestartFrom(message.head!)}
+                    >
+                      {uiText("创建分叉")}
+                    </button>
+                  )}
+                </TimelineMessageMenu>
+              ) : null}
             </header>
             {message.role === "narrator" ? (
               <StoryMarkdown text={message.exactText} />

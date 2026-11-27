@@ -537,10 +537,13 @@ for (const locale of ["zh-CN", "en"] as const) {
         await action.clear();
         if (index === 0) {
           const regenerate = t("重新生成", "Regenerate");
-          const menuButton = story.getByRole("button", {
-            name: regenerate,
-            exact: true,
-          });
+          const menuButton = story
+            .locator(".call-chain-assistant.is-completed")
+            .last()
+            .getByRole("button", {
+              name: t("主持消息操作", "Narrator message actions"),
+              exact: true,
+            });
           await menuButton.click();
           const options = story.getByRole("group", { name: regenerate });
           const rewrite = options.getByRole("button", {
@@ -573,6 +576,12 @@ for (const locale of ["zh-CN", "en"] as const) {
           const player = story.locator(".call-chain-player").filter({
             hasText: "Fixture new-chat action",
           });
+          await player
+            .getByRole("button", {
+              name: t("玩家消息操作", "Player message actions"),
+              exact: true,
+            })
+            .click();
           await player
             .getByRole("button", { name: t("修改", "Edit"), exact: true })
             .click();

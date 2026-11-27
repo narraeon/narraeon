@@ -155,11 +155,15 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   const revisedTimeline = page.getByLabel(t("故事时间线", "Story timeline"));
   const edit = t("修改", "Edit");
   const fork = t("创建分叉", "Create fork");
+  const playerActions = t("玩家消息操作", "Player message actions");
   const editor = revisedTimeline.locator(".history-player-edit");
   const openEdit = async (before: string, after: string) => {
     const player = revisedTimeline
       .locator(".call-chain-player")
       .filter({ hasText: before });
+    await player
+      .getByRole("button", { name: playerActions, exact: true })
+      .click();
     await player.getByRole("button", { name: edit, exact: true }).click();
     await editor.getByLabel(t("修改后的行动", "Edited action")).fill(after);
   };
@@ -302,12 +306,16 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   const copiedPlayer = page
     .locator(".call-chain-player")
     .filter({ hasText: "I ask Alex when we are meeting." });
+  await copiedPlayer
+    .getByRole("button", { name: playerActions, exact: true })
+    .click();
   await expect(
     copiedPlayer.getByRole("button", { name: edit, exact: true }),
   ).toBeVisible();
   await expect(
     copiedPlayer.getByRole("button", { name: fork, exact: true }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(providerRequests).toHaveLength(5);
   expect(providerRequests.at(-1)).toContain(freshEdit);
   expect(providerRequests.at(-1)).not.toContain(originalAction);
@@ -321,6 +329,9 @@ async function verifyHistoryEdit(page: Page, locale: "zh-CN" | "en") {
   const revisedPlayer = page
     .locator(".call-chain-player")
     .filter({ hasText: freshEdit });
+  await revisedPlayer
+    .getByRole("button", { name: playerActions, exact: true })
+    .click();
   await revisedPlayer.getByRole("button", { name: fork, exact: true }).click();
   const forkTitle = `${title} · ${t("分叉", "Fork")}`;
   await expect(
@@ -424,27 +435,27 @@ test("故事模式开关持久化，最新检查点自动预选且取消后只�
     .locator(".call-chain-player")
     .filter({ hasText: "整理这段事情。" });
   await page.mouse.move(0, 0);
-  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
-    "opacity",
-    "0",
-  );
-  await player.locator("article").hover();
-  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
-    "opacity",
-    "1",
-  );
-  await page.mouse.move(0, 0);
-  await player.getByRole("button", { name: "修改" }).focus();
-  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
-    "opacity",
-    "1",
-  );
+  const playerActions = player.getByRole("button", {
+    name: "玩家消息操作",
+    exact: true,
+  });
+  const editAction = player.getByRole("button", { name: "修改", exact: true });
+  await expect(playerActions).toBeVisible();
+  await expect(playerActions).toHaveCSS("opacity", "1");
+  await expect(editAction).toHaveCount(0);
+  await playerActions.focus();
+  const playerBefore = await player.boundingBox();
+  await playerActions.press("Space");
+  await expect(editAction).toBeVisible();
+  expect(await player.boundingBox()).toEqual(playerBefore);
+  await page.keyboard.press("Tab");
+  await expect(editAction).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(editAction).toHaveCount(0);
+  await expect(playerActions).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("你的行动").focus();
-  await expect(player.getByRole("button", { name: "修改" })).toHaveCSS(
-    "opacity",
-    "1",
-  );
+  await expect(playerActions).toHaveCSS("opacity", "1");
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole("button", { name: "阅读设置" }).click();
   const toggle = page.getByRole("checkbox", { name: "显示技术信息" });

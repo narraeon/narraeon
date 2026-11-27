@@ -79,8 +79,12 @@ test("导入备份后，自动修改使用本机新对话，缺模型时保持�
     const player = page.locator(".call-chain-player").filter({
       hasText: "我推开旅店的大门。",
     });
-    const edit = () =>
-      player.getByRole("button", { name: "修改", exact: true }).click();
+    const edit = async () => {
+      await player
+        .getByRole("button", { name: "玩家消息操作", exact: true })
+        .click();
+      await player.getByRole("button", { name: "修改", exact: true }).click();
+    };
     await edit();
     await expect(
       player.getByText("这次修改需要开启新对话。请先配置模型，再保存修改。", {

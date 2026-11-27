@@ -2308,6 +2308,8 @@ const worldPageEnglishMessages: Record<string, string> = {
     "Copy current state and committed narrative through this point into a completely independent world.",
   "正在创建…": "Creating…",
   创建分叉: "Create fork",
+  玩家消息操作: "Player message actions",
+  主持消息操作: "Narrator message actions",
   重新生成: "Regenerate",
   只重写这段正文: "Rewrite just this reply",
   "保留本轮已生效的结果和状态变化。":

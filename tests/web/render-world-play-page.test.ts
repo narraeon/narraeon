@@ -98,18 +98,20 @@ describe("世界游玩页面", () => {
     {
       locale: "zh-CN" as const,
       edit: "修改",
+      messageActions: "玩家消息操作",
       warning:
         "保存修改会永久删除这条原消息及之后的故事、模型对话和产物，并撤销从这条消息起的世界改动。此前的历史会保留。",
     },
     {
       locale: "en" as const,
       edit: "Edit",
+      messageActions: "Player message actions",
       warning:
         "Saving permanently deletes the original message and all later story, model conversation, and artifacts. It rolls back world changes from that message onward. Earlier history is kept.",
     },
   ])(
     "warns before saving a player-message edit in $locale",
-    async ({ locale, edit, warning }) => {
+    async ({ locale, edit, messageActions, warning }) => {
       setWebLocale(locale);
       const chain = playChainView("original", "first", "Open the door.");
       const request = vi.fn((input: V1Request): Promise<unknown> => {
@@ -123,7 +125,10 @@ describe("世界游玩页面", () => {
       });
       renderWorld({ request });
 
-      fireEvent.click(await screen.findByRole("button", { name: edit }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: messageActions }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: edit }));
 
       expect(screen.getByText(warning)).toBeTruthy();
       expect(request).not.toHaveBeenCalledWith(
@@ -3481,7 +3486,7 @@ describe("世界游玩页面", () => {
     );
     expect(card.closest(".world-timeline-trace")).toBeNull();
     expect(card.closest(".call-chain-resolution")).not.toBeNull();
-    fireEvent.click(within(timeline).getByRole("button", { name: "重新生成" }));
+    fireEvent.click(latestNarratorActions(timeline)!);
     expect(
       within(timeline).getByRole("button", { name: "只重写这段正文" }),
     ).toBeTruthy();
@@ -4205,6 +4210,9 @@ describe("世界游玩页面", () => {
     const copiedPlayerMessage = screen
       .getByText("I signal Alex to open the door.")
       .closest<HTMLElement>(".call-chain-player")!;
+    fireEvent.click(
+      within(copiedPlayerMessage).getByRole("button", { name: "玩家消息操作" }),
+    );
     expect(
       within(copiedPlayerMessage).getByRole("button", { name: "修改" }),
     ).toBeTruthy();
@@ -4270,11 +4278,11 @@ describe("世界游玩页面", () => {
 
     renderWorld(client, onOpenWorld);
     await screen.findByText("Alex opens the door and lets you go first.");
+    const timeline = within(screen.getByLabelText("模型调用链"));
     fireEvent.click(
-      within(screen.getByLabelText("模型调用链")).getAllByRole("button", {
-        name: "创建分叉",
-      })[0]!,
+      timeline.getAllByRole("button", { name: "玩家消息操作" })[0]!,
     );
+    fireEvent.click(timeline.getByRole("button", { name: "创建分叉" }));
 
     await waitFor(() =>
       expect(onOpenWorld).toHaveBeenCalledWith("world-branch"),
@@ -4304,27 +4312,27 @@ describe("世界游玩页面", () => {
     };
     renderWorld(client);
     const latest = (await screen.findByText("最新正文")).closest("article")!;
-    expect(screen.getAllByRole("button", { name: "重新生成" })).toHaveLength(1);
-    expect(
-      within(latest).getByRole("button", { name: "重新生成" }),
-    ).toBeTruthy();
+    const trigger = within(latest).getByRole("button", {
+      name: "主持消息操作",
+    });
+    fireEvent.click(trigger);
     expect(
       within(latest).getByRole("button", { name: "创建分叉" }),
     ).toBeTruthy();
-    fireEvent.click(within(latest).getByRole("button", { name: "重新生成" }));
     expect(
       within(latest).getByRole("button", { name: "只重写这段正文" }),
     ).toBeTruthy();
     expect(
       within(latest).getByRole("button", { name: "整轮重来" }),
     ).toBeTruthy();
-    expect(
-      within(
-        screen
-          .getByText("Alex opens the door and lets you go first.")
-          .closest("article")!,
-      ).queryByRole("button", { name: "重新生成" }),
-    ).toBeNull();
+    fireEvent.click(trigger);
+    const older = within(
+      screen
+        .getByText("Alex opens the door and lets you go first.")
+        .closest("article")!,
+    );
+    fireEvent.click(older.getByRole("button", { name: "主持消息操作" }));
+    expect(older.queryByRole("group", { name: "重新生成" })).toBeNull();
   });
 
   test("已展开的重新生成菜单会随忙碌状态禁用，仍可关闭并返回原焦点", () => {
@@ -4364,7 +4372,7 @@ describe("世界游玩页面", () => {
           children,
         ),
     });
-    const trigger = screen.getByRole("button", { name: "重新生成" });
+    const trigger = latestNarratorActions(screen.getByLabelText("模型调用链"))!;
     fireEvent.click(trigger);
     const rewrite = screen.getByRole("button", { name: "只重写这段正文" });
     const redo = screen.getByRole("button", { name: "整轮重来" });
@@ -4494,21 +4502,16 @@ describe("世界游玩页面", () => {
     };
     renderWorld(client);
     await screen.findByRole("heading", { name: "宿舍世界" });
-    const button = screen.queryByRole<HTMLButtonElement>("button", {
-      name: "重新生成",
-    });
-    if (disabled) {
-      expect(button?.getAttribute("aria-disabled")).toBe("true");
-      fireEvent.click(button!);
-      expect(screen.queryByRole("group", { name: "重新生成" })).toBeNull();
-    } else if (scenario === "未提交主持正文" || scenario === "工具步骤") {
-      expect(button).toBeNull();
+    const trigger = latestNarratorActions(screen.getByLabelText("模型调用链"));
+    if (scenario === "未提交主持正文" || scenario === "工具步骤") {
+      expect(trigger).toBeUndefined();
     } else {
-      fireEvent.click(button!);
-      expect(
-        screen.getByRole("button", { name: "只重写这段正文" }),
-      ).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "整轮重来" })).toBeNull();
+      fireEvent.click(trigger!);
+      const rewrite = screen.getByRole("button", { name: "只重写这段正文" });
+      expect(rewrite.getAttribute("aria-disabled")).toBe(String(disabled));
+      const redo = screen.queryByRole("button", { name: "整轮重来" });
+      if (disabled) expect(redo?.getAttribute("aria-disabled")).toBe("true");
+      else expect(redo).toBeNull();
     }
   });
 
@@ -5037,6 +5040,9 @@ describe("世界游玩页面", () => {
       .getByText("I signal Alex to open the door.")
       .closest<HTMLElement>(".call-chain-player")!;
     fireEvent.click(
+      within(playerMessage).getByRole("button", { name: "玩家消息操作" }),
+    );
+    fireEvent.click(
       within(playerMessage).getByRole("button", { name: "修改" }),
     );
     const editor = within(playerMessage).getByLabelText("修改后的行动");
@@ -5148,6 +5154,9 @@ describe("世界游玩页面", () => {
       .getByText("I signal Alex to open the door.")
       .closest<HTMLElement>(".call-chain-player")!;
     fireEvent.click(
+      within(playerMessage).getByRole("button", { name: "玩家消息操作" }),
+    );
+    fireEvent.click(
       within(playerMessage).getByRole("button", { name: "修改" }),
     );
     fireEvent.change(within(playerMessage).getByLabelText("修改后的行动"), {
@@ -5194,8 +5203,21 @@ describe("世界游玩页面", () => {
   });
 });
 
+function latestNarratorActions(timeline: HTMLElement): HTMLElement | undefined {
+  const latest = Array.from(
+    timeline.querySelectorAll<HTMLElement>(
+      ".call-chain-assistant.is-completed",
+    ),
+  ).at(-1);
+  return latest === undefined
+    ? undefined
+    : (within(latest).queryByRole("button", { name: "主持消息操作" }) ??
+        undefined);
+}
+
 async function redoLatestTurn(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));
+  const timeline = await screen.findByLabelText("模型调用链");
+  fireEvent.click(latestNarratorActions(timeline)!);
   fireEvent.click(screen.getByRole("button", { name: "整轮重来" }));
 }
 

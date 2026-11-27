@@ -1,5 +1,10 @@
 import { worldArchiveFixture } from "../support/worldArchiveFixture.ts";
-import { expect as baseExpect, test, type Page } from "@playwright/test";
+import {
+  expect as baseExpect,
+  test,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -16,6 +21,7 @@ const expect = baseExpect.configure({ timeout: 15_000 });
 
 test("重新生成最新回复追加一次时间线修订，保留原文和旧端点，不重复提交玩家消息", async ({
   page,
+  browser,
 }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(15_000);
@@ -110,7 +116,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
       .getByRole("button", { name: "打开世界：重新生成测试世界", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: "重新生成", exact: true }),
+      page.getByRole("group", { name: "重新生成", exact: true }),
     ).toHaveCount(0);
     await page.getByLabel("你的行动").fill("第一次行动");
     await page
@@ -123,24 +129,43 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(
       page.getByText("原来的第二段回复", { exact: true }),
     ).toBeVisible();
-    const regenerate = page.getByRole("button", {
-      name: "重新生成",
+    const latestReply = page
+      .locator(".call-chain-assistant.is-completed")
+      .last();
+    const actions = latestReply.getByRole("button", {
+      name: "主持消息操作",
       exact: true,
     });
-    await expect(regenerate).toHaveCount(1);
-    await expect(regenerate).toBeEnabled();
+    await expect(actions).toBeVisible();
+    await expect(actions).toBeEnabled();
     const before = await store.readAuthorityHistory(worldId);
     expect(before.commits).toHaveLength(4);
     const firstReply = page
       .locator(".call-chain-assistant")
       .filter({ hasText: "第一段回复" });
+    await firstReply
+      .getByRole("button", { name: "主持消息操作", exact: true })
+      .click();
     await expect(
-      firstReply.getByRole("button", { name: "重新生成", exact: true }),
+      firstReply.getByRole("group", { name: "重新生成", exact: true }),
     ).toHaveCount(0);
+    await expect(
+      firstReply.getByRole("button", { name: "创建分叉", exact: true }),
+    ).toBeEnabled();
+    await page.keyboard.press("Escape");
     const desktop = page.viewportSize()!;
     await page.setViewportSize({ width: 375, height: 760 });
-    await regenerate.focus();
-    await regenerate.press("Enter");
+    const originalProse = page.getByText("原来的第二段回复", { exact: true });
+    const prosePosition = () =>
+      originalProse.evaluate((element) => ({
+        top: element.getBoundingClientRect().top,
+        scroll: element.closest(".world-reader-scroll")!.scrollTop,
+      }));
+    await expect(latestReply.locator("header")).toHaveCount(0);
+    await actions.scrollIntoViewIfNeeded();
+    await actions.focus();
+    const beforeOpen = await prosePosition();
+    await actions.press("Enter");
     const menu = page.getByRole("group", { name: "重新生成", exact: true });
     const rewrite = menu.getByRole("button", { name: "只重写这段正文" });
     const redo = menu.getByRole("button", { name: "整轮重来" });
@@ -150,18 +175,69 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(redo).toHaveAccessibleDescription(
       "撤回本轮进展，从你的行动重新推演。",
     );
+    const popup = latestReply.getByRole("group", {
+      name: "主持消息操作",
+      exact: true,
+    });
+    expect(await prosePosition()).toEqual(beforeOpen);
+    await expectPopupInsideViewport(popup, page);
     await rewrite.click({ trial: true });
     await redo.click({ trial: true });
+    await page.keyboard.press("Tab");
+    await expect(
+      latestReply.getByRole("button", { name: "复制原文" }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      latestReply.getByRole("button", { name: "创建分叉" }),
+    ).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(rewrite).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(redo).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
-    await expect(regenerate).toBeFocused();
-    await regenerate.click();
+    await expect(actions).toBeFocused();
+    expect(await prosePosition()).toEqual(beforeOpen);
+    await actions.click();
     await page.getByLabel("你的行动").click();
     await expect(menu).toBeHidden();
+    const touch = await browser.newContext({
+      viewport: { width: 390, height: 450 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    try {
+      const mobile = await touch.newPage();
+      await mobile.goto(page.url());
+      const mobileReply = mobile
+        .locator(".call-chain-assistant.is-completed")
+        .last();
+      const mobileActions = mobileReply.getByRole("button", {
+        name: "主持消息操作",
+        exact: true,
+      });
+      const mobileProse = mobileReply.getByText("原来的第二段回复", {
+        exact: true,
+      });
+      await mobileActions.scrollIntoViewIfNeeded();
+      const mobileBefore = await mobileProse.boundingBox();
+      await mobileActions.tap();
+      const mobilePopup = mobileReply.getByRole("group", {
+        name: "主持消息操作",
+        exact: true,
+      });
+      await expect(
+        mobilePopup.getByRole("button", { name: "整轮重来" }),
+      ).toBeVisible();
+      await expectPopupInsideViewport(mobilePopup, mobile);
+      expect(await mobileProse.boundingBox()).toEqual(mobileBefore);
+      await mobileActions.tap();
+      await expect(mobilePopup).toBeHidden();
+      expect(await mobileProse.boundingBox()).toEqual(mobileBefore);
+    } finally {
+      await touch.close();
+    }
     expect(providerRequests).toHaveLength(2);
     let dialogs = 0;
     page.on("dialog", async (dialog) => {
@@ -169,13 +245,16 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
       await dialog.dismiss();
     });
     await page.getByLabel("你的行动").fill("仍未发送的行动草稿");
-    await regenerate.click();
+    await actions.click();
     await redo.click();
     await expect(
       page.getByText("正在重新生成…", { exact: true }),
     ).toBeVisible();
     await expect.poll(() => finishRegeneration !== undefined).toBe(true);
-    await expect(regenerate).toBeDisabled();
+    await actions.click();
+    await expect(rewrite).toBeDisabled();
+    await expect(redo).toBeDisabled();
+    await page.keyboard.press("Escape");
     finishRegeneration!();
     finishRegeneration = undefined;
     await expect(
@@ -235,13 +314,13 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await expect(page).toHaveURL(/#\/world\//u);
     await expect(timeline).toContainText("重新生成的第二段回复");
     await expect(timeline).not.toContainText("原来的第二段回复");
-    await expect(regenerate).toHaveCount(1);
+    await expect(actions).toBeVisible();
     await page.getByLabel("你的行动").fill("");
     await page.getByRole("button", { name: "继续故事", exact: true }).click();
     await expect(
       page.getByText("空输入续写回复", { exact: true }),
     ).toBeVisible();
-    await regenerate.click();
+    await actions.click();
     await expect(rewrite).toBeVisible();
     await expect(redo).toHaveCount(0);
     await rewrite.click();
@@ -319,12 +398,15 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
       .getByRole("button", { name: "打开世界：雨夜旅店", exact: true })
       .click();
     await expect(page.getByText("上下文 —", { exact: true })).toBeVisible();
-    const regenerate = page.getByRole("button", {
-      name: "重新生成",
-      exact: true,
-    });
-    await expect(regenerate).toBeEnabled();
-    await regenerate.click();
+    const actions = page
+      .locator(".call-chain-assistant.is-completed")
+      .last()
+      .getByRole("button", {
+        name: "主持消息操作",
+        exact: true,
+      });
+    await expect(actions).toBeEnabled();
+    await actions.click();
     await page.getByRole("button", { name: "整轮重来", exact: true }).click();
     const fallback = page.getByRole("button", {
       name: "用全新上下文重新生成",
@@ -383,6 +465,17 @@ function sendNarrative(response: ServerResponse, text: string): void {
       "data: [DONE]\n\n",
     ].join(""),
   );
+}
+
+async function expectPopupInsideViewport(popup: Locator, page: Page) {
+  const bounds = await popup.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
 }
 
 async function runtime<T = unknown>(

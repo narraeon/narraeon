@@ -196,6 +196,11 @@ async function expectOpening(container: Locator): Promise<void> {
 }
 
 async function copyOriginal(page: Page, container: Locator, source: string) {
+  const messageActions = container.getByRole("button", {
+    name: "Narrator message actions",
+    exact: true,
+  });
+  if ((await messageActions.count()) > 0) await messageActions.click();
   await container.getByRole("button", { name: "Copy original" }).click();
   await expect(
     container.getByRole("button", { name: "Original copied" }),
@@ -203,6 +208,7 @@ async function copyOriginal(page: Page, container: Locator, source: string) {
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     source,
   );
+  if ((await messageActions.count()) > 0) await page.keyboard.press("Escape");
 }
 
 async function runtime<T>(page: Page, request: V1Request): Promise<T> {
