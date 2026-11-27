@@ -211,6 +211,7 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
         .click();
     };
     await open();
+    await expect(page.locator('[data-extension-mount="story"]')).toHaveCount(0);
     await page.getByLabel("你的行动").fill("Open the door.");
     await page
       .getByRole("button", { name: "从全新上下文发送行动", exact: true })
@@ -265,6 +266,10 @@ test("浏览器多产物编辑、停用及后置内容同端点刷新、观察�
       ],
     });
     await expect.poll(() => pending.length).toBe(1);
+    const storyAttachment = page.locator(
+      '.call-chain-assistant [data-extension-mount="story"] iframe[title="panel"]',
+    );
+    await expect(storyAttachment).toHaveCount(1);
     const panel = page.frameLocator('iframe[title="panel"]');
     await expect(
       panel.getByText("Saved panel at the same head", { exact: true }),

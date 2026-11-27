@@ -802,9 +802,9 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "composer_below",
     "debug",
   ])
-    await expect(
-      page.locator(`[data-extension-mount="${mount}"]`),
-    ).toBeAttached();
+    await expect(page.locator(`[data-extension-mount="${mount}"]`)).toHaveCount(
+      0,
+    );
   await expect(
     page.getByRole("button", { name: "浮层", exact: true }),
   ).toHaveCount(0);
