@@ -75,16 +75,22 @@ test("empty workspace previews unsaved and saved changes without accessing insta
   await expect
     .poll(() => seen.filter(({ type }) => type === "workspace.read").at(-1))
     .toEqual({ type: "workspace.read" });
+  const readsBeforeBack = seen.filter(
+    ({ type }) => type === "workspace.read",
+  ).length;
   await page.goBack();
   await expect(
     panel.getByRole("combobox", { name: "预览版本", exact: true }),
   ).toHaveCount(0);
   await drawer.click();
   await panel.getByLabel("预览玩法").selectOption("d20");
-  expect(seen.filter(({ type }) => type === "workspace.read").at(-1)).toEqual({
-    type: "workspace.read",
-    scope: "orchestration",
-  });
+  await expect
+    .poll(() =>
+      seen
+        .filter(({ type }) => type === "workspace.read")
+        .slice(readsBeforeBack),
+    )
+    .toEqual([{ type: "workspace.read", scope: "orchestration" }]);
 });
 
 test("author preview switches targets in English with existing instances kept outside the workbench", async ({
