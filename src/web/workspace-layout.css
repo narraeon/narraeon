@@ -887,8 +887,8 @@
   gap: 0;
 }
 .model-connection-screen .config-form {
-  gap: 8px 18px;
-  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   grid-column: 2;
   grid-row: 1;
@@ -900,11 +900,15 @@
   grid-column: 1;
   grid-row: 1;
   padding: 16px;
+  max-block-size: 65dvh;
+  overflow-y: auto;
+  scroll-padding-block: 12px;
   border-right: 1px solid var(--border);
   background: var(--surface-muted);
 }
 .model-connection-screen .config-list .panel-card {
   padding: 14px 10px;
+  overflow-wrap: anywhere;
   border: 0;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -913,8 +917,17 @@
   background: var(--surface-selected);
   box-shadow: none;
 }
-.model-protocol-options {
+.model-protocol-options,
+.model-prompt-options {
   padding: 8px 0;
+}
+.model-prompt-options summary small {
+  margin-inline-start: 8px;
+  color: var(--muted);
+}
+.model-prompt-options textarea {
+  display: block;
+  margin-top: 8px;
 }
 .model-protocol-fields {
   display: grid;
@@ -925,18 +938,16 @@
   margin: 0;
 }
 .model-connection-screen .config-form > label {
-  align-self: center;
-  margin: 0;
+  margin: 6px 0 0;
+}
+.model-connection-screen .config-form label {
   font-size: 13px;
 }
-.model-connection-screen .config-form > input,
-.model-connection-screen .config-form > select {
-  grid-column: 2;
+.model-connection-screen .config-form .model-picker-row label {
+  margin-bottom: 8px;
 }
-.model-connection-screen .config-form > div,
-.model-connection-screen .config-form > details,
-.model-connection-screen .config-form > p {
-  grid-column: 1 / -1;
+.model-connection-screen .config-form > .field-note {
+  margin-top: 0;
 }
 .model-connection-screen .config-form > .section-heading-row {
   display: flex;
@@ -1345,18 +1356,7 @@
   .model-config-mobile-navigation button {
     min-height: 40px;
   }
-  .model-connection-screen .config-form {
-    display: flex;
-    flex-direction: column;
-  }
-  .model-connection-screen .config-form > label {
-    align-self: stretch;
-    margin-top: 8px;
-  }
   .model-connection-screen .config-list {
-    max-block-size: 65dvh;
-    overflow-y: auto;
-    scroll-padding-block: 12px;
     border: 0;
   }
   .model-connection-screen .config-layout[data-narrow-view="form"] .config-list,

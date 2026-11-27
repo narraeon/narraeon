@@ -1194,6 +1194,7 @@ const englishMessages: Record<string, string> = {
     "Leave the API Key blank to reuse the saved credential when the address uses the same scheme, host, and port. Enter the API Key for the new service origin when changing any of these.",
   "模型 ID": "Model ID",
   "模型提示词（可选）": "Model prompt (optional)",
+  已填写: "Filled in",
   "正在拉取…": "Fetching…",
   已拉取的模型: "Fetched models",
   选择模型: "Select a model",
