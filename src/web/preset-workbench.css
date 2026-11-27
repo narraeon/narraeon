@@ -69,12 +69,15 @@
   display: flex;
   align-items: center;
 }
-.play-preset-screen details {
+.play-preset-screen
+  details:not(:where(.model-call-details, .model-call-details *)) {
   padding: 14px 0;
   border: 0;
   background: transparent;
 }
-.play-preset-screen details > summary {
+.play-preset-screen
+  details:not(:where(.model-call-details, .model-call-details *))
+  > summary {
   cursor: pointer;
   font-size: 13px;
 }
@@ -88,7 +91,7 @@
 .play-preset-screen h3 {
   font-weight: 500;
 }
-.play-preset-screen pre {
+.play-preset-screen pre:not(:where(.model-call-details *)) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: #f3f1e9;

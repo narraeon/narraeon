@@ -150,7 +150,10 @@ export function PlayTurnCallDetails({
           </ModelCallTools>
         ))}
         {orphanFailures.map(({ chainId, event }) => (
-          <details className="technical-details" key={`${chainId}:${event.id}`}>
+          <details
+            className="technical-details is-error"
+            key={`${chainId}:${event.id}`}
+          >
             <summary>{uiText("历史调用错误")}</summary>
             <pre>{event.message}</pre>
           </details>
@@ -262,7 +265,7 @@ export function PlayTurnCallDetails({
                                 )}
                                 {detail.toolCalls.map((call) => (
                                   <details
-                                    className="technical-details"
+                                    className={`technical-details${call.ok ? "" : " is-error"}`}
                                     key={call.callId}
                                   >
                                     <summary>
@@ -426,6 +429,7 @@ function PlayToolDetails({
   return (
     <TimelineDetails
       label={label}
+      failed={result?.ok === false}
       load={() =>
         Promise.all([
           call === undefined ? null : load(call.id),
@@ -454,6 +458,7 @@ function TimelineDetails<T>({
   children,
   revision,
   enabled = true,
+  failed = false,
   preview,
 }: {
   label: ReactNode;
@@ -461,6 +466,7 @@ function TimelineDetails<T>({
   children: (detail: T) => ReactNode;
   revision?: number | undefined;
   enabled?: boolean;
+  failed?: boolean;
   preview?: ReactNode;
 }) {
   const [detail, setDetail] = useState<{
@@ -504,7 +510,7 @@ function TimelineDetails<T>({
   return (
     <details
       ref={disclosure}
-      className="technical-details"
+      className={`technical-details${failed ? " is-error" : ""}`}
       onToggle={(event) => {
         if (
           event.currentTarget.open &&

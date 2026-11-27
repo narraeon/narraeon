@@ -174,8 +174,16 @@ test("跑团 d20 行动：请求暴露判定工具与规则，折叠卡片与回
     const summary = card.locator("summary");
     await expect(card.locator(".resolution-outcome")).toHaveText(outcome);
     await expect(summary).toHaveText(expectedLine);
+    await expect(card.locator("details")).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    const closedHeight = async () => (await card.boundingBox())!.height;
+    const initialHeight = await closedHeight();
+    expect(initialHeight).toBeLessThanOrEqual(38);
 
-    await summary.click();
+    await summary.focus();
+    await page.keyboard.press("Enter");
     const facts = card.locator(".resolution-facts");
     await expect(facts).toBeVisible();
     for (const label of ["行动", "修正", "难度", "总值", "结果"])
@@ -185,6 +193,9 @@ test("跑团 d20 行动：请求暴露判定工具与规则，折叠卡片与回
     await expect(factValue(facts, "修正")).toHaveText("+3");
     await expect(factValue(facts, "难度")).toHaveText("15");
     const factsText = await facts.innerText();
+    await page.keyboard.press("Enter");
+    await expect(facts).toBeHidden();
+    expect(await closedHeight()).toBeCloseTo(initialHeight);
     for (const raw of [
       "modifier",
       "difficulty",

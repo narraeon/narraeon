@@ -59,7 +59,7 @@ export function ModelCallDetails({
   usage: ModelUsage | null | undefined;
 }) {
   return (
-    <section className="model-call">
+    <section className={`model-call is-${status}`}>
       <header>
         {label ? <h4>{label}</h4> : null}
         <small>

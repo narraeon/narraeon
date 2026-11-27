@@ -150,23 +150,22 @@
   list-style: none;
 }
 
-.events article,
-.events details,
-:where(.column) :global(.call-chain-failure),
-:where(.column) :global(.call-chain-cancellation) {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--danger-surface);
-}
-
-.events article,
+.events
+  > :where(
+    :global(.call-chain-player),
+    :global(.call-chain-assistant),
+    :global(.player-message),
+    :global(.narrator-message)
+  )
+  > article,
 :where(.column) :global(.call-chain-failure),
 :where(.column) :global(.call-chain-cancellation) {
   padding: 0.8rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
 }
 
-.events article header,
-.events summary {
+.events > li > article > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -175,8 +174,7 @@
   font-size: 0.75rem;
 }
 
-.events article header span,
-.events summary span {
+.events > li > article > header span {
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 650;
@@ -312,6 +310,7 @@
 
 :where(.column) :global(.history-player-edit-options) > summary {
   width: fit-content;
+  padding: 0.4rem 0;
   cursor: pointer;
 }
 
@@ -449,6 +448,12 @@
   background: var(--surface-inset);
 }
 
+:where(.column) :global(.call-chain-tool-step-text) > summary {
+  padding: 0.45rem 0.65rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 :where(.column) :global(.call-chain-tool-step-text) > p {
   margin: 0;
   padding: 0.75rem 0.85rem;
@@ -468,6 +473,7 @@
 :where(.column) :global(.call-chain-cancellation) {
   border-color: var(--border);
   color: var(--muted);
+  background: var(--surface-muted);
 }
 
 :where(.column) :global(.call-chain-assistant) small {
@@ -485,35 +491,24 @@
   margin-top: 0.65rem;
 }
 
-.events details {
-  overflow: hidden;
-}
-
-.events summary {
-  padding: 0.7rem 0.85rem;
-  cursor: pointer;
-}
-
-:where(.events) pre {
-  max-height: 24rem;
-  margin: 0;
-  padding: 0.85rem;
-  overflow: auto;
-  border-top: 1px solid var(--border);
-  color: var(--text);
-  background: var(--surface-inset);
+:where(.column) :global(.call-chain-followup-summary) {
+  border-inline-start: 2px solid var(--danger);
+  background: var(--danger-surface);
+  color: var(--danger);
+  font-family: system-ui, sans-serif;
   font-size: 0.75rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
+}
+
+:where(.column) :global(.call-chain-followup-summary) > details > ol {
+  margin: 0;
+  padding: 0 0.75rem 0.45rem;
+  list-style: none;
+}
+
+:where(.column) :global(.call-chain-followup-summary) summary {
+  min-block-size: 32px;
+  padding: 0.45rem 0.6rem;
   overflow-wrap: anywhere;
-}
-
-:where(.column) :global(.call-chain-tool-result):global(.is-ok) details {
-  border-color: var(--border);
-}
-
-:where(.column) :global(.call-chain-tool-result):global(.is-error) details {
-  border-color: var(--danger);
 }
 
 :where(.column) :global(.call-chain-summary) {
@@ -569,6 +564,12 @@
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.column :global(.call-chain-assistant):global(.is-interrupted) > article {
+  padding: 0.65rem 0.75rem;
+  border-inline-start: 2px solid var(--danger);
+  background: var(--danger-surface);
 }
 
 .column :global(.call-chain-assistant) article > header,
@@ -686,22 +687,7 @@
 .column :global(.world-timeline-trace) {
   margin: -0.25rem 0 0;
   list-style: none;
-  font-family: system-ui, sans-serif;
-  font-size: 0.75rem;
   letter-spacing: normal;
-}
-
-:where(.column) :global(.world-timeline-trace) > details > summary {
-  width: fit-content;
-  padding: 0.35rem 0;
-  color: var(--text);
-  cursor: pointer;
-}
-
-:where(.column) :global(.world-timeline-trace) > details > summary small {
-  margin-left: 0.55rem;
-  color: var(--muted);
-  font-size: 0.75rem;
 }
 
 .column :global(.call-chain-tool-call),

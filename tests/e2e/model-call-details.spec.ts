@@ -39,6 +39,7 @@ test.beforeAll(async () => {
         const tool = tools[surface];
         delta({
           content: "I will read the file.",
+          reasoning_content: "I need the current file first.",
           tool_calls: [
             {
               index: 0,
@@ -127,6 +128,7 @@ for (const kind of ["play", "setting", "revision"] as const) {
             })
           ).world;
     const contexts: Promise<PlayRequestContext>[] = [];
+    let timelineDetails = 0;
     page.on("response", (response) => {
       if (
         !response.url().endsWith("/api/runtime/v1") ||
@@ -136,6 +138,7 @@ for (const kind of ["play", "setting", "revision"] as const) {
       const body = response.request().postDataJSON() as {
         request?: V1Request;
       } | null;
+      if (body?.request?.type === "play.timeline.detail") timelineDetails++;
       if (!body?.request?.type.endsWith(".context")) return;
       contexts.push(
         response
@@ -245,11 +248,49 @@ for (const kind of ["play", "setting", "revision"] as const) {
     )
       await open();
     await expect(page.getByText(finalText, { exact: true })).toBeVisible();
-    await group.locator(":scope > summary").click();
+    const readsBeforeOpen = timelineDetails;
+    const groupSummary = group.locator(":scope > summary");
+    await groupSummary.focus();
+    await page.keyboard.press("Enter");
     await expect(
       second.getByText(/调用量详情 · 输入 42 · 输出 5 tokens/u),
     ).toBeVisible();
     expect(contexts).toHaveLength(2);
+    expect(timelineDetails).toBe(readsBeforeOpen);
+
+    const context = first
+      .locator("summary")
+      .filter({ hasText: /^本次上下文$/u });
+    const reasoning = first
+      .locator("summary")
+      .filter({ hasText: /^模型推理$/u });
+    for (const [summary, loadedText] of [
+      [context, /历史逻辑上下文/u],
+      [reasoning, "I need the current file first."],
+    ] as const) {
+      const details = summary.locator("..");
+      await expect(details).not.toHaveAttribute("open", "");
+      const measure = () =>
+        summary.evaluate((element) => {
+          const details = element.parentElement!;
+          const outer = details.getBoundingClientRect();
+          return {
+            height: outer.height,
+            extra: outer.bottom - element.getBoundingClientRect().bottom,
+          };
+        });
+      const initial = await measure();
+      expect(initial.extra).toBeLessThanOrEqual(1);
+      await expect(details).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await summary.focus();
+      await page.keyboard.press("Space");
+      await expect(details.getByText(loadedText)).toBeVisible();
+      await page.keyboard.press("Space");
+      await expect(details).not.toHaveAttribute("open", "");
+      expect((await measure()).height).toBeCloseTo(initial.height);
+    }
+    expect(contexts).toHaveLength(3);
+    expect(timelineDetails - readsBeforeOpen).toBe(kind === "play" ? 1 : 0);
     expect(calls).toBe(2);
   });
 }

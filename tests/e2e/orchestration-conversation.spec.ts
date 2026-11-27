@@ -307,11 +307,20 @@ test("AI editing switches to the author surface on mobile and opens saved reques
       .filter({ hasText: /Call details|Model calls/i })
       .first()
       .click();
-    await panel
+    const context = panel
       .locator("summary")
-      .filter({ hasText: /^Context for this call$/i })
-      .click();
+      .filter({ hasText: /^Context for this call$/i });
+    const closedContextHeight = async () =>
+      context.evaluate((summary) => ({
+        summary: summary.getBoundingClientRect().height,
+        details: summary.parentElement!.getBoundingClientRect().height,
+      }));
+    const initial = await closedContextHeight();
+    expect(initial.details - initial.summary).toBeLessThanOrEqual(1);
+    await context.click();
     await expect(panel.getByText(/Historical logical context/i)).toBeVisible();
+    await context.click();
+    expect((await closedContextHeight()).details).toBeCloseTo(initial.details);
 
     const preview = await runtime(page, {
       type: "orchestration.request.preview",

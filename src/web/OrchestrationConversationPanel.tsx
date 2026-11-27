@@ -872,9 +872,21 @@ function ConversationTurn({
                   >
                     {exchange.toolCalls.map(
                       ({ callId, name, arguments: args, result }) => (
-                        <details key={callId}>
+                        <details
+                          className={`setting-exchange-tool${result?.isError === true ? " is-error" : ""}`}
+                          key={callId}
+                        >
                           <summary>
                             <code>{name}</code>
+                            <span>
+                              {uiText(
+                                result === null
+                                  ? "等待 Runtime 结果"
+                                  : result.isError
+                                    ? "拒绝／失败"
+                                    : "成功",
+                              )}
+                            </span>
                           </summary>
                           <pre>{JSON.stringify(args, null, 2)}</pre>
                           {result && <pre>{result.markdown}</pre>}
