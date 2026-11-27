@@ -3,12 +3,18 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { test } from "../support/isolatedRuntimeTest.ts";
 
-import type { V1PlayTimelinePage, V1Request } from "../../src/protocol/v1.ts";
+import type {
+  V1PlayCallChainEvent,
+  V1PlayCallChainView,
+  V1PlayTimelinePage,
+  V1Request,
+} from "../../src/protocol/v1.ts";
 import type { ResolutionReceipt } from "../../src/protocol/resolution.ts";
 import { gameplayFile, type Gameplay } from "../../src/protocol/gameplay.ts";
 
 type ScriptedTurn =
-  { text: string } | { tool: string; arguments: Record<string, unknown> };
+  | { text: string; after?: Promise<void> }
+  | { tool: string; arguments: Record<string, unknown> };
 
 interface ProviderRequest {
   raw: string;
@@ -74,14 +80,19 @@ test.beforeAll(async () => {
                 },
               ],
             };
-      response.writeHead(200, { "content-type": "text/event-stream" });
-      response.end(
-        [
-          `data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`,
-          `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 20 } })}\n\n`,
-          "data: [DONE]\n\n",
-        ].join(""),
-      );
+      const send = () => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          [
+            `data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`,
+            `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 20 } })}\n\n`,
+            "data: [DONE]\n\n",
+          ].join(""),
+        );
+      };
+      if ("text" in turn && turn.after !== undefined)
+        void turn.after.then(send);
+      else send();
     });
   });
   await new Promise<void>((resolve) =>
@@ -198,6 +209,195 @@ test("跑团 d20 行动：请求暴露判定工具与规则，折叠卡片与回
       "",
     );
   } finally {
+    await cleanupWorld(page, world);
+  }
+});
+
+test("暗骰实时与历史均只在调用详情可查，重写正文保留原判定", async ({
+  page,
+}) => {
+  const world = await createPlayWorld(page, {
+    name: "旅店留守的暗骰",
+    gameplay: { mode: "tabletop", scheme: "d100" },
+  });
+  await page.addInitScript(() => {
+    const snapshots: string[] = [];
+    Object.assign(window, { tabletopSnapshots: snapshots });
+    const NativeEventSource = window.EventSource;
+    window.EventSource = class extends NativeEventSource {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        if (this.url.includes("kind=play"))
+          this.addEventListener("observation", (event) => {
+            const { data } = event as MessageEvent<string>;
+            if (data.includes('"hiddenResolution":true')) snapshots.push(data);
+          });
+      }
+    };
+  });
+  const hiddenGoal = "幕后委托人赶在证人之前取走铜牌";
+  const publicGoal = "请求船夫载我过河";
+  const narrative = "你留在旅店，窗上积着薄雾。";
+  const rewritten = "你留在旅店，窗外的雾渐浓。";
+  const story = page.getByLabel("模型调用链", { exact: true });
+  const card = story.getByRole("article", { name: "判定结果", exact: true });
+  const finish = Promise.withResolvers<void>();
+  try {
+    turns.push(
+      {
+        tool: "percentile_check",
+        arguments: { goal: hiddenGoal, target: 73, visibility: "hidden" },
+      },
+      { text: narrative, after: finish.promise },
+    );
+    await openWorld(page, world.title);
+    const sending = sendFirstAction(page, "我留在旅店。");
+    await expect.poll(() => providerRequests.length).toBe(2);
+    await expect(page.getByRole("button", { name: "取消生成" })).toBeVisible();
+    const active = await runtime<V1PlayCallChainView>(page, {
+      type: "play.chain.inspect",
+      worldId: world.worldId,
+    });
+    const projected = active.events.find(
+      (event) => event.kind === "tool_result",
+    );
+    expect(projected).toMatchObject({
+      ok: true,
+      markdown: "",
+      hiddenResolution: true,
+    });
+    expect(projected).not.toHaveProperty("resolution");
+    expect(JSON.stringify(active)).not.toContain(hiddenGoal);
+    const snapshots = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { tabletopSnapshots: string[] })
+            .tabletopSnapshots,
+      );
+    await expect
+      .poll(async () => (await snapshots()).length)
+      .toBeGreaterThan(0);
+    expect((await snapshots()).join("")).not.toContain(hiddenGoal);
+    await expect(card).toHaveCount(0);
+    await expect(story).not.toContainText(hiddenGoal);
+
+    finish.resolve();
+    await expect(story.getByText(narrative, { exact: true })).toBeVisible();
+    await (
+      await sending
+    )();
+    const pageSnapshot = await runtime<V1PlayTimelinePage>(page, {
+      type: "play.timeline.page",
+      worldId: world.worldId,
+      limit: 40,
+    });
+    expect(pageSnapshot.items).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({ hiddenResolution: true }),
+      }),
+    );
+    expect(JSON.stringify(pageSnapshot)).not.toContain(hiddenGoal);
+    const detail = await runtime<V1PlayCallChainEvent>(page, {
+      type: "play.timeline.detail",
+      worldId: world.worldId,
+      chainId: active.chainId,
+      eventId: projected!.id,
+    });
+    expect(detail).toMatchObject({
+      kind: "tool_result",
+      resolution: {
+        goal: hiddenGoal,
+        target: 73,
+        selected: expect.any(Number),
+        visibility: "hidden",
+      },
+    });
+    if (detail.kind !== "tool_result")
+      throw new Error("Expected hidden tool result");
+    expect(providerRequests[1]!.body.messages).toContainEqual(
+      expect.objectContaining({ role: "tool", content: detail.markdown }),
+    );
+
+    await page.reload();
+    await expect(story.getByText(narrative, { exact: true })).toBeVisible();
+    await expect(card).toHaveCount(0);
+    await expect(story).not.toContainText(hiddenGoal);
+    const regenerate = story.getByRole("button", {
+      name: "重新生成",
+      exact: true,
+    });
+    await regenerate.focus();
+    await regenerate.press("Enter");
+    const menu = story.getByRole("group", { name: "重新生成", exact: true });
+    await expect(menu.getByRole("button", { name: "整轮重来" })).toHaveCount(0);
+    turns.push({ text: rewritten });
+    await menu.getByRole("button", { name: "只重写这段正文" }).click();
+    await expect(story.getByText(rewritten, { exact: true })).toBeVisible();
+    const updated = await runtime<V1PlayCallChainView>(page, {
+      type: "play.chain.inspect",
+      worldId: world.worldId,
+    });
+    expect(updated.chainId).not.toBe(active.chainId);
+    expect(providerRequests).toHaveLength(3);
+    expect(providerRequests[2]!.body.messages).toContainEqual(
+      expect.objectContaining({ role: "tool", content: detail.markdown }),
+    );
+    await expect(card).toHaveCount(0);
+
+    turns.push(
+      {
+        tool: "percentile_check",
+        arguments: { goal: publicGoal, target: 40, visibility: "public" },
+      },
+      { text: "船夫听完你的请求，抬头看了你一眼。" },
+    );
+    await runtime(page, {
+      type: "play.chain.append",
+      worldId: world.worldId,
+      chainId: updated.chainId,
+      exchangeId: randomUUID(),
+      playerText: "我请船夫载我过河。",
+    });
+    for (let turn = 1; turn <= 20; turn++) {
+      turns.push({ text: `雾里传来第 ${turn} 声钟响。` });
+      await runtime(page, {
+        type: "play.chain.append",
+        worldId: world.worldId,
+        chainId: updated.chainId,
+        exchangeId: randomUUID(),
+        playerText: `我数第 ${turn} 声钟响。`,
+      });
+    }
+
+    await page.reload();
+    await expect(
+      story.getByText("雾里传来第 20 声钟响。", { exact: true }),
+    ).toBeVisible();
+    await expect(story.getByText(rewritten, { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "加载更早的故事" }).click();
+    await expect(story.getByText(rewritten, { exact: true })).toBeVisible();
+    await expect(card).toHaveCount(1);
+    await expect(card.locator("summary")).toContainText(publicGoal);
+    await expect(story).not.toContainText(hiddenGoal);
+
+    await page.getByRole("button", { name: "阅读设置" }).click();
+    await page.getByRole("checkbox", { name: "显示技术信息" }).check();
+    await page
+      .getByLabel("阅读设置")
+      .getByRole("button", { name: "关闭" })
+      .click();
+    const hiddenTrace = story.locator(".world-timeline-trace").first();
+    await hiddenTrace.getByText("本段调用详情", { exact: true }).click();
+    await hiddenTrace.getByText("工具调用 · 1 次", { exact: true }).click();
+    await hiddenTrace
+      .getByText("调用 percentile_check", { exact: true })
+      .click();
+    await expect(
+      hiddenTrace.locator("pre").filter({ hasText: "可见性：暗骰，仅供主持" }),
+    ).toHaveText(detail.markdown);
+    await expect(card).toHaveCount(1);
+  } finally {
+    finish.resolve();
     await cleanupWorld(page, world);
   }
 });

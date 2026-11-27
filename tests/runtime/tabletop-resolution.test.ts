@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   resolutionMarkdown,
   resolutionToolDefinition,
+  resolutionToolNames,
   resolveTabletop,
   seededRandom,
 } from "../../src/runtime/play/TabletopResolution.ts";
@@ -597,4 +598,60 @@ test("tool definitions keep bilingual descriptions and the shared input schema",
       difficulty: { type: "integer" },
     },
   });
+  for (const name of resolutionToolNames) {
+    const chinese = resolutionToolDefinition(name, "zh-CN");
+    const english = resolutionToolDefinition(name, "en");
+    expect(chinese.description).toContain("公开 goal 只写玩家已知的行动");
+    expect(english.description).toContain("only the player-known action");
+    for (const tool of [chinese, english]) {
+      expect(tool.description).toContain('visibility: "hidden"');
+      expect(tool.inputSchema).toMatchObject({
+        properties: { visibility: { enum: ["public", "hidden"] } },
+      });
+    }
+  }
 });
+
+test.each([
+  ["d20_check", { modifier: 3, difficulty: 15 }, [13]],
+  ["percentile_check", { target: 50 }, [3, 4]],
+  ["bag_check", { value: 3, difficulty: 2 }, [0]],
+  ["roll_dice", { count: 2, sides: 6 }, [0, 5]],
+  ["calculate", { left: 10, right: 4, operation: "divide" }, []],
+] as const)(
+  "%s validates visibility and retains identical mechanics",
+  (name, values, dice) => {
+    const args = { goal: "A private purpose", ...values };
+    const legacy = resolved(name, args, sequence(...dice));
+    expect(legacy).not.toHaveProperty("visibility");
+    for (const visibility of ["public", "hidden"] as const) {
+      const receipt = resolved(
+        name,
+        { ...args, visibility },
+        sequence(...dice),
+      );
+      expect(receipt).toEqual({ ...legacy, visibility });
+    }
+    const hidden = { ...legacy, visibility: "hidden" } as const;
+    expect(resolutionMarkdown(hidden, "zh-CN")).toContain(
+      "可见性：暗骰，仅供主持",
+    );
+    expect(resolutionMarkdown(hidden, "en")).toContain(
+      "Visibility: hidden (GM only)",
+    );
+    expect(isResolutionReceipt({ ...legacy, visibility: null })).toBe(false);
+    expect(isResolutionReceipt({ ...legacy, visibility: "private" })).toBe(
+      false,
+    );
+    expect(() =>
+      resolveTabletop(name, { ...args, visibility: "private" }, sequence()),
+    ).toThrow(/visibility/u);
+    expect(() =>
+      resolveTabletop(
+        name,
+        { ...args, visibility: "hidden", total: 999 },
+        sequence(),
+      ),
+    ).toThrow(/additional properties/u);
+  },
+);

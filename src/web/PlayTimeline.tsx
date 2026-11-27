@@ -92,7 +92,10 @@ export function PlayTimeline({
             (item) =>
               item.kind === "event" &&
               item.chainId === latestNarrative.chainId &&
-              timelineEventBelongsInStory(item.event),
+              (timelineEventBelongsInStory(item.event) ||
+                (item.event.kind === "tool_result" &&
+                  (item.event.hiddenResolution === true ||
+                    item.event.resolution !== undefined))),
           )
       : undefined;
   const regeneratePlayer =
@@ -372,8 +375,12 @@ function timelineEventBelongsInStory(
   )
     return true;
   if (event.kind === "followup") return event.failed;
-  // Only tabletop resolutions are story material; other tool results stay in the trace.
-  if (event.kind === "tool_result") return event.resolution !== undefined;
+  if (event.kind === "tool_result")
+    return (
+      event.resolution !== undefined &&
+      event.resolution.visibility !== "hidden" &&
+      event.hiddenResolution !== true
+    );
   if (event.kind !== "assistant") return false;
   return (
     event.status === "streaming" || assistantResponseKind(event) === "narrative"

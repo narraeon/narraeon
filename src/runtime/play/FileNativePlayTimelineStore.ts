@@ -15,6 +15,7 @@ import {
   validRequestContextEvidence,
 } from "./PlayRequestContext.ts";
 import { isResolutionReceipt } from "../../protocol/resolution.ts";
+import { projectPlayToolResult } from "../../shared/play-tool-result-projection.ts";
 import { validAuthoringNativeContinuation } from "../model/FileNativeModelAdapters.ts";
 import { validProviderKind } from "../prompt/PromptCompilationCodec.ts";
 import { isSafeGoogleWireRequest } from "../model/GoogleRequestPreview.ts";
@@ -1920,11 +1921,8 @@ function summarizeEvent(
     void _arguments;
     return { ...structuredClone(summary), detailsAvailable: true };
   }
-  if (event.kind === "tool_result") {
-    const { markdown: _markdown, ...summary } = event;
-    void _markdown;
-    return { ...structuredClone(summary), detailsAvailable: true };
-  }
+  if (event.kind === "tool_result")
+    return { ...projectPlayToolResult(event), detailsAvailable: true };
   if (event.kind === "followup")
     return {
       id: event.id,
@@ -2278,6 +2276,10 @@ function assertTimelineEventSummary(
       typeof value.ok !== "boolean" ||
       typeof value.replayed !== "boolean" ||
       !validOptionalString(value.executedName) ||
+      (value.hiddenResolution !== undefined &&
+        (value.hiddenResolution !== true || value.resolution !== undefined)) ||
+      (isRecord(value.resolution) &&
+        value.resolution.visibility === "hidden") ||
       value.detailsAvailable !== true
     )
       throw new Error("Tool-result timeline summary has an invalid shape");

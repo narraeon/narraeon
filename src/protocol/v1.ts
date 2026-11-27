@@ -876,6 +876,8 @@ export type V1PlayCallChainEvent =
       kind: "tool_result";
       /** Present only for tabletop resolution tools; never a preformatted string. */
       resolution?: ResolutionReceipt;
+      /** Activity and timeline projections replace the hidden receipt with this marker. */
+      hiddenResolution?: true;
       callId: string;
       /** The name the model sent. */
       name: string;

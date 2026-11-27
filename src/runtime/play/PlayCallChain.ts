@@ -3,6 +3,7 @@ import {
   supersededPlayEvents,
   publicAttempt,
 } from "../../shared/latest-model-attempts.ts";
+import { projectPlayToolResult } from "../../shared/play-tool-result-projection.ts";
 import {
   ModelResponseFormatError,
   validateModelToolCalls,
@@ -4071,7 +4072,7 @@ function projectActivityEvent(
   if (event.kind === "tool_call")
     return { ...structuredClone(event), arguments: null };
   if (event.kind === "tool_result")
-    return { ...structuredClone(event), markdown: "" };
+    return { ...projectPlayToolResult(event), markdown: "" };
   const { reasoning, toolFragment, ...summary } = event;
   void toolFragment;
   return {
