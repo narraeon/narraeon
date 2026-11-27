@@ -42,16 +42,19 @@ test("only the direct desktop Runtime can use a saved ChatGPT plan, including af
   };
   const accountReads = vi
     .spyOn(auth, "listAccounts")
-    .mockImplementation(async () => [{ ...identity }]);
+    .mockImplementation(() => Promise.resolve([{ ...identity }]));
   const listModels = vi
     .spyOn(auth, "listModels")
     .mockResolvedValue([{ id: plan.modelId, displayName: "Fixture model" }]);
   const readToken = vi.spyOn(auth, "getAccessToken").mockResolvedValue(bearer);
-  vi.spyOn(auth, "disconnect").mockImplementation(async () => {
+  vi.spyOn(auth, "disconnect").mockImplementation(() => {
     identity.status = "signed_out";
-    return { account: { ...identity }, remoteRevocationConfirmed: true };
+    return Promise.resolve({
+      account: { ...identity },
+      remoteRevocationConfirmed: true,
+    });
   });
-  const modelFetch = vi.fn<typeof fetch>().mockImplementation(async () => {
+  const modelFetch = vi.fn<typeof fetch>().mockImplementation(() => {
     const event = {
       type: "response.completed",
       response: {
@@ -68,9 +71,11 @@ test("only the direct desktop Runtime can use a saved ChatGPT plan, including af
         ],
       },
     };
-    return new Response(`data: ${JSON.stringify(event)}\n\n`, {
-      headers: { "Content-Type": "text/event-stream" },
-    });
+    return Promise.resolve(
+      new Response(`data: ${JSON.stringify(event)}\n\n`, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
   });
 
   async function start(
@@ -173,7 +178,9 @@ test("only the direct desktop Runtime can use a saved ChatGPT plan, including af
       expect(readToken).toHaveBeenCalledTimes(1);
       expect(modelFetch).toHaveBeenCalledTimes(1);
       const [url, init] = modelFetch.mock.calls[0]!;
-      expect(String(url)).toBe(`${chatGptPlanBaseUrl}/responses`);
+      expect(url instanceof Request ? url.url : url.toString()).toBe(
+        `${chatGptPlanBaseUrl}/responses`,
+      );
       expect(new Headers(init?.headers).get("Authorization")).toBe(
         `Bearer ${bearer}`,
       );

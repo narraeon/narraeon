@@ -69,7 +69,10 @@ export async function startWebServer(
         : { mobileStartupKey: input.mobileStartupKey }),
       ...(input.logger === undefined ? {} : { logger: input.logger }),
     });
-    server.addHook("onClose", async () => chatGptAuth?.close());
+    server.addHook("onClose", (_server, done) => {
+      chatGptAuth?.close();
+      done();
+    });
     await server.listen({ host: input.host, port: input.port });
     return server;
   } catch (error: unknown) {

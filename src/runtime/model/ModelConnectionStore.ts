@@ -460,7 +460,8 @@ export class ModelConnectionStore {
         throw new ChatGptAuthError("plan_permission_required");
       case "reauthorization_required":
         throw new ChatGptAuthError("reauthorization_required");
-      default:
+      case "signed_out":
+      case undefined:
         throw new ChatGptAuthError("sign_in_required");
     }
   }
