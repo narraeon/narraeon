@@ -100,17 +100,13 @@ export interface PlayFollowupInput {
  * player message follows the narrative directly.
  *
  * Follow-ups run strictly after Authority has accepted the exchange. A failure
- * here cannot damage committed world state: it is recorded, the remaining
- * requests still run, and the chain returns to the player either way.
+ * is recorded and the chain returns with the committed story. ChatGPT plan
+ * failures stop the remaining follow-ups for this turn.
  */
 export async function runPlayFollowupRequests(
   input: PlayFollowupInput,
 ): Promise<PlayFollowupRun> {
-  if (
-    input.followups.length === 0 ||
-    input.modelHost.allowsAutomaticFollowups?.() === false
-  )
-    return { outcomes: [] };
+  if (input.followups.length === 0) return { outcomes: [] };
 
   await input.artifacts.beginOperation(input.context);
   await input.artifacts.markCoreCommitted(input.context, input.head);
@@ -165,8 +161,8 @@ export async function runPlayFollowupRequests(
     if (outcome.failure === undefined) completed.push(followup.id);
     else {
       failure ??= outcome.failure;
-      // Consent allows running the post-play work. A failed plan request ends
-      // that automatic sequence, leaving the committed main story intact.
+      // A failed plan request ends the automatic sequence, leaving the
+      // committed main story intact.
       if (chatgptPlan) break;
     }
   }

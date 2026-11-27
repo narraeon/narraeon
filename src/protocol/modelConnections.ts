@@ -451,7 +451,6 @@ export interface ModelConnectionView
   maxOutputTokens: number;
   hasApiKey: boolean;
   chatGptAccountId?: string;
-  chatGptAllowFollowups?: boolean;
 }
 
 export interface ModelConnectionLibraryView {
@@ -478,7 +477,6 @@ export interface SaveModelConnectionInput
   authMode?: ModelConnectionAuthMode;
   apiKey?: string;
   chatGptAccountId?: string;
-  chatGptAllowFollowups?: boolean;
   modelId: string;
   modelPrompt?: string;
   reasoningEffort?: ModelReasoningEffort;

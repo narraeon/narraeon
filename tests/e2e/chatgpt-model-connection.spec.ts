@@ -182,7 +182,7 @@ for (const locale of ["zh-CN", "en"] as const) {
         "Allow this connection to automatically send extra requests after each play turn using my ChatGPT plan or credits.",
       ),
     });
-    await expect(followups).not.toBeChecked();
+    await expect(followups).toHaveCount(0);
     await expect(probe).toHaveAccessibleDescription(
       t(
         "试发会发送一条短消息，使用你的 ChatGPT 套餐或额度。输出上限由 ChatGPT 决定。",
@@ -205,15 +205,14 @@ for (const locale of ["zh-CN", "en"] as const) {
     expect(probes).toBe(1);
     expect(signInRequests).toEqual([false, true]);
 
-    await followups.check();
     await save.click();
     await expect(
       page.locator(".model-active-summary").getByText("account-model"),
     ).toBeVisible();
-    expect(saved?.chatGptAllowFollowups).toBe(true);
+    expect(saved).not.toHaveProperty("chatGptAllowFollowups");
     await page.reload();
     await expect(model).toHaveValue("account-model");
-    await expect(followups).toBeChecked();
+    await expect(followups).toHaveCount(0);
     await form
       .getByRole("button", {
         name: t("刷新 ChatGPT 授权", "Refresh ChatGPT authorization"),

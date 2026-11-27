@@ -3102,10 +3102,7 @@ export class PlayCallChain {
                 "The play call chain recovered during a later model exchange and completed.",
               details: { parentHead: session.parentHead },
             });
-          if (
-            (currentPlayPrompt(session).followups?.length ?? 0) > 0 &&
-            modelHost.allowsAutomaticFollowups?.() !== false
-          ) {
+          if ((currentPlayPrompt(session).followups?.length ?? 0) > 0) {
             // Follow-up artifacts are part of this player-visible invocation.
             // Keep `running` ephemeral: the settled main response remains the
             // durable recovery point if this Runtime process stops here.

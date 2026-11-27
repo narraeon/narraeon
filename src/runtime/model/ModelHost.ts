@@ -275,8 +275,6 @@ export interface ModelHost {
   /** Optional credential-free production encoding, used only for request diagnostics. */
   previewRequest?(request: ModelHostExchange): ModelHostWireRequest;
   previewAuthoringRequest?(request: ModelHostExchange): ModelHostWireRequest;
-  /** Whether this captured connection allows automatic post-play requests. */
-  allowsAutomaticFollowups?(): boolean;
   binding(): ModelHostBinding;
   exchange(
     request: ModelHostExchange,

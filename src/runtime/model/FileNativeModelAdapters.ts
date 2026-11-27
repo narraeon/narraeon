@@ -112,10 +112,6 @@ export class FileNativeModelHost implements ModelHost {
     return this.#modelPrompt;
   }
 
-  allowsAutomaticFollowups(): boolean {
-    return this.#connection.chatgptPlan?.allowFollowups ?? true;
-  }
-
   binding(): ModelHostBinding {
     const { provider, modelId, contextWindowTokens, maxOutputTokens } =
       this.#connection;
