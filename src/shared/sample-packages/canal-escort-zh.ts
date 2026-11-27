@@ -18,20 +18,19 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
     contents: `$document:
   id: situation.canal-escort
   ref: current-situation
-  title: 清河码头起锚前
-  summary: 顺水号装妥封蜡樟木箱，正待领队决定即刻启程还是先探听搭船传闻。
+  title: 运河押镖当前局面
+  summary: 顺水号北上押镖途中的当前时间、停靠位置与待决事项。
   aliases: []
 背景:
-  时间: 第 1 日 · 清晨（距北方封河尚有 15 日）
+  时间: 第 1 日 · 清晨
   地点: 清河码头，顺水号货船甲板
 在场:
   - { $ref: character.ce-leader }
   - { $ref: character.ce-tan }
   - { $ref: character.ce-ayan }
-待回应:
-  说话者: { $ref: character.ce-ayan }
-  原话: 咱是这就起锚直奔柳湾闸，还是先去茶棚探探那搭船人的底细？
-  现场: 老谭手握缆绳待命；封蜡樟木箱已锁在后舱暗格；码头茶棚就在几十步外，晨雾里人影往来。
+当前待决:
+  启程选择: 阿砚刚汇报码头茶棚有人愿出双倍船资搭船去白塔集；领队尚未决定即刻起锚直奔柳湾闸，还是先去茶棚探听来人底细。
+  现场: 老谭手握缆绳待命；封蜡樟木箱已锁在后舱暗格；码头茶棚就在几十步外。
 `,
   },
   {
@@ -100,11 +99,11 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
   summary: 记录核心押镖期限、船况盘缠、沿途未探水镇传闻及玩家已接支线。
   aliases: []
 核心期限与船况: 距封河尚有 15 日；顺水号完好，盘缠与干粮够半月之用，封蜡樟木箱安放后舱暗格。
-沿途水镇风声:
-  柳湾闸: 前方首道大闸，过路盐船称这两天查船极严。
-  白塔集: 运河中段商镇，传闻码头茶棚有人愿出双倍船资搭船前往。
-  盐仓镇: 官盐集散旧镇，水路岔口多，常有夜渡私船出没。
-  临清渡: 入北最后一处大渡口，若遇提前结冰需在此换旱路车马。
+老谭航路簿所记站点:
+  柳湾闸: 前方首道大闸；刚才南下的过路盐船称这两天查船极严。
+  白塔集: 运河中段商镇；阿砚在茶棚听说有人愿出双倍船资搭船前往。
+  盐仓镇: 官盐集散旧镇，水路岔口多（近况待沿途打听）。
+  临清渡: 入北最后一处大渡口，常作水陆换乘处（水情待临近核实）。
 沿途见闻与支线:
   - 码头茶棚传出双倍船资求搭顺风船的消息，尚未核实来人身份。
 `,
@@ -133,13 +132,13 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
 ## 鼓励自主扩展世界与支线（world_create）
 
 - 行程单上的柳湾闸、白塔集、盐仓镇、临清渡，以及玩家主动探访的任何茶棚、岔河小村、过路船只与搭船客，均未预写详细文档。不要因为它们不在初始文件里就把玩家硬拽回赶路。
-- 当玩家停船探访、接下搭客或私活、卷入地方纠纷、结识新人物或开辟新路线时，请结合明清运河市井质感现场生成鲜活的人物、地点与支线风波；只要该人物、地点或事件会在后续回合持续产生影响，就调用 world_create 将其正式写入 world/characters/、world/locations/ 或 world/events/。
+- 当玩家停船探访、接下搭客或私活、卷入地方纠纷、结识新人物或开辟新路线时，请结合明清运河市井质感现场生成鲜活的人物、地点与支线风波；只要新人物或新地点会在后续回合持续产生影响，就调用 world_create 将其写入 world/characters/ 或 world/locations/，而需要共同追溯的重要事件与支线结果则写入已有的 @important-events（不要尝试创建 world/events/）。
 - 支线应当与主线彼此呼吸：支线里结下的船户人情、拿到的手令、欠下的麻烦或赚到的盘缠，都可以在后续过闸、避寒、遇袭或换旱路时真正派上用场。
 
 ## 信息隔离与状态维护
 
-- @sealed-crate-origin 是按需读取的幕后底档，仅在玩家设法查探箱子来历、与知情者交锋或拆封查验时再通过 context_read 读取，严禁开局泄露箱内是盐政账册。
-- 每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation 与 @escort-manifest；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
+- @sealed-crate-origin 是按需读取的幕后底档，仅在玩家设法查探箱子来历、与知情者交锋或拆封查验时再通过 context_read 读取，严禁在玩家尚未查验前泄露箱内实情。
+- 封河倒计时只维护在 @escort-manifest 的「核心期限与船况」中，不在 @current-situation 重复记录。每次天数推进、停靠新水镇、船况/盘缠变动或接下新支线时，及时更新 @current-situation（只保留眼下仍未决定的事项，移除已落定的旧选择）与 @escort-manifest；长期承诺写入 @pending-matters，重要人物往来写入 @relationships。
 `,
     ["escort-manifest"],
     undefined,
@@ -158,9 +157,9 @@ export const canalEscortChinese: readonly ContentTreeFile[] = [
             },
             {
               id: "route-rumors",
-              label: "沿途水镇风声",
+              label: "老谭航路簿所记站点",
               document: "escort-manifest",
-              locator: ["沿途水镇风声"],
+              locator: ["老谭航路簿所记站点"],
             },
             {
               id: "side-threads",

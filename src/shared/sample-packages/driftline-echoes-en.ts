@@ -20,8 +20,8 @@ Lin Xi pauses the playback and turns to you. “All three echo beacons are plott
     contents: `$document:
   id: situation.driftline-echoes
   ref: current-situation
-  title: Three echoes at Gravel Port
-  summary: The Grey Swift has finished refueling as three beacon vectors and two off-route leads compete for the captain’s call.
+  title: Current situation aboard the Grey Swift
+  summary: Current time, position, and immediate decision for the Grey Swift’s frontier voyage.
   aliases: []
 background:
   Time: Voyage Day 1, docked
@@ -30,10 +30,9 @@ Present:
   - { $ref: character.de-captain }
   - { $ref: character.de-sol }
   - { $ref: character.de-linxi }
-Awaiting a response:
-  Speaker: { $ref: character.de-linxi }
-  Words: All three echo beacons are plotted, Captain. Do we pick a beacon vector and burn out now, check the station bar on that survey contract, or chase that half-distress call into the blank belt first?
-  Scene: Redshift-04, Icebelt-09, and Silent Haven-12 glow on the chart table; the open band just caught a station survey contract and a broken distress call from the unmapped rubble belt.
+Immediate decision:
+  Course choice: Lin Xi just flagged a Gravel Port survey contract and a clipped civilian distress call from the unmapped rubble belt; the captain has not yet decided whether to burn for a main beacon, check the station contract, or answer the distress call first.
+  Scene: Redshift-04, Icebelt-09, and Silent Haven-12 glow on the chart table; refueling is complete.
 `,
   },
   {
@@ -100,10 +99,10 @@ Fixed fittings:
   summary: Tracks ship condition, unmapped beacon vectors, and active side signals or contracts.
   aliases: []
 Ship & supplies: Hull sound; fusion fuel enough for one outer-ring loop; spare parts tight and filter coils aging.
-Echo beacon vectors:
-  Redshift-04: Edge of a hot dust cloud; clearest carrier pulse, rumored to attract salvage crews.
-  Icebelt-09: Deep inside an icy asteroid ring; intermittent signal in an uncharted sector.
-  Silent Haven-12: Far-rim derelict relay vector; almost no civilian ship reports in three years.
+Charted beacon vectors:
+  Redshift-04: Edge of a hot dust cloud; clearest carrier pulse (local sector conditions unknown until scanned or asked about).
+  Icebelt-09: Deep inside an icy asteroid ring; intermittent signal (sector uncharted on ship’s database).
+  Silent Haven-12: Far-rim derelict relay vector; faint pulse (current route status unknown).
 Side signals & contracts:
   - High-paying survey contract posted by Gravel Port control (details unchecked).
   - Clipped civilian distress call from the unmapped rubble belt outside Gravel Port.
@@ -118,8 +117,11 @@ Side signals & contracts:
   summary: Background record linking the ten-year-old Farsight survey route with the three echo beacon bands.
   aliases: []
 Facts:
-  Split coordinates: Ten years ago, the Farsight survey team discovered a rare low-energy natural jump corridor on the rim; fearing corporate seizure, they split the coordinates and logs into three encrypted echo fragments across Redshift-04, Icebelt-09, and Silent Haven-12 before vanishing.
-  Unknown fate: The main expedition cut transponders and headed into deep space; decoding each beacon reveals part of the corridor chart and the dispute that split the crew.
+  Split background: Ten years ago, the Farsight survey team discovered a rare low-energy natural jump corridor on the rim; fearing corporate seizure, they split the full transit data and logs into three encrypted echo fragments across Redshift-04, Icebelt-09, and Silent Haven-12 before cutting transponders and heading into deep space.
+  What each beacon proves on its own:
+    Redshift-04: Holds the corridor entry ephemeris, the first checksum, and a brief voice log from the expedition lead proving the withdrawal was deliberate evasion of corporate trackers rather than a mishap—without revealing the stability window or exit.
+    Icebelt-09: Holds the internal gravity stability window, the second checksum, and a heated log between the lead and deputy over whether to publish or seal the corridor, pointing toward the third beacon for the crew’s final heading.
+    Silent Haven-12: Holds the far-side exit coordinates, the third checksum, and the team’s final pre-transit self-check proving they crossed safely—though without the first two checksums the entry remains unsafe to attempt.
 `,
   },
   ...storyControlFiles(
@@ -132,13 +134,13 @@ This is an open-ended frontier space exploration sandbox. The core spine is flyi
 ## Growing Sectors & Side Threads (world_create)
 
 - All three beacon sectors, the blank rubble belt outside Gravel Port, contract brokers, salvage outfits, outpost holdouts, and potential new crewmates are intentionally undefined. Never railroad the player into a bare three-stop checklist just because an off-route lead is not pre-written.
-- Whenever the player answers a distress call, takes a side job, explores an uncharted belt, meets a passing captain, or steps into a station dispute, invent grounded, lived-in frontier characters, stations, and side arcs on the spot. Whenever a new character, location, or shared event will matter going forward, persist it with world_create under world/locations/, world/characters/, or world/events/.
+- Whenever the player answers a distress call, takes a side job, explores an uncharted belt, meets a passing captain, or steps into a station dispute, invent grounded, lived-in frontier characters, stations, and side arcs on the spot. Persist enduring new characters or locations with world_create under world/locations/ or world/characters/, and record shared events, rescues, or completed jobs in the existing @important-events document (do not attempt to create world/events/).
 - Let side threads feed back into the main voyage: filter coils, salvaged upgrades, chart leads, new crew, or rivals earned off-route should materially shape how the beacon search unfolds.
 
 ## Information Discipline & State Tracking
 
-- @lost-survey-core is an on-demand background archive; read it via context_read only after the player decodes a beacon fragment or uncovers Farsight records—never reveal the natural jump corridor early.
-- Update @current-situation and @star-chart whenever fuel, hull, upgrades, beacon progress, or active contracts change; record ongoing commitments in @pending-matters and faction/character ties in @relationships.
+- @lost-survey-core is an on-demand background archive; read it via context_read only after the player decodes any beacon fragment or uncovers Farsight records—never reveal what the expedition discovered early.
+- Update @current-situation (keeping only what is still undecided right now and clearing settled choices) and @star-chart whenever fuel, hull, upgrades, beacon progress, or active contracts change; record ongoing commitments in @pending-matters and faction/character ties in @relationships.
 `,
     ["star-chart"],
     undefined,
@@ -157,9 +159,9 @@ This is an open-ended frontier space exploration sandbox. The core spine is flyi
             },
             {
               id: "beacon-vectors",
-              label: "Echo beacon vectors",
+              label: "Charted beacon vectors",
               document: "star-chart",
-              locator: ["Echo beacon vectors"],
+              locator: ["Charted beacon vectors"],
             },
             {
               id: "contracts-signals",

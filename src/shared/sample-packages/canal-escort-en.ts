@@ -18,20 +18,19 @@ Young guard A-Yan hops aboard with two bundles of dry rations, bright-eyed on hi
     contents: `$document:
   id: situation.canal-escort
   ref: current-situation
-  title: Before casting off at Qinghe Wharf
-  summary: The Fair Current has stowed the sealed camphor chest and awaits the leader’s decision to depart or check the passenger rumor.
+  title: Current situation on the canal escort
+  summary: Current time, mooring, and immediate decision along the Fair Current’s northern run.
   aliases: []
 background:
-  Time: Day 1, early morning (15 days until northern freeze)
+  Time: Day 1, early morning
   Place: Qinghe Wharf, deck of the Fair Current
 Present:
   - { $ref: character.ce-leader }
   - { $ref: character.ce-tan }
   - { $ref: character.ce-ayan }
-Awaiting a response:
-  Speaker: { $ref: character.ce-ayan }
-  Words: Do we cast off for Willow Bend now, or walk over to the teahouse and size up this passenger first?
-  Scene: Old Tan waits with the bow line in hand; the sealed camphor chest is stowed below; the wharf teahouse is a short walk away through the morning mist.
+Immediate decision:
+  Departure choice: A-Yan just reported a double-fare passenger rumor at the wharf teahouse for White Pagoda Market; the leader has not yet decided whether to cast off for Willow Bend Lock or check the teahouse first.
+  Scene: Old Tan waits with the bow line in hand; the sealed camphor chest is stowed below; the wharf teahouse is a short walk away.
 `,
   },
   {
@@ -100,11 +99,11 @@ Fixed fittings:
   summary: Tracks the core freeze deadline, boat condition, unmapped canal-town rumors, and active side threads.
   aliases: []
 Deadline & boat status: 15 days until freeze; the Fair Current is sound, silver and rations suffice for two weeks, and the sealed chest rests in the aft locker.
-Canal-town rumors:
-  Willow Bend Lock: First major lock ahead; southbound salt barges report strict hull inspections.
-  White Pagoda Market: Mid-route trading town; someone at Qinghe teahouse is offering double fare to ride there.
-  Salt Store Town: Old salt-depot hub full of side channels and night smugglers.
-  Linqing Ferry: Final major crossing before the north; early ice may force switching to overland carts here.
+Stops in Old Tan’s river notes:
+  Willow Bend Lock: First major lock ahead; a southbound salt barge just reported strict hull inspections.
+  White Pagoda Market: Mid-route trading town; A-Yan heard someone at Qinghe teahouse is offering double fare to ride there.
+  Salt Store Town: Old salt-depot hub full of side channels (current conditions to be learned along the way).
+  Linqing Ferry: Final major northern crossing, often used to switch to overland carts (ice conditions to be checked closer north).
 Side threads & notes:
   - Rumor of a double-fare passenger at Qinghe Wharf teahouse; identity not yet checked.
 `,
@@ -133,13 +132,13 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
 ## Growing the World & Side Threads (world_create)
 
 - Willow Bend Lock, White Pagoda Market, Salt Store Town, Linqing Ferry, and any teahouse, side creek, passing boat, or passenger the player investigates are intentionally undefined. Never force the player back onto a bare linear rush just because a place or person is not pre-written.
-- Whenever the player stops to investigate, takes on a passenger or side job, helps a stranger, or stumbles into local trouble, invent grounded, historically textured characters, locations, and side arcs on the spot. Whenever a new character, place, or shared event will matter beyond the immediate moment, persist it with world_create under world/characters/, world/locations/, or world/events/.
+- Whenever the player stops to investigate, takes on a passenger or side job, helps a stranger, or stumbles into local trouble, invent grounded, historically textured characters, locations, and side arcs on the spot. Persist enduring new characters or locations with world_create under world/characters/ or world/locations/, and record shared events or side-thread outcomes in the existing @important-events document (do not attempt to create world/events/).
 - Let side threads feed back into the core spine: favors earned from boatmen, transit passes, extra silver, allies, or new rivals should genuinely shape later lock checks, ambushes, or winter detours.
 
 ## Information Discipline & State Tracking
 
-- @sealed-crate-origin is an on-demand background record; read it via context_read only when the player probes the chest’s origin, confronts someone who knows, or breaks the seal—never reveal the salt-tax ledgers early.
-- Update @current-situation and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open; record ongoing promises in @pending-matters and lasting ties in @relationships.
+- @sealed-crate-origin is an on-demand background record; read it via context_read only when the player probes the chest’s origin, confronts someone who knows, or breaks the seal—never reveal the chest’s true contents early.
+- Track the freeze countdown only in @escort-manifest under Deadline & boat status rather than duplicating it in @current-situation. Update @current-situation (keeping only what is still undecided right now and clearing settled choices) and @escort-manifest whenever days pass, stops change, silver/boat condition shifts, or side threads open; record ongoing promises in @pending-matters and lasting ties in @relationships.
 `,
     ["escort-manifest"],
     undefined,
@@ -158,9 +157,9 @@ This is an open-ended journey up the Grand Canal. The core spine is delivering t
             },
             {
               id: "route-rumors",
-              label: "Canal-town rumors",
+              label: "Stops in Old Tan’s river notes",
               document: "escort-manifest",
-              locator: ["Canal-town rumors"],
+              locator: ["Stops in Old Tan’s river notes"],
             },
             {
               id: "side-threads",
