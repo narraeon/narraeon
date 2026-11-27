@@ -76,6 +76,8 @@ const expectedSampleGameplay: Record<SampleContentPackageId, Gameplay> = {
   "qingzhou-tales": { mode: "tabletop", scheme: "bag" },
   "treasure-island": { mode: "tabletop", scheme: "d20" },
   "baker-street-fog": { mode: "interactive-fiction" },
+  "canal-escort": { mode: "interactive-fiction" },
+  "driftline-echoes": { mode: "interactive-fiction" },
 };
 
 describe.each(appLocales)(

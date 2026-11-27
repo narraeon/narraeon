@@ -9,6 +9,8 @@ export const sampleContentPackageIds = [
   "qingzhou-tales",
   "treasure-island",
   "baker-street-fog",
+  "canal-escort",
+  "driftline-echoes",
 ] as const;
 
 export type SampleContentPackageId = (typeof sampleContentPackageIds)[number];

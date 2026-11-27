@@ -143,6 +143,34 @@ const descriptions = {
         "十一月浓雾封锁伦敦。福尔摩斯与华生外出盯梢，桌上留着三张便签，雷斯垂德送来海锚暗记金币，维金斯也带来一张博物馆借书单。",
     },
   },
+  "canal-escort": {
+    en: {
+      genre: "Open journey",
+      title: "The Canal Escort",
+      premise:
+        "Escort a wax-sealed camphor chest up the Grand Canal within fifteen days before winter freeze, with unmapped canal towns, lock rumors, and side detours left open to grow as you travel.",
+    },
+    "zh-CN": {
+      genre: "开放旅途 · 自由扩展",
+      title: "运河押镖记",
+      premise:
+        "赶在封河前十五日内沿大运河护送一口封蜡樟木箱北上。沿途水镇、搭船客与江湖风波刻意留白，随你的停靠与选择自然生长。",
+    },
+  },
+  "driftline-echoes": {
+    en: {
+      genre: "Open frontier sci-fi",
+      title: "Driftline Echoes",
+      premise:
+        "Captain an aging survey cutter from Gravel Port to trace three ten-year-old echo beacons, while uncharted belts, distress calls, and frontier stations grow organically off the main route.",
+    },
+    "zh-CN": {
+      genre: "开放科幻 · 自由扩展",
+      title: "残响航线",
+      premise:
+        "驾老旧勘测船从碎石港出发，追寻三道十年前的残响信标。空白星区、求救呼号与边境站台随你的航向自由生长。",
+    },
+  },
 } satisfies Record<
   SampleContentPackageId,
   Record<AppLocale, { genre: string; title: string; premise: string }>
