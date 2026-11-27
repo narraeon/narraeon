@@ -8,6 +8,7 @@ import {
   type AuthoringFileView,
 } from "./authoring-file-list.ts";
 import { uiText } from "./i18n.ts";
+import type { Ref } from "react";
 
 export function AuthoringFileRail({
   target,
@@ -15,6 +16,7 @@ export function AuthoringFileRail({
   open,
   onModeChange,
   onClose,
+  closeButtonRef,
   contentEditor,
   editDisabled,
 }: {
@@ -23,6 +25,7 @@ export function AuthoringFileRail({
   open: boolean;
   onModeChange: (mode: "preview" | "edit") => void;
   onClose: () => void;
+  closeButtonRef: Ref<HTMLButtonElement>;
   contentEditor: ContentTreeEditorProps;
   editDisabled: boolean;
 }): React.JSX.Element {
@@ -51,6 +54,7 @@ export function AuthoringFileRail({
           </strong>
         </div>
         <button
+          ref={closeButtonRef}
           type="button"
           aria-label={uiText("收起文件面板")}
           onClick={onClose}

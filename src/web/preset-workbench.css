@@ -413,6 +413,22 @@
   border-top: 1px solid var(--line);
   z-index: 2;
 }
+.play-preset-screen .play-preset-editor-actions.is-quiet {
+  padding-block: 0;
+  background: var(--surface);
+}
+.play-preset-screen .play-preset-editor-actions.is-quiet > details {
+  width: 100%;
+  padding: 0;
+}
+.play-preset-screen .play-preset-editor-actions.is-quiet summary {
+  width: fit-content;
+  padding: 7px 0;
+  color: var(--muted);
+}
+.play-preset-screen .play-preset-editor-actions.is-quiet p {
+  margin: 0 0 8px;
+}
 .play-preset-screen .play-preset-primary-actions > button:first-of-type {
   background: #343832;
   color: #fff;

@@ -37,6 +37,20 @@ async function expectStableBackdrop(
   await expect(panel).toHaveCSS("opacity", "0");
 }
 
+async function expectEscapeClosesRail(
+  page: Page,
+  opener: Locator,
+  panel: Locator,
+  closeLabel: string,
+): Promise<void> {
+  await opener.press("Enter");
+  await expect(panel).toHaveAttribute("aria-hidden", "false");
+  await expect(panel.getByRole("button", { name: closeLabel })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveAttribute("aria-hidden", "true");
+  await expect(opener).toBeFocused();
+}
+
 test("手机工作区从明确的内容包快捷创建世界，并保护编辑草稿", async ({
   page,
 }) => {
@@ -122,6 +136,18 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
       page.locator(".setting-overlay-rail-right"),
       "right",
     );
+    await expectEscapeClosesRail(
+      page,
+      page.getByRole("button", { name: "历史", exact: true }),
+      page.locator(".setting-overlay-rail-left"),
+      "收起对话历史",
+    );
+    await expectEscapeClosesRail(
+      page,
+      page.getByRole("button", { name: "文件", exact: true }),
+      page.locator(".setting-overlay-rail-right"),
+      "收起文件面板",
+    );
   }
   const tools = page.getByRole("navigation", { name: "设定完善工具" });
   await expect(
@@ -171,6 +197,23 @@ test("手机工作区从明确的内容包快捷创建世界，并保护编辑�
     page.locator(".world-overlay-rail-right"),
     "right",
   );
+  await page.getByRole("button", { name: "世界", exact: true }).click();
+  await page.getByRole("button", { name: "修订当前世界", exact: true }).click();
+  await expectEscapeClosesRail(
+    page,
+    page.getByRole("button", { name: "历史", exact: true }),
+    page.locator(".setting-overlay-rail-left"),
+    "收起对话历史",
+  );
+  await expectEscapeClosesRail(
+    page,
+    page
+      .getByRole("navigation", { name: "世界修订工具" })
+      .getByRole("button", { name: "编辑", exact: true }),
+    page.locator(".setting-overlay-rail-right"),
+    "收起文件面板",
+  );
+  await page.getByRole("button", { name: "返回游玩", exact: true }).click();
   await page.getByRole("button", { name: "世界管理", exact: true }).click();
   const management = page.getByRole("dialog", { name: "世界管理" });
   await management.getByText("世界控制 · 高级编辑", { exact: true }).click();

@@ -594,12 +594,21 @@ for (const locale of ["en", "zh-CN"] as const) {
       name: cn ? "内容包标题" : "Content-package title",
     });
     await titleDraft.fill("Unsaved package title");
+    const warning = cn
+      ? /删除内容包“Package to remove”.*已创建的世界不受影响/
+      : /Delete content package “Package to remove”.*Existing worlds are unaffected/;
+    await opener.click();
+    const dialog = page.getByRole("dialog", { name: warning });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(rail).toBeVisible();
+    await expect(opener).toBeFocused();
+    expect(writes).toEqual([]);
     await cancelAndConfirmDeletion(
       page,
       opener,
-      cn
-        ? /删除内容包“Package to remove”.*已创建的世界不受影响/
-        : /Delete content package “Package to remove”.*Existing worlds are unaffected/,
+      warning,
       writes,
       { type: "content.delete", packageId },
       async () => {

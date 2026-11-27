@@ -341,6 +341,7 @@ export function PlayPresetScreen({
   const [library, setLibrary] = useState(initialLibrary);
   const libraryMenu = useRef<HTMLDetailsElement>(null);
   const screenRef = useRef<HTMLElement>(null);
+  const focusAppliedStatus = useRef(false);
   useAndroidBack(true, () => {
     const menus =
       screenRef.current?.querySelectorAll<HTMLDetailsElement>(
@@ -470,6 +471,12 @@ export function PlayPresetScreen({
     ({ id }) => id === library.currentPresetId,
   );
   const selectedIsCurrent = draft?.id === library.currentPresetId;
+  const showQuietStatus =
+    selectedIsCurrent &&
+    !dirty &&
+    saved?.draft === undefined &&
+    draft?.validation.status === "valid" &&
+    draft.structure?.migrationNotice === undefined;
   const nextSend = !selectedIsCurrent
     ? uiText("应用为当前编排方案后，下一次正常发送才会使用它。")
     : saved?.draft === undefined
@@ -1545,102 +1552,123 @@ export function PlayPresetScreen({
                       </button>
                     </section>
                   ) : null}
-                  <footer className="play-preset-editor-actions">
-                    {structuralConflict ? (
-                      <p role="alert" className="workspace-feedback">
-                        {uiText(
-                          "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
-                        )}
-                      </p>
-                    ) : null}
-                    <div className="play-preset-save-state">
-                      <strong>
-                        {dirty
-                          ? uiText("草稿尚未保存")
-                          : draft.validation.status === "valid"
-                            ? uiText("编排方案检查通过")
-                            : uiText("草稿需要修复")}
-                      </strong>
-                      <p>{nextSend}</p>
-                      {draft.validation.status === "invalid" && (
-                        <span>
-                          {`[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
-                        </span>
-                      )}
-                    </div>
-                    <div className="play-preset-primary-actions">
-                      {saved?.draft !== undefined && (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={pending || dirty}
-                          onClick={(event) =>
-                            setDiscardConfirmation({
-                              action: {
-                                presetId: draft.id,
-                                revision: saved.draft!.revision,
-                              },
-                              opener: event.currentTarget,
-                              message: uiText(
-                                "放弃这份尚未应用的编排草稿？保存的手动与 AI 改动都会丢失。",
-                              ),
-                              confirmLabel: uiText("放弃已保存草稿"),
-                            })
-                          }
+                  {showQuietStatus ? (
+                    <footer className="play-preset-editor-actions is-quiet">
+                      <details>
+                        <summary
+                          ref={(summary) => {
+                            if (summary === null || !focusAppliedStatus.current)
+                              return;
+                            focusAppliedStatus.current = false;
+                            if (document.activeElement === document.body)
+                              summary.focus({ preventScroll: true });
+                          }}
                         >
-                          {uiText("放弃已保存草稿")}
-                        </button>
-                      )}
-                      {dirty ? (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={pending}
-                          onClick={resetDraft}
-                        >
-                          {uiText("撤销未保存修改")}
-                        </button>
+                          {uiText("编排方案检查通过")}
+                        </summary>
+                        <p>{nextSend}</p>
+                      </details>
+                    </footer>
+                  ) : (
+                    <footer className="play-preset-editor-actions">
+                      {structuralConflict ? (
+                        <p role="alert" className="workspace-feedback">
+                          {uiText(
+                            "编排方案原文与表单均有修改，请先保留一种编辑结果再保存，以免覆盖当前修改。",
+                          )}
+                        </p>
                       ) : null}
-                      <button
-                        type="button"
-                        disabled={
-                          pending ||
-                          (!dirty &&
-                            draft.structure?.migrationNotice === undefined) ||
-                          structuralConflict
-                        }
-                        onClick={() => void saveDraft()}
-                      >
-                        {uiText("保存修改")}
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={
-                          pending ||
-                          dirty ||
-                          draft.validation.status !== "valid"
-                        }
-                        onClick={() =>
-                          void run(async () => {
-                            const receipt = await request<PlayPresetReceipt>({
-                              type: "play.select",
-                              presetId: draft.id,
+                      <div className="play-preset-save-state">
+                        <strong>
+                          {dirty
+                            ? uiText("草稿尚未保存")
+                            : draft.validation.status === "valid"
+                              ? uiText("编排方案检查通过")
+                              : uiText("草稿需要修复")}
+                        </strong>
+                        <p>{nextSend}</p>
+                        {draft.validation.status === "invalid" && (
+                          <span>
+                            {`[${draft.validation.code ?? "play_preset_invalid"}] ${draft.validation.location ?? "call-chain.yaml"}：${draft.validation.message}`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="play-preset-primary-actions">
+                        {saved?.draft !== undefined && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={pending || dirty}
+                            onClick={(event) =>
+                              setDiscardConfirmation({
+                                action: {
+                                  presetId: draft.id,
+                                  revision: saved.draft!.revision,
+                                },
+                                opener: event.currentTarget,
+                                message: uiText(
+                                  "放弃这份尚未应用的编排草稿？保存的手动与 AI 改动都会丢失。",
+                                ),
+                                confirmLabel: uiText("放弃已保存草稿"),
+                              })
+                            }
+                          >
+                            {uiText("放弃已保存草稿")}
+                          </button>
+                        )}
+                        {dirty ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={pending}
+                            onClick={resetDraft}
+                          >
+                            {uiText("撤销未保存修改")}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={
+                            pending ||
+                            (!dirty &&
+                              draft.structure?.migrationNotice === undefined) ||
+                            structuralConflict
+                          }
+                          onClick={() => void saveDraft()}
+                        >
+                          {uiText("保存修改")}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={
+                            pending ||
+                            dirty ||
+                            draft.validation.status !== "valid"
+                          }
+                          onClick={(event) => {
+                            const moveFocus = event.detail === 0;
+                            void run(async () => {
+                              const receipt = await request<PlayPresetReceipt>({
+                                type: "play.select",
+                                presetId: draft.id,
+                              });
+                              focusAppliedStatus.current = moveFocus;
+                              acceptPreset(receipt);
+                              setFeedback({
+                                kind: "status",
+                                text: uiText(
+                                  "已应用此编排方案；游玩修改将在下一次正常发送时生效。",
+                                ),
+                              });
                             });
-                            acceptPreset(receipt);
-                            setFeedback({
-                              kind: "status",
-                              text: uiText(
-                                "已应用此编排方案；游玩修改将在下一次正常发送时生效。",
-                              ),
-                            });
-                          })
-                        }
-                      >
-                        {uiText("应用为当前编排方案")}
-                      </button>
-                    </div>
-                  </footer>
+                          }}
+                        >
+                          {uiText("应用为当前编排方案")}
+                        </button>
+                      </div>
+                    </footer>
+                  )}
                 </div>
                 {aiPanelOpen &&
                   aiEditing !== undefined &&

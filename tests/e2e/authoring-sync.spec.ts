@@ -1292,6 +1292,9 @@ test("a lost package gameplay receipt refreshes authoring metadata before drafts
     gameplay: { mode: "tabletop", scheme: "d20" },
   });
   await page.goto(`/#/content/${pack.localId}`);
+  await openDetails(
+    page.getByRole("region", { name: "玩法" }).locator("summary"),
+  );
   await expect(
     page.getByRole("radio", { name: "d20", exact: true }),
   ).toBeChecked();

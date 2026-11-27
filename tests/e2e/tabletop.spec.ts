@@ -70,9 +70,22 @@ test("跑团内容包在对话框选择判定方案，改方案后世界卡片�
     await expect(dialog).toHaveCount(0);
 
     const gameplay = page.getByRole("region", { name: "玩法" });
+    await page.setViewportSize({ width: 390, height: 844 });
     await expect(
       gameplay.getByText("跑团 · d20", { exact: true }),
     ).toBeVisible();
+    const options = gameplay.locator("details");
+    const summary = options.locator("summary");
+    await expect(options).not.toHaveAttribute("open", "");
+    await expect(gameplay.getByRole("radio")).toHaveCount(0);
+    await expect
+      .poll(async () => (await gameplay.boundingBox())?.height)
+      .toBeLessThan(60);
+    await expect(
+      page.getByRole("button", { name: "预览下一条请求", exact: true }),
+    ).toBeInViewport();
+    await summary.press("Enter");
+    await expect(options).toHaveAttribute("open", "");
     await gameplay.getByRole("radio", { name: "混乱袋", exact: true }).check();
     await expect(
       gameplay.getByText("跑团 · 混乱袋", { exact: true }),
@@ -88,6 +101,13 @@ test("跑团内容包在对话框选择判定方案，改方案后世界卡片�
         })
       ).gameplay,
     ).toEqual({ mode: "tabletop", scheme: "bag" });
+    await summary.press("Enter");
+    await expect(options).not.toHaveAttribute("open", "");
+    await expect(summary).toBeFocused();
+    await expect
+      .poll(async () => (await gameplay.boundingBox())?.height)
+      .toBeLessThan(60);
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     await page.getByRole("button", { name: "创建世界", exact: true }).click();
     await expect

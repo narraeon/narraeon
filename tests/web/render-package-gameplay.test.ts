@@ -26,6 +26,13 @@ afterEach(() => {
   setWebLocale("zh-CN");
 });
 
+function openGameplayOptions(section: HTMLElement): void {
+  const details = section.querySelector("details")!;
+  expect(details.open).toBe(false);
+  fireEvent.click(details.querySelector("summary")!);
+  expect(details.open).toBe(true);
+}
+
 test("迟到的权限读取不能覆盖已确认的撤销", async () => {
   const read = Promise.withResolvers<{ enabled: boolean }>();
   const client = {
@@ -147,6 +154,7 @@ describe("内容包 Gameplay 区块", () => {
 
     const section = screen.getByRole("region", { name: "玩法" });
     expect(within(section).getByText("互动式小说")).toBeTruthy();
+    openGameplayOptions(section);
     expect(
       within(section).getByText(
         /玩法模式在创建时固定，不能在互动式小说与跑团之间切换/u,
@@ -170,6 +178,7 @@ describe("内容包 Gameplay 区块", () => {
 
     const section = screen.getByRole("region", { name: "玩法" });
     expect(within(section).getByText("跑团 · d100")).toBeTruthy();
+    openGameplayOptions(section);
     expect(
       within(section).getByText(/已有世界保持创建时的判定方案/u),
     ).toBeTruthy();
@@ -198,6 +207,7 @@ describe("内容包 Gameplay 区块", () => {
       }),
     );
     const section = screen.getByRole("region", { name: "玩法" });
+    openGameplayOptions(section);
     expect(
       within(section).getByRole("radio", { name: "d20" }).closest("fieldset")
         ?.disabled,
@@ -270,6 +280,7 @@ describe("内容包 Gameplay 区块", () => {
       expect(within(section).getByText("跑团 · d100")).toBeTruthy(),
     );
 
+    openGameplayOptions(section);
     fireEvent.click(within(section).getByRole("radio", { name: "混乱袋" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith({
@@ -415,6 +426,7 @@ describe("判定方案保存期间的文件草稿", () => {
     const editor = await screen.findByLabelText("编辑 opening.md");
     expect(editor.closest("fieldset")?.matches(":disabled")).toBe(false);
 
+    openGameplayOptions(section);
     fireEvent.click(within(section).getByRole("radio", { name: "混乱袋" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith({

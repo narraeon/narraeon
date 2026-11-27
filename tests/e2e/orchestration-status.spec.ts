@@ -16,6 +16,52 @@ async function runtime<T = unknown>(
   return ((await response.json()) as { result: T }).result;
 }
 
+test("clean current orchestration leaves room for both prompt editors", async ({
+  page,
+}) => {
+  await runtime(page, { type: "preferences.save", locale: "en" });
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/#/orchestrations");
+    for (const name of ["Play", "Setting improvement"]) {
+      await page.getByRole("tab", { name, exact: true }).click();
+      const panel = page.getByRole("tabpanel", { name, exact: true });
+      const prompt = panel.getByLabel("Prompt text", { exact: true });
+      const status = page.locator(".play-preset-editor-actions details");
+      const summary = status.locator("summary");
+      await expect(summary).toHaveText("Orchestration validated");
+      await expect(status).not.toHaveAttribute("open", "");
+      await expect
+        .poll(async () => (await status.boundingBox())?.height)
+        .toBeLessThan(46);
+      await expect(prompt).toBeInViewport({ ratio: 0.15 });
+      const visiblePromptHeight = await prompt.evaluate((element) => {
+        const body = element.getBoundingClientRect();
+        const footer = document.querySelector(".play-preset-editor-actions")!;
+        return footer.getBoundingClientRect().top - body.top;
+      });
+      expect(visiblePromptHeight).toBeGreaterThan(44);
+      await expect(
+        page.getByRole("button", { name: "Save changes" }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Use as current orchestration" }),
+      ).toHaveCount(0);
+      await summary.press("Enter");
+      await expect(status).toHaveAttribute("open", "");
+      await expect(status).toContainText(
+        "The next normal send uses this orchestration’s applied revision.",
+      );
+      await summary.press("Enter");
+      await expect(status).not.toHaveAttribute("open", "");
+      await expect(summary).toBeFocused();
+    }
+  }
+});
+
 for (const locale of ["en", "zh-CN"] as const) {
   test(`next play send uses the applied orchestration revision (${locale})`, async ({
     page,
@@ -105,6 +151,15 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: cn ? "应用为当前编排方案" : "Use as current orchestration",
         exact: true,
       });
+      const expectApplied = async () => {
+        const status = editor.locator(".play-preset-editor-actions details");
+        const summary = status.locator("summary");
+        await expect(summary).toBeFocused();
+        await summary.press("Enter");
+        await expect(
+          status.getByText(activeHint, { exact: true }),
+        ).toBeVisible();
+      };
       const addPrompt = async (body: string) => {
         await editor
           .getByRole("button", {
@@ -148,8 +203,8 @@ for (const locale of ["en", "zh-CN"] as const) {
       await open(a.id);
       const aPrompt = "A applied revision marker.";
       await addPrompt(aPrompt);
-      await apply.click();
-      await expect(editor.getByText(activeHint, { exact: true })).toBeVisible();
+      await apply.press("Enter");
+      await expectApplied();
 
       await open(b.id);
       await expect(
@@ -165,8 +220,8 @@ for (const locale of ["en", "zh-CN"] as const) {
       expect(aRequest).not.toContain(appliedPrompt);
 
       await open(b.id);
-      await apply.click();
-      await expect(editor.getByText(activeHint, { exact: true })).toBeVisible();
+      await apply.press("Enter");
+      await expectApplied();
       const bRequest = await send(2);
       expect(bRequest).toContain(appliedPrompt);
       expect(bRequest).not.toContain(aPrompt);
@@ -182,8 +237,8 @@ for (const locale of ["en", "zh-CN"] as const) {
       expect(previousRevision).not.toContain(draftPrompt);
 
       await open(b.id);
-      await apply.click();
-      await expect(editor.getByText(activeHint, { exact: true })).toBeVisible();
+      await apply.press("Enter");
+      await expectApplied();
       expect(await send(4)).toContain(draftPrompt);
     } finally {
       provider.closeAllConnections();

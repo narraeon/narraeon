@@ -275,6 +275,15 @@ export function SettingImprovementPanel({
     useState<ConfirmationRequest<AuthoringConfirmation> | null>(null);
   const backButton = useRef<HTMLButtonElement>(null);
   const historyButton = useRef<HTMLButtonElement>(null);
+  const filesButton = useRef<HTMLButtonElement>(null);
+  const railOpener = useRef<HTMLButtonElement>(null);
+  const historyCloseButton = useRef<HTMLButtonElement>(null);
+  const filesCloseButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (leftRailOpen)
+      historyCloseButton.current?.focus({ preventScroll: true });
+    if (rightRailOpen) filesCloseButton.current?.focus({ preventScroll: true });
+  }, [leftRailOpen, rightRailOpen]);
   const [rollingBackFile, setRollingBackFile] = useState<{
     changeSetId: string;
     path: string;
@@ -583,8 +592,12 @@ export function SettingImprovementPanel({
     sendText(message),
   );
 
-  const openFileRail = (mode: FileRailMode): void => {
+  const openFileRail = (
+    mode: FileRailMode,
+    opener: HTMLButtonElement,
+  ): void => {
     if (mode === "edit" && (interactionLocked || draftsLocked)) return;
+    railOpener.current = opener;
     setFileRailMode(mode);
     setRightRailOpen(true);
     setLeftRailOpen(false);
@@ -728,15 +741,35 @@ export function SettingImprovementPanel({
 
   // World revision is a panel within play. Content authoring has its own address.
   useAndroidBack(revisingWorld, requestBack);
-  useAndroidBack(leftRailOpen || rightRailOpen, () => {
+  useAndroidBack(leftRailOpen || rightRailOpen, closeRail);
+
+  function closeRail(): void {
     setLeftRailOpen(false);
     setRightRailOpen(false);
-  });
+    const opener = railOpener.current;
+    (opener?.disabled ? filesButton.current : opener)?.focus({
+      preventScroll: true,
+    });
+    railOpener.current = null;
+  }
 
   return (
     <main
       className="setting-reader-page"
       aria-labelledby="setting-improvement-title"
+      onKeyDown={(event) => {
+        if (
+          event.key !== "Escape" ||
+          event.defaultPrevented ||
+          (!leftRailOpen && !rightRailOpen) ||
+          (event.target instanceof Element &&
+            event.target.closest('dialog, [role="dialog"]'))
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeRail();
+      }}
       style={
         {
           "--setting-composer-height": `${composerHeight}px`,
@@ -768,9 +801,13 @@ export function SettingImprovementPanel({
             type="button"
             className={leftRailOpen ? "is-current" : ""}
             aria-pressed={leftRailOpen}
-            onClick={() => {
-              setLeftRailOpen((open) => !open);
-              setRightRailOpen(false);
+            onClick={(event) => {
+              if (leftRailOpen) closeRail();
+              else {
+                railOpener.current = event.currentTarget;
+                setLeftRailOpen(true);
+                setRightRailOpen(false);
+              }
             }}
           >
             {uiText("历史")}
@@ -803,11 +840,13 @@ export function SettingImprovementPanel({
             </button>
           )}
           <button
+            ref={filesButton}
             type="button"
             className={
               rightRailOpen && fileRailMode === "preview" ? "is-current" : ""
             }
-            onClick={() => openFileRail("preview")}
+            aria-expanded={rightRailOpen && fileRailMode === "preview"}
+            onClick={(event) => openFileRail("preview", event.currentTarget)}
           >
             {uiText("文件")}
           </button>
@@ -816,8 +855,9 @@ export function SettingImprovementPanel({
             className={
               rightRailOpen && fileRailMode === "edit" ? "is-current" : ""
             }
+            aria-expanded={rightRailOpen && fileRailMode === "edit"}
             disabled={interactionLocked || draftsLocked}
-            onClick={() => openFileRail("edit")}
+            onClick={(event) => openFileRail("edit", event.currentTarget)}
           >
             {uiText("编辑")}
           </button>
@@ -1376,10 +1416,7 @@ export function SettingImprovementPanel({
           aria-label={uiText("收起侧栏")}
           aria-hidden={!leftRailOpen && !rightRailOpen}
           tabIndex={leftRailOpen || rightRailOpen ? 0 : -1}
-          onClick={() => {
-            setLeftRailOpen(false);
-            setRightRailOpen(false);
-          }}
+          onClick={closeRail}
         />
 
         <aside
@@ -1401,9 +1438,10 @@ export function SettingImprovementPanel({
               </span>
             </div>
             <button
+              ref={historyCloseButton}
               type="button"
               aria-label={uiText("收起对话历史")}
-              onClick={() => setLeftRailOpen(false)}
+              onClick={closeRail}
             >
               ×
             </button>
@@ -1432,7 +1470,8 @@ export function SettingImprovementPanel({
           mode={fileRailMode}
           open={rightRailOpen}
           onModeChange={setFileRailMode}
-          onClose={() => setRightRailOpen(false)}
+          onClose={closeRail}
+          closeButtonRef={filesCloseButton}
           contentEditor={{
             ...contentEditor,
             deleteDisabled: packageDeleteLocked,

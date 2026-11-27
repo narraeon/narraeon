@@ -44,26 +44,33 @@ function fixture(): PlayPresetScreenPreset {
 }
 function setup(preset = fixture()) {
   let current = preset;
+  let nextDraft = 1;
   const request = vi.fn((request: V1Request): Promise<unknown> => {
     if (request.type === "play.read")
       return Promise.reject(new Error("preset listing unavailable"));
     if (request.type === "play.save") {
+      const structure = request.structure
+        ? (request.structure as unknown as NonNullable<
+            PlayPresetScreenPreset["structure"]
+          >)
+        : (current.draft ?? current).structure;
       current = {
         ...current,
         name: request.name,
-        files: request.files,
-        ...(request.structure
-          ? {
-              structure: request.structure as unknown as NonNullable<
-                PlayPresetScreenPreset["structure"]
-              >,
-            }
-          : {}),
+        draft: {
+          revision: `rev-draft-${nextDraft++}`,
+          files: request.files,
+          validation: { status: "valid" },
+          ...(structure === undefined ? {} : { structure }),
+        },
       };
       return Promise.resolve({ currentPresetId: current.id, preset: current });
     }
-    if (request.type === "play.select")
+    if (request.type === "play.select") {
+      const { draft, ...applied } = current;
+      if (draft !== undefined) current = { ...applied, ...draft };
       return Promise.resolve({ currentPresetId: current.id, preset: current });
+    }
     if (request.type === "play.workbench.read")
       return Promise.resolve({
         id: current.id,
@@ -602,6 +609,11 @@ test.each(["zh-CN", "en"] as const)(
         ? "已应用此编排方案；游玩修改将在下一次正常发送时生效。"
         : "Orchestration applied. Play changes take effect on the next normal send.",
     );
+    expect(
+      screen.queryByRole("button", {
+        name: cn ? "应用为当前编排方案" : "Use as current orchestration",
+      }),
+    ).toBeNull();
   },
 );
 
