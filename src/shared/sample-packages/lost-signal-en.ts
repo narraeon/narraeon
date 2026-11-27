@@ -111,7 +111,7 @@ Connections beyond the relay: The outpost uses the relay for courier traffic. A 
 Status summary:
   Berth: Empty, unpressurized, data port covered
   Power socket: Currently connected to the courier battery load tester
-Default condition: Empty, physically disengaged, and unpressurized. The packet lead is unplugged under a cover. There is a separate voice-only radio and enough room for a suited observer at the safety rail.
+Fixed fittings: A manual-tether docking cradle past the pressure bulkhead, a physical data connector with a dust cover, a separate voice-only radio, and enough room for a suited observer at the safety rail.
 Options: Use the manual tether with the ship on its own power, connect external berth power without data, or negotiate a full supervised docking with the physical data lead still covered. Open the pressure bulkhead only by agreement after inspection. The ship can also hold outside the berth and use radio or exchange a sealed test packet.
 Shared resource: The external power hose and the courier battery load tester use the single suitable socket. Either can be unplugged and reconnected by Jun. Giving the ship permanent use postpones the scheduled battery work; a short use or independent supply leaves room for another arrangement.
 Protocol: A crew member stays at the ship controls until both sides have rehearsed a shared release signal. Either party may call a halt while that is still safe.
@@ -137,13 +137,12 @@ Material condition: Morrow can use its own power to hold position and keep its a
   id: archive.lost-signal-sedge-log
   ref: sedge-beacon-log
   title: Archived Sedge Beacon telemetry log
-  summary: Original telemetry excerpt in the watch desk archive drawer, revealed only when old logs are checked.
+  summary: Original twenty-year-old Sedge Beacon telemetry excerpt stored in the watch desk archive drawer.
   aliases: []
-Discovery condition: The player inspects the watch desk archive drawer, asks Jun to pull the twenty-year-old Sedge Beacon log, or calls the observation habitat to compare clock archives.
-Hidden record:
+Location: Watch desk archive drawer at Last Light Relay.
+Original record:
   Inverted echo: For fourteen seconds after Morrow broke off twenty years ago, Sedge Beacon logged an acknowledgment timestamped earlier than Morrow's ping, accompanied by a brief gravity-shear advisory.
   Filing note: Three months later, an outpost technical officer reclassified the anomaly as instrument drift and omitted it from the public search summary.
-Cross-check value: The out-of-order reply matches Em's crew account closely; calling the small observation habitat for an independent star-clock reading turns first contact into a shared investigation of the twenty-year gap.
 `,
   },
   {
@@ -152,13 +151,12 @@ Cross-check value: The out-of-order reply matches Em's crew account closely; cal
   id: archive.lost-signal-outpost-order
   ref: outpost-standing-order
   title: Outpost standing order on the outer survey channel
-  summary: Standing closure memo filed after Morrow vanished, revealed only when checking outpost protocols or reporting rules.
+  summary: Standing closure memo filed at Last Light Relay after Morrow vanished.
   aliases: []
-Discovery condition: The player checks relay reporting protocols, considers notifying the outpost immediately, or asks Jun why she is cautious about live links and outpost traffic.
+Location: Outpost protocol folder in the watch desk archive drawer.
 Order terms:
   Quarantine clause: Any vessel returning from the closed Sedge survey channel must be reported to the outpost immediately and placed under one-way telemetry lockdown, transferring all raw navigation logs to outpost custody before crew disembark.
-  Dilemma: Reporting immediately brings a courier crew within hours to impound Morrow's logs and quarantine the eleven aboard; delaying the report to verify things privately puts the duty operator and Jun at odds with an old standing order.
-  Open choices: The player may disclose the order to Em, report by the book, or copy a mutually signed read-only record through the observation habitat before contacting the outpost.
+  Consequences: Reporting immediately brings a courier crew within hours to impound Morrow's logs and quarantine the eleven aboard; delaying the report breaches the standing order.
 `,
   },
   ...storyControlFiles(

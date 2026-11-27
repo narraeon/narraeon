@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { appLocales } from "../../src/protocol/appPreferences.ts";
-import { sampleContentPackageIds } from "../../src/protocol/sampleContentPackages.ts";
+import { readGameplay, type Gameplay } from "../../src/protocol/gameplay.ts";
+import {
+  sampleContentPackageIds,
+  type SampleContentPackageId,
+} from "../../src/protocol/sampleContentPackages.ts";
 import type { RenderedPlayerView } from "../../src/protocol/playerViews.ts";
 import {
   parseV1Envelope,
@@ -60,6 +64,98 @@ test("sample creation requires a supported locale and only allows an optional bu
       }),
     ).toThrow();
 });
+
+const expectedSampleGameplay: Record<SampleContentPackageId, Gameplay> = {
+  "rainy-inn": { mode: "interactive-fiction" },
+  "tide-vault": { mode: "interactive-fiction" },
+  "missing-reel": { mode: "interactive-fiction" },
+  "lost-signal": { mode: "interactive-fiction" },
+  "screening-night": { mode: "interactive-fiction" },
+  "last-proof": { mode: "interactive-fiction" },
+  "fogbell-harbor": { mode: "tabletop", scheme: "d100" },
+  "qingzhou-tales": { mode: "tabletop", scheme: "bag" },
+  "treasure-island": { mode: "tabletop", scheme: "d20" },
+  "baker-street-fog": { mode: "interactive-fiction" },
+};
+
+describe.each(appLocales)(
+  "all built-in sample content packages (%s)",
+  (locale) => {
+    test("every built-in story is usable, creates a world, compiles a clean preview, and renders player views without diagnostics", async () => {
+      const { runtime } = await setup();
+      const network = vi.spyOn(globalThis, "fetch");
+      await request(runtime, { type: "preferences.save", locale });
+      const model = {
+        provider: "chat_completions" as const,
+        modelId: "sample-matrix-test",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_000,
+      };
+      await request(runtime, {
+        type: "model.save",
+        connection: {
+          ...model,
+          name: "Sample matrix preview",
+          presetId: "custom",
+          baseUrl: "https://provider.invalid/v1",
+          apiKey: "sample-matrix-test",
+          reasoningEffort: "provider_default",
+        },
+      });
+
+      for (const sampleId of sampleContentPackageIds) {
+        const sample = sampleContentPackageForLocale(locale, sampleId);
+        const inspection = inspectContentPackageCurrentTree(sample.files);
+        expect({
+          sampleId,
+          status: inspection.status,
+          issues: inspection.issues,
+        }).toEqual({ sampleId, status: "usable", issues: [] });
+        expect(readGameplay(sample.files)).toEqual(
+          expectedSampleGameplay[sampleId],
+        );
+
+        const created = await request<{ localId: string }>(runtime, {
+          type: "content.create-sample",
+          locale,
+          sampleId,
+        });
+        const preview = await request<PromptPreview>(runtime, {
+          type: "prompt.preview",
+          packageId: created.localId,
+          playerInput: locale === "zh-CN" ? "先观察周围。" : "Look around.",
+          model,
+        });
+        expect({ sampleId, leakage: preview.leakage.status }).toEqual({
+          sampleId,
+          leakage: "clean",
+        });
+
+        const world = await request<{
+          outcome: string;
+          world: { worldId: string; title: string };
+        }>(runtime, {
+          type: "world.create",
+          operationId: `matrix-${locale}-${sampleId}`,
+          packageId: created.localId,
+          model,
+        });
+        expect(world.outcome).toBe("created");
+        expect(world.world.title).toBe(sample.title);
+
+        const view = await request<{
+          playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
+        }>(runtime, { type: "world.read", worldId: world.world.worldId });
+        expect({
+          sampleId,
+          diagnostics: view.playerViews.diagnostics,
+        }).toEqual({ sampleId, diagnostics: [] });
+        expect(view.playerViews.views.length).toBeGreaterThanOrEqual(1);
+      }
+      expect(network).not.toHaveBeenCalled();
+    });
+  },
+);
 
 describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
   test("has independent identities and supports editing, copying, ZIP round-trip and deletion", async () => {

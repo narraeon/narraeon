@@ -5,7 +5,7 @@ import { storyControlFiles } from "./story-controls.ts";
 export const fogbellHarborEnglish: readonly ContentTreeFile[] = [
   {
     path: "opening.md",
-    contents: `The steam ferry’s whistle dies in the ice fog, swallowed by the swell. It is the last boat before winter drift seals the cove; the next supply steamer will not return for seven days.
+    contents: `The steam ferry’s whistle dies in the ice fog, swallowed by the swell. It is the last boat before winter drift seals the cove; the next supply steamer will not return for seven nights—until dawn on Day 8.
 
 The shipping guild hired you to audit the old lighthouse ledger after the keeper vanished three days ago, leaving only an unsigned handover slip. A storm lantern swings at the end of the jetty. High above the quay, the iron fogbell hangs motionless in the mist.
 
@@ -25,7 +25,7 @@ Colin looks up and offers the pen. “Just a signature to start. Heading straigh
   summary: The investigator steps onto Fogbell Harbor's jetty as the harbor master and innkeeper give conflicting advice.
   aliases: []
 background:
-  Time: Day 1, dusk (7 days until the next supply steamer)
+  Time: Day 1, dusk (7 nights until the steamer returns at dawn on Day 8)
   Place: Fogbell Harbor jetty (road to Fogbell Inn)
   Weather and isolation: Heavy ice fog and drifting floes; no vessel can leave for seven days
 Present:
@@ -42,7 +42,7 @@ Seven-day clock:
   Upcoming shifts:
     Day 3 night: Unless spotted or stopped, Colin sends hired hands to Wreck Reef to destroy old crate seals.
     Day 5 spring ebb: The lowest tide exposes the resonance cavity beneath Wreck Reef—the only walkable window.
-    Day 7 dawn: The supply steamer returns; the case resolves according to the player's evidence, alliances, and the keeper's fate.
+    Day 8 dawn: The supply steamer returns after seven sealed nights.
 `,
   },
   {
@@ -202,7 +202,10 @@ Clues: The acoustic strip proves the pulse originated underwater at Wreck Reef t
   title: Sailors' chapel
   summary: Small stone hillside chapel lined with brass plaques for lost ships.
   aliases: []
-Clues: Tucked inside the prayer book beneath the Seagull plaque is a penciled note in Bram's hand from four days ago: "Lamp did not fail—it was put out. Old bell lies below; look at low water."
+Clues: >-
+  Tucked inside the prayer book beneath the Seagull plaque is a penciled note in
+  Bram's hand from four days ago: "Lamp did not fail—it was put out. Old bell
+  lies below; look at low water."
 Routine: Unattended by day and quiet at dusk—a safe spot for private meetings.
 `,
   },
@@ -247,14 +250,13 @@ Faction stances:
   id: archive.fogbell-wreck-truth
   ref: wreck-insurance-truth
   title: Truth of the Seagull insurance wreck
-  summary: Second-layer conspiracy truth, read on demand only when checking boatyard impressions, Bram's logbook, or pressing Harlan/Colin.
+  summary: What happened ten winters ago when the Seagull sank and Colin's active plan.
   aliases: []
-Discovery condition: The player uncovers the boatyard ledger impression, obtains Bram's original logbook, or confronts Harlan or Colin with corroborating evidence.
-What happened:
+Facts:
   - Ten winters ago, the Seagull's insured copper cargo was quietly swapped for scrap iron by the cargo owners and Colin.
   - Colin sent the previous keeper away on a false repair errand and doused the main lighthouse lamp for half an hour so the vessel would ground on Wreck Reef, then ran the salvage write-off himself and used the payout to lock down the harbor's supply trade.
   - Bram uncovered an unburned carbon leaf of the original logbook while clearing the oil store, drew Colin's suspicion, and went into hiding with the evidence.
-Consequences: On Day 3 night, Colin sends hired hands to smash the crate seals on Wreck Reef unless intercepted; the player can thwart them, expose Colin when the Day 7 steamer arrives, or strike a risky bargain.
+Active plan: Unless intercepted, Colin intends to send hired hands on Day 3 night to smash the double-stamped crate seals on Wreck Reef before the Day 8 dawn steamer arrives.
 `,
   },
   {
@@ -263,9 +265,9 @@ Consequences: On Day 3 night, Colin sends hired hands to smash the crate seals o
   id: archive.fogbell-keeper-log
   ref: keeper-logbook
   title: Keeper Bram's original logbook
-  summary: Physical evidence carried by Bram, read on demand only after reaching Bram or recovering his waxed-canvas bundle.
+  summary: Physical logbook carried by Bram inside his waxed-canvas bundle on the stranded barge.
   aliases: []
-Discovery condition: The player reaches Bram aboard the stranded barge or arranges a meeting using the green lighthouse filter signal.
+Location: Carried by Bram aboard the stranded barge on Wreck Reef.
 Contents:
   Evidence leaf: Logs the exact 32-minute blackout and oil-level readings on the night the Seagull sank, disproving the official accident ruling.
   Anomaly notes: In the back pages, Bram logged over a dozen low-pressure cellar hums over the past six months and sketched tidal marks behind the lighthouse cellar door pointing to an "old bell visible at Day 5 spring ebb."
@@ -277,13 +279,12 @@ Contents:
   id: archive.fogbell-resonance
   ref: resonance-chamber
   title: The fogbell resonance cavity and stele
-  summary: Third-layer mystery, read on demand only when opening the lighthouse cellar or exploring Wreck Reef at Day 5 spring ebb.
+  summary: Physical origin of the calm-night bell tolls and the inscription inside the lighthouse cellar.
   aliases: []
-Discovery condition: The player forces the boarded lighthouse cellar door or explores Wreck Reef's lower fissure with Vera or Bram at Day 5 spring ebb.
-Deep truth:
+Facts:
   Mechanism and history: The harbor's iron fogbell was cast two centuries ago as half of a tidal warning pair; its larger bronze twin fell into the reef fissure during an earlier ice slide and wedged across a sea cave running beneath the lighthouse foundation.
-  Resonance effect: When severe low pressure coincides with a spring ebb, surge through the sea cave generates an 18 Hz infrasonic standing wave that sets both bells tolling in dead calm—loosening stone and causing severe vertigo or auditory hallucinations up close (Resolve check to stay steady).
-  Old stele: An older stone marker in the cellar explains how to wedge the vent shaft closed to silence the hum—or leave it open as a natural storm warning. The player may seal the cavity, preserve it for Vera's study, or publish both the natural phenomenon and the Seagull conspiracy.
+  Resonance effect: When severe low pressure coincides with a spring ebb, surge through the sea cave generates an 18 Hz infrasonic standing wave that sets both bells tolling in dead calm, loosening stone and causing vertigo or auditory hallucinations up close.
+  Old stele: An older stone marker in the lighthouse cellar explains how to wedge the vent shaft closed to silence the hum, or leave it open as a natural storm warning.
 `,
   },
   gameplayFile({ mode: "tabletop", scheme: "d100" }),
@@ -303,7 +304,7 @@ Run this as a seven-day coastal tabletop sandbox with a grounded gothic atmosphe
 ## On-Demand Reading & Seven-Day Cadence
 
 - Beyond the @fogbell-inn hub, read the other five locations and the three archive files (@wreck-insurance-truth, @keeper-logbook, @resonance-chamber) on demand via context_read only when the player visits or probes those leads—never spoil them early.
-- Advance time in Morning, Afternoon, and Night periods across seven days; let Day 3 night, Day 5 spring ebb, and Day 7 dawn shift the situation naturally, pausing wherever the player can make a meaningful decision.
+- Advance time in Morning, Afternoon, and Night periods across seven days; let Day 3 night, Day 5 spring ebb, and Day 8 dawn shift the situation naturally, pausing wherever the player can make a meaningful decision.
 `,
     ["investigation-board"],
     undefined,

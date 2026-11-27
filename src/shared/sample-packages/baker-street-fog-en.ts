@@ -187,9 +187,10 @@ Scene: Arthur Finch is locked in the upper loft while the barge below loads prim
   aliases: []
 Verified evidence:
   Anchor-marked sovereign: Brought by Lestrade from a Whitechapel pawnshop; pawned under Arthur Finch’s name by a man missing half his left little finger.
-  Museum call slip: Copied by Wiggins, pointing to an unreturned 1874 maritime almanac at the British Museum.
+  Museum call slip: Wiggins is waving from the street below with a copied British Museum Reading Room call slip (not yet read).
 Open leads:
   - Read Holmes’s three folded field notes on the table
+  - Call Wiggins up to read the copied museum call slip
   - Question the Whitechapel pawnbroker about the pledger’s description and destination
   - Inspect Arthur Finch’s last paperwork at Thames Shipping
 Informants & ties:
@@ -204,12 +205,11 @@ Informants & ties:
   id: archive.bs-anchor-coin
   ref: anchor-coin-origin
   title: Origin of the anchor-marked sovereign
-  summary: Second-layer physical lead, read on demand only when checking the pawnshop, examining the coin, or consulting Holmes.
+  summary: True purpose of the anchor-stamped sovereign and how it reached the pawnshop.
   aliases: []
-Discovery condition: The player questions the Whitechapel pawnbroker closely, examines the countermark at 221B, or wires Holmes.
-Truth:
-  - Old sovereigns countermarked with a microscopic anchor serve as retainer tokens issued by Thames Shipping deputy manager Marcus Vale to crooked lightermen, redeemable for full pay at Blackwater Bend Wharf.
-  - The maimed lighterman pawned one for drink money and impulsively gave the name of their captive clerk, Finch—handing Scotland Yard and Baker Street their first break.
+Facts:
+  Token purpose: Old sovereigns countermarked with a microscopic anchor serve as retainer tokens issued by Thames Shipping deputy manager Marcus Vale to crooked lightermen, redeemable for full pay at Blackwater Bend Wharf.
+  Pawnshop slip: The maimed lighterman pawned one for drink money and impulsively gave the name of their captive clerk, Arthur Finch.
 `,
   },
   {
@@ -218,12 +218,11 @@ Truth:
   id: archive.bs-almanac-cipher
   ref: almanac-cipher
   title: The 1874 almanac & Blackwater channel
-  summary: Second-layer lead, read on demand only when visiting the British Museum Reading Room or checking call slips.
+  summary: What page 88 of the missing almanac records and why Vale’s confederate borrowed it.
   aliases: []
-Discovery condition: The player inspects the call slip and questions the Reading Room attendant about the missing 1874 almanac.
-Truth:
-  - Page 88 of the 1874 Thames Shoals & Tides Almanac charts an abandoned deep channel off Blackwater Bend that lets a barge bypass customs launches on a foggy high tide.
-  - Vale’s confederate borrowed the volume under Finch’s name to time tonight’s smuggling run.
+Facts:
+  Almanac chart: Page 88 of the 1874 Thames Shoals & Tides Almanac charts an abandoned deep channel off Blackwater Bend that lets a barge bypass customs launches on a foggy high tide.
+  Borrower: Vale’s confederate borrowed the volume under Finch’s name to time tonight’s smuggling run.
 `,
   },
   {
@@ -232,13 +231,11 @@ Truth:
   id: archive.bs-insurance-ring
   ref: insurance-ring-truth
   title: Truth of the Thames Shipping insurance plot
-  summary: Endgame truth, read on demand only when checking the counting house, freeing Finch, or comparing all three threads with Holmes.
+  summary: Deputy manager Marcus Vale’s smuggling-and-insurance scheme and Arthur Finch’s abduction.
   aliases: []
-Discovery condition: The player reads the blotting paper at Thames Shipping, compares notes with Holmes and Watson, or reaches Blackwater Bend Wharf.
-Truth:
+Facts:
   Mastermind: Deputy manager Marcus Vale colluded with river smugglers to offload insured tea and porcelain onto a hidden lighter in tonight’s fog, then ground the stripped freighter to collect a fraudulent total-loss payout.
   Abduction: Honest clerk Arthur Finch spotted the discrepancy in the policy ledger and was seized by the maimed lighterman to frame him as a runaway embezzler once the ship went down.
-Resolutions: Raid the wharf with Lestrade, set a fog-tide ambush with Holmes and Watson to catch Vale red-handed, or slip Finch out first with Wiggins’s help before exposing Vale publicly.
 `,
   },
   ...storyControlFiles(

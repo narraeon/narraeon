@@ -120,13 +120,13 @@ const descriptions = {
       genre: "Tabletop · d20",
       title: "Treasure Island: Aboard the Hispaniola",
       premise:
-        "On the eve of sailing for Skeleton Island, Captain Smollett distrusts the crew while genial one-legged cook Long John Silver offers a warm mug—and hides a mutiny.",
+        "On the eve of sailing for Skeleton Island, Captain Smollett distrusts the newly signed crew, two hands hide a torn island sketch in the hold, and genial one-legged cook Long John Silver brings warm rum on deck.",
     },
     "zh-CN": {
       genre: "跑团航海 · d20",
       title: "金银岛：暗流航程",
       premise:
-        "伊斯帕尼奥拉号启航前夜，斯莫莱特船长对新水手满怀戒心，热情的独脚厨师西尔弗却笑盈盈递来热酒——一场跨海寻宝与兵变暗流就此展开。",
+        "伊斯帕尼奥拉号启航前夜，斯莫莱特船长对新水手满怀戒心，货舱里有人匆匆藏起撕角的岛屿草图，热情的独脚厨师西尔弗却笑盈盈递来热酒。",
     },
   },
   "baker-street-fog": {

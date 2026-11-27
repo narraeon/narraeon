@@ -187,14 +187,13 @@ Verification:
   id: archive.missing-reel-donor-addendum
   ref: donor-transfer-addendum
   title: Donor transfer addendum and edit memo
-  summary: Second-layer secret revealed only when probing why the donor cut the spoken roll call or checking the donor folder.
+  summary: Correspondence filed in the reading-room cabinet explaining why the donor asked to trim the spoken roll call.
   aliases: []
-Discovery condition: The player notices the donor's short-cut proof lacks an archive signature and presses why, or asks Mara to check the donor correspondence folder in the reading-room cabinet.
-Hidden truth:
+Location: Donor correspondence folder in the reading-room cabinet.
+Facts:
   Stated reason: The Harbor Shipping Heritage Trust (successor to the old stevedoring firm) asked to trim Ada Santos's spoken roll call for "tighter pacing."
-  Real concern: In that opening roll call thirty years ago, Ada reads out the names of three temporary night-shift loaders who were omitted from the company's official safety roster after a crane mishap the same year, leaving their families without proof of shift hours.
-Dilemma:
-  - Recovering the master solves only the first layer; deciding whether to play the full unedited roll call before forty families tonight, share a transcript, or negotiate first with the Trust (which funds next year's climate-control upgrade for the archive) is left to the player and Mara.
+  Real concern: In that opening roll call thirty years ago, Ada reads out the names of three temporary night-shift loaders omitted from the company's official safety roster after a crane mishap that same year, leaving their families without proof of shift hours.
+  Funding tie: The Trust also underwrites next year's climate-control upgrade budget for the archive.
 `,
   },
   ...storyControlFiles(

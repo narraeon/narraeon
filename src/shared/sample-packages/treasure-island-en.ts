@@ -208,7 +208,7 @@ Noticed signs:
 Crew stances:
   Captain Smollett: Guarded, waiting for hard proof
   Dr. Livesey: Calm, practical, trustworthy
-  Long John Silver: Warm and genial, no open slip yet
+  Long John Silver: Warm and genial, offering warm rum on deck
 `,
   },
   {
@@ -217,10 +217,9 @@ Crew stances:
   id: archive.ti-mutiny-roster
   ref: mutiny-roster
   title: Mutiny roster & apple-barrel plot
-  summary: Core undercurrent truth, read on demand only when eavesdropping from the apple barrel, checking berths, or pressing Hands.
+  summary: Actual crew loyalties aboard the Hispaniola and the pirates’ standing plan.
   aliases: []
-Discovery condition: The player hides in the apple barrel at sea, loosens Hands’s tongue, or investigates crew backgrounds with Smollett before sailing.
-Plot details:
+Facts:
   Numbers: Out of twenty-six aboard, nineteen—led by Silver and Hands—are old Flint pirates; only Smollett, Livesey, Trelawney, the player, and three honest hands remain loyal.
   Plan: Silver wants to wait until the treasure is safely loaded before striking on the return voyage, though hotheads like Hands itch to mutiny sooner.
 `,
@@ -231,12 +230,11 @@ Plot details:
   id: archive.ti-ben-gunn-hoard
   ref: ben-gunn-hoard
   title: Ben Gunn’s cave & moved hoard
-  summary: Major island twist, read on demand only after finding Ben Gunn in the pines or inspecting the empty pit.
+  summary: Where Flint’s treasure actually rests on Skeleton Island and what Ben Gunn wants.
   aliases: []
-Discovery condition: The player meets Ben Gunn on Skeleton Island or reaches the empty treasure pit on Spy-glass Hill.
-Truth:
-  - Ben Gunn dug up Flint’s hoard two years ago and moved the gold and silver bars into a dry cave on the north ridge.
-  - Promised safe passage home—and ideally a wedge of cheese—he will share the cave and his hidden coracle, flipping the balance of power.
+Facts:
+  Treasure location: Ben Gunn dug up Flint’s hoard two years ago and moved the gold and silver bars into a dry cave on the north ridge.
+  Ben Gunn’s price: He longs for English cheese and safe passage home, and is willing to trade the cave’s location and his hidden coracle for them.
 `,
   },
   {
@@ -244,13 +242,12 @@ Truth:
     contents: `$document:
   id: archive.ti-silver-bargain
   ref: silver-bargain
-  title: Silver’s real terms & defection line
-  summary: High-agency faction dossier, read on demand only during private parley or a showdown with Silver.
+  title: Silver’s real terms
+  summary: Long John Silver’s true priorities and bargaining line when the tide turns.
   aliases: []
-Discovery condition: The player negotiates privately with Silver, pretends to join him, or confronts him after the empty pit is exposed.
-Terms & forks:
-  - Silver has zero suicidal loyalty to his crew and fears the gallows above all; promised his life and a way out, he will turn against the hotheads and help retake the schooner.
-  - Supports sharply different forks: holding the stockade by force, stealing the ship by night, or forging a tense temporary alliance with Silver.
+Facts:
+  True priorities: Silver has no suicidal loyalty to his crew and fears the English gallows above all.
+  Bargaining line: Promised his life and a way out, he is willing to turn against the hotheads and help retake the schooner.
 `,
   },
   gameplayFile({ mode: "tabletop", scheme: "d20" }),

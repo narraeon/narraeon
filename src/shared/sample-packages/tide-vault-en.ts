@@ -153,15 +153,13 @@ Constraints: A climbing line used here may be left in place or recovered at the 
   id: archive.tide-vault-sluice-ledger
   ref: sluice-seal-ledger
   title: Sluice yard seal and village brine ledger
-  summary: Second-layer secret discoverable only by inspecting the bell gallery tablets, ceramic seal, or dry recess.
+  summary: Old sluice records and physical fittings hidden in the bell gallery's clay tablets and dry recess.
   aliases: []
-Discovery condition: The player or a companion reaches the bell gallery ledge and examines the clay tablets, takes a rubbing of the yard seal, or checks the dry recess behind the lowest shelf.
-Hidden physical clues:
-  Dry recess and bronze valve key: Behind the lowest tablet shelf sits a loose brick stamped with the same bird-and-wave mark as the entrance bronze. Behind it lie a salt-crusted bronze valve key and a half-slate inscription.
-  What the tablets show: Fifty years ago, a storm cracked the freshwater weir stone. Rather than repair the deep sluice, someone hastily plugged the wrong bypass gate from the village orchard cistern, gradually forcing brine into the lower well veins.
-Dilemma:
-  - Using the valve key to open the sealed village inspection door relieves brine pressure on the wells, but unless the cracked weir below the bell gallery is braced at low water first, a spring tide will flood two lower orchard cellars.
-  - This gives the descent a durable second act after rescuing Ren—returning to negotiate with the village or planning a second low-tide repair.
+Location: The clay tablet rack and the dry recess behind its lowest shelf on the bell gallery ledge.
+Physical clues and records:
+  Dry recess and bronze valve key: Behind the lowest tablet shelf sits a loose brick stamped with the same bird-and-wave mark as the entrance bronze, concealing a salt-crusted bronze valve key and a half-slate inscription.
+  What the tablets show: Fifty years ago, a storm cracked the freshwater weir stone; rather than repair the deep sluice, someone hastily plugged the wrong bypass gate from the village orchard cistern, gradually forcing brine into the lower well veins.
+  Hydraulic risk: Opening the sealed village inspection door with the valve key relieves brine pressure on the wells, but unless the cracked weir below the bell gallery is braced at low water first, a spring tide will flood two lower orchard cellars.
 `,
   },
   {
@@ -170,13 +168,13 @@ Dilemma:
   id: archive.tide-vault-ren-notes
   ref: ren-field-notes
   title: Ren's mason notebook
-  summary: Ren's private notes on fresh mortar and chisel marks, revealed only after reaching Ren or checking his chalk marks.
+  summary: Field notebook in Ren's tool roll recording fresh mortar and bridge-plank observations.
   aliases: []
-Discovery condition: The party reaches Ren, asks why he insisted on entering the vault, or inspects the fresh chalk marks near the broken footbridge.
-Hidden details:
-  Fresh mortar and chisel marks: Ren was not just mapping loose stone—near the sealed inspection bay he found unweathered mortar slapped over the old warning carving about the misplugged bypass gate during a recent ebb tide.
-  Bridge suspicion: Ren suspects the wedging block under the loose bridge plank may have been pried out, though he fell before he could tell rot from tampering and will not accuse any villager without proof.
-  Follow-up lead: The fresh mortar contains fine red brick dust fired only at the lower orchard kiln. Hearing this immediately tells Sera or Ivo that someone in Alder Head does not want the old sluice mistake reopened.
+Location: Tucked inside Ren's tool roll.
+Notes:
+  Fresh mortar and chisel marks: Near the sealed inspection bay, Ren found unweathered mortar slapped over the old warning carving about the misplugged bypass gate during a recent ebb tide.
+  Bridge suspicion: Ren suspects the wedging block under the loose bridge plank may have been pried out, though he fell before he could tell rot from tampering.
+  Mortar makeup: The fresh mortar contains fine red brick dust fired only at the lower orchard kiln.
 `,
   },
   ...storyControlFiles(

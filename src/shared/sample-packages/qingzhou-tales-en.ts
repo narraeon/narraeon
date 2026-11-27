@@ -219,12 +219,11 @@ Companions & trust:
   id: archive.qingzhou-lanruo-debt
   ref: lanruo-zither-debt
   title: The Lanruo zither and an old debt
-  summary: Second-layer truth, read on demand only when visiting Lanruo Temple at night or earning Bai Suxin’s trust.
+  summary: Why the zither plays at Lanruo Temple and Bai Suxin’s old debt to the Zhou family.
   aliases: []
-Discovery condition: The player inspects the zither table and calming incense at Lanruo Temple or speaks candidly with Bai Suxin about her tie to the Zhou family.
-Truth:
-  - Bai Suxin is a fox spirit sheltered and healed ten years ago at Lanruo Temple by Zhou Yan’s late father, who never betrayed her secret.
-  - Sensing a fate-draining miasma drifting downstream from the Dry-Well Post toward Willow Brook, she plays a warding air at the ruined temple each night at cost to her own strength, and came to Westgate Teahouse to trace the source.
+Facts:
+  Old debt: Bai Suxin is a fox spirit sheltered and healed ten years ago at Lanruo Temple by Zhou Yan’s late father, who never betrayed her secret.
+  Warding music: Sensing a fate-draining miasma drifting downstream from the Dry-Well Post toward Willow Brook, she plays a warding air at the ruined temple each night at cost to her own strength, and came to Westgate Teahouse to trace the source.
 `,
   },
   {
@@ -233,13 +232,11 @@ Truth:
   id: archive.qingzhou-mirror-bride
   ref: mirror-bride-truth
   title: Why the Willow Brook bride avoids mirrors
-  summary: Second-layer truth, read on demand only when inspecting the draped mirrors, portrait scroll, or Zhou Yan’s bedchamber.
+  summary: Who A-Heng truly is and what is actually draining Zhou Yan’s strength.
   aliases: []
-Discovery condition: The player visits Willow Brook Old Manor and inspects the draped bronze mirrors, the portrait scroll, or the real cause of Zhou Yan’s exhaustion.
-Truth:
-  - A-Heng is the gentle ghost of an orphan girl who died on the Qingzhou road ten years ago; grateful to Zhou Yan’s father for giving her a proper burial, she bound herself to the old scroll to care for his son, covering the mirrors only so her faint reflection would not frighten him.
-  - Zhou Yan’s nightly fatigue comes not from A-Heng, but from a paper fate-effigy slipped beneath his pillow by the letter-writer at the Dry-Well Post half a month ago.
-Dilemma: Destroying the scroll as a “haunting” harms an innocent spirit and leaves the real culprit free; uncovering the paper effigy lets the player save Zhou Yan and grant A-Heng a dignified resolution.
+Facts:
+  Identity: A-Heng is the gentle ghost of an orphan girl who died on the Qingzhou road ten years ago; grateful to Zhou Yan’s father for giving her a proper burial, she bound herself to the old scroll to care for his son, covering the mirrors only so her faint reflection would not frighten him.
+  Real cause: Zhou Yan’s nightly fatigue comes not from A-Heng, but from a paper fate-effigy slipped beneath his pillow by Qian Wenyuan half a month ago.
 `,
   },
   {
@@ -248,12 +245,11 @@ Dilemma: Destroying the scroll as a “haunting” harms an innocent spirit and 
   id: archive.qingzhou-borrowed-fate
   ref: borrowed-fate-ledger
   title: The Dry-Well borrowed-fate ledger
-  summary: Core truth tying all three tales together, read on demand only when checking the dry well, Qian Wenyuan’s desk, or shrine rolls.
+  summary: The culprit, method, and physical evidence behind the stolen birth-tallies.
   aliases: []
-Discovery condition: The player pries the loose brick in the Dry-Well Post courtyard, searches Qian Wenyuan’s letter-writing box, or matches his name in the City God Shrine rolls.
-Truth:
-  Culprit: Qian Wenyuan, the unassuming letter-writer at the post, is the disgraced clerk dismissed ten years ago for forging deeds and skimming relief silver. Using a fragment of a forbidden fate-siphoning rite, he drugs travelers’ tea, steals their birth-tallies, and seals them inside the dry well to siphon good fortune toward his own reinstatement.
-  Resolution paths: Arrest him with Constable Shen Qing’s warrant, break the well ward with Master Xuanwei to return the tallies, or enlist Bai Suxin and A-Heng to turn his own rite aside—balancing human law and quiet compassion.
+Facts:
+  Culprit: Qian Wenyuan, the quiet letter-writer at the post, is the disgraced clerk dismissed ten years ago for forging deeds and skimming relief silver.
+  Method and evidence: Using a fragment of a forbidden fate-siphoning rite, he drugs travelers’ tea, steals their birth-tallies, and seals them with silk-strung bronze bells behind a loose brick three feet down the dry well to siphon good fortune toward his own reinstatement.
 `,
   },
   gameplayFile({ mode: "tabletop", scheme: "bag" }),
