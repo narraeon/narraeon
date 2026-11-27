@@ -282,6 +282,7 @@ export class FileNativePlayDocuments {
     history: readonly HistoryEntry[],
     options: PlayDocumentToolOptions,
   ): PlayDocumentToolResult {
+    const locale = options.locale ?? "en";
     const query = () => {
       const scope = options.historyScope ?? "local-document-context";
       const version = options.historyVersion;
@@ -294,7 +295,7 @@ export class FileNativePlayDocuments {
       return next;
     };
     const render = (result: Parameters<typeof renderHistoryResult>[0]) =>
-      renderHistoryResult(result, options.locale ?? "en");
+      renderHistoryResult(result, locale);
     const legacy = options.legacyHistoryTools !== false;
     const args = call.arguments;
     if (call.name === "history_search") return render(query().search(args));
@@ -346,7 +347,7 @@ export class FileNativePlayDocuments {
         query().read({
           ref: args.ref.startsWith("@") ? args.ref : `@${args.ref}`,
         }),
-        options.locale ?? "en",
+        locale,
         true,
       );
     }
@@ -357,6 +358,7 @@ export class FileNativePlayDocuments {
         this.#candidate.snapshot,
         call.arguments,
         this.#declaredDirectories,
+        locale,
       );
     // Frozen contexts created before runtime-tools-v5 retain this exact name
     // and argument shape. New contexts never advertise it.
@@ -365,11 +367,13 @@ export class FileNativePlayDocuments {
         this.#candidate.snapshot,
         call.arguments,
         this.#declaredDirectories,
+        locale,
       );
     if (call.name === "context_read") {
       const result = executeContextRead(
         this.#candidate.snapshot,
         call.arguments,
+        locale,
       );
       authorizeToolRead(this.#reads, this.#candidate.snapshot, result);
       return result;
@@ -379,7 +383,7 @@ export class FileNativePlayDocuments {
         this.#candidate,
         this.#reads,
         call.arguments,
-        options.locale ?? "en",
+        locale,
       );
     if (call.name === "world_create")
       return applyPlayCandidateCreate(
@@ -387,14 +391,14 @@ export class FileNativePlayDocuments {
         this.#reads,
         call.arguments,
         this.#declaredDirectories,
-        options.locale ?? "en",
+        locale,
       );
     if (call.name === "world_retire")
       return applyPlayCandidateRetirement(
         this.#candidate,
         this.#reads,
         call.arguments,
-        options.locale ?? "en",
+        locale,
       );
     return toolFailure(
       `The current document context does not accept ${call.name}`,
@@ -659,8 +663,8 @@ function applyPlayCandidatePatch(
   )
     return toolFailure(
       locale === "zh-CN"
-        ? `写入前请精确读取 @${ref}，或在初始化材料中获取该文档全文。`
-        : `Read @${ref} exactly, or receive the complete document in bootstrap, before writing it.`,
+        ? `写入 @${ref} 超出了当前授权。请用 context_read 精确读取缺少授权的节点，或整份读取文档以更新元数据。`
+        : `The edit exceeds the current write scope for @${ref}. Use context_read on each uncovered node before writing it, or read the full document to update metadata.`,
       "protocol",
       locale,
     );
@@ -1345,6 +1349,7 @@ function executeStateList(
   snapshot: WorldDocumentStore,
   args: unknown,
   declaredDirectories: readonly string[],
+  locale: AppLocale,
 ): ContextToolResult {
   // Frozen sessions may still send obsolete cursor/limit; directories are
   // listed in full, so those keys are accepted and ignored.
@@ -1354,29 +1359,28 @@ function executeStateList(
     typeof args.parent !== "string" ||
     parseStateDirectoryHandle(args.parent) === null
   )
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nstate_list requires an @dir-* parent returned by Runtime; use history_list for committed history.",
-    };
-  return executeContextList(
-    snapshot,
-    { ...args, source: "state" },
-    declaredDirectories,
-  );
+    return stateReadArgumentError(
+      locale === "zh-CN"
+        ? "state_list 的 parent 必须是 Runtime 返回的 @dir-*；已提交历史用 history_list。"
+        : "state_list requires an @dir-* parent returned by Runtime; use history_list for committed history.",
+      locale,
+    );
+  return listStateDirectory(snapshot, args.parent, declaredDirectories, locale);
 }
 
 function executeContextList(
   snapshot: WorldDocumentStore,
   args: unknown,
-  declaredDirectories: readonly string[] = [],
+  declaredDirectories: readonly string[],
+  locale: AppLocale,
 ): ContextToolResult {
   if (!record(args) || (args.source !== "state" && args.source !== "history"))
-    return {
-      ok: false,
-      markdown:
-        '# Runtime argument error\n\nUse {source:"state", parent:"@dir-/"} for state directories and {source:"history", order:"newest_first"} for history.',
-    };
+    return stateReadArgumentError(
+      locale === "zh-CN"
+        ? '状态目录请用 {source:"state", parent:"@dir-/"}，已提交历史请用 history_list。'
+        : 'Use {source:"state", parent:"@dir-/"} for state directories and {source:"history", order:"newest_first"} for history.',
+      locale,
+    );
   const allowedKeys = ["source", "parent", "order", "cursor", "limit"];
   const invalidStateShape =
     args.source === "state" &&
@@ -1392,63 +1396,106 @@ function executeContextList(
     invalidStateShape ||
     invalidHistoryShape
   )
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nstate must use an @dir-* parent returned by the Runtime and omit order; history must use newest_first or oldest_first order and omit parent.",
-    };
-  if (args.source === "state") {
-    const parent = args.parent as string;
-    const directory = parseStateDirectoryHandle(parent);
-    if (directory === null) return unexpectedStateQueryResult();
-    if (!knownStateDirectory(snapshot, directory, declaredDirectories))
-      return {
-        ok: false,
-        markdown:
-          "# Runtime argument error\n\nThe parent is not a Runtime-known state directory; call state_list and descend only through its returned directory handles.",
-      };
-    const entries: string[] = [];
-    let complete = true;
-    let cursor: string | null = null;
-    do {
-      const result = snapshot.query({
-        kind: "catalog",
-        directory,
-        includeRetired: true,
-        declaredDirectories,
-        limit: 100,
-        ...(cursor === null ? {} : { cursor }),
-      });
-      if (result.kind === "error") return renderStateQueryFailure(result);
-      if (result.kind !== "catalog") return unexpectedStateQueryResult();
-      if (result.coverage.status !== "complete") complete = false;
-      entries.push(
-        ...result.entries.map((entry) => {
-          if (entry.kind === "directory") {
-            const relative = entry.logicalPath.slice(
-              `${snapshot.logicalRoot}/`.length,
-            );
-            return `- Directory ${stateDirectoryHandle(relative)}`;
-          }
-          if (entry.document === undefined)
-            return "- Damaged document (currently not addressable)";
-          return `- Document @${entry.document.shortRef} · ${entry.document.title} · ${entry.document.codec.toUpperCase()} · ${entry.document.summary}${entry.document.retired ? " · retired" : ""}${entry.status === "damaged" ? " · needs repair" : ""}`;
-        }),
-      );
-      cursor = result.page.nextCursor;
-    } while (cursor !== null);
-    return {
-      ok: true,
-      markdown: `# Directory listing\n\nScope: state · ${parent}\nCoverage: ${complete ? "complete" : "partial"}\n${entries.join("\n") || "(empty)"}\n\n---\nComplete: yes`,
-    };
-  }
+    return stateReadArgumentError(
+      locale === "zh-CN"
+        ? "状态目录请使用 Runtime 返回的 @dir-* 作为 parent，并省略 order；历史排序须为 newest_first 或 oldest_first，并省略 parent。"
+        : "state must use an @dir-* parent returned by the Runtime and omit order; history must use newest_first or oldest_first order and omit parent.",
+      locale,
+    );
+  if (args.source === "state")
+    return listStateDirectory(
+      snapshot,
+      args.parent as string,
+      declaredDirectories,
+      locale,
+    );
 
-  return toolFailure("Use history_list for committed history.");
+  return toolFailure(
+    locale === "zh-CN"
+      ? "已提交历史请用 history_list。"
+      : "Use history_list for committed history.",
+    "protocol",
+    locale,
+  );
+}
+
+function listStateDirectory(
+  snapshot: WorldDocumentStore,
+  parent: string,
+  declaredDirectories: readonly string[],
+  locale: AppLocale,
+): ContextToolResult {
+  const zh = locale === "zh-CN";
+  const directory = parseStateDirectoryHandle(parent);
+  if (directory === null) return unexpectedStateQueryResult(locale);
+  if (!knownStateDirectory(snapshot, directory, declaredDirectories))
+    return stateReadArgumentError(
+      zh
+        ? "此 parent 不在 Runtime 已知的状态目录中。请调用 state_list，并只使用回执返回的目录句柄逐级查找。"
+        : "The parent is not a Runtime-known state directory; call state_list and descend only through its returned directory handles.",
+      locale,
+    );
+  const entries: string[] = [];
+  let complete = true;
+  let cursor: string | null = null;
+  do {
+    const result = snapshot.query({
+      kind: "catalog",
+      directory,
+      includeRetired: true,
+      declaredDirectories,
+      limit: 100,
+      ...(cursor === null ? {} : { cursor }),
+    });
+    if (result.kind === "error") return renderStateQueryFailure(result, locale);
+    if (result.kind !== "catalog") return unexpectedStateQueryResult(locale);
+    if (result.coverage.status !== "complete") complete = false;
+    entries.push(
+      ...result.entries.map((entry) => {
+        if (entry.kind === "directory") {
+          const relative = entry.logicalPath.slice(
+            `${snapshot.logicalRoot}/`.length,
+          );
+          return `- ${zh ? "目录" : "Directory"} ${stateDirectoryHandle(relative)}`;
+        }
+        const { document } = entry;
+        if (document === undefined)
+          return zh
+            ? "- 文档已损坏（当前无法定位）"
+            : "- Damaged document (currently not addressable)";
+        const retired = document.retired
+          ? zh
+            ? " · 已退役"
+            : " · retired"
+          : "";
+        const damaged =
+          entry.status === "damaged"
+            ? zh
+              ? " · 待修复"
+              : " · needs repair"
+            : "";
+        return `- ${zh ? "文档" : "Document"} @${document.shortRef} · ${document.title} · ${document.codec.toUpperCase()} · ${document.summary}${retired}${damaged}`;
+      }),
+    );
+    cursor = result.page.nextCursor;
+  } while (cursor !== null);
+  const coverage = complete
+    ? zh
+      ? "完整"
+      : "complete"
+    : zh
+      ? "部分"
+      : "partial";
+  return {
+    ok: true,
+    markdown: `# ${zh ? "目录列表" : "Directory listing"}\n\n${stateReceiptScope(parent, locale)}\n${zh ? "覆盖：" : "Coverage: "}${coverage}\n${entries.join("\n") || (zh ? "（空）" : "(empty)")}\n\n---\n${stateReceiptComplete(locale)}`,
+  };
 }
 
 function executeContextRead(
   snapshot: WorldDocumentStore,
   args: unknown,
+  locale: AppLocale,
 ): ContextToolResult {
   if (
     !record(args) ||
@@ -1458,33 +1505,45 @@ function executeContextRead(
     !hasOnlyToolKeys(args, ["ref", "cursor", "maxBytes"]) ||
     typeof args.ref !== "string"
   )
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nA stable ref returned by list or search is required.",
-    };
+    return stateReadArgumentError(
+      locale === "zh-CN"
+        ? "需要 Runtime 返回的稳定 ref。"
+        : "A stable ref returned by list or search is required.",
+      locale,
+    );
   const handle = parseStateReadHandle(args.ref);
   if (handle === null)
-    return {
-      ok: false,
-      markdown:
-        "# Runtime argument error\n\nAn exact state read requires a document @short-ref or one of its #/logical nodes.",
-    };
+    return stateReadArgumentError(
+      locale === "zh-CN"
+        ? "精确读取状态需要文档 @短引用，或它的 #/逻辑节点。"
+        : "An exact state read requires a document @short-ref or one of its #/logical nodes.",
+      locale,
+    );
   const resolved = snapshot.query({
     kind: "read_document",
     document: { shortRef: handle.shortRef },
   });
-  if (resolved.kind === "error") return renderStateQueryFailure(resolved);
-  if (resolved.kind !== "read_document") return unexpectedStateQueryResult();
+  if (resolved.kind === "error")
+    return renderStateQueryFailure(resolved, locale);
+  if (resolved.kind !== "read_document")
+    return unexpectedStateQueryResult(locale);
   if (handle.path === null)
     return resolved.codec === "markdown"
-      ? readMarkdownDocument(snapshot, resolved.document)
+      ? renderStateRead(
+          snapshot,
+          resolved.document,
+          args.ref,
+          resolved.body.trimEnd(),
+          null,
+          locale,
+        )
       : readProjectedNode(
           snapshot,
           resolved.document,
           { yaml: [] },
           args.ref,
           true,
+          locale,
         );
   const locator: WorldDocumentLocator =
     resolved.codec === "yaml"
@@ -1496,28 +1555,8 @@ function executeContextRead(
     locator,
     args.ref,
     false,
+    locale,
   );
-}
-
-function readMarkdownDocument(
-  snapshot: WorldDocumentStore,
-  document: WorldDocumentDescriptor,
-): ContextToolResult {
-  const result = snapshot.query({
-    kind: "read_document",
-    document: { shortRef: document.shortRef },
-  });
-  if (result.kind === "error") return renderStateQueryFailure(result);
-  if (result.kind !== "read_document") return unexpectedStateQueryResult();
-  return {
-    ok: true,
-    markdown: `# Exact read @${document.shortRef}\n\n${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${result.body.trimEnd()}\n[Writable body ends]\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · @${document.shortRef}\nComplete: yes`,
-    readAuthorization: {
-      snapshotId: snapshot.id,
-      shortRef: document.shortRef,
-      locator: null,
-    },
-  };
 }
 
 function readProjectedNode(
@@ -1526,14 +1565,15 @@ function readProjectedNode(
   locator: WorldDocumentLocator,
   requestedHandle: string,
   wholeDocument: boolean,
+  locale: AppLocale,
 ): ContextToolResult {
   const result = snapshot.query({
     kind: "select_node",
     document: { shortRef: document.shortRef },
     locator,
   });
-  if (result.kind === "error") return renderStateQueryFailure(result);
-  if (result.kind !== "select_node") return unexpectedStateQueryResult();
+  if (result.kind === "error") return renderStateQueryFailure(result, locale);
+  if (result.kind !== "select_node") return unexpectedStateQueryResult(locale);
   const body =
     result.node.codec === "yaml"
       ? stringify(toolWorldDocumentValue(result.node.value), {
@@ -1541,21 +1581,52 @@ function readProjectedNode(
           lineWidth: 0,
         }).trimEnd()
       : result.node.markdown.trimEnd();
-  const text = wholeDocument
-    ? `${renderDocumentMetadata(document)}\n[Writable body starts; locators are relative to this point]\n${body}\n[Writable body ends]\n`
-    : `# ${document.title} · ${renderLocator(result.node.locator)} [${requestedHandle}]\n\n${body}\n`;
+  return renderStateRead(
+    snapshot,
+    document,
+    requestedHandle,
+    body,
+    wholeDocument ? null : result.node.locator,
+    locale,
+  );
+}
+
+function renderStateRead(
+  snapshot: WorldDocumentStore,
+  document: WorldDocumentDescriptor,
+  handle: string,
+  body: string,
+  locator: WorldDocumentLocator | null,
+  locale: AppLocale,
+): ContextToolResult {
+  const zh = locale === "zh-CN";
+  const text =
+    locator === null
+      ? `${renderDocumentMetadata(document, locale)}\n${zh ? "[可写正文开始，定位从此处起算]" : "[Writable body starts; locators are relative to this point]"}\n${body}\n${zh ? "[可写正文结束]" : "[Writable body ends]"}`
+      : `# ${document.title} · ${renderLocator(locator)} [${handle}]\n\n${body}`;
+  const writeScope =
+    locator === null
+      ? zh
+        ? "写入范围：整份文档的正文及元数据。"
+        : "Write scope: whole document body and metadata."
+      : zh
+        ? "写入范围：该节点及其子节点。"
+        : "Write scope: this node and its descendants.";
   return {
     ok: true,
-    markdown: `# Exact read ${requestedHandle}\n\n${text.trimEnd()}\n\n${renderPlayerViewBindings(snapshot, document.shortRef)}\n\n---\nScope: state · ${requestedHandle}\nComplete: yes`,
+    markdown: `# ${zh ? "精确读取" : "Exact read"} ${handle}\n\n${text.trimEnd()}\n\n${renderPlayerViewBindings(snapshot, document.shortRef, locale)}\n\n---\n${stateReceiptScope(handle, locale)}\n${writeScope}\n${stateReceiptComplete(locale)}`,
     readAuthorization: {
       snapshotId: snapshot.id,
       shortRef: document.shortRef,
-      locator: wholeDocument ? null : result.node.locator,
+      locator,
     },
   };
 }
 
-function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
+function renderDocumentMetadata(
+  document: WorldDocumentDescriptor,
+  locale: AppLocale,
+): string {
   const metadata = stringify(
     {
       title: document.title,
@@ -1565,7 +1636,19 @@ function renderDocumentMetadata(document: WorldDocumentDescriptor): string {
     },
     { indent: 2, lineWidth: 0 },
   ).trimEnd();
-  return `[Document metadata: not body content; set_metadata updates one or more fields and preserves omitted fields; retired is changed only by world_retire]\n${metadata}`;
+  const heading =
+    locale === "zh-CN"
+      ? "[文档元数据，位于正文之外。用 set_metadata 更新一项或多项，省略项保持原样。retired 只能用 world_retire 修改。]"
+      : "[Document metadata: not body content; set_metadata updates one or more fields and preserves omitted fields; retired is changed only by world_retire]";
+  return `${heading}\n${metadata}`;
+}
+
+function stateReceiptScope(handle: string, locale: AppLocale): string {
+  return `${locale === "zh-CN" ? "范围：状态" : "Scope: state"} · ${handle}`;
+}
+
+function stateReceiptComplete(locale: AppLocale): string {
+  return locale === "zh-CN" ? "完整返回：是" : "Complete: yes";
 }
 
 function toolWorldDocumentValue(value: WorldDocumentValue): unknown {
@@ -1611,18 +1694,35 @@ function renderLocator(locator: WorldDocumentLocator): string {
 
 function renderStateQueryFailure(
   result: WorldDocumentQueryFailure,
+  locale: AppLocale = "en",
+): ContextToolResult {
+  return stateReadArgumentError(
+    result.diagnostics
+      .map(({ code, message }) => `${code}: ${message}`)
+      .join("\n"),
+    locale,
+  );
+}
+
+function stateReadArgumentError(
+  message: string,
+  locale: AppLocale,
 ): ContextToolResult {
   return {
     ok: false,
-    markdown: `# Runtime argument error\n\n${result.diagnostics.map(({ code, message }) => `${code}: ${message}`).join("\n")}`,
+    markdown: `# ${locale === "zh-CN" ? "Runtime 参数错误" : "Runtime argument error"}\n\n${message}`,
   };
 }
 
-function unexpectedStateQueryResult(): ContextToolResult {
+function unexpectedStateQueryResult(
+  locale: AppLocale = "en",
+): ContextToolResult {
   return {
     ok: false,
     markdown:
-      "# Runtime tool rejected\n\nThe world-document query returned an incompatible result type.",
+      locale === "zh-CN"
+        ? "# Runtime 拒绝了工具调用\n\n世界文档查询返回了不兼容的结果类型。"
+        : "# Runtime tool rejected\n\nThe world-document query returned an incompatible result type.",
   };
 }
 

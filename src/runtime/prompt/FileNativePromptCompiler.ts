@@ -1054,7 +1054,7 @@ export class FileNativePromptCompiler {
           ...materials.blocks,
           {
             source: "runtime:world-placeholder/coverage",
-            markdown: `${this.#locale === "zh-CN" ? "# 材料覆盖与写入资格" : "# Material coverage and write authorization"}\n\n${materials.coverage.map((entry) => `- ${entry.slot}: ${entry.source} · ${entry.status}${coverageWriteHint(entry, this.#locale)}`).join("\n")}`,
+            markdown: `${this.#locale === "zh-CN" ? "# 材料覆盖与写入资格" : "# Material coverage and write authorization"}\n\n${materialWriteScopeGuide(this.#locale)}\n\n${materials.coverage.map((entry) => `- ${entry.slot}: ${entry.source} · ${entry.status}${coverageWriteHint(entry, this.#locale)}`).join("\n")}`,
           },
         ]);
       } else if (entry.enabled) {
@@ -3389,14 +3389,14 @@ function renderCoverage(
 
 下列条目说明本次请求注入了哪些材料，以及可以用哪个工具取得更多。\`未完整\` 表示这一项的覆盖没有得到证明，不表示一定还有内容：\`optional_missing\` 的位置可能什么都没注入（目录为空、或内容存在但未被选中），也可能已经注入了一部分（目录里还有无法解析的条目）；\`paged_catalog\` 表示确实还有条目没有列出。任何一种都不能用来推断世界上是否存在某件事；需要确认时用条目末尾列出的工具查。
 
-\`已注入完整正文\` 表示整份正文已提供并获得写入资格；\`已注入节点\` 表示仅标出的节点已提供并获得写入资格。
+${materialWriteScopeGuide(locale)}
 
 每份材料的标题都标出了它的 codec：\`· YAML\` 的用 \`{yaml: [键, ...]}\` 定位，正文就是它的 YAML 原文，键名和层级照写即可；\`· Markdown\` 的用 \`{markdown: [标题, ...]}\` 定位，路径是正文里的标题层级。文档 id 一律投影成 \`@短引用\`，写回时照原样保留。`
       : `# Material coverage report
 
 The entries below state which material this request injected and which tool can retrieve more. \`incomplete\` means coverage was not proven, not that more content necessarily exists. An \`optional_missing\` location may have injected nothing because a directory is empty or material exists but was not selected, or it may have injected only part because the directory contains entries that could not be parsed. \`paged_catalog\` means additional entries definitely were not listed. None of these states proves whether a world fact exists. Use the tool named at the end of the entry when confirmation is needed.
 
-\`full body injected\` covers the entire supplied body and authorizes writing it. \`node injected\` covers only the named node and authorizes writing that scope.
+${materialWriteScopeGuide(locale)}
 
 Each material heading identifies its codec. For \`· YAML\`, use \`{yaml: [key, ...]}\`; the body is the YAML source, so preserve its keys and hierarchy. For \`· Markdown\`, use \`{markdown: [heading, ...]}\`; the path follows the body's heading hierarchy. Document ids are always projected as \`@short-refs\`; preserve those handles exactly when writing.`;
 
@@ -3408,6 +3408,16 @@ ${coverage
       `- ${entry.slot}: ${entry.source} · ${entry.status} · ${entry.complete ? (locale === "zh-CN" ? "完整" : "complete") : locale === "zh-CN" ? "未完整" : "incomplete"}${coverageWriteHint(entry, locale)}`,
   )
   .join("\n")}`;
+}
+
+function materialWriteScopeGuide(locale: AppLocale): string {
+  return locale === "zh-CN"
+    ? `- \`已注入完整正文\`：整份正文可直接写入，无需精读，也可更新文档元数据。
+- \`已注入节点\`：仅该节点及其子节点可直接写入，范围不包含父节点、兄弟节点或文档元数据。
+- 目录摘要不授予写入资格。缺少所需正文或写入资格时，用已有 @句柄直接调用 context_read；只有需要发现未知句柄时才调用 state_list。`
+    : `- \`full body injected\`: write anywhere in its body without another read, and update document metadata.
+- \`node injected\`: write only within this node and its descendants. This scope excludes ancestors, siblings, and document metadata.
+- Catalog summaries grant no write authorization. If content or authorization is missing, use the known @handle directly with context_read. Use state_list only to discover unknown handles.`;
 }
 
 /**

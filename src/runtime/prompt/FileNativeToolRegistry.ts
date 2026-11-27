@@ -416,8 +416,8 @@ function createToolDefinitions(
         {
           target: describe(
             string,
-            "The document's Runtime-returned @short-ref. Each edited scope must already have write authorization from a precise read or fully injected material.",
-            "Runtime 返回的文档 @短引用。每处改动范围须已通过精确读取或完整注入材料获得写入资格。",
+            "The document's Runtime-returned @short-ref. Each edit must be covered by a precise read or injected material. Whole-document coverage permits body and metadata edits; node coverage permits only edits within that node.",
+            "Runtime 返回的文档 @短引用。每条编辑须在精确读取或注入材料的范围内。整份文档范围可编辑正文和元数据，节点范围只可编辑该节点及其子节点。",
           ),
           edits: describe(
             {
@@ -709,7 +709,7 @@ const toolDescriptions: Record<
     world_checkpoint:
       "Register an event gap and suggest starting a fresh context here (empty object {}). Settlement and replay scope follow tools-and-settlement rules; timing follows checkpoint policy. Consolidation does not need this tool; never advance the story just to register.",
     state_list:
-      "List Runtime-known state directory and document handles. Use @dir-/ for the root or an @dir-* from the initial index or state_list (no need to re-list known handles). Empty catalog directories declared by the frozen frame stay usable. Returns the whole directory (Complete: yes); pass document handles to context_read. Never lists committed history.",
+      "Discover unknown state directory or document handles. Use @dir-/ for the root or an @dir-* from the initial index or state_list. Use known handles directly. Empty catalog directories declared by the frozen frame stay usable. Returns the whole directory (Complete: yes). Directory entries do not grant write authorization. Never lists committed history.",
     history_list:
       "Browse committed timeline history including the opening, with previews of up to 120 code points in Authority acceptance order from oldest to newest. Historical background reflects capture-time state only, not current world state, and neither certifies facts nor grants character knowledge. Use either before or after for an anchored page, neither for the latest page, or {cursor} alone to continue.",
     history_search:
@@ -735,7 +735,7 @@ const toolDescriptions: Record<
     world_checkpoint:
       "登记事件间隙并向玩家建议从此开启全新上下文（参数为空对象 {}）。生效边界见“工具与响应结算”，登记时机见检查点政策。整理归并无需调用，勿为登记推进剧情。",
     state_list:
-      "列出 Runtime 已知的状态目录与文档句柄。根目录用 @dir-/，下级用初始目录索引或 state_list 返回的 @dir-*（已有句柄无需再列）。冻结 frame 声明的空 catalog 目录仍可用。每次整份返回（Complete: yes），文档句柄交给 context_read；不列出已提交历史。",
+      "发现未知的状态目录或文档句柄。根目录用 @dir-/，下级用初始目录索引或 state_list 返回的 @dir-*。已有句柄直接使用。冻结 frame 声明的空 catalog 目录仍可用。每次整份返回（完整返回：是），目录条目不授予写入资格。不列出已提交历史。",
     history_list:
       "浏览当前时间线已提交历史（含开场白），页内按 Authority 接受顺序由旧到新，每条预览最多 120 个码点。历史背景仅说明采集时刻状态，不是当前世界状态，不认证事实或授予角色知识。按锚点查页时只传 before 或 after 之一，查最新页时均省略，续页只传 {cursor}。",
     history_search:
