@@ -684,10 +684,6 @@
   background: transparent;
   border-color: transparent;
 }
-.setting-conversation-composer-row > button {
-  background: #343832;
-  color: #fff;
-}
 .setting-reader-page .setting-improvement-warning,
 .setting-reader-page .setting-current-tree-notice {
   padding: 8px 12px;

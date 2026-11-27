@@ -12,12 +12,23 @@ export function WorldExtensionMenu({
 }: {
   view: WorldExtensionsView;
   onChange: (key: string, value: WorldExtensionChoice) => Promise<void>;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<{
     key: string;
     message: string;
   } | null>(null);
+  const groupKeys = new Set(view.items.map((item) => item.group));
+  const requests = view.items.filter(
+    (item) =>
+      item.kind === "request" ||
+      (item.kind === "group" && groupKeys.has(item.key)),
+  );
+  const panels = view.items.filter(
+    (item) => item.kind === "panel" || item.kind === "view",
+  );
+  if (requests.length === 0 && panels.length === 0) return null;
+
   const change = async (key: string, value: WorldExtensionChoice) => {
     setBusy(true);
     setFailure(null);
@@ -82,16 +93,7 @@ export function WorldExtensionMenu({
     </div>
   );
   return (
-    <details
-      name="world-composer-menu"
-      className="world-extension-menu"
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || !event.currentTarget.open) return;
-        event.preventDefault();
-        event.currentTarget.open = false;
-        event.currentTarget.querySelector("summary")?.focus();
-      }}
-    >
+    <details name="world-composer-menu" className="world-extension-menu">
       <summary>{uiText("世界扩展")}</summary>
       <div className="world-extension-options">
         <p>
@@ -99,19 +101,21 @@ export function WorldExtensionMenu({
             "选择仅用于当前世界。后置请求重新开启后，从下一次正常发送生效；界面显示直接读取当前字段。",
           )}
         </p>
-        <fieldset>
-          <legend>{uiText("后置请求")}</legend>
-          <p>{uiText("每个启用的后置请求会在回复完成后额外调用模型一次。")}</p>
-          {view.items
-            .filter((item) => item.kind === "request" || item.kind === "group")
-            .map(row)}
-        </fieldset>
-        <fieldset>
-          <legend>{uiText("界面显示（不调用模型）")}</legend>
-          {view.items
-            .filter((item) => item.kind === "panel" || item.kind === "view")
-            .map(row)}
-        </fieldset>
+        {requests.length > 0 && (
+          <fieldset>
+            <legend>{uiText("后置请求")}</legend>
+            <p>
+              {uiText("每个启用的后置请求会在回复完成后额外调用模型一次。")}
+            </p>
+            {requests.map(row)}
+          </fieldset>
+        )}
+        {panels.length > 0 && (
+          <fieldset>
+            <legend>{uiText("界面显示（不调用模型）")}</legend>
+            {panels.map(row)}
+          </fieldset>
+        )}
       </div>
     </details>
   );

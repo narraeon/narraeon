@@ -130,11 +130,13 @@ for (const locale of appLocales) {
       await openRail();
       await expect(baseCard).toContainText(place);
       await closeRail();
+      await toggleMenu();
       await setChecked(status, true);
       await openRail();
       await expect(statusCard.getByText(place, { exact: true })).toBeVisible();
       await expect(baseCard).toHaveCount(0);
       await closeRail();
+      await toggleMenu();
       await setChecked(status, false);
       await openRail();
       await expect(baseCard).toContainText(place);

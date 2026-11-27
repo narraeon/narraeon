@@ -152,6 +152,12 @@ summary {
 .primary-button:hover:not(:disabled) {
   background: #464c43;
 }
+.world-composer-send.primary-button:disabled,
+.setting-conversation-send.primary-button:disabled {
+  opacity: 1;
+  color: #565d54;
+  background: var(--surface-inset);
+}
 
 .center-card,
 .config-shell {
@@ -2639,18 +2645,19 @@ summary {
 
 .model-run-progress {
   display: grid;
-  gap: 0.65rem;
-  padding: 0.8rem 0.9rem;
+  min-width: 0;
+  gap: 0.2rem;
+  padding: 0.25rem 0.45rem;
   border: 1px solid var(--border);
   border-radius: 3px;
-  background: var(--panel);
+  background: var(--surface-muted);
 }
 
 .model-run-headline {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.45rem 0.9rem;
+  align-items: center;
+  gap: 0.2rem 0.65rem;
   color: var(--muted);
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
@@ -2661,8 +2668,9 @@ summary {
   font-size: 0.9rem;
 }
 
-.model-run-headline span:last-child {
-  margin-left: auto;
+.model-run-headline button {
+  margin-inline-start: auto;
+  padding: 0.2rem 0.45rem;
 }
 
 .model-run-age-stalled,
@@ -2673,14 +2681,15 @@ summary {
 .model-run-counters {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 1.25rem;
+  gap: 0.15rem 0.85rem;
   margin: 0;
 }
 
 .model-run-counters div {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: 0.25rem;
+  white-space: nowrap;
 }
 
 .model-run-counters dt,
@@ -2702,13 +2711,11 @@ summary {
   line-height: 1.5;
 }
 
-.model-run-stalled-note {
+.model-run-stalled-note,
+.model-retry-status p {
+  margin: 0;
   color: var(--warning);
-}
-
-.model-run-actions {
-  display: flex;
-  justify-content: flex-end;
+  font-size: 0.75rem;
 }
 
 /* AI setting improvement */
@@ -4058,6 +4065,9 @@ summary {
   border-color: var(--danger);
   color: var(--danger);
   background: var(--danger-surface);
+  pointer-events: auto;
+  text-align: start;
+  user-select: text;
 }
 
 .world-play-layout {
@@ -4151,13 +4161,6 @@ summary {
   margin: 0;
 }
 
-.play-run-progress {
-  max-width: 54rem;
-  margin: 1.35rem auto 0;
-  border-color: var(--border);
-  background: var(--surface);
-}
-
 .play-run-activity {
   margin: 0;
   color: var(--accent);
@@ -4172,19 +4175,25 @@ summary {
   background: var(--surface);
 }
 
-.play-call-failure,
 .play-retry-note,
+.play-plan-note,
 .play-checkpoint-note,
 .model-required-callout {
   display: flex;
   align-items: center;
   gap: 0.7rem;
   padding: 0.65rem 0.8rem;
-  border: 1px solid var(--danger);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  color: var(--danger);
-  background: var(--danger-surface);
+  color: var(--text);
+  background: var(--surface-muted);
   font-size: 0.78rem;
+}
+
+.play-retry-note {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--warning-surface);
 }
 
 .play-call-failure {
@@ -6647,7 +6656,7 @@ summary {
   padding: 0.85rem;
   border: 1px solid var(--border);
   border-radius: 3px;
-  background: var(--danger-surface);
+  background: var(--surface-muted);
 }
 
 .setting-conversation-running p,
@@ -6656,6 +6665,11 @@ summary {
   color: var(--muted);
   font-size: 0.8rem;
   white-space: pre-wrap;
+}
+
+.setting-conversation-running .setting-run-age-stalled,
+.setting-conversation-running .model-retry-status p {
+  color: var(--warning);
 }
 
 .setting-conversation-paused {
@@ -7680,16 +7694,6 @@ summary {
   margin-bottom: 0.75rem;
 }
 
-.world-context-usage {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.world-context-usage-label {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
 .world-context-usage-warning {
   display: flex;
   align-items: center;
@@ -7699,7 +7703,7 @@ summary {
   padding: 0.35rem 0.6rem;
   border-radius: 3px;
   color: var(--warning);
-  background: var(--danger-surface);
+  background: var(--warning-surface);
   font-size: 0.75rem;
 }
 
@@ -8525,6 +8529,9 @@ dialog.world-dialog-scrim::backdrop {
   max-width: min(42rem, calc(100vw - 2rem));
   margin: 0;
   transform: translateX(-50%);
+}
+
+.world-feedback.status {
   pointer-events: none;
 }
 
