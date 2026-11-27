@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 
 import { FileNativeArtifactStore } from "../../src/runtime/artifact/FileNativeArtifactStore.ts";
+import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
+import { chatGptPlanBaseUrl } from "../../src/runtime/model/FileNativeModelConnection.ts";
 import {
   FileNativeAiFailureLog,
   type AiExchangeDiagnostics,
@@ -20,7 +22,10 @@ import {
   createMinimalFileNativePreviewInput,
   FileNativePromptCompiler,
 } from "../../src/runtime/prompt/FileNativePromptCompiler.ts";
-import { firstPartyActionChoicesPresetFiles } from "../../src/shared/first-party-action-choices.ts";
+import {
+  firstPartyActionChoicesPresetFiles,
+  firstPartyActionChoicesPresetFilesForLocale,
+} from "../../src/shared/first-party-action-choices.ts";
 
 const emitRecap = {
   id: "emit",
@@ -173,6 +178,176 @@ test.each([
       expect(records.filter(({ type }) => type === "resolved")).toHaveLength(
         failure === undefined ? 1 : 0,
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { locale: "zh-CN", instructions: false },
+  { locale: "en", instructions: true },
+] as const)(
+  "$locale Responses 后置请求派发完整的选项结构，并按同一契约接收产物",
+  async ({ locale, instructions }) => {
+    const root = await mkdtemp(join(tmpdir(), "narraeon-options-contract-"));
+    try {
+      const files = firstPartyActionChoicesPresetFilesForLocale(locale);
+      const parsed = parsePlayPresetFiles(files);
+      if (parsed.kind !== "valid") throw parsed.error;
+      const compiled = new FileNativePromptCompiler({
+        locale,
+      }).compilePlayCallChain(
+        createMinimalFileNativePreviewInput({
+          provider: "openai_responses",
+          modelId: "fixture",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 2_000,
+          playerInput: "Continue.",
+          playerInputPlacement: "append",
+          locale,
+        }),
+        {
+          id: "preset",
+          name: "Preset",
+          revision: "preset-revision",
+          files,
+          definition: parsed.definition,
+          scriptsEnabled: false,
+        },
+      );
+      expect(compiled.followups.map(({ id }) => id)).toEqual([
+        "player_options",
+      ]);
+      const options = [
+        { id: "a", label: "A", prompt: "Choose A." },
+        {
+          id: "b",
+          label: "B",
+          description: "Some detail",
+          prompt: "Choose B.",
+        },
+        { id: "c", label: "C", prompt: "Choose C." },
+        { id: "d", label: "D", prompt: "Choose D." },
+      ];
+      const artifacts = new FileNativeArtifactStore(root);
+      const requests: Record<string, unknown>[] = [];
+      const modelHost = new FileNativeModelHost(
+        {
+          provider: "openai_responses",
+          baseUrl: instructions
+            ? "https://provider.invalid/v1"
+            : chatGptPlanBaseUrl,
+          apiKey: instructions ? "synthetic" : "",
+          modelId: "fixture",
+          contextWindowTokens: 32_000,
+          maxOutputTokens: 2_000,
+          responsesTurnInstructions: instructions,
+          ...(instructions
+            ? {}
+            : {
+                chatgptPlan: {
+                  accountId: "fixture",
+                  allowFollowups: true,
+                  accessToken: async () => "synthetic",
+                },
+              }),
+        },
+        async (_url, init) => {
+          requests.push(
+            (await new Response(init?.body).json()) as Record<string, unknown>,
+          );
+          const payload =
+            requests.length === 1
+              ? options
+              : options.map(({ id, prompt }) => ({ id, text: prompt }));
+          return new Response(
+            `data: ${JSON.stringify({
+              type: "response.completed",
+              response: {
+                status: "completed",
+                output: [
+                  {
+                    type: "function_call",
+                    namespace: "narraeon",
+                    name: "artifact_emit",
+                    call_id: "emit-options",
+                    arguments: JSON.stringify({
+                      output: "player_options",
+                      payload,
+                    }),
+                  },
+                ],
+              },
+            })}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      );
+
+      for (const worldId of ["valid", "invalid"]) {
+        const run = await runPlayFollowupRequests({
+          artifacts,
+          modelHost,
+          followups: compiled.followups,
+          bootstrap: compiled.bootstrap,
+          prefix: [{ kind: "player", text: "Continue." }],
+          toolStrategy: compiled.toolStrategy,
+          context: {
+            worldId,
+            parentHead: "genesis",
+            operationId: "run",
+            playPresetId: "preset",
+            playPresetRevision: "preset-revision",
+            playPresetScriptsEnabled: false,
+          },
+          head: "commit:1",
+          maxOutputTokens: 2_000,
+        });
+        const toolCall = run.outcomes[0]?.toolCalls[0];
+        expect(toolCall?.ok).toBe(worldId === "valid");
+        const projection = await artifacts.readActiveProjection(worldId);
+        if (worldId === "valid")
+          expect(projection).toMatchObject([{ payload: options }]);
+        else {
+          expect(toolCall?.markdown).toContain("$[0].label is required");
+          expect(projection).toEqual([]);
+        }
+      }
+
+      expect(requests).toHaveLength(2);
+      const wire = requests[0]!;
+      const prompt = instructions
+        ? String(wire.instructions)
+        : (wire.input as { role?: string; content?: string }[]).at(-1)?.content;
+      expect(prompt).toContain(
+        locale === "zh-CN"
+          ? "未列入的已声明字段可省略"
+          : "other declared fields are optional",
+      );
+      const schema = prompt?.match(/^  payloadContract=(.+)$/mu)?.[1];
+      expect(schema).toBeDefined();
+      const wireContract: unknown = JSON.parse(schema!);
+      expect(wireContract).toEqual(
+        compiled.followups[0]?.artifacts[0]?.payloadContract,
+      );
+      expect(wireContract).toEqual({
+        type: "array",
+        minItems: 4,
+        maxItems: 4,
+        uniqueBy: "id",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "label", "prompt"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            label: { type: "string", minLength: 1, maxLength: 80 },
+            description: { type: "string", maxLength: 240 },
+            prompt: { type: "string", minLength: 1, maxLength: 1000 },
+          },
+        },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -171,10 +171,35 @@ function previewInput(files = packageFiles()) {
 }
 
 test("真实编译在组位置展开并隔离同名来源，禁用保留定义但不派发；冻结资源可精确恢复", () => {
+  const payloadContract = {
+    type: "object",
+    required: ["sections"],
+    properties: {
+      sections: {
+        type: "array",
+        maxItems: 2,
+        items: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", maxBytes: 100 },
+        },
+      },
+    },
+  };
   const files = packageFiles([
     definition,
     { ...definition, id: "disabled_request", enabled: false },
-    { ...definition, id: "another_request" },
+    {
+      ...definition,
+      id: "another_request",
+      artifacts: [
+        {
+          ...definition.artifacts[0],
+          contentType: "application/json",
+          payloadContract,
+        },
+      ],
+    },
   ]);
   const compiler = new FileNativePromptCompiler();
   const compiled = compiler.compilePlayCallChain(
@@ -204,6 +229,17 @@ test("真实编译在组位置展开并隔离同名来源，禁用保留定义�
   );
   expect(packageRequest.logicalMessages[0]?.markdown).toContain(
     "Emit panel from the settled story.",
+  );
+  expect(packageRequest.logicalMessages[0]?.markdown).not.toContain(
+    "payloadContract=",
+  );
+  const structuredRequest = compiled.followups[2]!;
+  const contractLine = structuredRequest.logicalMessages[0]?.markdown.match(
+    /^  payloadContract=(.+)$/mu,
+  )?.[1];
+  expect(JSON.parse(contractLine!)).toEqual(payloadContract);
+  expect(structuredRequest.artifacts[0]?.payloadContract).toEqual(
+    payloadContract,
   );
   const legacy = presetBinding();
   delete legacy.definition.followupItems;

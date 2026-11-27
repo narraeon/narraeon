@@ -1394,8 +1394,15 @@ function followupRuntimeContract(
 The core narrative and world state have already been committed. This request does not write the world, produce narrative, or alter committed results. It is dispatched once and has no later round trip.
 
 Only artifact_emit and artifact_clear may be called in this request. Only the artifacts declared below may be submitted. The model chooses an output name and supplies its payload; Runtime fixes every other field.`;
+  const payloadGuide = followup.artifacts.some(
+    (artifact) => artifact.payloadContract !== undefined,
+  )
+    ? locale === "zh-CN"
+      ? `\n\n有 payloadContract 的产物须把符合契约的 JSON 值直接传给 artifact_emit 的 payload。items 约束数组的每一项，properties 约束对象的各个字段。required 列出必填字段，未列入的已声明字段可省略。additionalProperties 为 false 时禁止未声明的字段。uniqueBy 指定的字段须在每项中提供字符串、数字或布尔值，且值不能重复。字符串长度按 Unicode 码点计算，maxBytes 限制 JSON 序列化后的 UTF-8 字节数。`
+      : `\n\nFor each output with a payloadContract, pass a JSON value matching that contract directly as artifact_emit's payload. items applies to every array element and properties to the fields of an object. Fields listed in required must be present and other declared fields are optional. additionalProperties: false disallows undeclared fields. Each item must supply a distinct string, number, or boolean in the field named by uniqueBy. String lengths count Unicode code points, and maxBytes limits the serialized JSON's UTF-8 byte length.`
+    : "";
 
-  return `${header}
+  return `${header}${payloadGuide}
 
 ${followup.artifacts
   .map(
@@ -1403,7 +1410,7 @@ ${followup.artifacts
       `- output=${artifact.name}${artifact.purpose === undefined ? "" : `; purpose=${JSON.stringify(artifact.purpose)}`}; channel=${artifact.channel}; key=${artifact.key ?? none}; contentType=${artifact.contentType}; renderer=${artifact.renderer ?? "builtin"}@${artifact.rendererRevision ?? "v1"}; save=${artifact.save}; projection=${artifact.strategy}; invalidation=${artifact.invalidation}; required=${artifact.required ? "yes" : "no"}; maxEmits=${artifact.maxEmits}${
         artifact.payloadContract === undefined
           ? ""
-          : `; payloadContract=${payloadContractSummary(artifact.payloadContract)}`
+          : `\n  payloadContract=${JSON.stringify(artifact.payloadContract)}`
       }`,
   )
   .join("\n")}`;
@@ -2120,24 +2127,6 @@ export function renderPromptDeltaMessage(
       `Runtime constructed an invalid appended role: ${role}`,
     );
   return `${locale === "zh-CN" ? "# 作者提示" : "# Author instruction"}\n\n${markdown}`;
-}
-
-function payloadContractSummary(
-  contract: NonNullable<
-    PlayPresetFollowupDefinition["artifacts"][number]["payloadContract"]
-  >,
-): string {
-  const shape =
-    contract.type === "array"
-      ? `array${contract.minItems === undefined ? "" : `[${contract.minItems},`}${contract.maxItems === undefined ? "" : `${contract.maxItems}]`}${contract.uniqueBy === undefined ? "" : ` uniqueBy=${contract.uniqueBy}`}`
-      : contract.type === "object"
-        ? `object{${Object.keys(contract.properties ?? {}).join(",")}}`
-        : contract.type;
-  const required =
-    contract.required === undefined
-      ? ""
-      : ` required=${contract.required.join(",")}`;
-  return `${shape}${required}${contract.maxBytes === undefined ? "" : ` maxBytes=${contract.maxBytes}`}`;
 }
 
 export function createMinimalFileNativePreviewInput(input: {

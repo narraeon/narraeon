@@ -801,7 +801,7 @@ extensions:
       },
     });
     expect(followup?.logicalMessages.at(-1)?.markdown).toContain(
-      "payloadContract=array",
+      `payloadContract=${JSON.stringify(followup?.artifacts[0]?.payloadContract)}`,
     );
   });
 

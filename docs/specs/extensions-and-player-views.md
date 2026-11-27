@@ -27,6 +27,7 @@
 
 - 主叙事成功提交后，按编译冻结的有序后置清单**串行派发**；各请求共享同一份冻结主链前缀与冻结工具定义（含 `artifact_emit`、`artifact_clear`），由 Runtime 授权仅调用声明的产物工具（见 [模型 Provider 规格 §4.3](model-providers-and-resilience.md#43-allowed_tools-阶段白名单)）。
 - 各后置请求之间互不可见、不共享输出，不追加主链 transcript，也不推进世界 Authority；单次后置响应可多次调用 `artifact_emit`，不按产物增发请求。
+- 对声明了 `payloadContract` 的 JSON 产物，Runtime 在 Prompt Preview 和实际派发的后置提示中列出完整契约，包含所有嵌套数组元素与对象字段的类型、必填项和约束。模型把符合契约的 JSON 值传给 `artifact_emit` 的 `payload`，Runtime 按同一冻结声明校验后才接收产物。
 - 任一后置请求失败不回滚已提交剧情，也不阻断后续后置请求；现有取消生成流程会取消剩余未派发或等待中的后置请求。
 
 ## 2. 世界级扩展选择（`extension-controls.json`）
