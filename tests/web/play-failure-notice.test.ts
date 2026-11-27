@@ -2,7 +2,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { playFailureKinds } from "../../src/protocol/playFailure.ts";
+import { chatGptUsageUrl } from "../../src/protocol/chatGptAuth.ts";
+import {
+  playFailureKinds,
+  type PlayFailureKind,
+} from "../../src/protocol/playFailure.ts";
 import { PlayFailureNotice } from "../../src/web/PlayFailureNotice.tsx";
 import { setWebLocale } from "../../src/web/i18n.ts";
 
@@ -97,20 +101,31 @@ test.each(["zh-CN", "en"] as const)(
   },
 );
 
-const titles = [
-  ["模型请求结果未知", "Model request outcome unknown"],
-  ["模型上下文已达上限", "Model context limit reached"],
-  ["模型输出已达上限", "Model output limit reached"],
-  ["模型上下文无法继续", "Model context unavailable"],
-  ["模型请求可以重新发送", "Model request can be resent"],
-  ["模型连接发生错误", "Model connection error"],
-  ["调用链中断", "Call chain interrupted"],
-  ["旧模型配置曾阻止发送", "Previous model settings blocked sending"],
-  ["游玩生成已暂停", "Play generation paused"],
-];
+const titles: Record<PlayFailureKind, readonly [string, string]> = {
+  outcome_unknown: ["模型请求结果未知", "Model request outcome unknown"],
+  context_limit: ["模型上下文已达上限", "Model context limit reached"],
+  output_limit: ["模型输出已达上限", "Model output limit reached"],
+  context_unavailable: ["模型上下文无法继续", "Model context unavailable"],
+  retryable: ["模型请求可以重新发送", "Model request can be resent"],
+  provider_error: ["模型连接发生错误", "Model connection error"],
+  other: ["调用链中断", "Call chain interrupted"],
+  configuration_mismatch: [
+    "旧模型配置曾阻止发送",
+    "Previous model settings blocked sending",
+  ],
+  dispatch_budget: ["游玩生成已暂停", "Play generation paused"],
+  chatgpt_plan_quota: [
+    "ChatGPT 套餐使用达到上限",
+    "ChatGPT plan usage limit reached",
+  ],
+  chatgpt_plan_authorization: [
+    "ChatGPT 套餐授权不可用",
+    "ChatGPT plan authorization unavailable",
+  ],
+};
 
 for (const locale of ["zh-CN", "en"] as const)
-  for (const [index, failureKind] of playFailureKinds.entries())
+  for (const failureKind of playFailureKinds)
     test(`${locale}: ${failureKind} uses localized guidance, legal actions and collapsed technical details`, () => {
       setWebLocale(locale);
       const english = locale === "en";
@@ -126,7 +141,9 @@ for (const locale of ["zh-CN", "en"] as const)
       };
       const props = { failureKind, canRetry: true, message, recovery };
       const view = render(createElement(PlayFailureNotice, props));
-      expect(screen.getByText(titles[index]![english ? 1 : 0]!)).toBeDefined();
+      expect(
+        screen.getByText(titles[failureKind][english ? 1 : 0]),
+      ).toBeDefined();
       const description = document.querySelector("p")!.textContent;
       expect(description).not.toContain(message);
       expect(/[\u4e00-\u9fff]/u.test(description ?? "")).toBe(!english);
@@ -160,12 +177,20 @@ for (const locale of ["zh-CN", "en"] as const)
           : /检查模型连接|调整最大输出/u,
       });
       expect(configure !== null).toBe(
-        failureKind === "provider_error" || failureKind === "output_limit",
+        failureKind === "provider_error" ||
+          failureKind === "output_limit" ||
+          failureKind === "chatgpt_plan_authorization",
       );
       if (configure !== null) {
         fireEvent.click(configure);
         expect(onConfigureModel).toHaveBeenCalledOnce();
       }
+      const usageLink = screen.queryByRole("link", {
+        name: english ? "Manage ChatGPT usage" : "管理 ChatGPT 用量",
+      });
+      expect(usageLink?.getAttribute("href") ?? null).toBe(
+        failureKind === "chatgpt_plan_quota" ? chatGptUsageUrl : null,
+      );
       view.rerender(
         createElement(PlayFailureNotice, { ...props, canRetry: false }),
       );

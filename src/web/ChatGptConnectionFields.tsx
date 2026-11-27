@@ -269,6 +269,7 @@ export function ChatGptConnectionFields({
               className="secondary-button"
               type="button"
               disabled={working}
+              data-oai-siwc-button=""
               onClick={() => void signIn(account?.id)}
             >
               {uiText(
@@ -283,6 +284,7 @@ export function ChatGptConnectionFields({
               className="secondary-button"
               type="button"
               disabled={working}
+              data-oai-siwc-button=""
               onClick={() => void signIn()}
             >
               {uiText("登录另一个 ChatGPT 账号")}

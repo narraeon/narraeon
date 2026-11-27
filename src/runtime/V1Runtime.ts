@@ -132,10 +132,11 @@ export class V1Runtime {
         ? {}
         : { uploadPolicy: input.archiveUploadPolicy }),
     });
-    this.#modelFetch = input.modelFetch ?? fetch;
+    this.#modelFetch =
+      input.modelFetch ?? ((url, init) => globalThis.fetch(url, init));
     this.#models = new ModelConnectionStore(
       input.configRoot,
-      this.#modelFetch,
+      input.modelFetch,
       () =>
         this.#localChatGptAccess.getStore() === true
           ? input.chatGptAuth
