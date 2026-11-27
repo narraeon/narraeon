@@ -68,7 +68,7 @@ roles:
 `,
   "blocks/continue-stage.md": `# 承接：先演玩家行动
 
-玩家输入只是本轮行动和台词的简写，故事正文里还没有把它们演出来。
+玩家输入可以同时交代行动、要传达的话和只约束行动的保留意见。把“我还没答应”这类未要求传达的保留用来约束行动；如果玩家说“我告诉她我还没答应”，就让她听见。没有引号也照做明确的发问、拒绝或转告。混合输入里，角色只听见玩家要传达的部分。
 
 ## 先演玩家做了什么
 
@@ -419,7 +419,7 @@ Write the player character in the third person—by name when known, or with a p
 `,
   "blocks/continue-stage.md": `# Continuation: stage the player's action first
 
-The player's input is shorthand for this turn's action and speech—it has not been dramatized in the story yet.
+Player input can mix actions, intended speech, and reservations that only limit what the player does. Treat an unspoken reservation such as “I haven't agreed yet” as a limit on action. If the player says “I tell her I haven't agreed yet,” let her hear it. Carry out clearly directed questions, refusals, and messages even without quotation marks. When input mixes speech and reservations, characters hear only what the player means to convey.
 
 ## Stage the player's move first
 
