@@ -305,8 +305,8 @@ function compileBootstrap(documents: FileNativePlayDocuments) {
   ).bootstrap;
 }
 
-function readyDocuments() {
-  const documents = new FileNativePlayDocuments(playFiles());
+function readyDocuments(files = playFiles()) {
+  const documents = new FileNativePlayDocuments(files);
   documents.bindBootstrap(compileBootstrap(documents));
   expect(
     documents.execute(
@@ -330,6 +330,182 @@ function patchQin(
     [],
   );
 }
+
+describe("world_patch YAML style", () => {
+  test("filling the first child of an empty flow map expands only that map", () => {
+    const files = playFiles();
+    const path = "state/characters/qin.yaml";
+    const untouched = [
+      "",
+      "# 保持作者的空格和引号",
+      "现有映射: {状态: '关闭',  方向: 北}  # 原格式",
+      "现有引用: {$ref: person.qin}",
+      "仍然为空: {}",
+      "",
+    ].join("\n");
+    const empty = "未了事项: {}  # 留给后续情节\n";
+    const before = files[path] + empty + untouched;
+    files[path] = before;
+    const documents = readyDocuments(files);
+    const details = "撤退时落在遗迹里的灯还亮着，必须在下次涨潮前取回。";
+
+    const result = patchQin(documents, [
+      {
+        op: "add",
+        locator: { yaml: ["未了事项", "找回遗迹的灯"] },
+        value: { 描述: details, 信使: { $ref: "@qin" } },
+      },
+    ]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      candidateWrite: { changed: true },
+    });
+    expect(
+      documents.snapshot.files.find((file) => file.path === path)?.contents,
+    ).toBe(
+      before.replace(
+        empty,
+        [
+          "未了事项:  # 留给后续情节",
+          "  找回遗迹的灯:",
+          `    描述: ${details}`,
+          "    信使: { $ref: person.qin }",
+          "",
+        ].join("\n"),
+      ),
+    );
+  });
+
+  test("replacing an empty map inside a block sequence keeps adjacent text and multiline values", () => {
+    const files = playFiles();
+    const path = "state/characters/qin.yaml";
+    const empty = "    - { # 边记\n        } # 后记\n";
+    const after = "\n         # 作者原有的注释\n    - 保留\n";
+    const prefix = `${files[path]}行程:\n`;
+    files[path] = prefix + empty + after;
+    const documents = readyDocuments(files);
+    const details = "找到灯。\n\n";
+
+    expect(
+      patchQin(documents, [
+        {
+          op: "replace",
+          locator: { yaml: ["行程", 0] },
+          value: { 描述: details },
+        },
+      ]).ok,
+    ).toBe(true);
+
+    const contents = documents.snapshot.files.find(
+      (file) => file.path === path,
+    )!.contents;
+    expect(contents).toBe(
+      prefix +
+        "    -\n      # 边记\n      # 后记\n      描述: " +
+        '"找到灯。\\n\\n"\n' +
+        after,
+    );
+    expect(parseRecord(contents).行程).toEqual([{ 描述: details }, "保留"]);
+  });
+
+  test("fills a separately indented map without changing its siblings", () => {
+    const files = playFiles();
+    const path = "state/characters/qin.yaml";
+    const before = `${files[path]}线索:\n    已登记: 先前\n    待补:\n        {} # 后续\n    现有: {方向: 北}\n`;
+    files[path] = before;
+    const documents = readyDocuments(files);
+
+    expect(
+      patchQin(documents, [
+        {
+          op: "replace",
+          locator: { yaml: ["线索", "待补", "地点"] },
+          value: "遗迹",
+        },
+      ]).ok,
+    ).toBe(true);
+
+    const contents = documents.snapshot.files.find(
+      (file) => file.path === path,
+    )!.contents;
+    expect(contents).toBe(
+      before.replace("        {} # 后续", "        # 后续\n        地点: 遗迹"),
+    );
+    expect(parseRecord(contents).线索).toEqual({
+      已登记: "先前",
+      待补: { 地点: "遗迹" },
+      现有: { 方向: "北" },
+    });
+    expect(
+      patchQin(documents, [
+        {
+          op: "replace",
+          locator: { yaml: ["线索", "现有", "方向"] },
+          value: "南",
+        },
+      ]).ok,
+    ).toBe(true);
+    const updated = documents.snapshot.files.find(
+      (file) => file.path === path,
+    )!.contents;
+    expect(parseRecord(updated).线索).toEqual({
+      已登记: "先前",
+      待补: { 地点: "遗迹" },
+      现有: { 方向: "南" },
+    });
+  });
+
+  test("keeps reference-only replacements and maps inside an existing flow collection inline", () => {
+    const files = playFiles();
+    const path = "state/characters/qin.yaml";
+    files[path] += "潜在引用: {}\n已有映射: { 待补: {}, 状态: 已记录 }\n";
+    const documents = readyDocuments(files);
+
+    expect(
+      patchQin(documents, [
+        { op: "add", locator: { yaml: ["潜在引用"] }, value: { $ref: "@qin" } },
+        {
+          op: "add",
+          locator: { yaml: ["已有映射", "待补", "描述"] },
+          value: "线索",
+        },
+      ]).ok,
+    ).toBe(true);
+
+    expect(
+      documents.snapshot.files.find((file) => file.path === path)?.contents,
+    ).toBe(
+      files[path]
+        .replace("潜在引用: {}", "潜在引用: { $ref: person.qin }")
+        .replace("待补: {}", "待补: { 描述: 线索 }"),
+    );
+  });
+
+  test("leaves a CRLF-authored document untouched when the restricted codec rejects it", () => {
+    const files = playFiles();
+    const path = "state/characters/qin.yaml";
+    const before = `${files[path]}未了事项: {}\n`.replaceAll("\n", "\r\n");
+    files[path] = before;
+    const documents = new FileNativePlayDocuments(files);
+
+    expect(documents.snapshot.diagnostics).toContainEqual(
+      expect.objectContaining({
+        logicalPath: path,
+        code: "yaml_invalid",
+        message: "YAML contains a NUL or carriage return",
+      }),
+    );
+    expect(
+      patchQin(documents, [
+        { op: "add", locator: { yaml: ["未了事项", "灯"] }, value: "遗迹" },
+      ]).ok,
+    ).toBe(false);
+    expect(
+      documents.snapshot.files.find((file) => file.path === path)?.contents,
+    ).toBe(before);
+  });
+});
 
 describe("world_patch receipt", () => {
   test("a full success keeps the one-line receipt", () => {

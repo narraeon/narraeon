@@ -62,6 +62,7 @@ AI 使用受管工具（`setting_list` / `setting_search` / `setting_read` / `se
   - `setting_patch` 单次调用传单个 `op`。`set_metadata` 只传需改动的 `title`、`summary` 或 `aliases`（至少一项），省略字段由 Runtime 保留。
   - 批量修改通过模型在**同一完整响应中连续发出多条工具调用**完成，由 Runtime 顺序执行并在响应结束时统一原子发布。
   - YAML 的 `locator` 是 map key 与从 `0` 开始的数组下标组成的非空数组。`add` 与 `replace` 均为 upsert（缺失父级 map 自动创建，数组下标越界追加至末尾），`append` 向已有数组追加，`remove` 删除已存在路径，路径不存在时无改动。
+  - 空行内 YAML 映射首次填入内容时沿用[游玩局部补丁的格式规则](play-history-and-world-lifecycle.md#24-world_patchworld_createworld_retire-与回执)。
   - Markdown 小节操作沿用游玩的精确标题路径规则。`locator` 是标题文字的数组，从顶层小节逐级写到目标，省略文档一级标题和 `#` 标记，例如 `["港口", "值守"]`。不同父节中的同名小节可分别定位；完整路径有歧义时，工具拒绝并返回该路径。
   - `replace_section` 的 `markdown` 从同名同级标题开始，写入整个小节及其子节。目标缺失时可在已存在的父级下新增。`add_section` 的 `locator` 指向父节（`[]` 表示新增顶层小节），`markdown` 从低一级的新标题开始。`rename_section` 通过 `title` 重命名，`remove_section` 删除整个小节，目标缺失时无改动。小节以外的源码和文档身份原样保留，修改前仍须完整读取该文档。
 - **新建、移动、物理删除与字符安全**：
