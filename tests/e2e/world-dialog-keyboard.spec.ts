@@ -58,7 +58,7 @@ test("AI 读取键盘焦点在弹窗内循环，关闭后回到侧栏入口", as
   await expect(close).toBeInViewport();
   await expect(close).toHaveCSS("outline-style", "solid");
   await tab(true);
-  await expect(dialog.getByText("查看下次发送的完整提示词预览")).toBeFocused();
+  await expect(dialog.getByText("查看下次编译材料：全新上下文")).toBeFocused();
   await tab();
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");

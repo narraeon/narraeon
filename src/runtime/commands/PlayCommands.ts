@@ -584,6 +584,7 @@ export class PlayCommands {
           currentContext,
           nextFreshContext: {
             contextMode: continueContext ? "append" : "fresh",
+            previewScope: "compiled_materials",
             head: binding.parentHead,
             preview,
             prefixDiagnostics,

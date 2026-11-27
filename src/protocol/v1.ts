@@ -649,8 +649,12 @@ export interface V1PlayContextReadingView {
         | null;
     }[];
   } | null;
+  /** Legacy wire name for the candidate for the next normal send. */
   nextFreshContext: {
+    /** Append reuses the native conversation. Fresh builds a new context from this head. */
     contextMode?: "append" | "fresh";
+    /** The preview contains compiled materials, without the separate native continuation or new player input. */
+    previewScope?: "compiled_materials";
     prefixDiagnostics?: WorldPromptPrefixComparison;
     head: string;
     preview: V1SettingPromptPreview;

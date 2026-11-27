@@ -772,16 +772,27 @@ const englishMessages: Record<string, string> = {
     "This system example is read-only. New runs use the current application example; clones are saved independently.",
   内容包后置请求: "Content-package followups",
   最近一次请求材料: "Latest request materials",
-  "下一次发送将采用当前编排方案和世界材料；原生对话保留。":
-    "The next send uses the current orchestration and world materials while preserving the native conversation.",
+  "沿用现有对话时会重新编译提示。":
+    "Continuing the current conversation recompiles the prompts.",
+  "当前发送预览采用全新上下文。": "The current preview uses a fresh context.",
   "每次正常发送重新编译，工具往返使用本轮快照":
     "Each normal send recompiles; tool exchanges use the same run snapshot.",
   下次发送的世界内容预览: "World content preview for the next send",
   "这里可以查看最近一次请求、这段对话各轮读过的内容，以及下一次可能发送的材料。":
     "See the latest request, what the AI has read across turns in this conversation, and what might be sent next.",
   列在最近一次请求的材料中: "Listed in the latest request materials",
-  查看下次发送的完整提示词预览:
-    "View the full prompt preview for the next send",
+  查看下次编译材料: "View next compiled materials",
+  "查看下次编译材料：沿用现有对话":
+    "View next compiled materials: continue the current conversation",
+  "查看下次编译材料：全新上下文": "View next compiled materials: fresh context",
+  "这里展示重新编译的提示和沿用的预载世界材料。已有对话会在发送时沿用，包括先前的消息和工具往返。":
+    "This preview shows the newly compiled prompts and the existing preloaded world materials. The send carries forward the existing conversation, including earlier messages and tool exchanges.",
+  "这里展示重新编译的提示和当前世界材料，也包含适用的已提交故事原文。发送时会开启新的模型对话。":
+    "This preview shows the newly compiled prompts and current world materials, including applicable committed story text. Sending with a fresh context starts a new model conversation.",
+  "这里展示下次正常发送的编译材料。":
+    "This preview shows the compiled materials for the next normal send.",
+  "要看某次实际派发的上下文，请在故事页的「阅读设置」开启「显示技术信息」，再在对应正文下展开「本段调用详情」和该步骤的「本次上下文」。":
+    "To see the context for a particular dispatch, open Reading settings on the story page and turn on Show technical information. Under the corresponding story passage, open Call details, then Context for this call for that step.",
   "正常游玩发送使用当前方案的已应用修订，原样重试保留旧请求。":
     "Normal play sends use the current orchestration’s applied revision. Exact retries use the saved request.",
   "应用为当前编排方案后，下一次正常发送才会使用它。":
@@ -2569,8 +2580,8 @@ const playWorkspaceEnglishMessages: Record<string, string> = {
     "View complete text blocks for the next context",
   "查看下一次全新上下文的完整 Prompt Preview":
     "View the complete Prompt Preview for the next fresh context",
-  查看最近一次请求的完整提示材料:
-    "View the full prompt materials for the latest request",
+  查看最近一次请求保存的提示材料:
+    "View the saved prompt materials for the latest request",
   查看按需读取返回的完整记录:
     "View complete records returned by on-demand reads",
   标准: "Standard",

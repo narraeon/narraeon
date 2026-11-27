@@ -2011,6 +2011,7 @@ describe("世界游玩页面", () => {
       ),
     ).toBeTruthy();
     expect(within(dialog).getByText("AI 读取记录与发送预览")).toBeTruthy();
+    expect(within(dialog).getByText("查看下次编译材料")).toBeTruthy();
     expect(
       within(dialog).getAllByText("最近一次请求材料").length,
     ).toBeGreaterThan(0);

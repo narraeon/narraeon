@@ -191,9 +191,11 @@ export function AiReadingRail({
           <p>
             {reading.currentContext.stale
               ? uiText("当前世界已推进；这条追加上下文不能再继续。")
-              : uiText(
-                  "下一次发送将采用当前编排方案和世界材料；原生对话保留。",
-                )}
+              : reading.nextFreshContext?.contextMode === "append"
+                ? uiText("沿用现有对话时会重新编译提示。")
+                : reading.nextFreshContext?.contextMode === "fresh"
+                  ? uiText("当前发送预览采用全新上下文。")
+                  : uiText("每次正常发送重新编译，工具往返使用本轮快照")}
           </p>
         </section>
       )}
@@ -484,6 +486,9 @@ function AiReadingAudit({
     );
   const currentRows = documentEvidence(reading, documents, "current");
   const nextRows = documentEvidence(reading, documents, "next");
+  const nextContext = reading.nextFreshContext;
+  const nextCompilation = nextContext?.preview.compilation;
+  const nextMode = nextContext?.contextMode;
   return (
     <div className="ai-reading-audit">
       <header>
@@ -518,16 +523,14 @@ function AiReadingAudit({
         <span aria-hidden="true">→</span>
         <article>
           <span>{uiText("下次发送的世界内容预览")}</span>
-          <strong>
-            {reading.nextFreshContext?.head ?? uiText("模型未配置")}
-          </strong>
+          <strong>{nextContext?.head ?? uiText("模型未配置")}</strong>
         </article>
       </div>
       <WorldPromptDiagnosticsPanel
         report={reading.currentContext?.prefixDiagnostics}
       />
       <WorldPromptDiagnosticsPanel
-        report={reading.nextFreshContext?.prefixDiagnostics}
+        report={nextContext?.prefixDiagnostics}
         preview
       />
       <EvidenceTable title={uiText("最近一次请求材料")} rows={currentRows} />
@@ -536,9 +539,7 @@ function AiReadingAudit({
         title={uiText("AI 在这段对话中读过")}
         rows={documentEvidence(reading, documents, "cumulative")}
       />
-      <WorldMaintenancePanel
-        report={reading.nextFreshContext?.preview.compilation.maintenance}
-      />
+      <WorldMaintenancePanel report={nextCompilation?.maintenance} />
       {reading.currentContext?.reads.length ? (
         <details className="ai-reading-raw">
           <summary>{uiText("查看按需读取返回的完整记录")}</summary>
@@ -571,7 +572,7 @@ function AiReadingAudit({
         ))}
       </details>
       <details className="ai-reading-raw">
-        <summary>{uiText("查看最近一次请求的完整提示材料")}</summary>
+        <summary>{uiText("查看最近一次请求保存的提示材料")}</summary>
         {reading.currentContext?.bootstrap.logicalMessages.map((message) => (
           <section key={message.role}>
             <h3>{message.role}</h3>
@@ -585,15 +586,47 @@ function AiReadingAudit({
         )) ?? <p>{uiText("暂无当前对话记录")}</p>}
       </details>
       <details className="ai-reading-raw">
-        <summary>{uiText("查看下次发送的完整提示词预览")}</summary>
-        {reading.nextFreshContext?.preview.compilation.logicalMessages.map(
-          (message) => (
-            <section key={message.role}>
-              <h3>{message.role}</h3>
-              <pre>{message.markdown}</pre>
-            </section>
-          ),
-        ) ?? <p>{uiText("配置模型后可查看下次发送的预览。")}</p>}
+        <summary>
+          {nextMode === "append"
+            ? uiText("查看下次编译材料：沿用现有对话")
+            : nextMode === "fresh"
+              ? uiText("查看下次编译材料：全新上下文")
+              : uiText("查看下次编译材料")}
+        </summary>
+        {nextCompilation === undefined ? (
+          <p>{uiText("配置模型后可查看下次发送的预览。")}</p>
+        ) : (
+          <>
+            <p>
+              {nextMode === "append"
+                ? uiText(
+                    "这里展示重新编译的提示和沿用的预载世界材料。已有对话会在发送时沿用，包括先前的消息和工具往返。",
+                  )
+                : nextMode === "fresh"
+                  ? uiText(
+                      "这里展示重新编译的提示和当前世界材料，也包含适用的已提交故事原文。发送时会开启新的模型对话。",
+                    )
+                  : uiText("这里展示下次正常发送的编译材料。")}
+            </p>
+            {nextCompilation.logicalMessages.map((message, index) => (
+              <section key={index}>
+                <h3>{message.role}</h3>
+                <pre>{message.markdown}</pre>
+              </section>
+            ))}
+            {nextCompilation.turnGuide === undefined ? null : (
+              <section>
+                <h3>{uiText("本轮提示")}</h3>
+                <pre>{nextCompilation.turnGuide.text}</pre>
+              </section>
+            )}
+          </>
+        )}
+        <p>
+          {uiText(
+            "要看某次实际派发的上下文，请在故事页的「阅读设置」开启「显示技术信息」，再在对应正文下展开「本段调用详情」和该步骤的「本次上下文」。",
+          )}
+        </p>
       </details>
       <p className="ai-reading-caveat">
         {uiText(
