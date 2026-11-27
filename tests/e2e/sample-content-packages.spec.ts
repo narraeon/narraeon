@@ -239,6 +239,21 @@ for (const locale of appLocales) {
 
 const playableStories = [
   {
+    id: "fogbell-harbor",
+    en: {
+      genre: "Tabletop · d100",
+      action: "I sign the register and ask Mae when the next boat arrives.",
+      reply: "Mae nods toward the timetable on the inn noticeboard.",
+      context: ["Public schedule:", "Day 5 spring ebb", "Day 8 dawn"],
+    },
+    "zh-CN": {
+      genre: "跑团调查 · d100",
+      action: "我在登记簿上签名，然后问梅姨下班船什么时候来。",
+      reply: "梅姨指了指旅店公告板上的船期。",
+      context: ["公开日程:", "第 5 天大低潮", "第 8 天黎明"],
+    },
+  },
+  {
     id: "missing-reel",
     en: {
       genre: "Detective",
@@ -476,6 +491,23 @@ for (const locale of appLocales) {
           { kind: "genesis", exactText: opening },
         ]);
         expect(initialWorld.playerViews.diagnostics).toEqual([]);
+        if (story.id === "fogbell-harbor") {
+          await page
+            .getByRole("button", { name: t("此刻", "Now"), exact: true })
+            .click();
+          const rail = page.locator(".world-overlay-rail-left");
+          await expect(rail).toContainText(t("第 1 天 · 傍晚", "Day 1, dusk"));
+          await expect(rail).toContainText(t("体能", "Athletics"));
+          await expect(rail).toContainText(
+            t("登岸前一夜", "the night before the investigator landed"),
+          );
+          await expect(rail).not.toContainText(/第 8 天|Day 8|砸毁|smash/u);
+          await rail
+            .getByRole("button", {
+              name: t("收起状态栏", "Close status panel"),
+            })
+            .click();
+        }
         if (story.id === "screening-night") {
           expect(
             initialWorld.playerViews.views[0]?.items.map(({ value }) => value),

@@ -157,6 +157,150 @@ describe.each(appLocales)(
   },
 );
 
+test.each(appLocales)(
+  "keeps Fogbell Harbor's public and private material distinct after ZIP import (%s)",
+  async (locale) => {
+    const { runtime } = await setup();
+    const zh = locale === "zh-CN";
+    await request(runtime, { type: "preferences.save", locale });
+    await request(runtime, {
+      type: "model.save",
+      connection: {
+        provider: "chat_completions",
+        modelId: "fogbell-test",
+        name: "Fogbell dispatch fixture",
+        presetId: "custom",
+        baseUrl: "https://provider.invalid/v1",
+        apiKey: "fixture-only",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 512,
+      },
+    });
+    const { localId: packageId } = await request<{ localId: string }>(runtime, {
+      type: "content.create-sample",
+      locale,
+      sampleId: "fogbell-harbor",
+    });
+    const { base64 } = await request<{ base64: string }>(runtime, {
+      type: "content.export",
+      packageId,
+    });
+    const imported = await request<EditableContentPackageDetail>(runtime, {
+      type: "content.import",
+      archiveBase64: base64,
+      title: "Fogbell ZIP",
+    });
+    expect(imported.status).toBe("usable");
+    expect(imported.issues).toEqual([]);
+    const {
+      world: { worldId },
+    } = await request<{ world: { worldId: string } }>(runtime, {
+      type: "world.create",
+      operationId: "fogbell-from-zip",
+      packageId: imported.localId,
+    });
+    const { playerViews } = await request<{
+      playerViews: { views: RenderedPlayerView[]; diagnostics: unknown[] };
+    }>(runtime, { type: "world.read", worldId });
+    expect(playerViews.diagnostics).toEqual([]);
+    const readViews = Object.fromEntries(
+      playerViews.views.map(({ id, items }) => [
+        id,
+        Object.fromEntries(items.map((item) => [item.id, item.value])),
+      ]),
+    );
+    expect(readViews["scene-status"]?.time).toBe(
+      zh ? "第 1 天 · 傍晚" : "Day 1, dusk",
+    );
+    expect(readViews["investigator-sheet"]?.skills).toMatchObject({
+      [zh ? "体能" : "Athletics"]: 55,
+    });
+    expect(Object.keys(readViews["investigation-progress"] ?? {})).toEqual([
+      "confirmed-clues",
+      "open-mysteries",
+      "factions",
+    ]);
+    expect(JSON.stringify(readViews["investigation-progress"])).toContain(
+      zh ? "登岸前一夜" : "the night before the investigator landed",
+    );
+
+    const planTime = zh ? "第 3 天深夜" : "late on Day 3";
+    const planAction = zh
+      ? "砸毁带双重货号的货箱铅封"
+      : "smash the double-stamped crate seals";
+    const hidingPlace = zh ? "老周藏身之处" : "Bram's shelter";
+    const secrets = [planTime, planAction, hidingPlace];
+    for (const secret of secrets)
+      expect(JSON.stringify(playerViews.views)).not.toContain(secret);
+    const network = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Unexpected Provider request"))
+      .mockResolvedValueOnce(
+        toolResponse("plan", "context_read", { ref: "@wreck-insurance-truth" }),
+      )
+      .mockResolvedValueOnce(
+        toolResponse("reef", "context_read", { ref: "@wreck-reef" }),
+      )
+      .mockResolvedValueOnce(
+        narrativeResponse(zh ? "柯林把笔递给你。" : "Colin holds out the pen."),
+      );
+    const chainId = "fogbell-reads";
+    const played = await request<V1PlayCallChainView>(runtime, {
+      type: "play.chain.start",
+      worldId,
+      chainId,
+      exchangeId: "first",
+      playerText: zh
+        ? "我打听沉船礁和灯塔的旧账。"
+        : "I ask about the reef and the old lighthouse records.",
+    });
+    expect(played.status).toBe("ready");
+    expect(network).toHaveBeenCalledTimes(3);
+    const body = network.mock.calls[0]?.[1]?.body;
+    if (typeof body !== "string")
+      throw new Error("Expected a JSON Provider request");
+    const wire = JSON.parse(body) as { messages: { content: string | null }[] };
+    const preload = wire.messages.map(({ content }) => content).join("\n");
+    expect(preload).toContain(zh ? "公开日程" : "Public schedule");
+    expect(preload).toContain(zh ? "第 5 天大低潮" : "Day 5 spring ebb");
+    expect(preload).toContain(zh ? "第 8 天黎明" : "Day 8 dawn");
+    expect(preload).toContain(
+      zh
+        ? "推进至第三夜之前，用 context_read 核对 @wreck-insurance-truth"
+        : "Before advancing to the third night, use context_read to check the private plan and its conditions in @wreck-insurance-truth",
+    );
+    expect(preload).toContain(zh ? "昨晚半夜无风" : "Dead calm last night");
+    expect(preload).toContain(
+      zh ? "雾钟港当前情境" : "Current situation at Fogbell Harbor",
+    );
+    expect(preload).not.toMatch(/七日时钟|Seven-day clock/);
+    for (const secret of secrets) expect(preload).not.toContain(secret);
+
+    const details = await Promise.all(
+      ["plan", "reef"].map(async (callId) => {
+        const summary = played.events.find(
+          (event) => event.kind === "tool_result" && event.callId === callId,
+        );
+        if (summary === undefined)
+          throw new Error(`Missing tool result ${callId}`);
+        const detail = await request<V1PlayCallChainEvent>(runtime, {
+          type: "play.timeline.detail",
+          worldId,
+          chainId,
+          eventId: summary.id,
+        });
+        if (detail.kind !== "tool_result" || !detail.ok)
+          throw new Error(`Failed context_read ${callId}`);
+        return detail.markdown;
+      }),
+    );
+    expect(details[0]).toContain(planTime);
+    expect(details[0]).toContain(planAction);
+    expect(details[1]).toContain(hidingPlace);
+    expect(details[1]).toContain(zh ? "体能检定" : "Athletics check");
+  },
+);
+
 describe.each(appLocales)("ordinary sample content package (%s)", (locale) => {
   test("has independent identities and supports editing, copying, ZIP round-trip and deletion", async () => {
     const { runtime, root } = await setup();
