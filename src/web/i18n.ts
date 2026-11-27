@@ -1294,6 +1294,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   编排方案列表: "Orchestration list",
   本地编排方案: "Local orchestrations",
   当前编排方案: "Current orchestration",
+  非当前方案: "Not current",
   结构有效: "Structure valid",
   已停用: "Disabled",
   新建与导入编排方案: "Create and import orchestrations",
@@ -1307,6 +1308,12 @@ const playPresetEnglishMessages: Record<string, string> = {
     "· Changes affect only new contexts started later",
   未保存修改: "Unsaved changes",
   已保存: "Saved",
+  "草稿已保存，待应用": "Saved draft awaiting application",
+  "保存会更新草稿。应用后，修改在下一次正常发送时生效。":
+    "Saving updates the draft. Applying it makes the changes effective on the next normal send.",
+  "请在编排方案操作中启用此方案，再应用。":
+    "Enable this orchestration in Orchestration actions before applying it.",
+  "关闭 AI 编辑": "Close AI editing",
   "JavaScript 已启用": "JavaScript enabled",
   "JavaScript 已停用": "JavaScript disabled",
   编排方案名称: "Orchestration name",
@@ -1321,6 +1328,7 @@ const playPresetEnglishMessages: Record<string, string> = {
   添加: "Add",
   切换编排方案: "Switch orchestration",
   保留的资源: "Retained assets",
+  删除未引用资源: "Delete unused resource",
   "未绑定资源仍随编排方案保存；可在模板编辑器重新引用。":
     "Unbound assets are still saved with the orchestration. Reference them again from the template editor.",
   "导入内容无法解析；原文完整保留，可导出或打开原文修复。":

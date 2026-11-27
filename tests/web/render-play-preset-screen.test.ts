@@ -495,19 +495,15 @@ test("unused named resources can be deleted after unlinking without leaving expo
   );
   fireEvent.click(within(resource).getByRole("button", { name: "移除此引用" }));
   fireEvent.click(screen.getByText("编排方案操作", { exact: true }));
-  fireEvent.click(screen.getByText("保留的资源", { exact: true }));
-  const unused = screen
-    .getByText("样式 - 雾港.css", { exact: true, selector: "summary" })
-    .closest("details")!;
-  fireEvent.click(
-    within(unused).getByText("样式 - 雾港.css", {
-      exact: true,
-      selector: "summary",
-    }),
+  fireEvent.click(screen.getByRole("button", { name: "保留的资源" }));
+  const files = within(
+    screen.getByRole("tabpanel", { name: "完整编排方案文件" }),
   );
   fireEvent.click(
-    within(unused).getByRole("button", { name: "删除未引用资源" }),
+    files.getByRole("button", { name: /^打开编排方案文件 assets\/named-/u }),
   );
+  expect(files.getByRole("heading", { name: "样式 - 雾港.css" })).toBeDefined();
+  fireEvent.click(files.getByRole("button", { name: "删除未引用资源" }));
   expect(screen.queryByText("样式 - 雾港.css", { exact: true })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   await waitFor(() =>
@@ -776,27 +772,35 @@ test("resource deletion button follows current source references through edits a
   preset.structure!.extensionRefs = ["assets/data.json", "scripts/consumer.js"];
   const request = setup(preset);
   fireEvent.click(screen.getByText("编排方案操作", { exact: true }));
-  fireEvent.click(screen.getByText("保留的资源", { exact: true }));
-  const data = screen
-    .getByText("data.json", { selector: "summary" })
-    .closest("details")!;
-  fireEvent.click(within(data).getByText("data.json", { selector: "summary" }));
-  expect(
-    within(data).getByRole("button", { name: "删除未引用资源" }),
-  ).toHaveProperty("disabled", true);
-  const consumer = screen
-    .getByText("consumer.js", { selector: "summary" })
-    .closest("details")!;
-  fireEvent.click(
-    within(consumer).getByText("consumer.js", { selector: "summary" }),
+  fireEvent.click(screen.getByRole("button", { name: "保留的资源" }));
+  const files = within(
+    screen.getByRole("tabpanel", { name: "完整编排方案文件" }),
   );
-  fireEvent.change(within(consumer).getByRole("textbox"), {
-    target: { value: "// no resource references" },
+  const data = files.getByRole("button", {
+    name: "打开编排方案文件 assets/data.json",
   });
-  expect(
-    within(data).getByRole("button", { name: "删除未引用资源" }),
-  ).toHaveProperty("disabled", false);
-  fireEvent.click(within(data).getByRole("button", { name: "删除未引用资源" }));
+  fireEvent.click(data);
+  expect(files.getByRole("button", { name: "删除未引用资源" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  fireEvent.click(
+    files.getByRole("button", { name: "打开编排方案文件 scripts/consumer.js" }),
+  );
+  fireEvent.change(
+    files.getByRole("textbox", {
+      name: "编辑编排方案文件 scripts/consumer.js",
+    }),
+    {
+      target: { value: "// no resource references" },
+    },
+  );
+  fireEvent.click(data);
+  expect(files.getByRole("button", { name: "删除未引用资源" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  fireEvent.click(files.getByRole("button", { name: "删除未引用资源" }));
   const save = await savedRequest(request);
   expect(save.files["assets/data.json"]).toBeUndefined();
   expect(

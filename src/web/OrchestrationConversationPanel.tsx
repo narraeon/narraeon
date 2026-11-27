@@ -78,7 +78,6 @@ interface OrchestrationConversationPanelProps {
   editMessage: (message: string) => void;
   modelConfigured: boolean;
   configureModel?: (() => void) | undefined;
-  close: () => void;
   localDirty: boolean;
   menuBusy: boolean;
   localConflict: boolean;
@@ -106,7 +105,6 @@ export function OrchestrationConversationPanel({
   editMessage,
   modelConfigured,
   configureModel,
-  close,
   localDirty,
   menuBusy,
   localConflict,
@@ -416,9 +414,6 @@ export function OrchestrationConversationPanel({
             {focusedEntryName && <> · {focusedEntryName}</>}
           </p>
         </div>
-        <button type="button" onClick={close}>
-          {uiText("关闭")}
-        </button>
       </header>
       <div className="orchestration-chat">
         {connectionNotice && <p role="status">{connectionNotice}</p>}

@@ -1,7 +1,7 @@
 import type { ModelConnectionView } from "../protocol/modelConnections.ts";
 import { browserUUID } from "./browser-uuid.ts";
 import { builtinAuthorPrompts } from "../shared/ordered-author-prompts.ts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   builtinPlayPrompts,
   orderedPromptScope,
@@ -104,7 +104,8 @@ export function OrderedPlayPromptEditor({
       ? categoryLabels.tail
       : entry.kind === "builtin"
         ? categoryLabels[builtinOf(entry)!.category]
-        : undefined;
+        : uiText(entry.kind === "world" ? "动态占位" : "用户");
+  const promptTagsId = useId();
   const index = entries.findIndex((entry) => entry.id === selected?.id);
   function move(id: string, to: number) {
     const from = entries.findIndex((entry) => entry.id === id);
@@ -276,6 +277,8 @@ export function OrderedPlayPromptEditor({
               >
                 <button
                   type="button"
+                  aria-label={name(entry)}
+                  aria-describedby={`${promptTagsId}-${position}`}
                   ref={
                     entry.id === initialPromptId
                       ? initialEntryButton
@@ -300,12 +303,22 @@ export function OrderedPlayPromptEditor({
                   }}
                 >
                   {name(entry)}
+                  <span
+                    id={`${promptTagsId}-${position}`}
+                    className="ordered-play-entry-tags"
+                  >
+                    <small className="ordered-play-category">
+                      {category(entry)}
+                    </small>
+                    {entry.kind !== "world" &&
+                      orderedPromptScope(entry, catalog) !== undefined && (
+                        <small>{uiText("仅跑团")}</small>
+                      )}
+                    {entry.kind !== "world" && !entry.enabled && (
+                      <small>{uiText("已停用")}</small>
+                    )}
+                  </span>
                 </button>
-                {category(entry) !== undefined && (
-                  <small className="ordered-play-category">
-                    {category(entry)}
-                  </small>
-                )}
                 {entry.kind !== "world" && (
                   <input
                     type="checkbox"
@@ -316,13 +329,6 @@ export function OrderedPlayPromptEditor({
                       update({ ...entry, enabled: event.target.checked })
                     }
                   />
-                )}
-                {entry.kind !== "world" &&
-                  orderedPromptScope(entry, catalog) !== undefined && (
-                    <small>{uiText("仅跑团")}</small>
-                  )}
-                {entry.kind !== "world" && !entry.enabled && (
-                  <small>{uiText("已停用")}</small>
                 )}
               </li>
             ))}
