@@ -468,6 +468,7 @@ const invalidContentArchive =
   "content.import.archiveBase64 is not a supported content-package ZIP";
 
 const contentChecks: Partial<Record<Command, readonly Check[]>> = {
+  "content.rename": [field("expectedTitle", text)],
   "content.copy": [
     field("operationId", {
       type: "string",

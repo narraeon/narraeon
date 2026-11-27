@@ -159,6 +159,72 @@ test("达到调用上限而暂停的对话显示本地化说明和继续按钮�
   expect(html).not.toContain("上一次操作未完成");
 });
 
+test("最新书名建议显示当前标题和可编辑建议，建世界仍需玩家点击", () => {
+  const value = view({ suggestedTitle: "无人报站的夜班车" });
+  const html = renderWith({
+    value,
+    latestSessionId: value.sessionId,
+    history: [],
+    offerTitle: true,
+  });
+
+  expect(html).toContain("当前书名：Test");
+  expect(html).toContain('value="无人报站的夜班车"');
+  expect(html).toContain("采用建议书名");
+  expect(html).toContain("保留当前书名");
+  expect(html).toContain("内容包已准备好。点击「创建世界」开始游玩。");
+  expect(html).toMatch(
+    /<button type="button" class="setting-create-world is-ready">创建世界<\/button>/u,
+  );
+
+  const withDraft = renderWith({
+    value,
+    latestSessionId: value.sessionId,
+    history: [],
+    offerTitle: true,
+    hasUnsavedFileDraft: true,
+  });
+  expect(withDraft).toContain('disabled="">创建世界');
+  expect(withDraft).toContain('disabled="">采用建议书名');
+  expect(withDraft).not.toContain("内容包已准备好");
+});
+
+test("历史建议没有采用入口，旧会话成功写过可用内容也能显示建世界提示", () => {
+  const value = view({ suggestedTitle: "无人报站的夜班车" });
+  const historical = renderWith({
+    value,
+    latestSessionId: "setting-newer",
+    history: [],
+    offerTitle: true,
+  });
+  expect(historical).not.toContain("采用建议书名");
+
+  const legacy = view();
+  legacy.turns[0]!.exchanges[0]!.toolCalls = [
+    {
+      callId: "write-opening",
+      name: "setting_write_file",
+      arguments: { path: "opening.md" },
+      result: {
+        markdown: "Saved",
+        isError: false,
+        changeSetId: null,
+        changes: [
+          { path: "opening.md", kind: "modify", before: "Old", after: "New" },
+        ],
+      },
+    },
+  ];
+  const old = renderWith({
+    value: legacy,
+    latestSessionId: legacy.sessionId,
+    history: [],
+    offerTitle: true,
+  });
+  expect(old).not.toContain("采用建议书名");
+  expect(old).toContain("内容包已准备好。点击「创建世界」开始游玩。");
+});
+
 function render(value: SettingImprovementView): string {
   return renderWith({ value, latestSessionId: value.sessionId, history: [] });
 }
@@ -168,18 +234,22 @@ function renderWith({
   latestSessionId,
   history,
   target = "content-package",
+  offerTitle = false,
+  hasUnsavedFileDraft = false,
 }: {
   value: SettingImprovementView | null;
   latestSessionId: string | null;
   history: V1SettingImprovementHistoryItem[];
   target?: "content-package" | "world-revision";
+  offerTitle?: boolean;
+  hasUnsavedFileDraft?: boolean;
 }): string {
   return renderToStaticMarkup(
     createElement(SettingImprovementPanel, {
       target,
       packageName: "Test",
       modelConfigured: true,
-      hasUnsavedFileDraft: false,
+      hasUnsavedFileDraft,
       loading: false,
       notice: "",
       contentEditor: {
@@ -198,6 +268,15 @@ function renderWith({
       },
       onConfigureModel: () => undefined,
       onBack: () => undefined,
+      ...(offerTitle
+        ? {
+            onCreateWorld: () => undefined,
+            titleSuggestion: {
+              packageId: "package-1",
+              onSave: () => Promise.resolve(true),
+            },
+          }
+        : {}),
       conversation: {
         view: value,
         history,

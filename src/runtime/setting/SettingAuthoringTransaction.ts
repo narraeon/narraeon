@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { localDisplayNameLimit } from "../DerivedDisplayName.ts";
 import { isPackageFollowupControlPath } from "../content/PackageFollowups.ts";
 import { renderWorldMaintenanceReport } from "../prompt/WorldMaintenanceReport.ts";
 import { listWorldDocuments as listQueryableWorldDocuments } from "../prompt/WorldMaintenanceReport.ts";
 import type { AppLocale } from "../../protocol/appPreferences.ts";
 import { defaultAppLocale } from "../../protocol/appPreferences.ts";
+import { settingTitleMechanics } from "../../shared/ordered-author-prompts.ts";
 import {
   fictionGameplay,
   gameplayLabel,
@@ -47,6 +49,8 @@ import {
   type WorldDocumentWriteRevisionCommand,
 } from "../world/WorldDocumentStore.ts";
 
+const suggestTitleToolName = "setting_suggest_title";
+
 export const settingImprovementToolNames = [
   "setting_list",
   "setting_search",
@@ -56,6 +60,7 @@ export const settingImprovementToolNames = [
   "setting_patch",
   "setting_move",
   "setting_delete",
+  suggestTitleToolName,
 ] as const;
 
 export type SettingImprovementToolName =
@@ -259,7 +264,7 @@ export function settingImprovementRuntimeContract(
     ? `# Runtime 设定完善对话契约
 
 - 每条用户消息都追加到所选设定完善对话。默认沿该对话的 Provider 上下文继续；用户显式选择“全新上下文”时，Runtime 才从内容包当前树编译一段新对话。根据用户当前要求决定直接回复、提出问题、读取当前树或修改当前树。
-- 当前请求随附八个读写工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
+- 当前请求随附八个文件读写工具和一个书名建议工具。不调用工具的完整响应会作为普通助手消息显示，并结束本次用户调用。含有工具调用的响应是内部工具步骤；收到全部工具结果后继续处理，最终用一个不调用工具的完整响应答复用户。
 - 工具写入直接修改内容包当前树。每个完整 Provider 工具响应中的调用按顺序执行，成功改动在该响应结算时原子发布，发布后立即成为内容包权威，无需另一步确认。
 - 每个写工具调用独立结算，并按本响应中的调用顺序读取之前已接受的结果。某个调用失败只在对应工具结果中返回精确原因，不回滚同一响应内其他成功调用，也不阻止后续调用。Runtime 在写调用结算后自动运行内容树检查和真实 Prompt Preview，并把检查结果附在最后一个成功写调用的结果中。
 - 修改既有文件前必须完整读取它。setting_search 的 cursor，以及 setting_read 的读取授权，只属于产生它们的当前树 revision；任何其他对话或手动编辑改变当前树后，必须重新读取再写。setting_read 总是完整返回精确文件，不截断、不分页。工具只暴露逻辑路径，不暴露宿主路径。
@@ -276,6 +281,8 @@ export function settingImprovementRuntimeContract(
 - 编辑对象是用于创建世界的内容包当前树；成功工具写入会直接替换这份当前树。每个已经创建的世界持有创建时复制的状态、控制与历史，并从此独立演化。
 - 创建世界时，world/* 逐份成为可持续修改的 state/*，control/* 成为世界控制，opening.md 逐字成为第一条已提交主持叙事。
 - opening.md 的正文只在创建时作为 genesis 提交。全新游玩上下文由世界控制与当前世界状态编译，并追加本次玩家输入；会继续约束首次行动的事实同时写入自然承载它的 world 文档。
+
+${settingTitleMechanics(locale)}
 
 ## 游玩怎样读取并使用设定
 
@@ -295,7 +302,7 @@ export function settingImprovementRuntimeContract(
     : `# Runtime setting-improvement conversation contract
 
 - Every user message is appended to the selected setting-improvement conversation. Continue its Provider context by default; only an explicit Fresh context choice compiles a new conversation from the content package's current tree. Decide whether to reply, ask, read the current tree, or change it from the user's current request.
-- The current request includes eight read/write tools. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
+- The current request includes eight file read/write tools and one title suggestion tool. A complete response with no tool calls is shown as an ordinary assistant message and settles this user invocation. A response containing tool calls is an internal tool step; continue after all results and eventually answer with a complete tool-free response.
 - Tool writes directly modify the content package's current tree. Calls in one complete Provider tool response execute in order; its successful changes publish atomically when that response settles, immediately become authoritative, and require no second confirmation.
 - Every write tool call settles independently and sees earlier accepted calls in response order. A failure returns its precise cause only in that call's result, does not roll back successful siblings, and does not stop later calls. Runtime automatically runs content-tree checks and a real Prompt Preview after writes and appends that review to the last successful write result.
 - Read an existing file completely before changing it. Cursors from setting_search, and read authorization from setting_read, belong only to the current-tree revision that produced them. setting_read always returns the complete exact file without truncation or pagination. Re-read after another conversation or a manual edit changes the current tree. Tools expose logical paths, never host paths.
@@ -312,6 +319,8 @@ export function settingImprovementRuntimeContract(
 - The editing target is the current tree of a content-package template used to create worlds. Successful tool writes replace that current tree directly. Each world already created from it retains the state, control, and history copied at creation and evolves independently from then on.
 - When a world is created, world/* becomes independently mutable state/*, control/* becomes world control, and opening.md is committed verbatim as the first host narrative.
 - The opening.md body is committed only as genesis during world creation. A fresh play context is compiled from world control and current world state, then appends the current player input. Every fact that still constrains the first action also lives in the world document that naturally owns it.
+
+${settingTitleMechanics(locale)}
 
 ## How play reads and uses the setting
 
@@ -338,6 +347,28 @@ export function settingImprovementToolDefinitions(
     locale,
     gameplay,
   );
+}
+
+/** Read the structured title from a call, including supported proxy aliases. */
+export function suggestedTitleFromSettingCall(call: {
+  name: string;
+  arguments: unknown;
+}): string | undefined {
+  const resolved = resolveToolName(call.name, settingImprovementToolNames);
+  const args = call.arguments;
+  if (
+    resolved.kind === "rejected" ||
+    resolved.name !== suggestTitleToolName ||
+    !isRecord(args) ||
+    !hasOnly(args, ["title"]) ||
+    typeof args.title !== "string" ||
+    /[\r\n\u2028\u2029]|\\u[0-9a-f]{4}/iu.test(args.title)
+  )
+    return undefined;
+  const title = args.title.trim();
+  return title.length > 0 && [...title].length <= localDisplayNameLimit
+    ? title
+    : undefined;
 }
 
 /** Tool definitions a surface exposes; names, paths and descriptions come from the surface. */
@@ -471,6 +502,22 @@ export function authoringToolDefinitions(
       description: descriptions.delete,
       inputSchema: schema({ document: text }, ["document"]),
     },
+    ...(surface.layout === "content_package"
+      ? [
+          {
+            name: suggestTitleToolName,
+            description: localized(
+              locale,
+              "Offer one plain story title for the author to review. Does not rename the content package or change its files.",
+              "提交一个纯文本候选书名供作者确认，不改动内容包标题或文件。",
+            ),
+            inputSchema: schema(
+              { title: { ...text, maxLength: localDisplayNameLimit } },
+              ["title"],
+            ),
+          },
+        ]
+      : []),
   ];
 }
 
@@ -736,6 +783,28 @@ export class SettingAuthoringTransaction {
           isError: true,
           changes: [],
         });
+        continue;
+      }
+      if (call.name === suggestTitleToolName) {
+        const title = suggestedTitleFromSettingCall(call);
+        const result =
+          title === undefined
+            ? failure(
+                localized(
+                  this.#locale,
+                  `Send only a plain, single-line title of 1 to ${localDisplayNameLimit} characters. Use real Unicode characters.`,
+                  `请只提交 1～${localDisplayNameLimit} 字符的单行纯文本书名，使用真实的 Unicode 字符。`,
+                ),
+                this.#locale,
+              )
+            : success(
+                localized(
+                  this.#locale,
+                  "Title suggestion recorded for the author to review.",
+                  "已记录候选书名，供作者确认。",
+                ),
+              );
+        results.push(toToolResult(call.id, result, []));
         continue;
       }
       const before = this.files();
@@ -1291,7 +1360,7 @@ function renderPlayCoverage(
 interface NormalizedCall {
   id: string;
   name: string;
-  /** The surface operation this tool name names, or null for an unknown tool. */
+  /** The file operation, when the call names one. */
   operation: SettingAuthoringOperation | null;
   arguments: Record<string, unknown>;
   /** Argument paths the model sent as JSON strings and Runtime parsed. */
@@ -1343,7 +1412,7 @@ function normalizeCall(
     (definition) => definition.name === name,
   )?.inputSchema;
   const repaired =
-    schema === undefined
+    schema === undefined || name === suggestTitleToolName
       ? { arguments: cloned, coerced: [] }
       : coerceToolArguments(schema, cloned);
   return {

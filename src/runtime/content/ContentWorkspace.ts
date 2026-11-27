@@ -250,7 +250,7 @@ export class ContentWorkspace {
   renameCurrentTreeContentPackage(
     localId: string,
     title: string,
-    options: ContentWorkspaceOperationOptions = {},
+    options: ContentWorkspaceOperationOptions & { expectedTitle?: string } = {},
   ) {
     return this.#mutate(() =>
       this.#currentTreeLibrary.renamePackage(localId, title, options),

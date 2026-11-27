@@ -151,7 +151,12 @@ export type V1Request =
     }
   | { type: "content.copy"; packageId: string; operationId?: string }
   | { type: "content.delete"; packageId: string }
-  | { type: "content.rename"; packageId: string; name: string }
+  | {
+      type: "content.rename";
+      packageId: string;
+      name: string;
+      expectedTitle?: string;
+    }
   | {
       type: "content.import";
       archiveBase64: string;
@@ -691,6 +696,8 @@ export interface V1SettingImprovementView {
   runStatus: "ready" | "running" | "paused" | "interrupted";
   messages: V1SettingConversationMessage[];
   turns: V1SettingConversationTurn[];
+  /** Latest settled title suggestion from this content-package conversation. */
+  suggestedTitle?: string;
   /** Audit-only changes from a pre-v2 isolated draft; never auto-applied. */
   legacyDraft: null | {
     outcome:

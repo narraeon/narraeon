@@ -604,6 +604,21 @@ describe("YAML/Markdown 内容包当前树", () => {
       "  雾港来信  ",
     );
     expect(renamed.title).toBe("雾港来信");
+    const oldTitle = { expectedTitle: before.title };
+    await expect(
+      workspace.renameCurrentTreeContentPackage(
+        created.localId,
+        renamed.title,
+        oldTitle,
+      ),
+    ).resolves.toMatchObject({ title: renamed.title });
+    await expect(
+      workspace.renameCurrentTreeContentPackage(
+        created.localId,
+        "过期的建议",
+        oldTitle,
+      ),
+    ).rejects.toThrow("title changed before confirmation");
     expect(
       (await workspace.exportCurrentTreeContentPackage(created.localId))
         .fileName,

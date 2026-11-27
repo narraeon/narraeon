@@ -566,6 +566,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_patch",
     "setting_move",
     "setting_delete",
+    "setting_suggest_title",
   ]);
   await page
     .getByLabel("继续这段对话")
@@ -687,6 +688,7 @@ test("四任务工作台以文件原生内容创建世界并展示真实 Prompt 
     "setting_patch",
     "setting_move",
     "setting_delete",
+    "setting_suggest_title",
   ]);
   const documentScrollRange = await page.evaluate(() => {
     const root = document.scrollingElement;

@@ -500,7 +500,7 @@ export class CurrentTreeContentLibrary {
   renamePackage(
     localId: string,
     title: string,
-    options: CurrentTreeMutationOptions = {},
+    options: CurrentTreeMutationOptions & { expectedTitle?: string } = {},
   ): Promise<EditableContentPackageSummary> {
     return this.#mutate(async () => {
       const normalizedTitle = normalizePackageTitle(title);
@@ -509,6 +509,20 @@ export class CurrentTreeContentLibrary {
       });
       try {
         options.signal?.throwIfAborted();
+        if (options.expectedTitle !== undefined) {
+          if (lease.package.title === normalizedTitle)
+            return summarizeContentPackage(lease.package);
+          if (lease.package.title !== options.expectedTitle)
+            throw new CurrentTreeContentLibraryError(
+              "The content-package title changed before confirmation",
+              {
+                receipt: {
+                  code: "operation_conflict",
+                  commands: ["content.rename"],
+                },
+              },
+            );
+        }
         const packageRoot = this.#packageRoot(localId);
         await writeStoredLocalMetadata(packageRoot, {
           schemaVersion: 2,

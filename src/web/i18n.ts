@@ -846,6 +846,20 @@ const englishMessages: Record<string, string> = {
   "内容包版本缺失，请重新加载后再保存。":
     "The content package version is missing. Reload it before saving.",
   "内容包已重命名。": "The content package has been renamed.",
+  "AI 建议的书名": "AI-suggested title",
+  "当前书名：{name}": "Current title: {name}",
+  书名: "Story title",
+  采用建议书名: "Use suggested title",
+  保存书名: "Save title",
+  "正在保存书名…": "Saving title…",
+  保留当前书名: "Keep current title",
+  "当前书名已更改。可保留当前书名。":
+    "The current title has changed. You can keep the current title.",
+  "内容包书名已在别处更改。":
+    "The content package title was changed elsewhere.",
+  "未能保存书名。请重试。": "Could not save the title. Try again.",
+  "内容包已准备好。点击「创建世界」开始游玩。":
+    "Your content package is ready. Select “Create world” to start playing.",
   "内容包 ZIP 自身大小超过安全上限。":
     "The content package ZIP exceeds the safety limit.",
   "已将内容包导入为独立副本，现有内容包未被覆盖。":

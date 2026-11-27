@@ -59,6 +59,9 @@ export async function handleContentCommand(
       return content.renameCurrentTreeContentPackage(
         request.packageId,
         request.name,
+        request.expectedTitle === undefined
+          ? {}
+          : { expectedTitle: request.expectedTitle },
       );
     case "content.import": {
       const imported = await content.importPortableContentPackageArchive(

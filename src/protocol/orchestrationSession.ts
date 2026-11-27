@@ -94,7 +94,7 @@ export interface V1OrchestrationChangeSet {
 
 export interface V1OrchestrationView extends Omit<
   V1SettingImprovementView,
-  "packageId" | "legacyDraft"
+  "packageId" | "legacyDraft" | "suggestedTitle"
 > {
   presetId: string;
   revision: string;

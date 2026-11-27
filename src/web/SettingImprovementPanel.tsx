@@ -135,6 +135,10 @@ interface SettingImprovementPanelProps {
   showWorkspaceBack?: boolean;
   backLabel?: string;
   onCreateWorld?: () => void;
+  titleSuggestion?: {
+    packageId: string;
+    onSave: (title: string, expectedTitle: string) => Promise<boolean>;
+  };
   onNavigationProtectionChange?: (
     protection: WorkspaceNavigationProtection,
   ) => void;
@@ -158,6 +162,40 @@ interface SettingImprovementPanelProps {
 }
 
 type FileRailMode = "preview" | "edit";
+
+interface TitleOffer {
+  key: string;
+  baseTitle: string;
+  handled: boolean;
+}
+
+function readTitleOffer(key: string): TitleOffer | null {
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored === null) return null;
+    const value: unknown = JSON.parse(stored);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "baseTitle" in value &&
+      typeof value.baseTitle === "string" &&
+      "handled" in value &&
+      typeof value.handled === "boolean"
+    )
+      return { key, baseTitle: value.baseTitle, handled: value.handled };
+  } catch {
+    // A missing or unavailable browser preference leaves the offer visible.
+  }
+  return null;
+}
+
+function rememberTitleOffer({ key, baseTitle, handled }: TitleOffer): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ baseTitle, handled }));
+  } catch {
+    // The mounted panel still remembers the decision without browser storage.
+  }
+}
 
 export function SettingImprovementPanel({
   target = "content-package",
@@ -197,6 +235,7 @@ export function SettingImprovementPanel({
   showWorkspaceBack = true,
   backLabel,
   onCreateWorld,
+  titleSuggestion,
   onNavigationProtectionChange,
   packageGameplay,
   draftsLocked = false,
@@ -214,6 +253,18 @@ export function SettingImprovementPanel({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const [titleEdit, setTitleEdit] = useState<{
+    suggestion: string;
+    draft: string;
+    failed: boolean;
+  } | null>(null);
+  const [titleOffer, setTitleOffer] = useState<TitleOffer | null>(null);
+  useLayoutEffect(() => {
+    if (titleOffer !== null) rememberTitleOffer(titleOffer);
+  }, [titleOffer]);
+  const [savingTitle, setSavingTitle] = useState(false);
+  const savingTitleRef = useRef(false);
+  const titleInput = useRef<HTMLInputElement>(null);
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [fileRailMode, setFileRailMode] = useState<FileRailMode>("preview");
@@ -247,12 +298,61 @@ export function SettingImprovementPanel({
   const running = view?.runStatus === "running" || submitting;
   const rollbackRunning = rollingBackFile !== null;
   const finishingRevision = revisionActions?.applying === true;
-  const editBusy = running || rollbackRunning || finishingRevision;
+  const editBusy =
+    running || rollbackRunning || finishingRevision || savingTitle;
+  const revisingWorld = target === "world-revision";
+  const completedSetting =
+    !revisingWorld &&
+    view?.sessionId === latestSessionId &&
+    view.runStatus === "ready" &&
+    view.lastFailure === null
+      ? view
+      : null;
+  const suggestedTitle = completedSetting?.suggestedTitle;
+  const titleKey =
+    suggestedTitle === undefined ||
+    completedSetting === null ||
+    titleSuggestion === undefined
+      ? null
+      : `narraeon.setting-title.v1:${JSON.stringify([
+          titleSuggestion.packageId,
+          completedSetting.sessionId,
+          suggestedTitle,
+        ])}`;
+  const activeTitleOffer = titleOffer?.key === titleKey ? titleOffer : null;
+  if (titleKey !== null && activeTitleOffer === null && !loading)
+    setTitleOffer(
+      readTitleOffer(titleKey) ?? {
+        key: titleKey,
+        baseTitle: packageName,
+        handled: false,
+      },
+    );
+  const activeTitleEdit = titleKey === titleEdit?.suggestion ? titleEdit : null;
+  const titleDraft = activeTitleEdit?.draft ?? suggestedTitle ?? "";
+  const titleChanged =
+    activeTitleEdit !== null && titleDraft !== suggestedTitle;
+  const savedTitleChanged =
+    activeTitleOffer !== null && packageName !== activeTitleOffer.baseTitle;
+  if (
+    savedTitleChanged &&
+    !titleChanged &&
+    !savingTitle &&
+    !activeTitleOffer.handled
+  )
+    setTitleOffer({ ...activeTitleOffer, handled: true });
+  const showTitleSuggestion =
+    activeTitleOffer?.handled === false &&
+    (savingTitle ||
+      titleChanged ||
+      (!savedTitleChanged && packageName !== suggestedTitle));
+  const titleDirty = showTitleSuggestion && titleChanged;
   const editSubmitDisabled =
     editBusy ||
     loading ||
     hasUnsavedFileDraft ||
     draftsLocked ||
+    titleDirty ||
     !modelConfigured;
   const interactionLocked = editBusy || editing !== null;
   if (
@@ -262,7 +362,7 @@ export function SettingImprovementPanel({
   )
     setEditing(null);
   const navigationDirty =
-    hasUnsavedFileDraft || editing?.draft !== editing?.original;
+    hasUnsavedFileDraft || titleDirty || editing?.draft !== editing?.original;
   const navigationBusy = editBusy || loading || draftsLocked;
   useLayoutEffect(() => {
     onNavigationProtectionChange?.({
@@ -278,10 +378,36 @@ export function SettingImprovementPanel({
     latestSessionId !== null &&
     view.sessionId !== latestSessionId;
   const disabled =
-    loading || interactionLocked || !modelConfigured || hasUnsavedFileDraft;
+    loading ||
+    interactionLocked ||
+    !modelConfigured ||
+    hasUnsavedFileDraft ||
+    titleDirty;
   const rollbackDisabled =
     loading || interactionLocked || hasUnsavedFileDraft || draftsLocked;
-  const revisingWorld = target === "world-revision";
+  const packageActionLocked =
+    loading || interactionLocked || hasUnsavedFileDraft || draftsLocked;
+  const createWorldDisabled =
+    packageActionLocked || titleDirty || contentEditor.status !== "usable";
+  const showCreationNextStep =
+    onCreateWorld !== undefined &&
+    completedSetting !== null &&
+    contentEditor.status === "usable" &&
+    (suggestedTitle !== undefined ||
+      completedSetting.turns.some((turn) =>
+        turn.exchanges.some((exchange) =>
+          exchange.toolCalls.some(
+            (tool) =>
+              tool.result?.isError === false &&
+              (tool.result.changes?.length ?? 0) > 0,
+          ),
+        ),
+      ));
+  const titleSaveDisabled =
+    packageActionLocked ||
+    savedTitleChanged ||
+    titleDraft.trim() === "" ||
+    titleDraft.trim() === packageName;
   const packageDeleteLocked =
     revisingWorld ||
     loading ||
@@ -293,6 +419,8 @@ export function SettingImprovementPanel({
     rollbackRunning ||
     finishingRevision ||
     editing !== null ||
+    savingTitle ||
+    titleDirty ||
     (!revisingWorld && (running || hasUnsavedFileDraft));
   const discardTarget = revisionActions?.discardTarget ?? null;
   const discardLocked =
@@ -304,6 +432,52 @@ export function SettingImprovementPanel({
     revisionActions === undefined
       ? undefined
       : new Set(revisionActions.changes.map(({ changeSetId }) => changeSetId));
+
+  function createWorldFromSetting(): void {
+    if (createWorldDisabled || savingTitleRef.current) return;
+    if (showTitleSuggestion) {
+      setLeftRailOpen(false);
+      setRightRailOpen(false);
+      titleInput.current?.scrollIntoView({ block: "center" });
+      titleInput.current?.focus({ preventScroll: true });
+      return;
+    }
+    onCreateWorld?.();
+  }
+
+  function finishTitleSuggestion(): void {
+    if (activeTitleOffer === null) return;
+    setTitleOffer({ ...activeTitleOffer, handled: true });
+    setTitleEdit(null);
+  }
+
+  async function saveTitle(): Promise<void> {
+    if (
+      titleSuggestion === undefined ||
+      activeTitleOffer === null ||
+      titleSaveDisabled ||
+      savingTitleRef.current
+    )
+      return;
+    savingTitleRef.current = true;
+    setSavingTitle(true);
+    try {
+      const saved = await titleSuggestion.onSave(
+        titleDraft.trim(),
+        activeTitleOffer.baseTitle,
+      );
+      if (saved) finishTitleSuggestion();
+      else
+        setTitleEdit({
+          suggestion: activeTitleOffer.key,
+          draft: titleDraft,
+          failed: true,
+        });
+    } finally {
+      savingTitleRef.current = false;
+      setSavingTitle(false);
+    }
+  }
 
   const [unconfirmedDraft, setUnconfirmedDraft] = useState<{
     text: string;
@@ -320,6 +494,7 @@ export function SettingImprovementPanel({
     if (message === unconfirmedDraft.text) setMessage("");
   }
   function openFreshComposer(options?: { keepMessage: true }): void {
+    if (titleDirty || savingTitleRef.current) return;
     if (!options?.keepMessage && unconfirmedDraft?.text === message)
       setMessage("");
     setUnconfirmedDraft(null);
@@ -620,15 +795,9 @@ export function SettingImprovementPanel({
           {!revisingWorld && onCreateWorld !== undefined && (
             <button
               type="button"
-              className="setting-create-world"
-              disabled={
-                loading ||
-                interactionLocked ||
-                hasUnsavedFileDraft ||
-                draftsLocked ||
-                contentEditor.status !== "usable"
-              }
-              onClick={onCreateWorld}
+              className={`setting-create-world${showCreationNextStep ? " is-ready" : ""}`}
+              disabled={createWorldDisabled}
+              onClick={createWorldFromSetting}
             >
               {uiText("创建世界")}
             </button>
@@ -657,7 +826,7 @@ export function SettingImprovementPanel({
           </button>
           <button
             type="button"
-            disabled={interactionLocked || loading}
+            disabled={interactionLocked || loading || titleDirty}
             onClick={() => {
               setUnconfirmedDraft(null);
               onFreshContext();
@@ -1027,7 +1196,7 @@ export function SettingImprovementPanel({
                       </p>
                       <button
                         type="button"
-                        disabled={loading || interactionLocked}
+                        disabled={loading || interactionLocked || titleDirty}
                         onClick={() => openFreshComposer({ keepMessage: true })}
                       >
                         {uiText("选择新对话（保留已保存的创作工作）")}
@@ -1053,6 +1222,72 @@ export function SettingImprovementPanel({
                   )}
                 </div>
               ) : null}
+              {(showTitleSuggestion ||
+                (showCreationNextStep && !createWorldDisabled)) && (
+                <section className="setting-world-next-step">
+                  {showTitleSuggestion && (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void saveTitle();
+                      }}
+                    >
+                      <h2>{uiText("AI 建议的书名")}</h2>
+                      <p>{uiText("当前书名：{name}", { name: packageName })}</p>
+                      <label>
+                        {uiText("书名")}
+                        <input
+                          ref={titleInput}
+                          value={titleDraft}
+                          disabled={packageActionLocked}
+                          maxLength={160}
+                          onChange={(event) => {
+                            if (titleKey !== null)
+                              setTitleEdit({
+                                suggestion: titleKey,
+                                draft: event.target.value,
+                                failed: false,
+                              });
+                          }}
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button type="submit" disabled={titleSaveDisabled}>
+                          {uiText(
+                            savingTitle
+                              ? "正在保存书名…"
+                              : titleChanged
+                                ? "保存书名"
+                                : "采用建议书名",
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingTitle}
+                          onClick={() => {
+                            if (!savingTitleRef.current)
+                              finishTitleSuggestion();
+                          }}
+                        >
+                          {uiText("保留当前书名")}
+                        </button>
+                      </div>
+                      {savedTitleChanged && !savingTitle ? (
+                        <p role="status">
+                          {uiText("当前书名已更改。可保留当前书名。")}
+                        </p>
+                      ) : activeTitleEdit?.failed ? (
+                        <p role="alert">{uiText("未能保存书名。请重试。")}</p>
+                      ) : null}
+                    </form>
+                  )}
+                  {showCreationNextStep && !createWorldDisabled && (
+                    <p role="status">
+                      {uiText("内容包已准备好。点击「创建世界」开始游玩。")}
+                    </p>
+                  )}
+                </section>
+              )}
               {view === null ? null : (
                 <details className="technical-details">
                   <summary>{uiText("本对话累计用量")}</summary>

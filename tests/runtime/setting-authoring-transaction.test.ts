@@ -36,6 +36,7 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
     "setting_patch",
     "setting_move",
     "setting_delete",
+    "setting_suggest_title",
   ]);
   const patch = settingImprovementToolDefinitions(
     "zh-CN",
@@ -106,6 +107,35 @@ test("设定完善契约描述显式上下文和直接当前树工具行为", ()
   expect(englishContract).not.toMatch(
     /planning phase|generation phase|finish tool|preview and finish tools/iu,
   );
+});
+
+test("the title tool records a receipt with no file diff and rejects invalid suggestions", () => {
+  const transaction = new SettingAuthoringTransaction({
+    baseFiles: minimalFileNativeContentScaffold("en"),
+    locale: "en",
+    preview: () => preview,
+  });
+  const before = transaction.files();
+  const results = transaction.execute(
+    [
+      { title: "  Harbor Letters  " },
+      { title: " " },
+      { title: "Two\nLines" },
+      { title: 123 },
+      { title: "Harbor Letters", path: "opening.md" },
+      { title: "✨".repeat(161) },
+      { title: "\\u96fe\\u6e2f" },
+    ].map((args, index) => ({
+      id: `title-${index}`,
+      name: "setting_suggest_title",
+      arguments: args,
+    })),
+  );
+  expect(results[0]).toMatchObject({ isError: false, changes: [] });
+  expect(results[0]?.markdown).toContain("Title suggestion recorded");
+  for (const result of results.slice(1))
+    expect(result).toMatchObject({ isError: true, changes: [] });
+  expect(transaction.files()).toEqual(before);
 });
 
 test("an ambiguous Markdown path requires a complete read before its diagnostic is visible", () => {

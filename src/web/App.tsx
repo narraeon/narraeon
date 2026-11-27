@@ -158,6 +158,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const creatingWorldRef = useRef(false);
   const [deletingPackage, setDeletingPackage] = useState(false);
   const deletingPackageRef = useRef(false);
+  const renamingPackageRef = useRef(false);
   const copyingPackageRef = useRef(false);
   const packageCopyAttempt = useRef<{
     origin: WorkspaceLocation;
@@ -901,21 +902,60 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function renamePackage(
     title: string,
     packageId = selected,
+    expectedTitle?: string,
   ): Promise<boolean> {
+    const origin = locationRef.current;
+    const inEditor =
+      origin.screen === "content" && origin.packageId === packageId;
+    const editing = authoringWorkspace.getSnapshot();
+    if (
+      renamingPackageRef.current ||
+      (inEditor &&
+        (creatingWorldRef.current ||
+          deletingPackageRef.current ||
+          editing.dirty ||
+          editing.draftsLocked ||
+          editing.loading ||
+          editing.savingFiles ||
+          editing.view?.runStatus === "running"))
+    )
+      return false;
+    renamingPackageRef.current = true;
     try {
-      const receipt = await client.request<HomeContentPackage>({
-        type: "content.rename",
-        packageId,
-        name: title,
-      });
-      acceptPackage(receipt);
+      const rename = async (): Promise<void> => {
+        const receipt = await client.request<HomeContentPackage>({
+          type: "content.rename",
+          packageId,
+          name: title,
+          ...(expectedTitle === undefined ? {} : { expectedTitle }),
+        });
+        acceptPackage(receipt);
+      };
+      if (inEditor) await authoringWorkspace.holdDraftsWhile(rename);
+      else await rename();
       setNotice(uiText("内容包已重命名。"));
       return true;
     } catch (error: unknown) {
-      await workspaceTarget.recover();
-      if (screen === "content") await authoringWorkspace.refresh();
-      report(error);
+      const recovered = await workspaceTarget.recover();
+      if (
+        hasUnconfirmedOutcome(error) &&
+        recovered?.contentPackages.some(
+          (item) => item.localId === packageId && item.title === title,
+        )
+      ) {
+        setNotice(uiText("内容包已重命名。"));
+        return true;
+      }
+      if (
+        expectedTitle !== undefined &&
+        error instanceof RuntimeRequestError &&
+        error.protocolCode === "operation_conflict"
+      )
+        setNotice(uiText("内容包书名已在别处更改。"));
+      else report(error);
       return false;
+    } finally {
+      renamingPackageRef.current = false;
     }
   }
 
@@ -1073,6 +1113,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   async function createWorld(template?: ProtagonistTemplate): Promise<void> {
     if (
       creatingWorldRef.current ||
+      renamingPackageRef.current ||
       filesDirtyRef.current ||
       authoring.view?.runStatus === "running"
     )
@@ -1200,6 +1241,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   );
   const selectedPackageDetail =
     packageDetail?.localId === selected ? packageDetail : null;
+  const selectedPackageName =
+    selectedPackage?.title ?? selectedPackageDetail?.title ?? selected;
   const selectedGameplay =
     selectedPackageDetail?.gameplay ?? selectedPackage?.gameplay;
   const selectedWorld = workspace.worlds.find(
@@ -1415,9 +1458,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       <SettingImprovementPanel
         showWorkspaceBack={false}
         key={selected}
-        packageName={
-          selectedPackage?.title ?? selectedPackageDetail?.title ?? selected
-        }
+        packageName={selectedPackageName}
         modelConfigured={workspace.model.configured}
         {...(selectedGameplay === undefined
           ? {}
@@ -1431,6 +1472,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         draftsLocked={authoring.draftsLocked || deletingPackage}
         loading={authoring.loading || creatingWorld}
         onCreateWorld={() => void createWorld()}
+        titleSuggestion={{
+          packageId: selected,
+          onSave: (title, expectedTitle) =>
+            renamePackage(title, selected, expectedTitle),
+        }}
         onNavigationProtectionChange={setChildNavigation}
         conversation={conversation}
         onViewPromptOrder={(target) => openPromptOrder("authorPrompts", target)}
@@ -1474,8 +1520,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           onCopy: () => void contentCommand("content.copy"),
           onExport: () => void exportPackage(),
           onDelete: () => void contentCommand("content.delete", selected),
-          title:
-            selectedPackage?.title ?? selectedPackageDetail?.title ?? selected,
+          title: selectedPackageName,
           onRename: (name) => void renamePackage(name),
         }}
         onConfigureModel={() => navigate("model")}

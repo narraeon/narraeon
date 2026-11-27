@@ -79,6 +79,7 @@ import {
   authoringPreloadAuthorization,
   buildAuthoringPreload,
   contentPackageAuthoringSurface,
+  suggestedTitleFromSettingCall,
   type AuthoringPreload,
 } from "./SettingAuthoringTransaction.ts";
 
@@ -1129,10 +1130,13 @@ export class SettingImprovementSession {
     currentRevision?: string,
   ): SettingImprovementView {
     const view = this.#authoring.view(session);
+    const turns = settingConversationTurns(session, view.progress.streaming);
+    const suggestedTitle = latestSuggestedTitle(turns);
     return {
       ...view,
       packageId: session.packageId,
-      turns: settingConversationTurns(session, view.progress.streaming),
+      turns,
+      ...(suggestedTitle === undefined ? {} : { suggestedTitle }),
       legacyDraft:
         session.legacyDraft === null
           ? null
@@ -1140,6 +1144,21 @@ export class SettingImprovementSession {
       ...authoringRecovery(session, false, currentRevision),
     };
   }
+}
+
+function latestSuggestedTitle(
+  turns: readonly V1SettingConversationTurn[],
+): string | undefined {
+  let latest: string | undefined;
+  for (const { exchanges } of turns) {
+    for (const { toolCalls } of exchanges) {
+      for (const call of toolCalls) {
+        if (call.result?.isError === false)
+          latest = suggestedTitleFromSettingCall(call) ?? latest;
+      }
+    }
+  }
+  return latest;
 }
 
 function assertPackage(

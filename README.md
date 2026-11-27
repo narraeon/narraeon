@@ -172,6 +172,8 @@ A content package is editable before play. You can keep several packages, copy t
 
 In setting improvement, ask the model to discuss a plan or to edit the package directly. The Runtime executes calls from each complete tool response in order and publishes all successful changes together to the current package. The conversation shows the file diffs and the results of checks such as reference validation and Prompt Preview. Creating a world gives it its own copy of the package files.
 
+For an original story, open a blank content package and tell the setting-improvement assistant your idea. When the package is ready, you can accept its suggested title, edit it, or keep the current name. Select **Create world** to start a world with the saved package name.
+
 If unsaved file edits pause the conversation while the file panel is closed, use **Save all changes** or **Discard unsaved changes** beside the message box. World revision offers **Save to revision** for the revision worktree. **Discard unsaved changes** clears only local file edits and keeps the saved revision and its lock.
 
 New world documents start with a header and a unique short reference. In the file editor, select a YAML or Markdown world document to edit its title, summary, and aliases. Open `control/player-views.yaml` and choose a document and field to preview the value a player will see. Both editors also support editing the source of the same draft. [File editor specification](docs/specs/web-workspace-and-observation.md#13-世界文档与玩家视图编辑)

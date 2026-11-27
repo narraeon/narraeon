@@ -111,11 +111,22 @@ export function authoringMechanics(
         ]
       : []),
     boundary,
+    ...(target === "setting" ? [settingTitleMechanics(locale)] : []),
     unicode,
     views,
     frame,
     followups,
   ].join("\n\n");
+}
+
+export function settingTitleMechanics(locale: AppLocale): string {
+  return locale === "zh-CN"
+    ? `为新故事创作内容包时，用 setting_suggest_title 提交一个候选书名，尽量与本次写文件的调用同批发出。若作者明确指定书名，沿用该书名；修改已有故事时，只有作者要求起名才提交建议。只传纯书名，不加书名号、引号或解释。候选由作者确认或修改，工具不会改包名或文件。
+
+内容包准备好时，告诉作者下一步点击「创建世界」。只有作者点击「创建世界」才会新建世界；在设定完善中不要声称世界已经创建或游玩已经开始。`
+    : `When authoring a content package for a new story, use setting_suggest_title to offer one title. Send it alongside that response's file writes when possible. Keep the title the author explicitly requested. For edits to an existing story, suggest a title only when asked. Send plain title text with no wrapping quotation marks, formatting, or explanation. The author can confirm or revise the suggestion. The tool leaves the package name and files untouched.
+
+When the content package is ready, tell the author to click “Create world” next. A new world is created only when the author clicks “Create world”. Never claim during setting improvement that a world has already been created or play has already started.`;
 }
 
 export function defaultOrderedAuthorPrompts(): OrderedPlayPrompt[] {

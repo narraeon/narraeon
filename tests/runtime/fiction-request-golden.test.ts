@@ -118,6 +118,8 @@ import { worldRevisionToolDefinitions } from "../../src/runtime/world-revision/W
  * digests moved; preset-free bootstraps stay unchanged.
  * #397 adds bounded scene verification and scoped edits to world revision.
  * Only the two revision digests moved.
+ * #413 adds the content-package title suggestion tool and creation guidance.
+ * Only the two setting digests moved.
  * Saved historical requests and user-authored copies retain their original text.
  */
 function digest(value: unknown): string {
@@ -414,7 +416,7 @@ const expectedDigests: Record<string, string> = {
   "revision/zh-CN":
     "2253e3f51c89306864a3dc772d5d4831cfac3bb09922d4cd8d244d2b6ea6ecc3",
   "setting/en":
-    "010bc4da02c9fd401bc12ef664f624878e12e8ea9cc65c7e56ecb5bdd0eb660c",
+    "6e4ce24835a05c3eb095723d34ced62e8a8c064d9fd2a1ede45253aaa76dbe0c",
   "setting/zh-CN":
-    "7cc39cc31be350dc1f712ab29d490538382b7f0a65dccf2389e0b38cb8191116",
+    "ccbc64d0bf54c4f88ace0e4bd5fbab045b748d0bc0033df69a64e91f72a25fa8",
 };

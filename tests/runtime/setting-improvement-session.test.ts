@@ -1929,6 +1929,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
     reasoning: "Provider-visible reasoning",
     toolCalls: [],
   });
+  expect(view.suggestedTitle).toBeUndefined();
   expect(
     fixture.host.requests[0]?.toolUniverse?.map(({ name }) => name),
   ).toEqual([
@@ -1940,6 +1941,7 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
     "setting_patch",
     "setting_move",
     "setting_delete",
+    "setting_suggest_title",
   ]);
   expect(
     fixture.host.requests[0]?.bootstrap.logicalMessages
@@ -1987,6 +1989,89 @@ test("全新上下文创建持久对话，普通回复不产生候选或快照",
   const resumed = await store.read(view.sessionId);
   expect(resumed.bootstrap).toEqual(frozenBootstrap);
   expect(resumed.contentPackageTitle).toBe("Harbor Letters");
+});
+
+test("a settled structured title survives restart and retry without renaming the content package", async () => {
+  const fixture = await createFixture([
+    {
+      outcome: "response",
+      toolCalls: [
+        {
+          id: "title",
+          name: "proxy_setting_suggest_title",
+          arguments: { title: "  Harbor Letters  " },
+        },
+        {
+          id: "invalid-title",
+          name: "setting_suggest_title",
+          arguments: { title: "Harbor\nLetters" },
+        },
+        { id: "list", name: "setting_list", arguments: {} },
+      ],
+    },
+    { outcome: "unknown", message: "Disconnected after tools" },
+  ]);
+  await fixture.content.renameCurrentTreeContentPackage(
+    fixture.packageId,
+    "Author's Own Name",
+  );
+  const before = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  const stopped = await sendFresh(
+    fixture.session,
+    fixture.packageId,
+    "original-title-request",
+    "Can you suggest a title?",
+  );
+  expect(stopped).toMatchObject({
+    runStatus: "interrupted",
+    canRetry: true,
+    suggestedTitle: "Harbor Letters",
+  });
+  expect(
+    fixture.host.requests[0]?.bootstrap.logicalMessages.find(
+      ({ promptId }) => promptId === "author.mechanics",
+    )?.markdown,
+  ).toContain("tell the author to click “Create world” next");
+  const retryHost = new ScriptedModelHost({
+    binding,
+    steps: [
+      { outcome: "response", text: 'Another idea is "The Other Harbor".' },
+      { outcome: "response", text: 'What about "The Harbor at Night"?' },
+    ],
+  });
+  const restarted = serviceFor(fixture.root, fixture.content, retryHost);
+  const overview = await restarted.overview(fixture.packageId);
+  expect(overview.latest?.suggestedTitle).toBe("Harbor Letters");
+  expect(retryHost.requests).toHaveLength(0);
+  const resumed = await restarted.resume({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "retry-title-request",
+  });
+  expect(resumed).toMatchObject({
+    runStatus: "ready",
+    suggestedTitle: "Harbor Letters",
+  });
+  expect(retryHost.requests).toHaveLength(1);
+  expect(retryHost.requests[0]?.appended).toEqual(
+    fixture.host.requests[1]?.appended,
+  );
+  const edited = await restarted.editMessage({
+    packageId: fixture.packageId,
+    sessionId: stopped.sessionId,
+    requestId: "edit-title-request",
+    messageId: stopped.turns[0]!.user.id,
+    message: "Let's discuss the opening instead.",
+    filePolicy: "revert",
+  });
+  expect(edited.suggestedTitle).toBeUndefined();
+  const after = await fixture.content.readCurrentTreeContentPackage(
+    fixture.packageId,
+  );
+  expect(after.title).toBe("Author's Own Name");
+  expect(after.files).toEqual(before.files);
 });
 
 test("interrupted authoring retries its frozen request after restart without appending the message or stream fragments", async () => {

@@ -6908,6 +6908,47 @@ summary {
   padding: 0.7rem 0 0;
 }
 
+.setting-world-next-step {
+  display: grid;
+  justify-self: start;
+  width: min(100%, 32rem);
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 3px;
+  background: var(--surface-inset);
+}
+
+.setting-floating-chrome button.setting-create-world.is-ready:not(:disabled) {
+  color: var(--accent);
+  background: var(--surface-selected);
+}
+
+.setting-world-next-step form,
+.setting-world-next-step label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.setting-world-next-step h2,
+.setting-world-next-step p,
+.setting-world-next-step .button-row {
+  margin: 0;
+}
+
+.setting-world-next-step h2 {
+  font-size: 1rem;
+}
+
+.setting-world-next-step p {
+  overflow-wrap: anywhere;
+}
+
+.setting-world-next-step p[role="alert"] {
+  color: var(--danger);
+}
+
 .setting-reader-page .setting-conversation-turn {
   gap: 0.75rem;
 }
