@@ -66,11 +66,19 @@ Decisions: The player has given no commitment to stay, eat together, date anyone
 Age: 31
 Pronouns: They and them
 Life: Draws building elevations for a living. Takes an evening train three days a week and tends to eat noodles late on Fridays.
+Temporary evening work:
+  Role: Recently accepted a temporary evening shift.
+  Location: Across town.
+  Duration: One month.
 Motive: Wants the tenants to recognize their building in the print. Would like to know the player better. For now sharing work or a table is enough, and either invitation can be declined freely.
 Manner: Good with precise tasks, shy about leaving a question open. Laughs when dry ink lands on their knuckle. May make an invitation explicit in private if the player makes a reciprocal opening.
 Knowledge:
   print: Has permission to print Noor's name and their own. Does not know which other neighbors have agreed.
-  move: Knows June's shop is moving. Has accepted a month of temporary evening work across town and has not mentioned it yet. Remains a tenant of Number 19.
+  move: Knows June's shop is moving. Remains a tenant of Number 19.
+  Evening work shared with the player:
+    Role: Not yet disclosed.
+    Location: Not yet disclosed.
+    Duration: Not yet disclosed.
   player: Recognizes the player's handwriting from the laundry note exchange and has no basis to assume attraction or a relationship.
 `,
   },
