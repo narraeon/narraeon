@@ -17,6 +17,7 @@ import {
   type PlayRequestContextEvidence,
 } from "../play/PlayRequestContext.ts";
 import type { ModelHostExchange } from "../model/ModelHost.ts";
+import { validOptionalChatGptPlanFingerprint } from "../model/ModelHost.ts";
 import type { ModelUsage } from "../../protocol/modelUsage.ts";
 
 /** One Provider dispatch, with references into the frozen send and transcript. */
@@ -289,6 +290,7 @@ function isBinding(value: unknown): value is ModelHostBinding {
         "maxOutputTokens",
         "protocolConfigFingerprint",
         "cacheStrategy",
+        "chatgptPlanAccountFingerprint",
       ].includes(key),
     ) &&
     [
@@ -300,6 +302,7 @@ function isBinding(value: unknown): value is ModelHostBinding {
     typeof b.endpointFingerprint === "string" &&
     typeof b.modelId === "string" &&
     typeof b.protocolConfigFingerprint === "string" &&
+    validOptionalChatGptPlanFingerprint(b) &&
     Number.isSafeInteger(b.contextWindowTokens) &&
     Number(b.contextWindowTokens) >= 0 &&
     Number.isSafeInteger(b.maxOutputTokens) &&

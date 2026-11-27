@@ -106,7 +106,11 @@ export interface PlayFollowupInput {
 export async function runPlayFollowupRequests(
   input: PlayFollowupInput,
 ): Promise<PlayFollowupRun> {
-  if (input.followups.length === 0) return { outcomes: [] };
+  if (
+    input.followups.length === 0 ||
+    input.modelHost.allowsAutomaticFollowups?.() === false
+  )
+    return { outcomes: [] };
 
   await input.artifacts.beginOperation(input.context);
   await input.artifacts.markCoreCommitted(input.context, input.head);

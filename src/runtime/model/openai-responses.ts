@@ -7,12 +7,21 @@ import {
 import type { RuntimeToolDefinitionStrategy } from "../prompt/FileNativeToolRegistry.ts";
 import { prefillMessage } from "./AssistantPrefill.ts";
 import {
+  chatGptPlanAccessToken,
+  chatGptPlanHttpFailure,
+  chatGptPlanInterrupted,
+  chatGptPlanStreamFailure,
+  invalidateRejectedToken,
+  sendChatGptPlanRequest,
+} from "./ChatGptPlanInference.ts";
+import {
   modelCacheStrategy,
   type ResolvedFileNativeModelConnection,
 } from "./FileNativeModelConnection.ts";
 import {
   assertModelOutputComplete,
   modelHostInputText,
+  ModelHostFailureError,
   type ModelHostAppendItem,
   type ModelHostExchange,
   type ModelHostExchangeObserver,
@@ -49,6 +58,7 @@ import {
 } from "./ProviderRequest.ts";
 import {
   bearerProviderHeaders,
+  cancelledModelRequest,
   dispatchProviderRequest,
   isProviderEventStream,
   providerError,
@@ -67,6 +77,8 @@ import {
   subtractCachedInput,
   usageRecord,
 } from "./ProviderValues.ts";
+
+const chatGptPlanToolNamespace = "narraeon";
 
 interface ResponsesRequestBodyInput {
   connection: ResolvedFileNativeModelConnection;
@@ -112,6 +124,34 @@ function responsesRequestBody(
   const allowedTools =
     input.allowedTools ?? input.tools.map((tool) => tool.name);
 
+  if (input.connection.chatgptPlan !== undefined) {
+    const allowed = new Set(allowedTools);
+    const tools = input.tools.filter(({ name }) => allowed.has(name));
+    return {
+      model: input.connection.modelId,
+      ...responsesReasoningRequest(input.connection),
+      ...(input.instructions === undefined
+        ? {}
+        : { instructions: input.instructions }),
+      input: input.input,
+      ...(tools.length === 0
+        ? {}
+        : {
+            tools: [
+              {
+                type: "namespace",
+                name: chatGptPlanToolNamespace,
+                description: "Tools executed by the Narraeon Runtime.",
+                tools: tools.map(responsesFunctionTool),
+              },
+            ],
+          }),
+      store: false,
+      include: ["reasoning.encrypted_content"],
+      stream: true,
+    };
+  }
+
   const toolChoice =
     input.hasFrozenToolPolicy === true && allowedTools.length === 0
       ? "none"
@@ -137,15 +177,7 @@ function responsesRequestBody(
         ? { tool_choice: "none" }
         : {}
       : {
-          tools: input.tools.map((tool) => ({
-            type: "function",
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-            // Runtime schemas distinguish absent options from supplied values.
-            // Responses otherwise normalizes compatible schemas to strict mode.
-            strict: false,
-          })),
+          tools: input.tools.map(responsesFunctionTool),
           tool_choice: toolChoice,
         }),
     max_output_tokens: input.maxOutputTokens,
@@ -158,18 +190,38 @@ function responsesRequestBody(
   });
 }
 
-function encodeInitialWorldContext(request: ModelHostExchange): unknown[] {
+function responsesFunctionTool(
+  tool: ResponsesRequestBodyInput["tools"][number],
+) {
+  return {
+    type: "function",
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+    // Runtime schemas distinguish absent options from supplied values.
+    // Responses otherwise normalizes compatible schemas to strict mode.
+    strict: false,
+  };
+}
+
+function encodeInitialWorldContext(
+  request: ModelHostExchange,
+  chatgptPlan: boolean,
+): unknown[] {
   const preload = initialWorldContext(request);
   if (preload === undefined) return [];
   const { callId, markdown, name, notice } = preload;
+  const call = {
+    type: "function_call" as const,
+    call_id: callId,
+    name,
+    ...(chatgptPlan ? { namespace: chatGptPlanToolNamespace } : {}),
+    arguments: "{}",
+  };
   return [
     notice,
-    { type: "function_call", call_id: callId, name, arguments: "{}" },
-    {
-      type: "function_call_output",
-      call_id: callId,
-      output: markdown,
-    },
+    call,
+    responsesToolOutput(chatgptPlan ? call : undefined, callId, markdown),
   ];
 }
 
@@ -194,7 +246,11 @@ function responsesBootstrapMessages(
       ? { ...message, cache_control: { type: "ephemeral" } }
       : message,
   );
-  prefix.splice(prefixEnd, 0, ...encodeInitialWorldContext(request));
+  prefix.splice(
+    prefixEnd,
+    0,
+    ...encodeInitialWorldContext(request, connection.chatgptPlan !== undefined),
+  );
   return prefix;
 }
 
@@ -225,7 +281,15 @@ function responsesAppend(
             item.notice === "response_correction")
         ),
     ) + 1;
-  const transcript = responsesItems(request.appended.slice(0, index), true);
+  const chatgptPlanCalls =
+    connection.chatgptPlan === undefined
+      ? undefined
+      : new Map<string, ResponsesToolCall>();
+  const transcript = responsesItems(
+    request.appended.slice(0, index),
+    true,
+    chatgptPlanCalls,
+  );
   const suffix = request.appended.slice(index);
   const instructions: string[] = [];
   const items =
@@ -263,7 +327,7 @@ function responsesAppend(
         else items.push(projected);
       }
     } else {
-      items.push(...responsesItems([item], true));
+      items.push(...responsesItems([item], true, chatgptPlanCalls));
     }
   }
   return { instructions: instructions.join("\n\n"), items };
@@ -272,6 +336,7 @@ function responsesAppend(
 function responsesItems(
   items: readonly ModelHostAppendItem[],
   projectRoles: boolean,
+  chatgptPlanCalls?: Map<string, ResponsesToolCall>,
 ): unknown[] {
   return items.flatMap((item): unknown[] => {
     if (
@@ -285,24 +350,85 @@ function responsesItems(
         return promptDeltaProviderMessages(item.logicalMessages);
       return item.logicalMessages.map(responsesDeltaMessage);
     }
-    if (item.kind === "tool")
+    if (item.kind === "tool") {
+      const call = chatgptPlanCalls?.get(item.toolCallId);
+      if (chatgptPlanCalls !== undefined && call === undefined)
+        throw continuationError("ChatGPT plan tool result");
       return [
-        {
-          type: "function_call_output",
-          call_id: item.toolCallId,
-          output: item.markdown,
-        },
+        responsesToolOutput(call, item.toolCallId, item.markdown, item.isError),
       ];
+    }
     if (
       item.providerState?.protocol === "openai_responses" &&
       validResponsesOutput(item.providerState.output)
-    )
+    ) {
+      if (chatgptPlanCalls !== undefined) {
+        for (const output of item.providerState.output) {
+          const call = nativeResponsesToolCall(output);
+          if (call !== undefined) chatgptPlanCalls.set(call.call_id, call);
+        }
+      }
       return [
         ...continuationInput(item),
         ...cloneResponseOutput(item.providerState.output),
       ];
+    }
     throw continuationError("OpenAI Responses");
   });
+}
+
+interface ResponsesToolCall {
+  type: "function_call" | "custom_tool_call";
+  call_id: string;
+  name: string;
+  namespace?: string;
+}
+
+function nativeResponsesToolCall(
+  value: unknown,
+): ResponsesToolCall | undefined {
+  if (
+    !isRecord(value) ||
+    (value.type !== "function_call" && value.type !== "custom_tool_call") ||
+    typeof value.call_id !== "string" ||
+    typeof value.name !== "string"
+  )
+    return undefined;
+  return {
+    type: value.type,
+    call_id: value.call_id,
+    name: value.name,
+    ...(typeof value.namespace === "string"
+      ? { namespace: value.namespace }
+      : {}),
+  };
+}
+
+function responsesToolOutput(
+  call: ResponsesToolCall | undefined,
+  callId: string,
+  markdown: string,
+  isError?: boolean,
+) {
+  return {
+    type:
+      call?.type === "custom_tool_call"
+        ? "custom_tool_call_output"
+        : "function_call_output",
+    call_id: callId,
+    ...(call === undefined
+      ? {}
+      : {
+          name: call.name,
+          ...(call.namespace === undefined
+            ? {}
+            : { namespace: call.namespace }),
+        }),
+    output:
+      call === undefined
+        ? markdown
+        : JSON.stringify({ content: markdown, success: isError !== true }),
+  };
 }
 
 function responsesDeltaMessage(
@@ -393,6 +519,12 @@ export function validResponsesOutput(value: unknown): value is unknown[] {
           typeof item.name === "string" &&
           typeof item.arguments === "string"
         );
+      if (item.type === "custom_tool_call")
+        return (
+          typeof item.call_id === "string" &&
+          typeof item.name === "string" &&
+          typeof item.input === "string"
+        );
       if (item.type === "reasoning")
         return (
           (item.summary === undefined || Array.isArray(item.summary)) &&
@@ -415,6 +547,52 @@ export async function exchangeResponses(
 ): Promise<ModelHostResponse> {
   const signal = observer?.signal;
   const body = responsesRequestBody(responsesRequestInput(connection, request));
+  if (connection.chatgptPlan !== undefined) {
+    const plan = connection.chatgptPlan;
+    const locale = request.bootstrap.locale ?? "en";
+    const token = await chatGptPlanAccessToken(plan, locale, signal);
+    const response = await sendChatGptPlanRequest({
+      fetchImplementation,
+      url: providerUrl(connection),
+      token,
+      body: JSON.stringify(body),
+      signal,
+      locale,
+    });
+    if (!response.ok)
+      throw await chatGptPlanHttpFailure(response, plan, token, locale);
+    if (!isProviderEventStream(response) || response.body === null) {
+      void response.body?.cancel().catch(() => undefined);
+      throw chatGptPlanInterrupted(locale);
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = await aggregateResponsesModelStream(
+        response.body,
+        observer?.onDelta,
+        (terminal) =>
+          chatGptPlanStreamFailure(
+            terminal,
+            token,
+            locale,
+            response.headers.get("x-request-id"),
+          ),
+      );
+    } catch (error: unknown) {
+      if (signal?.aborted) throw cancelledModelRequest();
+      if (error instanceof ModelHostFailureError) {
+        const evidence = error.details;
+        if (isRecord(evidence))
+          await invalidateRejectedToken(plan, token, evidence.providerCode);
+        throw error;
+      }
+      throw chatGptPlanInterrupted(locale);
+    }
+    if (signal?.aborted) throw cancelledModelRequest();
+    if (!validResponsesOutput(payload.output))
+      throw chatGptPlanInterrupted(locale);
+    return projectResponsesPayload(payload, true);
+  }
   await trace?.("responses_request", body);
   const bodyJson = JSON.stringify(body);
   const url = providerUrl(connection);
@@ -483,61 +661,79 @@ export async function exchangeResponses(
       }
     }
     assertModelOutputComplete(responsesStopReason(payload));
-    const output = cloneResponseOutput(payload.output);
-    if (!validResponsesOutput(output))
-      throw new ModelResponseFormatError(
-        "Return a valid Responses API assistant response with well-formed messages and tool calls.",
-        "请返回有效的 Responses API assistant 响应，确保消息和工具调用格式正确。",
-      );
-    const text = output
-      .flatMap((item) => {
-        if (
-          !isRecord(item) ||
-          item.type !== "message" ||
-          !Array.isArray(item.content)
-        )
-          return [];
-        return item.content.flatMap((part) =>
-          isRecord(part) &&
-          part.type === "output_text" &&
-          typeof part.text === "string"
-            ? [part.text]
-            : [],
-        );
-      })
-      .join("");
-    const reasoningContent = responsesReturnedReasoning(output);
-    const toolCalls = output.flatMap((item): ModelHostToolCall[] => {
+    return projectResponsesPayload(payload);
+  });
+}
+
+function projectResponsesPayload(
+  payload: Record<string, unknown>,
+  chatgptPlan = false,
+): ModelHostResponse {
+  const output = cloneResponseOutput(payload.output);
+  if (!validResponsesOutput(output))
+    throw new ModelResponseFormatError(
+      "Return a valid Responses API assistant response with well-formed messages and tool calls.",
+      "请返回有效的 Responses API assistant 响应，确保消息和工具调用格式正确。",
+    );
+  const text = output
+    .flatMap((item) => {
       if (
         !isRecord(item) ||
-        item.type !== "function_call" ||
-        typeof item.call_id !== "string" ||
-        typeof item.name !== "string" ||
-        typeof item.arguments !== "string"
+        item.type !== "message" ||
+        !Array.isArray(item.content)
       )
         return [];
-      return [
-        {
-          id: item.call_id,
-          name: item.name,
-          arguments: parseArguments(item.arguments),
-        },
-      ];
-    });
-    const stopReason = responsesStopReason(payload);
-    return {
-      ...(text.length === 0 ? {} : { text }),
-      ...(reasoningContent.length === 0 ? {} : { reasoningContent }),
-      providerState: {
-        protocol: "openai_responses" as const,
-        output,
-        ...(typeof payload.id === "string" ? { responseId: payload.id } : {}),
+      return item.content.flatMap((part) =>
+        isRecord(part) &&
+        part.type === "output_text" &&
+        typeof part.text === "string"
+          ? [part.text]
+          : [],
+      );
+    })
+    .join("");
+  const reasoningContent = responsesReturnedReasoning(output);
+  const toolCalls = output.flatMap((item): ModelHostToolCall[] => {
+    if (!isRecord(item)) return [];
+    const call = nativeResponsesToolCall(item);
+    if (
+      call === undefined ||
+      (!chatgptPlan && call.type === "custom_tool_call")
+    )
+      return [];
+    if (
+      chatgptPlan &&
+      ((call.namespace !== undefined &&
+        call.namespace !== chatGptPlanToolNamespace) ||
+        (isRecord(item.caller) && item.caller.type === "program"))
+    )
+      throw new ModelResponseFormatError(
+        "The response contains a tool call outside the Narraeon namespace.",
+        "本次回复包含 Narraeon 工具命名空间以外的调用。",
+      );
+    const input = call.type === "function_call" ? item.arguments : item.input;
+    if (typeof input !== "string") return [];
+    return [
+      {
+        id: call.call_id,
+        name: call.name,
+        arguments: parseArguments(input),
       },
-      usage: normalizeResponsesUsage(payload.usage),
-      ...(stopReason === undefined ? {} : { stopReason }),
-      toolCalls,
-    };
+    ];
   });
+  const stopReason = responsesStopReason(payload);
+  return {
+    ...(text.length === 0 ? {} : { text }),
+    ...(reasoningContent.length === 0 ? {} : { reasoningContent }),
+    providerState: {
+      protocol: "openai_responses" as const,
+      output,
+      ...(typeof payload.id === "string" ? { responseId: payload.id } : {}),
+    },
+    usage: normalizeResponsesUsage(payload.usage),
+    ...(stopReason === undefined ? {} : { stopReason }),
+    toolCalls,
+  };
 }
 
 function responsesStopReason(

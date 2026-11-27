@@ -97,6 +97,7 @@ import type {
   ModelHostToolCall,
 } from "../model/ModelHost.ts";
 import {
+  compatibleModelHostContinuation,
   equalModelHostBinding,
   ModelHostCancelledError,
 } from "../model/ModelHost.ts";
@@ -2883,6 +2884,8 @@ export class PlayCallChain {
           advance,
         );
 
+      const chatgptPlan =
+        modelHost.binding().chatgptPlanAccountFingerprint !== undefined;
       let response: Awaited<ReturnType<ModelHost["exchange"]>>;
       try {
         this.#observeInvocation(session.chainId, "waiting", { dispatches: 1 });
@@ -2961,11 +2964,13 @@ export class PlayCallChain {
         if (response.usage !== undefined) event.usage = response.usage;
         validateModelToolCalls(
           response,
-          modelHost.binding().provider !== "google_interactions",
+          !chatgptPlan &&
+            modelHost.binding().provider !== "google_interactions",
         );
         if (
-          (session.lastRequest?.modelConfig?.provider ??
-            session.modelBinding?.provider) === "google_interactions" &&
+          (chatgptPlan ||
+            (session.lastRequest?.modelConfig?.provider ??
+              session.modelBinding?.provider) === "google_interactions") &&
           (response.toolCalls?.length ?? 0) > 0
         ) {
           const boundary = session.events.findLastIndex(
@@ -3005,9 +3010,10 @@ export class PlayCallChain {
         if (response.diagnostics !== undefined)
           await this.#failureLog?.recordExchangeIfActive(response.diagnostics);
       } catch (error: unknown) {
+        if (chatgptPlan) event.responseKind = "empty";
         if (error instanceof ModelResponseFormatError) {
           event.responseKind = "empty";
-          if (!correcting && !signal.aborted) {
+          if (!chatgptPlan && !correcting && !signal.aborted) {
             event.status = "interrupted";
             event.stopReason = error.message;
             request = {
@@ -3096,7 +3102,10 @@ export class PlayCallChain {
                 "The play call chain recovered during a later model exchange and completed.",
               details: { parentHead: session.parentHead },
             });
-          if ((currentPlayPrompt(session).followups?.length ?? 0) > 0) {
+          if (
+            (currentPlayPrompt(session).followups?.length ?? 0) > 0 &&
+            modelHost.allowsAutomaticFollowups?.() !== false
+          ) {
             // Follow-up artifacts are part of this player-visible invocation.
             // Keep `running` ephemeral: the settled main response remains the
             // durable recovery point if this Runtime process stops here.
@@ -4267,9 +4276,13 @@ function assertSessionModelHostBinding(
     throw PlayCallChainError.requiresFreshContext(
       "This model context predates durable provider continuation bindings; start a fresh context.",
     );
-  if (session.modelBinding.provider !== modelHost.binding().provider)
+  if (
+    !compatibleModelHostContinuation(session.modelBinding, modelHost.binding())
+  )
     throw new PlayCallChainError(
-      "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context.",
+      session.modelBinding.provider !== modelHost.binding().provider
+        ? "The selected model protocol differs from this context. Switch back to its original protocol to continue, or start a fresh context."
+        : "This context uses a different ChatGPT plan connection. Switch back to its original connection or start a fresh context.",
       "model_protocol_mismatch",
     );
 }

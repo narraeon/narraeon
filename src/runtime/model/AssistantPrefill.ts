@@ -15,6 +15,7 @@ import type {
   ModelHostRequestConfig,
   ModelHostResponse,
 } from "./ModelHost.ts";
+import { validOptionalChatGptPlanFingerprint } from "./ModelHost.ts";
 
 const continuationInstructions = {
   en: "Runtime: The previous response was interrupted. Continue the following response exactly where it ended. Return only the subsequent text, without repeating the prefix or adding a preamble.",
@@ -57,7 +58,12 @@ export function prefillFor(
   text: string,
 ): AssistantPrefill | null {
   const mode = assistantPrefillMode(request.modelConfig);
-  if (!request.modelConfig || text.length === 0) return null;
+  if (
+    !request.modelConfig ||
+    request.modelConfig.chatgptPlanAccountFingerprint !== undefined ||
+    text.length === 0
+  )
+    return null;
   // Anthropic rejects a final assistant message ending in whitespace. Do not alter it.
   if (
     mode === "disabled" ||
@@ -399,6 +405,7 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
         "responsesCacheControl",
         "supportsAllowedTools",
         "assistantPrefillMode",
+        "chatgptPlanAccountFingerprint",
       ].includes(key),
     ) &&
     [
@@ -432,6 +439,7 @@ function validPrefillConfig(config: unknown): config is ModelHostRequestConfig {
     Number(c.contextWindowTokens) > 0 &&
     Number.isSafeInteger(c.maxOutputTokens) &&
     Number(c.maxOutputTokens) > 0 &&
+    validOptionalChatGptPlanFingerprint(c) &&
     (c.responsesTurnInstructions === undefined ||
       (c.provider === "openai_responses" &&
         typeof c.responsesTurnInstructions === "boolean")) &&

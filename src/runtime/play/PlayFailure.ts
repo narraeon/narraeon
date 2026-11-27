@@ -44,6 +44,16 @@ export function classifyPlayFailure(
     if (
       typeof error.details === "object" &&
       error.details !== null &&
+      "chatgptPlanFailure" in error.details
+    ) {
+      if (error.details.chatgptPlanFailure === "quota")
+        return "chatgpt_plan_quota";
+      if (error.details.chatgptPlanFailure === "authentication")
+        return "chatgpt_plan_authorization";
+    }
+    if (
+      typeof error.details === "object" &&
+      error.details !== null &&
       "code" in error.details &&
       error.details.code === "model_output_limit"
     )

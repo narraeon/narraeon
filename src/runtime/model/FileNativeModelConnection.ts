@@ -17,6 +17,16 @@ import type {
   ModelHostCacheStrategy,
 } from "./ModelHost.ts";
 
+export const chatGptPlanBaseUrl = "https://api.openai.com/v1";
+
+/** Live, workspace-local credential access. Keep out of request snapshots. */
+export interface ChatGptPlanConnection {
+  accountId: string;
+  allowFollowups: boolean;
+  accessToken(signal?: AbortSignal): Promise<string>;
+  invalidate?(accessToken: string): Promise<void>;
+}
+
 export interface FileNativeModelConnection
   extends ResponsesConnectionCapabilities, AnthropicConnectionCacheSettings {
   provider: FileNativePromptInput["modelBinding"]["provider"];
@@ -24,6 +34,7 @@ export interface FileNativeModelConnection
   baseUrl: string;
   authMode?: "none";
   apiKey: string;
+  chatgptPlan?: ChatGptPlanConnection;
   modelId: string;
   modelPrompt?: ModelConnectionPrompt;
   reasoningEffort?: ModelReasoningEffort;
@@ -66,10 +77,24 @@ export function resolveConnection(
     anthropicPromptCacheTtl,
     responsesTurnInstructions,
     responsesCacheControl,
+    chatgptPlan,
     ...connection
   }: Omit<FileNativeModelConnection, "modelPrompt">,
   legacyResponses = false,
 ): ResolvedFileNativeModelConnection {
+  if (
+    chatgptPlan !== undefined &&
+    (connection.provider !== "openai_responses" ||
+      connection.baseUrl !== chatGptPlanBaseUrl ||
+      connection.apiKey !== "" ||
+      connection.authMode !== undefined ||
+      (connection.dialect !== undefined && connection.dialect !== "standard") ||
+      chatgptPlan.accountId.trim() === "" ||
+      typeof chatgptPlan.accessToken !== "function")
+  )
+    throw new Error(
+      "ChatGPT plan usage requires the public OpenAI Responses endpoint",
+    );
   if (
     connection.authMode === "none" &&
     (connection.apiKey !== "" ||
@@ -103,6 +128,14 @@ export function resolveConnection(
     supportsAllowedTools: connection.supportsAllowedTools ?? true,
     assistantPrefillMode: connection.assistantPrefillMode ?? "disabled",
   });
+  if (chatgptPlan !== undefined) {
+    if (resolved.assistantPrefillMode !== "disabled")
+      throw new Error("ChatGPT plan usage requires standard Responses input");
+    Object.assign(resolved, {
+      chatgptPlan: { ...chatgptPlan },
+      responsesTurnInstructions: false,
+    });
+  }
   // Historical bindings can still be inspected. The Google encoder checks
   // the current reasoning policy before it previews or sends a request.
   const issue = modelReasoningPolicyIssue(

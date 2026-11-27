@@ -451,6 +451,7 @@ export async function aggregateAnthropicModelStream(
 export async function aggregateResponsesModelStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: ModelHostDeltaSink,
+  terminalFailure?: (payload: Record<string, unknown>) => Error,
 ): Promise<Record<string, unknown>> {
   let completed: Record<string, unknown> | null = null;
   let observedText = "";
@@ -464,7 +465,8 @@ export async function aggregateResponsesModelStream(
       (payload.type === "response.output_text.delta" ||
         payload.type === "response.reasoning_text.delta" ||
         payload.type === "response.reasoning_summary_text.delta" ||
-        payload.type === "response.function_call_arguments.delta") &&
+        payload.type === "response.function_call_arguments.delta" ||
+        payload.type === "response.custom_tool_call_input.delta") &&
       typeof payload.delta !== "string"
     )
       throw new Error("Responses SSE delta is invalid");
@@ -474,7 +476,11 @@ export async function aggregateResponsesModelStream(
       payload.item.type !== "message"
     )
       onDelta?.({
-        kind: payload.item.type === "function_call" ? "tool" : "reasoning",
+        kind:
+          payload.item.type === "function_call" ||
+          payload.item.type === "custom_tool_call"
+            ? "tool"
+            : "reasoning",
         text: "",
       });
     if (
@@ -499,7 +505,8 @@ export async function aggregateResponsesModelStream(
     )
       onDelta?.({ kind: "reasoning", text: payload.delta as string });
     else if (
-      payload.type === "response.function_call_arguments.delta" &&
+      (payload.type === "response.function_call_arguments.delta" ||
+        payload.type === "response.custom_tool_call_input.delta") &&
       payload.delta !== ""
     )
       onDelta?.({ kind: "tool", text: payload.delta as string });
@@ -519,6 +526,7 @@ export async function aggregateResponsesModelStream(
       payload.type === "response.cancelled" ||
       payload.type === "error"
     ) {
+      if (terminalFailure !== undefined) throw terminalFailure(payload);
       if (
         payload.type === "response.incomplete" &&
         isRecord(payload.response)
