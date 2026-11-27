@@ -191,6 +191,14 @@
   background: var(--surface-selected);
 }
 
+@media (min-width: 721px) and (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  :is(.events, .transcript)
+    article:not(:hover, :focus-within)
+    .messageActionsTrigger[aria-expanded="false"] {
+    opacity: 0;
+  }
+}
+
 .messageActionsPanel {
   position: fixed;
   inset: auto;

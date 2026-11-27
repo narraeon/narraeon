@@ -136,6 +136,45 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
       name: "主持消息操作",
       exact: true,
     });
+    const latestPlayer = page.locator(".call-chain-player").last();
+    const playerActions = latestPlayer.getByRole("button", {
+      name: "玩家消息操作",
+      exact: true,
+    });
+    const desktop = page.viewportSize()!;
+
+    const assertDesktopActions = async () => {
+      await page.mouse.move(1, 1);
+      await page.getByLabel("你的行动").focus();
+      await expect(playerActions).toHaveCSS("opacity", "0");
+      await expect(actions).toHaveCSS("opacity", "0");
+      await latestPlayer.getByText(originalText, { exact: true }).hover();
+      await expect(playerActions).toHaveCSS("opacity", "1");
+      await latestReply.getByText("原来的第二段回复", { exact: true }).hover();
+      await expect(actions).toHaveCSS("opacity", "1");
+      await expect(playerActions).toHaveCSS("opacity", "0");
+      await page.mouse.move(1, 1);
+      await playerActions.focus();
+      await expect(playerActions).toHaveCSS("opacity", "1");
+      await page.keyboard.press("Tab");
+      await expect(actions).toBeFocused();
+      await expect(actions).toHaveCSS("opacity", "1");
+    };
+    const enterReadingMode = async (showTechnicalInfo: boolean) => {
+      await page.getByRole("button", { name: "阅读设置", exact: true }).click();
+      await page
+        .getByRole("checkbox", { name: "显示技术信息" })
+        .setChecked(showTechnicalInfo);
+      await page
+        .getByLabel("阅读设置")
+        .getByRole("button", { name: "关闭", exact: true })
+        .click();
+    };
+    await assertDesktopActions();
+    await enterReadingMode(true);
+    await assertDesktopActions();
+    await enterReadingMode(false);
+
     await expect(actions).toBeVisible();
     await expect(actions).toBeEnabled();
     const before = await store.readAuthorityHistory(worldId);
@@ -153,8 +192,11 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
       firstReply.getByRole("button", { name: "创建分叉", exact: true }),
     ).toBeEnabled();
     await page.keyboard.press("Escape");
-    const desktop = page.viewportSize()!;
     await page.setViewportSize({ width: 375, height: 760 });
+    await page.mouse.move(1, 1);
+    await page.getByLabel("你的行动").focus();
+    await expect(actions).toHaveCSS("opacity", "1");
+    await expect(playerActions).toHaveCSS("opacity", "1");
     const originalProse = page.getByText("原来的第二段回复", { exact: true });
     const prosePosition = () =>
       originalProse.evaluate((element) => ({
@@ -203,7 +245,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
     await page.getByLabel("你的行动").click();
     await expect(menu).toBeHidden();
     const touch = await browser.newContext({
-      viewport: { width: 390, height: 450 },
+      viewport: { width: 1024, height: 760 },
       isMobile: true,
       hasTouch: true,
     });
@@ -220,6 +262,20 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
       const mobileProse = mobileReply.getByText("原来的第二段回复", {
         exact: true,
       });
+      expect(
+        await mobile.evaluate(
+          () =>
+            matchMedia("(min-width: 721px) and (any-pointer: coarse)").matches,
+        ),
+      ).toBe(true);
+      await expect(mobileActions).toHaveCSS("opacity", "1");
+      await expect(
+        mobile.locator(".call-chain-player").last().getByRole("button", {
+          name: "玩家消息操作",
+          exact: true,
+        }),
+      ).toHaveCSS("opacity", "1");
+      await mobile.setViewportSize({ width: 390, height: 450 });
       await mobileActions.scrollIntoViewIfNeeded();
       const mobileBefore = await mobileProse.boundingBox();
       await mobileActions.tap();
