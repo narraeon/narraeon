@@ -32,9 +32,8 @@ Present:
   - { $ref: character.fogbell-investigator }
   - { $ref: character.fogbell-colin }
   - { $ref: character.fogbell-mae }
-Awaiting a response:
-  Speaker: { $ref: character.fogbell-colin }
-  Words: Just a signature to start. Heading straight to the inn, or is there something you’d like to ask first?
+Pending decision:
+  Choice: How will the investigator respond to Colin’s request to sign the register? Will they settle in at the inn or stay on the jetty to ask questions?
   Scene: Colin holds out the damp landing register and dip pen; a few steps away, Mae holds a soup pail after quietly mentioning the three bell tolls and green light from the night before the investigator landed.
 `,
   },
@@ -151,7 +150,7 @@ Use: Rest to recover Vigor and relieve Stress, trade rumors with Mae, review not
 Visible leads: The taproom noticeboard posts this month's tide table, a steamer notice, and the ten-year-old relief list from the Seagull wreck.
 Public schedule:
   Day count: The investigator's landing is Day 1.
-  Lowest tide: The Day 5 spring ebb is the lowest tide of the season and exposes the stone causeway to Wreck Reef. It is the only chance during the closure to explore the reef bed on foot.
+  Lowest tide: The Day 5 spring ebb is the lowest tide of the season and exposes the stone causeway to Wreck Reef from roughly midafternoon to early evening. It is the only chance during the closure to explore the reef bed on foot.
   Supply steamer: The next supply steamer arrives at Day 8 dawn, after seven nights of closure.
 `,
   },
@@ -230,7 +229,7 @@ Submerged wreck and cavity: At spring ebb, the Seagull's split hold reveals doub
   title: Investigation board
   summary: Records only observations, testimony, and faction stances the player has actually established.
   aliases: []
-Confirmed clues:
+Gathered leads:
   Missing keeper: Keeper Bram vanished three days before the investigator landed, leaving an unsigned supply handover slip.
   Calm-night toll and green light: At the landing, Mae quietly reported that the fogbell tolled three times in dead calm on the night before the investigator landed while a green light shone in the lighthouse.
 Open questions:
@@ -299,7 +298,7 @@ Run this as a seven-day coastal tabletop sandbox with a grounded gothic atmosphe
 
 - Narrate routine conversation and obvious observations without rolling. Call for a d100 check only when there is genuine risk, time pressure, or opposition (forcing a lock, sneaking into the tower, pressing a guarded witness, rowing through floes, reading faint carbon impressions, or steadying nerves against infrasonic resonance), referencing @protagonist's Skills and stating the target clearly.
 - Always fail forward: a failed roll should never dead-end the mystery; instead spend extra time, inflict Vigor or Stress loss, alert Colin's watchers, or force an alternate route to the clue.
-- Update @protagonist when Vigor, Stress, or Gear changes. For physical challenges, use the investigator's Athletics skill and set the difficulty from the circumstances. Track the current time at background / Time in @current-situation, update its body when the location changes, and keep its title stable. Record only verified player discoveries in @investigation-board and date clues relative to fixed events such as the landing.
+- Update @protagonist when Vigor, Stress, or Gear changes. For physical challenges, use the investigator's Athletics skill and set the difficulty from the circumstances. Track the current time at background / Time in @current-situation, update its body when the location changes, and keep its title stable. Record leads the player has gathered in @investigation-board and distinguish direct observations, attributed testimony, and verified findings. Date clues relative to fixed events such as the landing.
 
 ## On-Demand Reading & Seven-Day Cadence
 
@@ -341,9 +340,9 @@ Run this as a seven-day coastal tabletop sandbox with a grounded gothic atmosphe
           items: [
             {
               id: "confirmed-clues",
-              label: "Confirmed clues",
+              label: "Gathered leads",
               document: "investigation-board",
-              locator: ["Confirmed clues"],
+              locator: ["Gathered leads"],
             },
             {
               id: "open-mysteries",
