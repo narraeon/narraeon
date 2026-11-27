@@ -331,6 +331,10 @@ const playableStories = [
         "Em proposes a pattern of her own, then asks who would be free to release the tether.",
       context: [
         "Open channel:",
+        "where to start counting the approach lights",
+        "Live station observations:",
+        "The two sides have yet to exchange a fresh lamp signal.",
+        "have the character explain in everyday words",
         "A crew member stays at the ship controls",
         "about six hours of elapsed time",
         "wants a chance to cross-check a local reading in return",
@@ -342,6 +346,10 @@ const playableStories = [
       reply: "埃姆提了一个闪灯顺序，又问双方谁能解开系缆。",
       context: [
         "通话中:",
+        "想知道引导灯从哪头开始数",
+        "站方即时观测:",
+        "双方尚未交换临时灯号。",
+        "让提出的人先用日常话说清楚",
         "共同的脱离信号",
         "航路中断后过了约六小时",
         "想换取一项能自己核对的站方读数",
@@ -553,6 +561,17 @@ for (const locale of appLocales) {
         if (story.id === "missing-reel") {
           expect(dispatched).toContain("@service-corridor");
           expect(dispatched).toContain("@reading-room");
+        }
+        if (story.id === "lost-signal") {
+          const requestForBerth = t(
+            "如果你们有不接数据线的泊位，能给我们一个吗？",
+            "If you have a berth without a live data link, may we ask for it?",
+          );
+          expect(opening).toContain(requestForBerth);
+          expect(dispatched.split(requestForBerth)).toHaveLength(2);
+          expect(dispatched).not.toContain(
+            t("目前站方事实:", "On the relay now:"),
+          );
         }
 
         await page
