@@ -9313,7 +9313,7 @@ dialog.world-dialog-scrim::backdrop {
   overflow-wrap: anywhere;
 }
 
-.model-call.is-interrupted > header small,
+.model-call[data-status="interrupted"] > header small,
 .model-call-details
   :is(.technical-details, .setting-exchange-tool).is-error
   > summary,
