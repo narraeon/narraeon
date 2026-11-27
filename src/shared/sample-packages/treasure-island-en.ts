@@ -220,7 +220,7 @@ Crew stances:
   summary: Actual crew loyalties aboard the Hispaniola and the pirates’ standing plan.
   aliases: []
 Facts:
-  Numbers: Out of twenty-six aboard, nineteen—led by Silver and Hands—are old Flint pirates; only Smollett, Livesey, Trelawney, the player, and three honest hands remain loyal.
+  Numbers: Out of twenty-six aboard, nineteen—led by Silver and Hands—are old Flint pirates; six are known to remain loyal to the employers (Smollett, Livesey, Trelawney, and three honest hands), while the player’s allegiance is left open to play.
   Plan: Silver wants to wait until the treasure is safely loaded before striking on the return voyage, though hotheads like Hands itch to mutiny sooner.
 `,
   },
