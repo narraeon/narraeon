@@ -70,19 +70,18 @@ for (const locale of appLocales) {
       ).toHaveValue("@current-situation");
 
       const source = editor.getByLabel(
-        chinese
-          ? "直接编辑 control/frame.yaml"
-          : "Edit control/frame.yaml directly",
+        chinese ? "编辑 control/frame.yaml" : "Edit control/frame.yaml",
       );
+      const sourceToggle = editor.getByRole("button", {
+        name: chinese ? "源码" : "Source",
+        exact: true,
+      });
+      const formToggle = editor.getByRole("button", {
+        name: chinese ? "表单" : "Form",
+        exact: true,
+      });
       await expect(source).toBeHidden();
-      await editor
-        .getByText(
-          chinese ? "源码视图（frame.yaml）" : "Source view (frame.yaml)",
-          {
-            exact: true,
-          },
-        )
-        .click();
+      await sourceToggle.click();
       await expect(source).toBeVisible();
       await expect(source).toHaveValue(/format: narraeon\.world-frame\/v1/u);
 
@@ -91,11 +90,11 @@ for (const locale of appLocales) {
         "# Author header\nformat: narraeon.world-frame/v1 # Format note",
       );
       await source.fill(formatted);
-      const sourceToggle = editor.getByText(
-        chinese ? "源码视图（frame.yaml）" : "Source view (frame.yaml)",
-        { exact: true },
-      );
-      await sourceToggle.click();
+      await formToggle.click();
+      const showSize = (name: string) =>
+        editor.getByText(name, { exact: true }).first().click();
+      const noSize = chinese ? "设置建议体积" : "Set advisory size";
+      await showSize(noSize);
       const sizeLabel = chinese
         ? "建议体积（UTF-8 字节，可留空）"
         : "Advisory size (UTF-8 bytes, optional)";
@@ -121,7 +120,10 @@ for (const locale of appLocales) {
       await expect(
         editor.getByRole("spinbutton", { name: sizeLabel }),
       ).toHaveCount(0);
+      await expect(formToggle).toBeDisabled();
       await source.fill(formatted);
+      await formToggle.click();
+      await showSize(noSize);
       await expect(
         editor.getByRole("spinbutton", { name: sizeLabel }).first(),
       ).toBeVisible();
@@ -154,6 +156,9 @@ for (const locale of appLocales) {
         "打开 control/frame.yaml",
         "Open control/frame.yaml",
       ).click();
+      await showSize(
+        chinese ? "建议体积 · 1,234 字节" : "Advisory size · 1,234 bytes",
+      );
       await expect(
         editor.getByRole("spinbutton", { name: sizeLabel }).first(),
       ).toHaveValue("1234");

@@ -33,20 +33,13 @@ export async function openFrameSource(
 ): Promise<Locator> {
   const english = locale === "en";
   await selectControlFile(dialog, "control/frame.yaml", locale);
-  const source = dialog.getByRole("textbox", {
-    name: english
-      ? "Edit control/frame.yaml directly"
-      : "直接编辑 control/frame.yaml",
-    exact: true,
+  const frame = dialog.getByRole("region", {
+    name: english ? "World prompt frame" : "世界提示框架",
   });
+  const source = rawControlFile(frame, "control/frame.yaml", locale);
   if (!(await source.isVisible())) {
-    await dialog
-      .getByText(
-        english ? "Source view (frame.yaml)" : "源码视图（frame.yaml）",
-        {
-          exact: true,
-        },
-      )
+    await frame
+      .getByRole("button", { name: english ? "Source" : "源码", exact: true })
       .click();
   }
   await expect(source).toBeVisible();

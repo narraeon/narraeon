@@ -102,6 +102,28 @@
   background: var(--surface-selected);
 }
 
+.fileName {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.fileName strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileName strong + code,
+.editorPath {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.editorPath {
+  overflow-wrap: anywhere;
+}
+
 :where(.workspace) :global(.content-file-list) code {
   overflow: hidden;
   text-overflow: ellipsis;

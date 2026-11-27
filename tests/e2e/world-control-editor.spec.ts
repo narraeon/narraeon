@@ -335,6 +335,20 @@ for (const locale of appLocales) {
       await expect(enabledDelete).toHaveCount(0);
       await selectControlFile(dialog, removedPath, locale);
       await enabledDelete.click();
+      const removeDialog = page.getByRole("dialog", {
+        name: t(
+          `从当前草稿删除 ${removedPath}？`,
+          `Delete ${removedPath} from the current draft?`,
+        ),
+      });
+      await expect(removeDialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(enabledDelete).toBeFocused();
+      await expect(
+        controlPicker.locator(`option[value="${removedPath}"]`),
+      ).toHaveCount(1);
+      await enabledDelete.click();
+      await button(removeDialog, "删除文件", "Delete file").click();
       await expect(
         controlPicker.locator(`option[value="${removedPath}"]`),
       ).toHaveCount(0);

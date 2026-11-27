@@ -8,7 +8,6 @@
 
 .toolbar,
 .viewPicker,
-.switcher,
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -28,7 +27,6 @@
   margin: 0;
 }
 
-.switcher button[aria-pressed="true"],
 .viewPicker button[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);

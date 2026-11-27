@@ -150,15 +150,10 @@ for (const locale of appLocales) {
       );
     const frameSource = (form: Locator) =>
       form.getByRole("textbox", {
-        name: t(
-          "直接编辑 control/frame.yaml",
-          "Edit control/frame.yaml directly",
-        ),
+        name: t("编辑 control/frame.yaml", "Edit control/frame.yaml"),
       });
     const sourceToggle = (form: Locator) =>
-      form.getByText(t("源码视图（frame.yaml）", "Source view (frame.yaml)"), {
-        exact: true,
-      });
+      form.getByRole("button", { name: t("源码", "Source"), exact: true });
     const expectInsideViewport = async (picker: Locator) => {
       await expect
         .poll(async () => {

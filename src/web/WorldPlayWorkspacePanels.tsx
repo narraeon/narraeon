@@ -21,7 +21,11 @@ import type {
   V1PlayContextReadingView,
 } from "../protocol/v1.ts";
 import { useAndroidBack } from "./androidBridge.ts";
-import { worldDocumentPresentation } from "./worldDocumentPresentation.ts";
+import { StoryMarkdown } from "./StoryMarkdown.tsx";
+import {
+  readWorldDocumentBody,
+  worldDocumentPresentation,
+} from "./worldDocumentPresentation.ts";
 import { uiText } from "./i18n.ts";
 
 export function WorldDocumentRail({
@@ -54,7 +58,7 @@ export function WorldDocumentRail({
         ? documents
         : documents.filter((document) => {
             const metadata = worldDocumentPresentation(document);
-            return `${metadata.title}\n${metadata.summary}\n${metadata.ref}\n${document.path}`
+            return `${metadata.title}\n${metadata.summary ?? ""}\n${metadata.ref === null ? "" : `@${metadata.ref}`}\n${document.path}`
               .toLocaleLowerCase("zh-CN")
               .includes(normalizedQuery);
           }),
@@ -149,24 +153,90 @@ export function WorldDocumentRail({
           {uiText("当前世界没有状态文档。")}
         </p>
       ) : (
-        <article className="world-document-card">
-          <header>
-            <div>
-              <strong>{worldDocumentPresentation(selected).title}</strong>
-              <small>{worldDocumentPresentation(selected).summary}</small>
-            </div>
-            <button
-              type="button"
-              disabled={revisionDisabled}
-              onClick={() => onRevise(selected.path)}
-            >
-              {uiText("修订")}
-            </button>
-          </header>
-          <pre>{selected.contents}</pre>
-        </article>
+        <WorldDocumentCard
+          key={selected.path}
+          file={selected}
+          onRevise={onRevise}
+          revisionDisabled={revisionDisabled}
+        />
       )}
     </div>
+  );
+}
+
+function WorldDocumentCard({
+  file,
+  onRevise,
+  revisionDisabled,
+}: {
+  file: ContentTreeFile;
+  onRevise: (path: string) => void;
+  revisionDisabled: boolean;
+}): React.JSX.Element {
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const reading = useMemo(() => readWorldDocumentBody(file), [file]);
+  const { identity } = reading;
+  return (
+    <article className="world-document-card">
+      <header>
+        <div className="world-document-details">
+          <details>
+            <summary>{uiText("文档身份")}</summary>
+            <dl>
+              <dt>{uiText("文件路径")}</dt>
+              <dd>
+                <code>{file.path}</code>
+              </dd>
+              {identity !== undefined && (
+                <>
+                  <dt>{uiText("公开短引用")}</dt>
+                  <dd>
+                    <code>@{identity.shortRef}</code>
+                  </dd>
+                  <dt>{uiText("文档 ID")}</dt>
+                  <dd>
+                    <code>{identity.documentId}</code>
+                  </dd>
+                  <dt>{uiText("文档摘要")}</dt>
+                  <dd>{identity.summary}</dd>
+                  {identity.aliases.length > 0 && (
+                    <>
+                      <dt>{uiText("文档别名")}</dt>
+                      <dd>{identity.aliases.join(" · ")}</dd>
+                    </>
+                  )}
+                </>
+              )}
+            </dl>
+          </details>
+          {reading.kind !== "source" && (
+            <details
+              onToggle={(event) => setSourceOpen(event.currentTarget.open)}
+            >
+              <summary>{uiText("原始源码")}</summary>
+              {sourceOpen && <pre>{file.contents}</pre>}
+            </details>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={revisionDisabled}
+          onClick={() => onRevise(file.path)}
+        >
+          {uiText("修订")}
+        </button>
+      </header>
+      {reading.kind === "markdown" ? (
+        <StoryMarkdown
+          className="world-document-markdown"
+          text={reading.text}
+        />
+      ) : reading.kind === "yaml" && reading.text === "" ? (
+        <p className="world-document-empty">{uiText("正文为空。")}</p>
+      ) : (
+        <pre>{reading.text}</pre>
+      )}
+    </article>
   );
 }
 
@@ -795,8 +865,9 @@ function documentEvidence(
               : uiText("列在下次发送的预览材料中"),
         tone: direct.complete ? "good" : "warning",
       };
-    const catalog = coverage?.find(({ catalogEntries }) =>
-      catalogEntries?.includes(metadata.ref),
+    const catalog = coverage?.find(
+      ({ catalogEntries }) =>
+        metadata.ref !== null && catalogEntries?.includes(metadata.ref),
     );
     if (catalog !== undefined)
       return {

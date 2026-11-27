@@ -88,6 +88,10 @@ describe("内容包手动编辑界面", () => {
       screen.getByLabelText("编辑 world/characters/alex.yaml"),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "删除文件" }));
+    const deletion = screen.getByRole("dialog", {
+      name: "从当前草稿删除 world/characters/alex.yaml？",
+    });
+    fireEvent.click(within(deletion).getByRole("button", { name: "删除文件" }));
     expect(
       screen.queryByRole("button", {
         name: "打开 world/characters/alex.yaml",

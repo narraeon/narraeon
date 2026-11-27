@@ -163,30 +163,43 @@ export function ContentTreeEditor({
         <PackageFollowupsEditor files={files} onChange={onFilesChange} />
       </div>
 
+      <div className="content-save-boundary">
+        <strong role="status">
+          {dirty
+            ? uiText("草稿尚未保存")
+            : mode === "world-revision"
+              ? uiText(revisionLocked ? "修订工作树已保存" : "世界当前文件")
+              : uiText("当前树已保存")}
+        </strong>
+        <ContentFileDraftActions
+          mode={mode}
+          disabled={!dirty || saving}
+          onSave={onSave}
+          onReset={onReset}
+        />
+        {conflict && onLoadLatest !== undefined && (
+          <div className="content-save-conflict" role="alert">
+            <p>{uiText("内容包已被其他操作修改，草稿已保留，尚未保存。")}</p>
+            <button type="button" disabled={saving} onClick={onLoadLatest}>
+              {uiText("加载最新版本")}
+            </button>
+          </div>
+        )}
+      </div>
+
       <DocumentWorkbench
         {...(revisionBase === undefined ? {} : { revisionBase })}
         fileView={fileView}
-        workspace={
-          mode === "world-revision"
-            ? {
-                kind: "world-revision",
-                files,
-                dirty,
-                locked: revisionLocked,
-                pending: false,
-                issues,
-                onFilesChange,
-                onSave,
-              }
-            : {
-                kind: "content-package",
-                files,
-                dirty,
-                issues,
-                onFilesChange,
-                onSave,
-              }
-        }
+        workspace={{
+          kind: mode,
+          locked: revisionLocked,
+          files,
+          dirty,
+          saving,
+          issues,
+          onFilesChange,
+          onSave,
+        }}
       />
 
       {issues.length > 0 && (
@@ -213,42 +226,6 @@ export function ContentTreeEditor({
       )}
 
       <footer className="content-tree-actions">
-        {conflict && onLoadLatest !== undefined && (
-          <div className="content-save-conflict" role="alert">
-            <p>{uiText("内容包已被其他操作修改，草稿已保留，尚未保存。")}</p>
-            <button type="button" disabled={saving} onClick={onLoadLatest}>
-              {uiText("加载最新版本")}
-            </button>
-          </div>
-        )}
-        <div className="content-save-boundary">
-          <div>
-            <strong>
-              {dirty
-                ? uiText("草稿尚未保存")
-                : mode === "world-revision"
-                  ? uiText(revisionLocked ? "修订工作树已保存" : "世界当前文件")
-                  : uiText("当前树已保存")}
-            </strong>
-            <span>
-              {mode === "world-revision"
-                ? revisionLocked
-                  ? uiText(
-                      "保存只更新锁定工作树并留下可回滚记录，不会提交世界。",
-                    )
-                  : uiText("首次编辑会锁定世界并创建修订工作树。")
-                : uiText(
-                    "保存会把整棵草稿作为一个候选原子替换，不会逐文件提交。",
-                  )}
-            </span>
-          </div>
-          <ContentFileDraftActions
-            mode={mode}
-            disabled={!dirty || saving}
-            onSave={onSave}
-            onReset={onReset}
-          />
-        </div>
         {mode === "content-package" ? (
           <details className="content-package-actions">
             <summary>{uiText("内容包操作")}</summary>

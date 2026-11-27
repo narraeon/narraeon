@@ -1,8 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { gameplayPath } from "../protocol/gameplay.ts";
 import type { ContentTreeFile } from "../protocol/v1.ts";
 import { validRelativePath } from "../shared/world-documents/WorldDocumentSource.ts";
+import {
+  ConfirmationDialog,
+  type ConfirmationRequest,
+} from "./ConfirmationDialog.tsx";
+import { FileEditorMode, FileSourceEditor } from "./FileSourceEditor.tsx";
 import { PlayerViewEditor } from "./PlayerViewEditor.tsx";
 import { WorldFrameEditor } from "./WorldFrameEditor.tsx";
 import { uiText } from "./i18n.ts";
@@ -29,6 +34,11 @@ export function WorldControlFilesEditor({
 }): React.JSX.Element {
   const [selectedPath, setSelectedPath] = useState("");
   const [newPath, setNewPath] = useState("");
+  const [deletion, setDeletion] = useState<ConfirmationRequest<string> | null>(
+    null,
+  );
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
+  const filePicker = useRef<HTMLSelectElement>(null);
   const orderedFiles = useMemo(
     () => [...files].sort((left, right) => left.path.localeCompare(right.path)),
     [files],
@@ -78,10 +88,14 @@ export function WorldControlFilesEditor({
     setNewPath("");
   }
 
-  function removeSelected(): void {
-    if (selected === undefined || editingDisabled || gameplay || binary) return;
+  function removeFile(target: string): void {
+    if (editingDisabled || path !== target || gameplay || binary) return;
     onChange(files.filter((file) => file !== selected));
     setSelectedPath("");
+  }
+
+  function previewIfDirty(): void {
+    if (dirty && !editingDisabled) onPreview();
   }
 
   return (
@@ -89,6 +103,7 @@ export function WorldControlFilesEditor({
       <label className="world-control-file-picker">
         {uiText("选择控制文件")}
         <select
+          ref={filePicker}
           value={path}
           disabled={orderedFiles.length === 0}
           onChange={(event) =>
@@ -130,10 +145,19 @@ export function WorldControlFilesEditor({
         <>
           {!gameplay && !binary && (
             <button
+              key={path}
               type="button"
               className="danger-button world-control-remove"
               disabled={editingDisabled}
-              onClick={removeSelected}
+              onClick={(event) =>
+                setDeletion({
+                  action: path,
+                  message: uiText("从当前草稿删除 {path}？", { path }),
+                  confirmLabel: uiText("删除文件"),
+                  opener: event.currentTarget,
+                  fallback: filePicker.current,
+                })
+              }
             >
               {uiText("删除文件")}
             </button>
@@ -162,7 +186,7 @@ export function WorldControlFilesEditor({
                   layout="world_revision"
                   dirty={dirty}
                   onChange={replaceSelected}
-                  onSave={onPreview}
+                  onSave={previewIfDirty}
                 />
               ) : formInputs !== undefined && path === playerViewControlPath ? (
                 <PlayerViewEditor
@@ -171,36 +195,48 @@ export function WorldControlFilesEditor({
                   files={formInputs}
                   layout="world_revision"
                   onChange={replaceSelected}
-                  onSave={onPreview}
+                  onSave={previewIfDirty}
                 />
               ) : (
-                <label className="content-source-editor">
-                  <span>{uiText("文件内容")}</span>
-                  <textarea
-                    key={path}
-                    rows={gameplay ? 5 : 14}
-                    spellCheck={false}
-                    readOnly={gameplay}
-                    aria-label={uiText("编辑 {path}", { path })}
-                    value={selected.contents}
-                    onChange={(event) =>
-                      replaceSelected(event.currentTarget.value)
+                <div
+                  className="world-control-raw-file"
+                  onKeyDown={(event) => {
+                    if (
+                      (event.ctrlKey || event.metaKey) &&
+                      event.key.toLowerCase() === "s"
+                    ) {
+                      event.preventDefault();
+                      previewIfDirty();
                     }
-                    onKeyDown={(event) => {
-                      if (
-                        (event.ctrlKey || event.metaKey) &&
-                        event.key.toLowerCase() === "s"
-                      ) {
-                        event.preventDefault();
-                        if (dirty) onPreview();
-                      }
-                    }}
+                  }}
+                >
+                  <FileEditorMode
+                    showSource
+                    onSource={() => sourceRef.current?.focus()}
                   />
-                </label>
+                  <FileSourceEditor
+                    key={path}
+                    path={path}
+                    contents={selected.contents}
+                    rows={gameplay ? 5 : 14}
+                    sourceRef={sourceRef}
+                    readOnly={gameplay}
+                    onChange={replaceSelected}
+                  />
+                </div>
               )}
             </fieldset>
           )}
         </>
+      )}
+      {deletion !== null && (
+        <ConfirmationDialog
+          request={deletion}
+          onDecision={(confirmed) => {
+            setDeletion(null);
+            if (confirmed) removeFile(deletion.action);
+          }}
+        />
       )}
     </div>
   );

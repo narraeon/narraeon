@@ -67,7 +67,7 @@ test("a long file list leaves the selected document available in both authoring 
       await expect(files.nth(22)).toBeAttached();
       const title = preview.locator("article header code");
       for (const file of [files.nth(1), files.last(), files.nth(1)]) {
-        const path = await file.innerText();
+        const path = await file.locator("code").innerText();
         await file.click();
         await expect(file).toHaveAttribute("aria-pressed", "true");
         await expect(title).toHaveText(path);
@@ -191,14 +191,27 @@ for (const locale of appLocales) {
           name: t("选择编辑文件", "Choose a file to edit"),
         });
         await expect(picker).toHaveValue(path);
-        await expect(picker.locator("option")).toHaveText(previewOrder);
+        const pickerPaths = () =>
+          picker
+            .locator("option")
+            .evaluateAll((options) =>
+              options.map((option) => (option as HTMLOptionElement).value),
+            );
+        await expect.poll(pickerPaths).toEqual(previewOrder);
+        await expect(picker.locator("option:checked")).toHaveText(
+          `${name} · ${path}`,
+        );
         const otherRef = t("shen-he", "nora");
         const otherPath = `${revision ? "state" : "world"}/characters/${otherRef}.yaml`;
         await search.fill(`@${otherRef}`);
         await expect(picker).toHaveValue(path);
-        await expect(picker.locator("option")).toHaveText(
-          previewOrder.filter((entry) => entry === path || entry === otherPath),
-        );
+        await expect
+          .poll(pickerPaths)
+          .toEqual(
+            previewOrder.filter(
+              (entry) => entry === path || entry === otherPath,
+            ),
+          );
         await picker.selectOption(otherPath);
         await previewTab.click();
         await expect(
