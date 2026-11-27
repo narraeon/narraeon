@@ -44,7 +44,7 @@ import {
 } from "./playPresetEditorLabels.ts";
 import type { OrderedPlayPrompt } from "../shared/ordered-play-prompts.ts";
 import { saveFile, useAndroidBack } from "./androidBridge.ts";
-import { getWebLocale, uiText } from "./i18n.ts";
+import { uiText } from "./i18n.ts";
 import {
   useCallback,
   useEffect,
@@ -304,6 +304,7 @@ function preferredPresetFilePath(files: Record<string, string>): string {
 // Android Back close them.
 const openPresetMenus =
   ".play-preset-operations[open], .play-preset-library > details[open]";
+const presetResourcePath = /^(assets|scripts|renderers|regex)\//u;
 
 export function PlayPresetScreen({
   client,
@@ -342,6 +343,8 @@ export function PlayPresetScreen({
   const libraryMenu = useRef<HTMLDetailsElement>(null);
   const screenRef = useRef<HTMLElement>(null);
   const focusAppliedStatus = useRef(false);
+  const fileWorkspaceTitle = useRef<HTMLHeadingElement>(null);
+  const focusFileWorkspace = useRef(false);
   useAndroidBack(true, () => {
     const menus =
       screenRef.current?.querySelectorAll<HTMLDetailsElement>(
@@ -456,6 +459,19 @@ export function PlayPresetScreen({
         : undefined,
     [draft?.files, draft?.structure],
   );
+  const retainedFilePaths = Object.keys(draft?.files ?? {}).filter(
+    (path) => !structuralPaths.has(path) && !resourceUsage?.get(path)?.declared,
+  );
+  const selectedFilePath =
+    draft === null || Object.hasOwn(draft.files, filePath)
+      ? filePath
+      : preferredPresetFilePath(draft.files);
+  const selectedIsRetainedResource =
+    retainedFilePaths.includes(selectedFilePath) &&
+    presetResourcePath.test(selectedFilePath);
+  const canDeleteSelectedResource =
+    draft?.structure !== undefined &&
+    (resourceUsage?.get(selectedFilePath)?.sources.length ?? 0) === 0;
   const rawStructuralDirty =
     draft !== null &&
     savedEditable !== null &&
@@ -471,21 +487,35 @@ export function PlayPresetScreen({
     ({ id }) => id === library.currentPresetId,
   );
   const selectedIsCurrent = draft?.id === library.currentPresetId;
+  const canSave =
+    !pending &&
+    !structuralConflict &&
+    (dirty || draft?.structure?.migrationNotice !== undefined);
+  const canApply =
+    !pending &&
+    !dirty &&
+    draft?.enabled !== false &&
+    draft?.validation.status === "valid" &&
+    (!selectedIsCurrent || saved?.draft !== undefined);
   const showQuietStatus =
     selectedIsCurrent &&
     !dirty &&
     saved?.draft === undefined &&
     draft?.validation.status === "valid" &&
     draft.structure?.migrationNotice === undefined;
-  const nextSend = !selectedIsCurrent
-    ? uiText("应用为当前编排方案后，下一次正常发送才会使用它。")
-    : saved?.draft === undefined
-      ? uiText("下一次正常发送将使用此编排方案的已应用修订。")
-      : saved.draft.validation.status === "valid"
-        ? uiText(
-            "下一次正常发送仍使用已应用的修订。请应用已保存的草稿以使其生效。",
-          )
-        : uiText("下一次正常发送仍使用已应用的修订。请修复草稿后再应用。");
+  const nextSend = dirty
+    ? uiText("保存会更新草稿。应用后，修改在下一次正常发送时生效。")
+    : draft?.enabled === false
+      ? uiText("请在编排方案操作中启用此方案，再应用。")
+      : !selectedIsCurrent
+        ? uiText("应用为当前编排方案后，下一次正常发送才会使用它。")
+        : saved?.draft === undefined
+          ? uiText("下一次正常发送将使用此编排方案的已应用修订。")
+          : saved.draft.validation.status === "valid"
+            ? uiText(
+                "下一次正常发送仍使用已应用的修订。请应用已保存的草稿以使其生效。",
+              )
+            : uiText("下一次正常发送仍使用已应用的修订。请修复草稿后再应用。");
   const applyRead = useRef<
     ((next: PlayPresetScreenLibrary) => void) | undefined
   >(undefined);
@@ -514,6 +544,13 @@ export function PlayPresetScreen({
   useLayoutEffect(() => {
     onNavigationProtectionChange({ dirty, busy: dirty && pending });
   }, [dirty, pending, onNavigationProtectionChange]);
+
+  useLayoutEffect(() => {
+    if (workspaceView === "files" && focusFileWorkspace.current) {
+      focusFileWorkspace.current = false;
+      fileWorkspaceTitle.current?.focus();
+    }
+  }, [workspaceView, aiPane]);
 
   useLayoutEffect(
     () => () => onNavigationProtectionChange(idleWorkspaceNavigation),
@@ -701,9 +738,15 @@ export function PlayPresetScreen({
     setFeedback({ kind: "status", text: uiText("已撤销当前未保存修改。") });
   }
 
-  function updateFile(contents: string): void {
-    if (draft === null || filePath === "") return;
-    updateFileAtPath(filePath, contents);
+  function openFileWorkspace(path?: string): void {
+    if (path !== undefined) setFilePath(path);
+    setAiPane("editor");
+    setWorkspaceView("files");
+    if (workspaceView === "files" && aiPane === "editor") {
+      fileWorkspaceTitle.current?.focus();
+    } else {
+      focusFileWorkspace.current = true;
+    }
   }
 
   function updateFileAtPath(path: string, contents: string): void {
@@ -1231,62 +1274,26 @@ export function PlayPresetScreen({
                         "导入的 JavaScript 默认停用；启用表示你信任这些本地文件，而不是获得安全沙箱保证。",
                       )}
                     </p>
-                    <details>
-                      <summary>{uiText("保留的资源")}</summary>
-                      <p>
-                        {uiText(
-                          "未绑定资源仍随编排方案保存；可在模板编辑器重新引用。",
-                        )}
-                      </p>
-                      {Object.keys(draft.files)
-                        .filter(
-                          (path) =>
-                            !structuralPaths.has(path) &&
-                            !resourceUsage?.get(path)?.declared,
-                        )
-                        .map((path) => (
-                          <details key={path}>
-                            <summary>
-                              {/^(assets|scripts|renderers|regex)\//u.test(path)
-                                ? resourceTitle(path)
-                                : (describePresetFile(
-                                    path,
-                                    draft.files[path] ?? "",
-                                  ).title ?? path.split("/").at(-1))}
-                            </summary>
-                            {/^(assets|scripts|renderers|regex)\//u.test(
-                              path,
-                            ) && (
-                              <button
-                                type="button"
-                                disabled={
-                                  !draft.structure ||
-                                  resourceUsage?.get(path)?.declared === true ||
-                                  (resourceUsage?.get(path)?.sources.length ??
-                                    0) > 0
-                                }
-                                onClick={() =>
-                                  updateResources({
-                                    type: "delete-resource",
-                                    path,
-                                  })
-                                }
-                              >
-                                {getWebLocale() === "zh-CN"
-                                  ? "删除未引用资源"
-                                  : "Delete unused resource"}
-                              </button>
-                            )}
-                            <textarea
-                              aria-label={path.split("/").at(-1)}
-                              value={draft.files[path]}
-                              onChange={(event) =>
-                                updateFileAtPath(path, event.target.value)
-                              }
-                            />
-                          </details>
-                        ))}
-                    </details>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        const menu = event.currentTarget.closest("details");
+                        if (menu) menu.open = false;
+                        openFileWorkspace(
+                          retainedFilePaths.includes(filePath)
+                            ? filePath
+                            : (retainedFilePaths.find((path) =>
+                                presetResourcePath.test(path),
+                              ) ?? retainedFilePaths[0]),
+                        );
+                      }}
+                    >
+                      {uiText(
+                        retainedFilePaths.length > 0
+                          ? "保留的资源"
+                          : "高级文件",
+                      )}
+                    </button>
                   </div>
                 </details>
               </>
@@ -1303,18 +1310,21 @@ export function PlayPresetScreen({
               aria-label={uiText("编排方案编辑器")}
             >
               <header className="play-preset-editor-header">
-                <h3>{draft.name}</h3>
                 <div className="play-preset-editor-badges">
                   <span
                     className={`play-preset-draft-state${dirty ? " dirty" : ""}`}
                   >
-                    {dirty ? uiText("未保存修改") : uiText("已保存")}
+                    {dirty
+                      ? uiText("未保存修改")
+                      : saved?.draft !== undefined
+                        ? uiText("已保存草稿")
+                        : uiText("已保存")}
                   </span>
-                  {selectedIsCurrent ? (
-                    <span className="play-preset-badge current">
-                      {uiText("当前编排方案")}
-                    </span>
-                  ) : null}
+                  <span
+                    className={`play-preset-badge${selectedIsCurrent ? " current" : ""}`}
+                  >
+                    {uiText(selectedIsCurrent ? "当前编排方案" : "非当前方案")}
+                  </span>
                   {draft.enabled === false ? (
                     <span className="play-preset-badge disabled">
                       {uiText("已停用")}
@@ -1326,21 +1336,24 @@ export function PlayPresetScreen({
                       : uiText("JavaScript 已停用")}
                   </span>
                 </div>
+                {onAiEditingChange !== undefined && (
+                  <button
+                    type="button"
+                    aria-expanded={aiPanelOpen}
+                    onClick={() => {
+                      if (aiPanelOpen) {
+                        onAiEditingChange(null);
+                      } else {
+                        setAiPane("conversation");
+                        onAiEditingChange({ presetId: draft.id, message: "" });
+                      }
+                    }}
+                  >
+                    {uiText(aiPanelOpen ? "关闭 AI 编辑" : "AI 编辑")}
+                  </button>
+                )}
               </header>
 
-              {!aiPanelOpen && onAiEditingChange !== undefined && (
-                <button
-                  type="button"
-                  className="secondary-button orchestration-ai-launch"
-                  disabled={pending}
-                  onClick={() => {
-                    setAiPane("conversation");
-                    onAiEditingChange({ presetId: draft.id, message: "" });
-                  }}
-                >
-                  {uiText("AI 编辑")}
-                </button>
-              )}
               {aiPanelOpen && (
                 <nav
                   className="orchestration-mobile-views"
@@ -1517,12 +1530,24 @@ export function PlayPresetScreen({
                   {workspaceView === "files" ? (
                     <PresetFileWorkspace
                       files={draft.files}
-                      filePath={filePath}
+                      retainedFilePaths={retainedFilePaths}
+                      filePath={selectedFilePath}
+                      headingRef={fileWorkspaceTitle}
                       newFilePath={newFilePath}
                       pending={pending}
                       onFilePathChange={setFilePath}
                       onNewFilePathChange={setNewFilePath}
-                      onFileChange={updateFile}
+                      onFileChange={updateFileAtPath}
+                      onDeleteResource={
+                        selectedIsRetainedResource
+                          ? () =>
+                              updateResources({
+                                type: "delete-resource",
+                                path: selectedFilePath,
+                              })
+                          : undefined
+                      }
+                      canDeleteResource={canDeleteSelectedResource}
                       onCreateFile={() => {
                         const path = newFilePath.trim();
                         if (draft.files[path] !== undefined) {
@@ -1562,7 +1587,11 @@ export function PlayPresetScreen({
                       <button
                         type="button"
                         className="secondary-button"
-                        onClick={() => setWorkspaceView("files")}
+                        onClick={() =>
+                          openFileWorkspace(
+                            preferredPresetFilePath(draft.files),
+                          )
+                        }
                       >
                         {uiText("修复导入原文")}
                       </button>
@@ -1598,9 +1627,11 @@ export function PlayPresetScreen({
                         <strong>
                           {dirty
                             ? uiText("草稿尚未保存")
-                            : draft.validation.status === "valid"
-                              ? uiText("编排方案检查通过")
-                              : uiText("草稿需要修复")}
+                            : draft.validation.status === "invalid"
+                              ? uiText("草稿需要修复")
+                              : saved?.draft !== undefined
+                                ? uiText("草稿已保存，待应用")
+                                : uiText("编排方案检查通过")}
                         </strong>
                         <p>{nextSend}</p>
                         {draft.validation.status === "invalid" && (
@@ -1644,24 +1675,18 @@ export function PlayPresetScreen({
                         ) : null}
                         <button
                           type="button"
-                          disabled={
-                            pending ||
-                            (!dirty &&
-                              draft.structure?.migrationNotice === undefined) ||
-                            structuralConflict
-                          }
+                          className={canSave ? "primary-button" : undefined}
+                          disabled={!canSave}
                           onClick={() => void saveDraft()}
                         >
                           {uiText("保存修改")}
                         </button>
                         <button
                           type="button"
-                          className="secondary-button"
-                          disabled={
-                            pending ||
-                            dirty ||
-                            draft.validation.status !== "valid"
+                          className={
+                            canApply && !canSave ? "primary-button" : undefined
                           }
+                          disabled={!canApply}
                           onClick={(event) => {
                             const moveFocus = event.detail === 0;
                             void run(async () => {
@@ -1717,7 +1742,6 @@ export function PlayPresetScreen({
                       }
                       modelConfigured={modelConnection !== undefined}
                       configureModel={onConfigureAiModel}
-                      close={() => onAiEditingChange?.(null)}
                       localDirty={dirty}
                       menuBusy={pending}
                       localConflict={savedDraftChanged}
@@ -2113,30 +2137,46 @@ function contentTypeLabel(
 
 function PresetFileWorkspace({
   files,
+  retainedFilePaths,
   filePath,
+  headingRef,
   newFilePath,
   pending,
   onFilePathChange,
   onNewFilePathChange,
   onFileChange,
+  onDeleteResource,
+  canDeleteResource,
   onCreateFile,
 }: {
   files: Record<string, string>;
+  retainedFilePaths: string[];
   filePath: string;
+  headingRef: React.Ref<HTMLHeadingElement>;
   newFilePath: string;
   pending: boolean;
   onFilePathChange: (path: string) => void;
   onNewFilePathChange: (path: string) => void;
-  onFileChange: (contents: string) => void;
+  onFileChange: (path: string, contents: string) => void;
+  onDeleteResource?: (() => void) | undefined;
+  canDeleteResource: boolean;
   onCreateFile: () => void;
 }): React.JSX.Element {
   const paths = Object.keys(files).sort();
-  const selectedPath =
-    files[filePath] === undefined ? (paths[0] ?? "") : filePath;
-  const selectedInfo = describePresetFile(
-    selectedPath,
-    files[selectedPath] ?? "",
-  );
+  const retainedPaths = new Set(retainedFilePaths);
+  const selectedInfo = describePresetFile(filePath, files[filePath] ?? "");
+  function fileTitle(path: string): string {
+    return retainedPaths.has(path) && presetResourcePath.test(path)
+      ? resourceTitle(path)
+      : describePresetFile(path, files[path] ?? "").title;
+  }
+  function option(path: string) {
+    return (
+      <option key={path} value={path}>
+        {fileTitle(path)} · {path}
+      </option>
+    );
+  }
   return (
     <section
       id="play-preset-panel-files"
@@ -2147,47 +2187,24 @@ function PresetFileWorkspace({
       <header className="play-preset-workspace-heading">
         <div>
           <p className="play-preset-section-kicker">ADVANCED FILES</p>
-          <h4 id="play-preset-files-title">{uiText("完整编排方案文件")}</h4>
+          <h4 id="play-preset-files-title" ref={headingRef} tabIndex={-1}>
+            {uiText("完整编排方案文件")}
+          </h4>
         </div>
-        <p>
-          {uiText(
-            "常用设置应在前面的表单完成。这里保留完整 YAML、Markdown、HTML、脚本和样式，并说明每份文件负责什么。",
-          )}
-        </p>
       </header>
-      <div
-        className="play-preset-yaml-guide"
-        aria-label={uiText("三个核心 YAML 文件的用途")}
-      >
-        {[
-          describePresetFile(
-            Object.hasOwn(files, "preset.yaml")
-              ? "preset.yaml"
-              : orchestrationManifest,
-            files[orchestrationManifest] ?? files["preset.yaml"] ?? "",
-          ),
-          describePresetFile("call-chain.yaml", files["call-chain.yaml"] ?? ""),
-          describePresetFile("frame.yaml", files["frame.yaml"] ?? ""),
-        ].map((info) => (
-          <article key={info.path}>
-            <strong>{info.title}</strong>
-            <code>{info.path}</code>
-            <p>{info.description}</p>
-          </article>
-        ))}
-      </div>
       <label className="play-preset-file-jump">
         {uiText("快速跳转文件")}
         <select
           aria-label={uiText("编排方案文件")}
-          value={selectedPath}
+          value={filePath}
           onChange={(event) => onFilePathChange(event.currentTarget.value)}
         >
-          {paths.map((path) => (
-            <option key={path} value={path}>
-              {describePresetFile(path, files[path] ?? "").title} · {path}
-            </option>
-          ))}
+          {retainedPaths.size > 0 && (
+            <optgroup label={uiText("保留的资源")}>
+              {paths.filter((path) => retainedPaths.has(path)).map(option)}
+            </optgroup>
+          )}
+          {paths.filter((path) => !retainedPaths.has(path)).map(option)}
         </select>
       </label>
       <div className="play-preset-file-browser">
@@ -2199,13 +2216,17 @@ function PresetFileWorkspace({
                 <li key={path}>
                   <button
                     type="button"
-                    className={path === selectedPath ? "selected" : ""}
-                    aria-pressed={path === selectedPath}
+                    className={path === filePath ? "selected" : ""}
+                    aria-pressed={path === filePath}
                     aria-label={uiText("打开编排方案文件 {path}", { path })}
                     onClick={() => onFilePathChange(path)}
                   >
-                    <strong>{info.title}</strong>
-                    <span>{info.kind}</span>
+                    <strong>{fileTitle(path)}</strong>
+                    <span>
+                      {retainedPaths.has(path)
+                        ? uiText("保留的资源")
+                        : info.kind}
+                    </span>
                     <code>{path}</code>
                   </button>
                 </li>
@@ -2217,25 +2238,63 @@ function PresetFileWorkspace({
           <header>
             <div>
               <span>{selectedInfo.kind}</span>
-              <h5>{selectedInfo.title}</h5>
-              <code>{selectedPath}</code>
+              <h5>{fileTitle(filePath)}</h5>
+              <code>{filePath}</code>
             </div>
-            <p>{selectedInfo.description}</p>
+            <p>
+              {retainedPaths.has(filePath) && presetResourcePath.test(filePath)
+                ? uiText("未绑定资源仍随编排方案保存；可在模板编辑器重新引用。")
+                : selectedInfo.description}
+            </p>
           </header>
           <label className="play-preset-source-editor">
             <span>{uiText("完整文件内容")}</span>
             <textarea
               aria-label={uiText("编辑编排方案文件 {path}", {
-                path: selectedPath,
+                path: filePath,
               })}
               wrap="soft"
-              value={files[selectedPath] ?? ""}
-              onChange={(event) => onFileChange(event.currentTarget.value)}
+              value={files[filePath] ?? ""}
+              disabled={filePath === ""}
+              onChange={(event) =>
+                onFileChange(filePath, event.currentTarget.value)
+              }
               spellCheck={false}
             />
           </label>
+          {onDeleteResource && (
+            <button
+              type="button"
+              className="danger-button"
+              disabled={!canDeleteResource}
+              onClick={onDeleteResource}
+            >
+              {uiText("删除未引用资源")}
+            </button>
+          )}
         </section>
       </div>
+      <details>
+        <summary>{uiText("三个核心 YAML 文件的用途")}</summary>
+        <div className="play-preset-yaml-guide">
+          {[
+            Object.hasOwn(files, "preset.yaml")
+              ? "preset.yaml"
+              : orchestrationManifest,
+            "call-chain.yaml",
+            "frame.yaml",
+          ].map((path) => {
+            const info = describePresetFile(path, files[path] ?? "");
+            return (
+              <article key={path}>
+                <strong>{info.title}</strong>
+                <code>{path}</code>
+                <p>{info.description}</p>
+              </article>
+            );
+          })}
+        </div>
+      </details>
       <details className="play-preset-file-create">
         <summary>{uiText("新增修复文件")}</summary>
         <div className="play-preset-file-add">

@@ -6,6 +6,219 @@ import { gunzipSync } from "node:zlib";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { FileNativePlayPresetLibrary } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 
+test("orchestration reveals prompt status and highlights the available draft action", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  const { preset } = await runtime<{ preset: { id: string } }>(page, {
+    type: "play.create",
+    name: "状态复核",
+  });
+  await runtime(page, {
+    type: "play.scripts",
+    presetId: preset.id,
+    enabled: false,
+  });
+  await runtime(page, { type: "play.select", presetId: preset.id });
+  await page.goto(`/#/orchestrations/${preset.id}`);
+
+  const editor = page.getByRole("region", { name: "编排方案编辑器" });
+  const prompt = page
+    .locator(".ordered-play-editor li")
+    .filter({
+      hasText: "仅跑团",
+    })
+    .first();
+  const save = page.getByRole("button", { name: "保存修改", exact: true });
+  const apply = page.getByRole("button", { name: "应用为当前编排方案" });
+  const quietFooter = editor.locator("footer.is-quiet");
+  const primaryFill = "rgb(52, 56, 50)";
+  const library = () =>
+    runtime<FileNativePlayPresetLibrary>(page, { type: "play.read" });
+  const revisionBefore = (await library()).presets.find(
+    ({ id }) => id === preset.id,
+  )?.revision;
+
+  await expect(quietFooter).toBeVisible();
+  expect((await quietFooter.boundingBox())!.height).toBeLessThan(40);
+  await expect(editor.getByText("当前编排方案", { exact: true })).toBeVisible();
+  await expect(
+    editor.getByText("JavaScript 已停用", { exact: true }),
+  ).toBeVisible();
+  await expect(prompt.getByText("仅跑团", { exact: true })).toBeVisible();
+  await expect(prompt.locator(".ordered-play-category")).toBeVisible();
+  await prompt.getByRole("checkbox").uncheck();
+  await expect(prompt.getByRole("checkbox")).not.toBeChecked();
+  await expect(prompt.getByText("已停用", { exact: true })).toBeVisible();
+  await expect(editor.getByText("草稿尚未保存", { exact: true })).toBeVisible();
+  await expect(save).toBeEnabled();
+  await expect(save).toHaveCSS("background-color", primaryFill);
+  await expect(apply).toBeDisabled();
+  await save.click();
+  await expect(
+    editor.getByText("草稿已保存，待应用", { exact: true }),
+  ).toBeVisible();
+  await expect(save).toBeDisabled();
+  await expect(save).not.toHaveCSS("background-color", primaryFill);
+  await expect(apply).toBeEnabled();
+  await expect(apply).toHaveCSS("background-color", primaryFill);
+  const saved = (await library()).presets.find(({ id }) => id === preset.id)!;
+  expect(saved.revision).toBe(revisionBefore);
+  expect(saved.draft).toBeDefined();
+  await apply.click();
+  await expect(quietFooter).toBeVisible();
+  expect(
+    (await library()).presets.find(({ id }) => id === preset.id)?.revision,
+  ).toBe(saved.draft?.revision);
+
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await page
+    .locator("summary")
+    .filter({ hasText: /^编排方案操作$/u })
+    .click();
+  await page.getByRole("button", { name: "停用编排方案", exact: true }).click();
+  await expect(
+    editor
+      .locator(".play-preset-editor-badges")
+      .getByText("已停用", { exact: true }),
+  ).toBeVisible();
+  await expect(editor.getByText("非当前方案", { exact: true })).toBeVisible();
+  await expect(apply).toBeDisabled();
+  await expect(apply).not.toHaveCSS("background-color", primaryFill);
+});
+
+test("orchestration AI leaves usable editing width and closes from every view", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  await page.goto("/#/orchestrations");
+
+  const launch = page.getByRole("button", { name: "AI 编辑", exact: true });
+  const close = page.getByRole("button", { name: "关闭 AI 编辑", exact: true });
+  const views = page.getByRole("navigation", { name: "编排编辑视图" });
+  const editor = page.locator(".ordered-play-content");
+  const ai = page.getByRole("region", { name: "编排方案 AI 编辑" });
+  await page.getByRole("button", { name: "新增提示词", exact: true }).click();
+  const body = page.getByRole("textbox", { name: "提示词正文", exact: true });
+  await body.fill("在三个视图间切换后保留这段草稿。");
+  for (const width of [1101, 1100, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const view of ["编排", "对话", "改动"]) {
+      await launch.click();
+      const button = views.getByRole("button", { name: view, exact: true });
+      await button.click();
+      if (view === "编排") {
+        await expect(editor).toBeVisible();
+        expect((await body.boundingBox())!.width).toBeGreaterThanOrEqual(
+          width === 390 ? 320 : 550,
+        );
+      }
+      await expect(close).toBeVisible();
+      await close.press("Enter");
+      await expect(ai).toHaveCount(0);
+      await expect(editor).toBeVisible();
+      await expect(launch).toBeFocused();
+      await expect(body).toHaveValue("在三个视图间切换后保留这段草稿。");
+    }
+  }
+
+  await page.setViewportSize({ width: 1360, height: 844 });
+  await launch.click();
+  await expect(ai).toBeVisible();
+  await expect(views).toBeHidden();
+  expect((await body.boundingBox())!.width).toBeGreaterThanOrEqual(550);
+  const workspace = page.getByRole("region", { name: "编排方案编辑器" });
+  await workspace.evaluate((element) => {
+    element.style.maxWidth = "1000px";
+  });
+  await views.getByRole("button", { name: "编排", exact: true }).click();
+  await expect(ai).toBeHidden();
+  expect((await body.boundingBox())!.width).toBeGreaterThanOrEqual(550);
+});
+
+test("retained resources open in the file editor and keep draft and export semantics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await runtime(page, { type: "preferences.save", locale: "zh-CN" });
+  const library = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  const base = library.presets.find(
+    ({ id }) => id === library.currentPresetId,
+  )!;
+  const path = "assets/unbound.css";
+  const otherPath = "assets/notes.txt";
+  const initial = "body { color: green; }\n";
+  const edited = "body { color: navy; }\n";
+  const { preset } = await runtime<{ preset: { id: string } }>(page, {
+    type: "play.import",
+    name: "未绑定资源复核",
+    files: Object.entries({
+      ...base.files,
+      [path]: initial,
+      [otherPath]: "notes\n",
+    }).map(([path, contents]) => ({ path, contents })),
+  });
+  await page.goto(`/#/orchestrations/${preset.id}`);
+  const actions = page
+    .locator("summary")
+    .filter({ hasText: /^编排方案操作$/u });
+  await actions.press("Enter");
+  await page
+    .getByRole("button", { name: "保留的资源", exact: true })
+    .press("Enter");
+  const files = page.getByRole("tabpanel", { name: "完整编排方案文件" });
+  await expect(page.locator(".play-preset-operations")).toHaveJSProperty(
+    "open",
+    false,
+  );
+  await expect(
+    files.getByRole("heading", { name: "完整编排方案文件" }),
+  ).toBeFocused();
+  const selector = files.getByRole("combobox", { name: "编排方案文件" });
+  await selector.selectOption(path);
+  const source = files.getByRole("textbox", {
+    name: `编辑编排方案文件 ${path}`,
+  });
+  await expect(source).toHaveValue(initial);
+  expect((await source.boundingBox())!.width).toBeGreaterThanOrEqual(340);
+  await source.fill(edited);
+  await selector.selectOption(otherPath);
+  await selector.selectOption(path);
+  await expect(source).toHaveValue(edited);
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await files
+    .getByRole("button", { name: `打开编排方案文件 ${otherPath}` })
+    .click();
+  await files.getByRole("button", { name: `打开编排方案文件 ${path}` }).click();
+  await expect(source).toHaveValue(edited);
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(
+    page.getByText("编排方案已保存。", { exact: true }),
+  ).toBeVisible();
+
+  const saved = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  expect(saved.currentPresetId).toBe(library.currentPresetId);
+  expect(
+    saved.presets.find(({ id }) => id === preset.id)?.draft?.files[path],
+  ).toBe(edited);
+  await actions.click();
+  const downloaded = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "导出已保存草稿", exact: true })
+    .click();
+  expect(await readFile(await (await downloaded).path(), "utf8")).toContain(
+    "body { color: navy; }",
+  );
+});
+
 test("orchestration management opens within the viewport and restores keyboard focus", async ({
   page,
 }) => {
