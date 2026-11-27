@@ -290,8 +290,8 @@ ${historyUseGuidance(locale)}`,
         ? "本轮新动作或台词先于首个世界回应演出（同次两者都给时均先演），不重演旧输入；条件未成立的后续按尝试处理。"
         : "Stages this turn's new player action or dialogue before the first world response (staging both when given) without replaying old input; unverified follow-through stays an attempt.",
       turnGuide: zh
-        ? "本轮有新动作或台词时，在最终正文开头演出；同次已发起的两者都在首个世界回应前出现，不重演旧输入。"
-        : "Stage new action or dialogue first; if both are given, stage both before the first world response. Skip old input.",
+        ? "在首个世界回应前演出本轮新动作和玩家要传达的话。只约束行动的保留意见留在话外，不重演旧输入。"
+        : "Stage new action and intended speech before the world responds. Keep private limits unspoken. Skip prior input.",
     }),
     block("continue-advance", {
       category: "choice",

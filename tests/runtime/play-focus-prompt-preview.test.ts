@@ -250,6 +250,8 @@ test.each(["en", "zh-CN"] as const)(
       locale === "zh-CN"
         ? {
             "continue-stage": [
+              "未要求传达的保留用来约束行动",
+              "没有引号也照做明确的发问、拒绝或转告",
               "本轮只要有新的角色行动或台词",
               "两者都要出现在首个世界回应之前",
               "条件尚未满足的后续打算仍按尝试或条件写",
@@ -284,6 +286,8 @@ test.each(["en", "zh-CN"] as const)(
           }
         : {
             "continue-stage": [
+              "an unspoken reservation",
+              "clearly directed questions, refusals, and messages even without quotation marks",
               "Whenever this turn introduces new action or dialogue",
               "show both before the first NPC reply",
               "Keep conditional follow-ups as attempts or conditions until met",
@@ -353,10 +357,18 @@ test.each(["en", "zh-CN"] as const)(
       expect(preview.compilation.turnGuide?.text ?? "").not.toMatch(
         /触觉先于视觉|touch before sight|只在归玩家的决定|stop only at a decision|“我”“你”转为第三人称|“I” and “you” in the player's text become third person/u,
       );
-      if (name === "continue-stage")
+      if (name === "continue-stage") {
         expect(preview.compilation.turnGuide?.text).toContain(
-          locale === "zh-CN" ? "同次已发起" : "new action or dialogue",
+          locale === "zh-CN"
+            ? "在首个世界回应前演出本轮新动作和玩家要传达的话"
+            : "Stage new action and intended speech before the world responds",
         );
+        expect(preview.compilation.turnGuide?.text).toContain(
+          locale === "zh-CN"
+            ? "只约束行动的保留意见留在话外"
+            : "Keep private limits unspoken",
+        );
+      }
       expect(
         builtinPlayPrompts(locale).find(({ id }) => id === `play.${name}`)
           ?.required,
