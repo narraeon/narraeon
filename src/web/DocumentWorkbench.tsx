@@ -79,7 +79,11 @@ export function DocumentWorkbench({
     onSelect: select,
   } = fileView;
   const selectedPath = selectedFile?.path ?? "";
-  const selectedTitle = titles.get(selectedPath);
+  const selectedTitle = titles.get(selectedPath) ?? leafName(selectedPath);
+  const hasDirectSource =
+    selectedFile?.encoding !== "base64" &&
+    selectedPath !== playerViewControlPath &&
+    selectedPath !== "control/frame.yaml";
   const pathDraft =
     pathEdit.sourcePath === selectedPath ? pathEdit.value : selectedPath;
   const { issues } = workspace;
@@ -399,8 +403,10 @@ export function DocumentWorkbench({
                 <span className="content-editor-kicker">
                   {describeFile(selectedFile, workspace.kind)}
                 </span>
-                <h4>{selectedTitle ?? leafName(selectedFile.path)}</h4>
-                <code className={styles.editorPath}>{selectedFile.path}</code>
+                <h4>{selectedTitle}</h4>
+                {selectedTitle !== selectedPath && (
+                  <code className={styles.editorPath}>{selectedPath}</code>
+                )}
               </div>
               <button
                 type="button"
@@ -422,35 +428,43 @@ export function DocumentWorkbench({
                 {uiText("删除文件")}
               </button>
             </header>
-            <details className="content-rename-file" key={selectedFile.path}>
-              <summary>{uiText("重命名文件")}</summary>
-              <div className="content-path-editor">
-                <label>
-                  {uiText("文件路径")}
-                  <input
-                    value={pathDraft}
-                    onChange={(event) =>
-                      setPathEdit({
-                        sourcePath: selectedFile.path,
-                        value: event.target.value,
-                      })
+            <div className={styles.fileActions}>
+              <details className="content-rename-file" key={selectedFile.path}>
+                <summary>{uiText("重命名文件")}</summary>
+                <div className="content-path-editor">
+                  <label>
+                    {uiText("文件路径")}
+                    <input
+                      value={pathDraft}
+                      onChange={(event) =>
+                        setPathEdit({
+                          sourcePath: selectedFile.path,
+                          value: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={
+                      pathError.length > 0 ||
+                      pathDraft.trim() === selectedFile.path
                     }
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={
-                    pathError.length > 0 ||
-                    pathDraft.trim() === selectedFile.path
-                  }
-                  onClick={renameSelected}
-                >
-                  {uiText("应用新路径")}
-                </button>
-              </div>
-              {pathError.length > 0 ? <p role="alert">{pathError}</p> : null}
-            </details>
+                    onClick={renameSelected}
+                  >
+                    {uiText("应用新路径")}
+                  </button>
+                </div>
+                {pathError.length > 0 ? <p role="alert">{pathError}</p> : null}
+              </details>
+              {hasDirectSource && (
+                <FileEditorMode
+                  showSource
+                  onSource={() => sourceRef.current?.focus()}
+                />
+              )}
+            </div>
             {selectedFile.encoding === "base64" ? (
               <div className="content-binary-note" role="note">
                 <strong>{uiText("二进制资源不在文本编辑器展开")}</strong>
@@ -479,10 +493,6 @@ export function DocumentWorkbench({
               />
             ) : (
               <>
-                <FileEditorMode
-                  showSource
-                  onSource={() => sourceRef.current?.focus()}
-                />
                 {selectedCodec !== null && (
                   <WorldDocumentMetadataForm
                     key={`metadata:${selectedFile.path}`}
