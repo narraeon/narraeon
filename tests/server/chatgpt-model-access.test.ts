@@ -159,7 +159,6 @@ test("only the direct desktop Runtime can use a saved ChatGPT plan, including af
           connections: [
             {
               chatGptAccountId: accountId,
-              chatGptAllowFollowups: false,
               hasApiKey: false,
             },
           ],
@@ -169,7 +168,9 @@ test("only the direct desktop Runtime can use a saved ChatGPT plan, including af
         join(configRoot, "model-connections-v1.json"),
         "utf8",
       );
-      expect(stored).not.toMatch(/apiKey|accessToken|refreshToken/u);
+      expect(stored).not.toMatch(
+        /apiKey|accessToken|refreshToken|chatGptAllowFollowups/u,
+      );
       await expect(
         local.rpc({ type: "model.test", connection: plan }),
       ).resolves.toMatchObject({

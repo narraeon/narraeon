@@ -55,7 +55,6 @@ interface ConnectionForm {
   apiKey: string;
   reuseSavedApiKey: boolean;
   chatGptAccountId: string;
-  chatGptAllowFollowups: boolean;
   modelId: string;
   modelPrompt: string;
   reasoningEffort: ModelReasoningEffort;
@@ -98,10 +97,7 @@ function requestSettings(form: ConnectionForm): TestModelConnectionInput {
     baseUrl: form.baseUrl,
     ...(form.authMode === "api_key" ? {} : { authMode: form.authMode }),
     ...(form.authMode === "chatgpt"
-      ? {
-          chatGptAccountId: form.chatGptAccountId,
-          chatGptAllowFollowups: form.chatGptAllowFollowups,
-        }
+      ? { chatGptAccountId: form.chatGptAccountId }
       : {}),
     ...(form.apiKey.length === 0 ? {} : { apiKey: form.apiKey }),
     modelId: form.modelId,
@@ -138,7 +134,6 @@ function emptyConnectionForm(): ConnectionForm {
     apiKey: "",
     reuseSavedApiKey: false,
     chatGptAccountId: "",
-    chatGptAllowFollowups: false,
     modelId: "",
     modelPrompt: "",
     reasoningEffort: "provider_default",
@@ -534,7 +529,7 @@ export function ModelConnectionScreen({
       onNotice(
         uiText(
           copied.chatGptAccountId !== undefined
-            ? "已克隆为「{name}」。副本使用同一个 ChatGPT 账号，自动后置请求默认关闭。"
+            ? "已克隆为「{name}」。副本使用同一个 ChatGPT 账号。"
             : copied.hasApiKey
               ? "已克隆为「{name}」。副本保留本机凭据，但不会切换当前配置。"
               : "已克隆为「{name}」。副本无需 API Key，当前配置保持不变。",
@@ -786,7 +781,6 @@ export function ModelConnectionScreen({
                   change({
                     chatGptAccountId: accountId,
                     modelId: "",
-                    chatGptAllowFollowups: false,
                   });
                 }}
                 onModelChange={changeModelId}
@@ -1001,20 +995,7 @@ export function ModelConnectionScreen({
             )}
           </div>
 
-          {chatGpt ? (
-            <label className="field-note chatgpt-followup-consent">
-              <input
-                type="checkbox"
-                checked={form.chatGptAllowFollowups}
-                onChange={(event) =>
-                  change({ chatGptAllowFollowups: event.target.checked })
-                }
-              />{" "}
-              {uiText(
-                "允许此连接在每轮游玩结束后自动发送额外请求，使用我的 ChatGPT 套餐或额度。",
-              )}
-            </label>
-          ) : (
+          {!chatGpt && (
             <details
               className="model-protocol-options"
               key={form.connectionId}
@@ -1716,7 +1697,6 @@ function formFor(connection: ModelConnectionView): ConnectionForm {
     apiKey: "",
     reuseSavedApiKey: connection.hasApiKey,
     chatGptAccountId: connection.chatGptAccountId ?? "",
-    chatGptAllowFollowups: connection.chatGptAllowFollowups ?? false,
     modelId: connection.modelId,
     modelPrompt: connection.modelPrompt ?? "",
     reasoningEffort: connection.reasoningEffort,

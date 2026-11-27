@@ -1,6 +1,9 @@
 import { continuationPrompt } from "../../src/runtime/model/AssistantPrefill.ts";
 import { FileNativePlayDocuments } from "../../src/runtime/play/PlayDocumentTools.ts";
 import { emptyAggregatedModelUsage } from "../../src/protocol/modelUsage.ts";
+import { requestControlKey } from "../../src/protocol/worldExtensions.ts";
+import { defaultFollowupItems } from "../../src/shared/ordered-followups.ts";
+import { ChatGptAuth } from "../../src/runtime/model/ChatGptAuth.ts";
 import { FileNativeModelHost } from "../../src/runtime/model/FileNativeModelAdapters.ts";
 import { chatGptPlanBaseUrl } from "../../src/runtime/model/FileNativeModelConnection.ts";
 import { ModelConnectionStore } from "../../src/runtime/model/ModelConnectionStore.ts";
@@ -21,7 +24,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { classifyPlayFailure } from "../../src/runtime/play/PlayFailure.ts";
 import { playFailureKinds } from "../../src/protocol/playFailure.ts";
 
@@ -268,12 +271,15 @@ test("关闭 Responses 子集能力后真实派发仍由 Runtime 拒绝越权工
 });
 
 test.each([
-  { allowFollowups: false, failFollowup: false, expectedRequests: 2 },
-  { allowFollowups: true, failFollowup: false, expectedRequests: 4 },
-  { allowFollowups: true, failFollowup: true, expectedRequests: 3 },
+  { legacy: undefined, expectedRequests: 4 },
+  { legacy: false, expectedRequests: 4 },
+  { legacy: true, expectedRequests: 4 },
+  { legacy: true, disabled: "orchestration", expectedRequests: 2 },
+  { legacy: true, disabled: "world", expectedRequests: 2 },
+  { legacy: true, failFollowup: true, expectedRequests: 3 },
 ])(
-  "ChatGPT plan runs the tool loop (followup consent $allowFollowups; followup fails $failFollowup)",
-  async ({ allowFollowups, failFollowup, expectedRequests }) => {
+  "ChatGPT plan follows effective controls (legacy $legacy, disabled by $disabled, quota error $failFollowup)",
+  async ({ legacy, disabled, failFollowup, expectedRequests }) => {
     const nativeCall = {
       type: "function_call",
       namespace: "narraeon",
@@ -320,21 +326,45 @@ test.each([
       ],
     ];
     const sent: { headers: Headers; body: Record<string, unknown> }[] = [];
+    const configRoot = await mkdtemp(join(tmpdir(), "narraeon-chatgpt-plan-"));
+    roots.push(configRoot);
+    await writeFile(
+      join(configRoot, "model-connections-v1.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        activeConnectionId: "old-plan",
+        connections: [
+          {
+            id: "old-plan",
+            name: "Saved ChatGPT plan",
+            presetId: "chatgpt-plan",
+            authMode: "chatgpt",
+            provider: "openai_responses",
+            baseUrl: chatGptPlanBaseUrl,
+            chatGptAccountId: "local-account",
+            chatGptAllowFollowups: legacy,
+            modelId: "subscription-model",
+            contextWindowTokens: 64000,
+            maxOutputTokens: 4000,
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+    const auth = new ChatGptAuth({
+      workspaceDirectory: configRoot,
+      localEnabled: true,
+    });
+    onTestFinished(() => auth.close());
+    vi.spyOn(auth, "listAccounts").mockResolvedValue([
+      { id: "local-account", label: "Test account", status: "plan_authorized" },
+    ]);
     let token = 0;
+    vi.spyOn(auth, "getAccessToken").mockImplementation(() =>
+      Promise.resolve(`fake-live-token-${++token}`),
+    );
     const host = new FileNativeModelHost(
-      {
-        provider: "openai_responses",
-        baseUrl: chatGptPlanBaseUrl,
-        apiKey: "",
-        modelId: "subscription-model",
-        contextWindowTokens: 64000,
-        maxOutputTokens: 4000,
-        chatgptPlan: {
-          accountId: "local-account",
-          allowFollowups,
-          accessToken: () => Promise.resolve(`fake-live-token-${++token}`),
-        },
-      },
+      await new ModelConnectionStore(configRoot, fetch, () => auth).bind(),
       async (url, init) => {
         expect(url).toEqual(new URL("https://api.openai.com/v1/responses"));
         const output = outputs[sent.length];
@@ -374,6 +404,20 @@ test.each([
       host.binding(),
     );
     const artifacts = new FileNativeArtifactStore(root);
+    const preset = followupPlayPreset();
+    if (disabled === "orchestration") {
+      preset.definition.followupItems = defaultFollowupItems(
+        preset.definition.followups,
+      ).map((item) => ({ ...item, enabled: false }));
+    }
+    if (disabled === "world") {
+      for (const requestId of ["status", "options"]) {
+        await worlds.extensionControls(worldId, preset, "en", {
+          key: requestControlKey(preset.id, requestId),
+          value: "off",
+        });
+      }
+    }
     const view = await new PlayCallChain(
       worlds,
       new FileNativePromptCompiler(),
@@ -384,15 +428,19 @@ test.each([
       exchangeId: "first",
       playerText: "What is Alex doing? Read the world document first.",
       hostBinding: hostBinding(),
-      playPreset: followupPlayPreset(),
+      playPreset: preset,
       modelBinding: host.binding(),
       modelHost: host,
     });
     expect(view.status).toBe("ready");
     expect(sent).toHaveLength(expectedRequests);
-    expect(
-      view.events.filter((event) => event.kind === "followup"),
-    ).toHaveLength(expectedRequests - 2);
+    const followups = view.events.filter((event) => event.kind === "followup");
+    expect(followups.map((event) => event.followupId)).toEqual(
+      ["status", "options"].slice(0, expectedRequests - 2),
+    );
+    if (failFollowup) {
+      expect(followups[0]?.failure).toMatch(/usage limit|使用限制/u);
+    }
     for (const [index, { body, headers }] of sent.entries()) {
       expect(body).toMatchObject({ store: false, stream: true });
       expect(body).not.toHaveProperty("max_output_tokens");
@@ -488,7 +536,6 @@ test("a terminal ChatGPT plan quota error never commits partial story or starts 
       maxOutputTokens: 4000,
       chatgptPlan: {
         accountId: "local-account",
-        allowFollowups: true,
         accessToken: () => Promise.resolve("fake-live-token"),
       },
     },

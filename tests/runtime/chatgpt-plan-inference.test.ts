@@ -29,7 +29,6 @@ function planConnection(
     contextWindowTokens: 64000,
     chatgptPlan: {
       accountId: "local-account-one",
-      allowFollowups: false,
       accessToken: () => Promise.resolve(fixtureToken),
       ...overrides,
     },

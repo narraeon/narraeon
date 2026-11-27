@@ -35,7 +35,9 @@
 
 订阅连接使用 OpenAI 的开源客户端授权流程。本机 Runtime 以 Narraeon 的名义发起授权，按账号及工作区对应的注册保存并刷新凭据。只有已授予套餐使用权限的连接能派发。模型列表来自所选账号。OAuth 凭据仅用于官方服务；Web 接口、请求预览、故障记录和世界归档均不得携带凭据。账号退出后，该连接停止派发。[动态注册](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) · [账号与会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
 
-套餐派发使用公开的 Responses 端点，开启流式传输，设置 `store: false`，每次携带本轮所需的完整输入。按订阅通道支持的形式传送工具定义及原生回执，系统材料用开发者消息或 `instructions` 表达。请求省略 `max_output_tokens`。需收到成功完成事件才结算本步，额度不足或授权失效由用户处理。试发只发一次；自动后置请求须经单独同意。[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+套餐派发使用公开的 Responses 端点，开启流式传输，设置 `store: false`，每次携带本轮所需的完整输入。按订阅通道支持的形式传送工具定义及原生回执，系统材料用开发者消息或 `instructions` 表达。请求省略 `max_output_tokens`。需收到成功完成事件才结算本步，额度不足或授权失效由用户处理。试发只发一次。[模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+
+后置请求使用编排方案和当前世界的有效启停，遵循既有冻结与恢复规则。每项启用的后置请求在剧情回复后额外调用一次套餐模型。单项套餐后置请求失败时结束该轮剩余后置请求，已提交剧情继续保留。读取旧连接时忽略 `chatGptAllowFollowups`，后续写入连接库时省略该字段。
 
 ### 1.3 Anthropic Messages
 

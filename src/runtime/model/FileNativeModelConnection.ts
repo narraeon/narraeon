@@ -22,7 +22,6 @@ export const chatGptPlanBaseUrl = "https://api.openai.com/v1";
 /** Live, workspace-local credential access. Keep out of request snapshots. */
 export interface ChatGptPlanConnection {
   accountId: string;
-  allowFollowups: boolean;
   accessToken(signal?: AbortSignal): Promise<string>;
   invalidate?(accessToken: string): Promise<void>;
 }

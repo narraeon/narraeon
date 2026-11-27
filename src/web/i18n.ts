@@ -59,8 +59,6 @@ const englishMessages: Record<string, string> = {
   "ChatGPT 账号操作失败。": "The ChatGPT account action failed.",
   "请在运行 Narraeon 的同一台电脑上直接打开本地工作区，再使用 ChatGPT 套餐。":
     "Open the local workspace directly on the computer running Narraeon to use a ChatGPT plan.",
-  "允许此连接在每轮游玩结束后自动发送额外请求，使用我的 ChatGPT 套餐或额度。":
-    "Allow this connection to automatically send extra requests after each play turn using my ChatGPT plan or credits.",
   "试发会发送一条短消息，使用你的 ChatGPT 套餐或额度。输出上限由 ChatGPT 决定。":
     "The test sends one short message using your ChatGPT plan or credits. ChatGPT sets the output limit.",
   "ChatGPT 套餐或此应用的使用已达到上限。":
@@ -69,8 +67,8 @@ const englishMessages: Record<string, string> = {
     "ChatGPT rejected this authorization. Refresh authorization or sign in again.",
   "ChatGPT 达到了输出上限，未能确认模型正文。":
     "ChatGPT reached its output limit before a model reply could be confirmed.",
-  "已克隆为「{name}」。副本使用同一个 ChatGPT 账号，自动后置请求默认关闭。":
-    "Cloned as “{name}”. The copy uses the same ChatGPT account, with automatic follow-ups off.",
+  "已克隆为「{name}」。副本使用同一个 ChatGPT 账号。":
+    "Cloned as “{name}”. The copy uses the same ChatGPT account.",
   "删除模型连接“{name}”？如需退出 ChatGPT，请另外断开账号。":
     "Delete model connection “{name}”? Disconnect the account separately to sign out of ChatGPT.",
   "AI 编辑": "AI editing",

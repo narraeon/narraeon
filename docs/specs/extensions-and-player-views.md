@@ -27,7 +27,7 @@
 
 - 主叙事成功提交后，按编译冻结的有序后置清单**串行派发**；各请求共享同一份冻结主链前缀与冻结工具定义（含 `artifact_emit`、`artifact_clear`），由 Runtime 授权仅调用声明的产物工具（见 [模型 Provider 规格 §4.3](model-providers-and-resilience.md#43-allowed_tools-阶段白名单)）。
 - 各后置请求之间互不可见、不共享输出，不追加主链 transcript，也不推进世界 Authority；单次后置响应可多次调用 `artifact_emit`，不按产物增发请求。
-- 任一后置请求失败不回滚已提交剧情，也不阻断后续后置请求；现有取消生成流程会取消剩余未派发或等待中的后置请求。
+- 后置请求失败时保留已提交剧情，通常继续派发剩余后置请求。ChatGPT 套餐请求失败时结束该轮剩余后置请求。取消生成会取消剩余未派发或等待中的后置请求。
 
 ## 2. 世界级扩展选择（`extension-controls.json`）
 

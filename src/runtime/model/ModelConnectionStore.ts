@@ -70,7 +70,6 @@ interface StoredModelConnection
   authMode: ModelConnectionAuthMode;
   apiKey?: string;
   chatGptAccountId?: string;
-  chatGptAllowFollowups?: boolean;
   modelPrompt: string;
   id: string;
   name: string;
@@ -184,9 +183,6 @@ export class ModelConnectionStore {
       if (source.chatGptAccountId !== undefined) this.requireChatGpt();
       const copied: StoredModelConnection = {
         ...structuredClone(source),
-        ...(source.chatGptAccountId === undefined
-          ? {}
-          : { chatGptAllowFollowups: false }),
         id: randomUUID(),
         name: validateConnectionInput(() =>
           requiredTrimmed(name, "Configuration name", 160),
@@ -474,7 +470,6 @@ export class ModelConnectionStore {
       ...binding,
       chatgptPlan: {
         accountId,
-        allowFollowups: connection.chatGptAllowFollowups === true,
         accessToken: (signal) =>
           this.requireChatGpt().getAccessToken(accountId, signal),
         invalidate: (token) =>
@@ -772,10 +767,7 @@ function toView(connection: StoredModelConnection): ModelConnectionView {
     hasApiKey: connection.authMode === "api_key",
     ...(connection.chatGptAccountId === undefined
       ? {}
-      : {
-          chatGptAccountId: connection.chatGptAccountId,
-          chatGptAllowFollowups: connection.chatGptAllowFollowups === true,
-        }),
+      : { chatGptAccountId: connection.chatGptAccountId }),
   });
 }
 
@@ -1023,18 +1015,13 @@ function planSettings(
   dialect: ModelProviderDialect,
   input: {
     chatGptAccountId?: unknown;
-    chatGptAllowFollowups?: unknown;
     assistantPrefillMode?: unknown;
     responsesCacheControl?: unknown;
     responsesTurnInstructions?: unknown;
   },
-): Pick<StoredModelConnection, "chatGptAccountId" | "chatGptAllowFollowups"> {
+): Pick<StoredModelConnection, "chatGptAccountId"> {
   if (authMode !== "chatgpt") {
-    if (
-      presetId === "chatgpt-plan" ||
-      input.chatGptAccountId !== undefined ||
-      input.chatGptAllowFollowups !== undefined
-    )
+    if (presetId === "chatgpt-plan" || input.chatGptAccountId !== undefined)
       throw new Error("ChatGPT account settings require Sign in with ChatGPT");
     return {};
   }
@@ -1054,10 +1041,7 @@ function planSettings(
     "ChatGPT account ID",
     160,
   );
-  const allowFollowups = input.chatGptAllowFollowups ?? false;
-  if (typeof allowFollowups !== "boolean")
-    throw new Error("ChatGPT follow-up consent must be a boolean");
-  return { chatGptAccountId: accountId, chatGptAllowFollowups: allowFollowups };
+  return { chatGptAccountId: accountId };
 }
 
 function normalizeApiKey(
