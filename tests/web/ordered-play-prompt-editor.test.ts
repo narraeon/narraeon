@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { createElement, useState } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { OrderedPlayPromptEditor } from "../../src/web/OrderedPlayPromptEditor.tsx";
 import {
@@ -127,20 +133,40 @@ test.each(["keyboard", "drag"] as const)(
     }
     setWebLocale("en");
     render(createElement(Editor));
-    const world = screen.getByRole("button", { name: "Complete world prompt" });
-    if (mode === "keyboard")
+    const order = within(screen.getByRole("list", { name: "Prompt order" }));
+    const [mechanicsBefore, worldBefore] = order.getAllByRole("listitem");
+    const world = within(worldBefore!).getByRole("button", {
+      name: "Complete world prompt",
+    });
+    if (mode === "keyboard") {
       fireEvent.keyDown(world, { key: "ArrowUp", altKey: true });
-    else {
-      fireEvent.dragStart(world.closest("li")!);
-      fireEvent.dragOver(screen.getAllByRole("listitem")[0]!);
-      fireEvent.drop(screen.getAllByRole("listitem")[0]!);
+    } else {
+      fireEvent.dragStart(worldBefore!);
+      fireEvent.dragOver(mechanicsBefore!);
+      fireEvent.drop(mechanicsBefore!);
     }
+
+    const rows = order.getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    const placeholder = within(rows[0]!);
+    const mechanics = within(rows[1]!);
     expect(
-      screen.getAllByRole("listitem").map((item) => item.textContent),
-    ).toEqual([
-      "Complete world prompt",
-      "Tools and response settlement (required)Required",
-    ]);
+      placeholder.getByRole("button", { name: "Complete world prompt" }),
+    ).toBe(world);
+    expect(
+      mechanics.getByRole("button", {
+        name: "Tools and response settlement (required)",
+      }),
+    ).toBeDefined();
+    expect(
+      placeholder.getByText("Dynamic placeholder", { exact: true }),
+    ).toBeDefined();
+    expect(mechanics.getByText("Required", { exact: true })).toBeDefined();
+    expect(placeholder.queryByRole("checkbox")).toBeNull();
+    expect(mechanics.getByRole("checkbox")).toMatchObject({
+      checked: true,
+      disabled: true,
+    });
   },
 );
 
