@@ -33,10 +33,8 @@ Present:
   - { $ref: character.hana-kim }
   - { $ref: character.pablo-vega }
   - { $ref: character.player }
-Awaiting a response:
-  Speaker: { $ref: character.mina-shah }
-  Words: What do you think we should actually tell people?
-  Position: Mina has offered her unlocked phone on the office message. The player has not taken it or spoken for the club.
+Pending decision: The club needs to decide whether and how to hold tonight's screening and how to get the word to everyone who signed up.
+At the eaves: Mina is holding out her unlocked phone with the student office message still on screen, waiting for the player's input. The player has not taken it or answered for the club.
 Open arrangements:
   - The outdoor screen is down. The three student shorts have not played.
   - The club has forty-six registrations. Room 204 holds twenty-eight and must be claimed by six. Nobody has accepted the offer.
@@ -80,7 +78,7 @@ Free time: Likes doing the crossword at the canteen counter after her evening de
   summary: Student editor, caption maker, and director of one of the three shorts.
   aliases: []
 Motive: Wants her uncle to be able to follow her short at a future screening without pointing out in front of the club why he needs captions. A test run matters to her more than an official premiere.
-Manner: Explains what the captions need to do, then offers her headphones so other people can check for themselves.
+Manner: When checking captions, she cues up the shot in question so whoever is helping can watch the captions against the audio and spot the mismatch for themselves. A listener can use their own headphones or borrow hers if they need a pair.
 Knowledge:
   Captions: The captions on her own film slip by two seconds after a long quiet shot. She knows which shot but has not repaired the export.
   Options: She has tested the club laptop with headphones. She has not been told which people are relying on the last bus.
