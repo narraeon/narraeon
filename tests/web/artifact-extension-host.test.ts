@@ -55,6 +55,94 @@ describe("ArtifactExtensionHost pipeline", () => {
     );
   });
 
+  test("Markdown tables keep inline formatting, literal pipes and escaped HTML through regex transforms", () => {
+    const payload = [
+      "**Place** | Capacity | Notes",
+      ":--- | ---: | :---:",
+      "Room \\| annex | `A|B` | <img src=x onerror=bad()>",
+      "",
+      "The note stays below the table.",
+    ].join("\r\n");
+    const result = applyRegexPipeline({
+      payload,
+      contentType: "text/markdown",
+      rules: [
+        {
+          order: 1,
+          scope: "raw_text",
+          pattern: "Capacity",
+          flags: "g",
+          replace: "Seats",
+          maxMatches: 1,
+          errorPolicy: "fail",
+        },
+        {
+          order: 2,
+          scope: "markdown_html",
+          pattern: "<strong>Place</strong>",
+          flags: "g",
+          replace: "<strong>Venue</strong>",
+          maxMatches: 1,
+          errorPolicy: "fail",
+        },
+      ],
+    });
+    expect(result.original).toBe(payload);
+    expect(result.steps.map(({ matches }) => matches)).toEqual([1, 1]);
+    const doc = new DOMParser().parseFromString(result.final, "text/html");
+    expect(
+      [...doc.querySelectorAll("th")].map((cell) => cell.textContent),
+    ).toEqual(["Venue", "Seats", "Notes"]);
+    expect(
+      [...doc.querySelectorAll("td")].map((cell) => cell.textContent),
+    ).toEqual(["Room | annex", "A|B", "<img src=x onerror=bad()>"]);
+    expect(doc.querySelector("td code")?.textContent).toBe("A|B");
+    expect(
+      doc.querySelector<HTMLTableCellElement>("th:nth-child(2)")?.style
+        .textAlign,
+    ).toBe("right");
+    expect(doc.querySelector("img")).toBeNull();
+    expect(doc.querySelector(".artifact-markdown-table + p")?.textContent).toBe(
+      "The note stays below the table.",
+    );
+  });
+
+  test("only matching pipe-table blocks become tables", () => {
+    const tableLines = ["A | B", "--- | ---", "1 | 2"];
+    const markdown = [
+      "Ordinary text | still a paragraph",
+      "| left | right |",
+      "| --- |",
+      "`A | B`",
+      "--- | ---",
+      "````md",
+      "```",
+      ...tableLines,
+      "````",
+      "~~~md",
+      ...tableLines,
+      "~~~",
+      "",
+      ...tableLines.map((line) => `    ${line}`),
+      "",
+      ...tableLines,
+      "A paragraph | immediately below | the table.",
+    ].join("\n");
+    const doc = new DOMParser().parseFromString(
+      markdownToHtml(markdown),
+      "text/html",
+    );
+    expect(doc.querySelectorAll("table")).toHaveLength(1);
+    expect(doc.querySelector("tr")?.textContent).toBe("AB");
+    expect(doc.querySelector("p")?.textContent).toBe(
+      "Ordinary text | still a paragraph",
+    );
+    expect(doc.querySelector("p code")?.textContent).toBe("A | B");
+    expect(doc.querySelector(".artifact-markdown-table + p")?.textContent).toBe(
+      "A paragraph | immediately below | the table.",
+    );
+  });
+
   test("按显式 order/scope 记录每一步且不修改 raw", () => {
     const result = applyRegexPipeline({
       payload: "hello **world**",

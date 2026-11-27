@@ -189,7 +189,19 @@ export function markdownToHtml(markdown: string): string {
   const lines = escaped.split("\n");
   const output: string[] = [];
   let listOpen = false;
-  for (const line of lines) {
+  let codeFence: string | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (fence !== null) {
+      const marker = fence[1]!;
+      const suffix = fence[2]!;
+      if (codeFence === undefined) {
+        if (marker.startsWith("~") || !suffix.includes("`")) codeFence = marker;
+      } else if (marker.startsWith(codeFence) && suffix.trim() === "") {
+        codeFence = undefined;
+      }
+    }
     const heading = /^(#{1,6})\s+(.*)$/u.exec(line);
     const list = /^[-*]\s+(.*)$/u.exec(line);
     if (list !== null) {
@@ -208,11 +220,92 @@ export function markdownToHtml(markdown: string): string {
       const level = heading[1]?.length ?? 1;
       output.push(`<h${level}>${inlineMarkdown(heading[2] ?? "")}</h${level}>`);
     } else if (line.trim() !== "") {
-      output.push(`<p>${inlineMarkdown(line)}</p>`);
+      const table =
+        codeFence === undefined && fence === null
+          ? markdownTableAt(lines, index)
+          : undefined;
+      if (table === undefined) {
+        output.push(`<p>${inlineMarkdown(line)}</p>`);
+      } else {
+        output.push(table.html);
+        index = table.nextLine - 1;
+      }
     }
   }
   if (listOpen) output.push("</ul>");
   return output.join("\n");
+}
+
+function markdownTableAt(
+  lines: string[],
+  index: number,
+): { html: string; nextLine: number } | undefined {
+  const delimiter = lines[index + 1];
+  if (delimiter === undefined || !/^[\t :|-]+$/u.test(delimiter)) return;
+  const alignments = markdownTableCells(delimiter);
+  if (
+    alignments === undefined ||
+    !alignments.every((cell) => /^:?-+:?$/u.test(cell))
+  )
+    return;
+  const header = markdownTableCells(lines[index]!);
+  if (header === undefined || header.length !== alignments.length) return;
+
+  const styles = alignments.map((cell) => {
+    if (cell.endsWith(":"))
+      return cell.startsWith(":")
+        ? ' style="text-align:center"'
+        : ' style="text-align:right"';
+    return cell.startsWith(":") ? ' style="text-align:left"' : "";
+  });
+  const headings = header
+    .map(
+      (cell, column) =>
+        `<th scope="col"${styles[column]!}>${inlineMarkdown(cell)}</th>`,
+    )
+    .join("");
+  const rows: string[] = [];
+  let nextLine = index + 2;
+  for (; nextLine < lines.length; nextLine += 1) {
+    const row = markdownTableCells(lines[nextLine]!);
+    if (row === undefined || row.length > header.length) break;
+    const cells = row
+      .map(
+        (cell, column) => `<td${styles[column]!}>${inlineMarkdown(cell)}</td>`,
+      )
+      .join("");
+    rows.push(`<tr>${cells}</tr>`);
+  }
+  const body = rows.length === 0 ? "" : `<tbody>${rows.join("\n")}</tbody>`;
+  return {
+    html: `<div class="artifact-markdown-table"><table><thead><tr>${headings}</tr></thead>${body}</table></div>`,
+    nextLine,
+  };
+}
+
+function markdownTableCells(line: string): string[] | undefined {
+  if (
+    !line.includes("|") ||
+    /^(?: {4}| {0,3}(?:\t|`{3,}|~{3,}|&gt;|#{1,6}\s|[-+*]\s|\d{1,9}[.)]\s))/u.test(
+      line,
+    )
+  )
+    return;
+  const cells: string[] = [];
+  let start = 0;
+  // Skip escaped delimiters and the code spans handled by inlineMarkdown.
+  for (const match of line.matchAll(/\\[\\|`]|`[^`]+`|\|/gu)) {
+    if (match[0] !== "|") continue;
+    cells.push(line.slice(start, match.index).trim());
+    start = match.index + 1;
+  }
+  if (cells.length === 0) return;
+  if (cells[0] === "") cells.shift();
+  const last = line.slice(start).trim();
+  if (last !== "") cells.push(last);
+  return cells.length === 0
+    ? undefined
+    : cells.map((cell) => cell.replaceAll("\\|", "|"));
 }
 
 export function applyRegexPipeline(input: {
@@ -404,8 +497,12 @@ export function buildDocumentSrcDoc(
       renderer,
     );
   if (contentType === "text/html") return withRendererStyles(content, renderer);
+  const tableStyles =
+    contentType === "text/markdown"
+      ? ".artifact-markdown-table{max-width:100%;overflow-x:auto}.artifact-markdown-table table{width:100%;border-collapse:collapse}.artifact-markdown-table :is(th,td){border:1px solid #b8b8b8;padding:.25rem .45rem;text-align:left;vertical-align:top;overflow-wrap:anywhere}"
+      : "";
   return withRendererStyles(
-    `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`,
+    `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:1rem;color:#202020}pre{white-space:pre-wrap}code{font-family:ui-monospace,monospace}${tableStyles}</style><main>${contentType === "text/markdown" ? content : `<pre>${escapeHtml(content)}</pre>`}</main>`,
     renderer,
   );
 }

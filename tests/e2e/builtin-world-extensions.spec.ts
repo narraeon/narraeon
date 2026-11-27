@@ -29,7 +29,15 @@ import { archiveModelBinding } from "../support/worldArchiveFixture.ts";
 const oldNarrative = "The innkeeper has left a lantern on the counter.";
 const draft = "I carry the lantern to the rain-soaked doorway.";
 const optionLabel = "Carry the lantern";
-const markdownText = "Markdown fixture: a light in the rain";
+const markdownNote = "目前只核对信息，尚未发送通知。";
+const markdownText = `| 已核实项目 | 204 教室 | 活动室 |
+|---|---|---|
+| 报名人数 | 共 46 人报名 | 共 46 人报名 |
+| 座位／空间 | 28 个座位，不够全员同时入座 | 共用空间，须给用餐和学习的人留桌子；尚未核实可容纳人数 |
+| 时间 | 六点前领钥匙；借用至七点，只够放一场 | 尚未核实可用于放映的时段 |
+| 放映限制 | 无法在现有预约内分两轮放完 | 不能大声放音，放片须戴耳机 |
+
+${markdownNote}`;
 const htmlText = "HTML fixture: the lantern is lit";
 const debugText = "Debug fixture: the innkeeper moved the lantern.";
 const requestsByPrompt = [
@@ -83,6 +91,8 @@ for (const locale of appLocales) {
       const lanternButton = page
         .frameLocator('iframe[title="player_options"]')
         .getByRole("button", { name: optionLabel, exact: true });
+      const markdownFrame = page.frameLocator('iframe[title="markdown_panel"]');
+      const markdownTable = markdownFrame.getByRole("table");
       const openRail = () =>
         page
           .getByRole("button", { name: t("此刻", "Now"), exact: true })
@@ -188,10 +198,21 @@ for (const locale of appLocales) {
         { accepted: 1, failure: undefined },
       ]);
 
+      await expect(markdownTable.getByRole("columnheader")).toHaveText([
+        "已核实项目",
+        "204 教室",
+        "活动室",
+      ]);
+      await expect(markdownTable.locator("tbody tr")).toHaveCount(4);
       await expect(
-        page
-          .frameLocator('iframe[title="markdown_panel"]')
-          .getByText(markdownText, { exact: true }),
+        markdownTable.locator("tbody tr").last().getByRole("cell"),
+      ).toHaveText([
+        "放映限制",
+        "无法在现有预约内分两轮放完",
+        "不能大声放音，放片须戴耳机",
+      ]);
+      await expect(
+        markdownFrame.getByText(markdownNote, { exact: true }),
       ).toBeVisible();
       await openRail();
       await expect(statusCard.getByText(place, { exact: true })).toBeVisible();
@@ -207,6 +228,24 @@ for (const locale of appLocales) {
       await servers.start(root, port);
       await page.goto(worldUrl(worldId));
       await expect(lanternButton).toBeVisible();
+      await expect(markdownTable.locator("tbody tr")).toHaveCount(4);
+      const initialViewport = page.viewportSize();
+      if (locale === "zh-CN" && initialViewport !== null) {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(
+          markdownFrame.getByText(markdownNote, { exact: true }),
+        ).toBeVisible();
+        expect(
+          await markdownTable.evaluate((table) => {
+            const document = table.ownerDocument.documentElement;
+            return (
+              document.scrollWidth === document.clientWidth &&
+              table.getBoundingClientRect().right <= document.clientWidth
+            );
+          }),
+        ).toBe(true);
+        await page.setViewportSize(initialViewport);
+      }
       await toggleMenu();
       for (const item of allToggles) await expect(item).toBeChecked();
       const completedHead = await readHead();
