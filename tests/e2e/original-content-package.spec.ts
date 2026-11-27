@@ -194,6 +194,9 @@ test("a one-sentence idea becomes an editable package and a first played turn af
     await expect
       .poll(async () => (await workspace()).model.configured)
       .toBe(true);
+    await expect(
+      page.locator(".workspace-feedback").getByRole("status"),
+    ).toContainText("The model connection was saved and enabled.");
     await page.goBack();
     await expect(page).toHaveURL(packageUrl);
     await expect(
