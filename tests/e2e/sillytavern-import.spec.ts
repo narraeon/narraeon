@@ -65,6 +65,91 @@ const source = {
   ],
 };
 
+test("preset wizard gives the source detail the empty variables column", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".workspace-locale-picker select").selectOption("en");
+  await openWorkspaceCreationTool(page);
+  await page.getByText("Manage orchestrations", { exact: true }).click();
+  await page.getByLabel("Choose SillyTavern JSON file").setInputFiles({
+    name: "variables.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({
+        prompts: [
+          source.prompts[0],
+          source.prompts[1],
+          {
+            identifier: "declaration",
+            name: "Declaration",
+            role: "system",
+            content: "{{setvar::weather::fog}}",
+          },
+        ],
+        prompt_order: [
+          {
+            character_id: 100001,
+            order: [
+              { identifier: "plain", enabled: true },
+              { identifier: "macro", enabled: false },
+              { identifier: "declaration", enabled: false },
+            ],
+          },
+        ],
+      }),
+    ),
+  });
+  const wizard = page.getByRole("dialog", {
+    name: "SillyTavern import wizard",
+  });
+  await expect(wizard.getByText("Plain original")).toBeVisible();
+  const detail = wizard.locator(".import-browser-detail");
+  const detailWidth = async () => (await detail.boundingBox())!.width;
+  const emptyWidth = await detailWidth();
+  await expect(wizard.getByText("No selected declarations")).toBeVisible();
+
+  const macro = wizard.getByRole("checkbox", { name: "Macro", exact: true });
+  await macro.check();
+  await expect(
+    wizard.getByText(
+      "The scan is incomplete or contains macros it cannot parse.",
+    ),
+  ).toBeVisible();
+  expect.soft(await detailWidth()).toBe(emptyWidth);
+
+  const declaration = wizard.getByRole("checkbox", {
+    name: "Declaration",
+    exact: true,
+  });
+  await declaration.check();
+  await expect(wizard.getByText("weather", { exact: true })).toBeVisible();
+  await expect(wizard.getByText(/Uncertain candidate: fog/u)).toBeVisible();
+  expect.soft(await detailWidth()).toBeLessThan(emptyWidth - 100);
+  await wizard.getByRole("button", { name: "Original declaration" }).click();
+  await expect(
+    wizard.getByText("{{setvar::weather::fog}}", { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(wizard.getByText("weather", { exact: true })).toBeVisible();
+  expect(
+    await wizard.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await declaration.uncheck();
+  expect.soft(await detailWidth()).toBe(emptyWidth);
+  await macro.uncheck();
+  await expect(
+    wizard.getByText(
+      "The scan is incomplete or contains macros it cannot parse.",
+    ),
+  ).toHaveCount(0);
+});
+
 for (const locale of ["zh-CN", "en"] as const)
   for (const mobile of [false, true]) {
     const text =

@@ -9156,10 +9156,18 @@ dialog.world-dialog-scrim::backdrop {
   }
 }
 .sillytavern-import .import-browser {
+  grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr);
+}
+.sillytavern-import .import-browser:has(> .st-variables) {
   grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr) minmax(
       14rem,
       22rem
     );
+}
+.st-variable-empty {
+  margin: 0 0 0.6rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 .sillytavern-import .st-variables {
   overflow: auto;

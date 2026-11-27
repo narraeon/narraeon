@@ -410,8 +410,8 @@ const englishMessages: Record<string, string> = {
   "导入 SillyTavern 角色卡或世界书":
     "Import SillyTavern character card or world book",
   "SillyTavern 内容导入向导": "SillyTavern content import wizard",
-  "选择目标用途。来源规则不会作为 SillyTavern 触发机制执行；未绑定的宏需要手动完善。":
-    "Choose a destination for each item. SillyTavern trigger rules are not executed; unbound macros need manual completion.",
+  "选择目标用途。SillyTavern 触发规则在 Narraeon 中仅供参考；未绑定的宏需要手动完善。":
+    "Choose a destination for each item. SillyTavern trigger rules are for reference only in Narraeon. Unbound macros need manual completion.",
   完整来源字段: "Complete source fields",
   角色卡目标用途: "Character card destinations",
   角色文档: "Character document",
@@ -515,7 +515,8 @@ const englishMessages: Record<string, string> = {
     "Editing order, priority, and insertion position are distinct source rules. Actual injection also depends on chat and global settings.",
   来源启用: "Enabled in source",
   来源禁用: "Disabled in source",
-  来源规则: "Source rules",
+  完整来源规则: "All source rules",
+  "来源规则 JSON": "Source rules JSON",
   目标用途: "Destination",
   仅迁移附件: "Migration attachment only",
   纳入世界资料: "Include as world material",

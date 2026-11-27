@@ -195,6 +195,7 @@ export function SillyTavernImport({
       .map((token) => ({ prompt, token, uncertain: scan.uncertain })),
   );
   const hasUncertainty = scans.some(({ scan }) => scan.uncertain);
+  const scanWarning = uiText("扫描不完整或包含无法解析的宏。");
   const byName = new Map<string, typeof declarations>();
   for (const declaration of declarations) {
     const group = byName.get(declaration.token.name) ?? [];
@@ -578,6 +579,12 @@ export function SillyTavernImport({
                       </button>
                     </nav>
                     <div className="import-browser-detail">
+                      {declarations.length === 0 && (
+                        <p className="st-variable-empty">
+                          {uiText("尚无选中的声明")}
+                          {hasUncertainty && <> · {scanWarning}</>}
+                        </p>
+                      )}
                       {inspection.prompts
                         .filter(
                           (prompt) =>
@@ -755,19 +762,15 @@ export function SillyTavernImport({
                         </div>
                       )}
                     </div>
-                    <details className="st-variables" open>
-                      <summary>{uiText("选中提示中的变量声明")}</summary>
-                      <p>
-                        {uiText(
-                          "仅静态阅读：按来源顺序列出，不代表运行顺序或运行时值；外部聊天变量不可知。",
-                        )}
-                      </p>
-                      {hasUncertainty && (
-                        <p>{uiText("扫描不完整或包含无法解析的宏。")}</p>
-                      )}
-                      {declarations.length === 0 ? (
-                        <p>{uiText("尚无选中的声明")}</p>
-                      ) : (
+                    {declarations.length > 0 && (
+                      <details className="st-variables" open>
+                        <summary>{uiText("选中提示中的变量声明")}</summary>
+                        <p>
+                          {uiText(
+                            "仅静态阅读：按来源顺序列出，不代表运行顺序或运行时值；外部聊天变量不可知。",
+                          )}
+                        </p>
+                        {hasUncertainty && <p>{scanWarning}</p>}
                         <ul>
                           {declarations
                             .slice(0, visibleDeclarations)
@@ -811,18 +814,18 @@ export function SillyTavernImport({
                               </li>
                             ))}
                         </ul>
-                      )}
-                      {visibleDeclarations < declarations.length && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setVisibleDeclarations((count) => count + 100)
-                          }
-                        >
-                          {uiText("显示更多声明")}
-                        </button>
-                      )}
-                    </details>
+                        {visibleDeclarations < declarations.length && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVisibleDeclarations((count) => count + 100)
+                            }
+                          >
+                            {uiText("显示更多声明")}
+                          </button>
+                        )}
+                      </details>
+                    )}
                   </div>
                 )}
                 {showResult && preview && (
