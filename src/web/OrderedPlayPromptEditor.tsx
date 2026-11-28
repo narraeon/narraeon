@@ -239,18 +239,6 @@ export function OrderedPlayPromptEditor({
       }
     >
       {migrationNotice && <p role="status">{migrationNotice}</p>}
-      {onMergeConsecutiveMessagesChange && (
-        <label>
-          <input
-            type="checkbox"
-            checked={mergeConsecutiveMessages}
-            onChange={(event) =>
-              onMergeConsecutiveMessagesChange(event.target.checked)
-            }
-          />
-          {uiText("合并相邻同角色消息")}
-        </label>
-      )}
       <div className="ordered-play-editor">
         <aside>
           <button type="button" onClick={() => add()}>
@@ -564,6 +552,18 @@ export function OrderedPlayPromptEditor({
             </div>
           ))}
       </div>
+      {onMergeConsecutiveMessagesChange && (
+        <label className="ordered-play-merge">
+          <input
+            type="checkbox"
+            checked={mergeConsecutiveMessages}
+            onChange={(event) =>
+              onMergeConsecutiveMessagesChange(event.target.checked)
+            }
+          />
+          {uiText("合并相邻同角色消息")}
+        </label>
+      )}
       {promptPreview}
       {!authoring && (
         <section

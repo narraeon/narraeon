@@ -167,6 +167,7 @@
   padding: 6px 16px;
 }
 .play-preset-screen .play-preset-editor-badges {
+  flex: 1 1 10rem;
   justify-content: start;
   gap: 3px 7px;
 }
@@ -204,6 +205,11 @@
   display: grid;
   grid-template-columns: 245px minmax(0, 1fr);
   gap: 0;
+}
+.play-preset-screen .ordered-play-merge {
+  margin: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
 }
 .play-preset-screen .ordered-play-editor > aside {
   background: #f7f6f1;

@@ -20,12 +20,17 @@ test("clean current orchestration leaves room for both prompt editors", async ({
   page,
 }) => {
   await runtime(page, { type: "preferences.save", locale: "en" });
-  for (const viewport of [
+  for (const { width, height, widerText } of [
+    { width: 390, height: 844, widerText: true },
     { width: 390, height: 844 },
     { width: 1440, height: 900 },
   ]) {
-    await page.setViewportSize(viewport);
+    await page.setViewportSize({ width, height });
     await page.goto("/#/orchestrations");
+    // Exercise wrapping without depending on the fonts installed on the host.
+    const textSpacing = widerText
+      ? await page.addStyleTag({ content: ":root { letter-spacing: 0.04em; }" })
+      : undefined;
     for (const name of ["Play", "Setting improvement"]) {
       await page.getByRole("tab", { name, exact: true }).click();
       const panel = page.getByRole("tabpanel", { name, exact: true });
@@ -38,12 +43,41 @@ test("clean current orchestration leaves room for both prompt editors", async ({
         .poll(async () => (await status.boundingBox())?.height)
         .toBeLessThan(46);
       await expect(prompt).toBeInViewport({ ratio: 0.15 });
-      const visiblePromptHeight = await prompt.evaluate((element) => {
-        const body = element.getBoundingClientRect();
-        const footer = document.querySelector(".play-preset-editor-actions")!;
-        return footer.getBoundingClientRect().top - body.top;
-      });
-      expect(visiblePromptHeight).toBeGreaterThan(44);
+      // The sticky footer can cover part of the textarea within the viewport.
+      const { visibleHeight, visibleLines } = await prompt.evaluate(
+        (element) => {
+          const body = element.getBoundingClientRect();
+          const editor = element.closest(".ordered-play-content")!;
+          const editorBounds = editor.getBoundingClientRect();
+          const footer = document.querySelector(".play-preset-editor-actions")!;
+          const clipTop = Math.max(0, editorBounds.top);
+          const clipBottom = Math.min(
+            window.innerHeight,
+            editorBounds.bottom,
+            footer.getBoundingClientRect().top,
+          );
+          const visibleHeight =
+            Math.min(body.bottom, clipBottom) - Math.max(body.top, clipTop);
+          const style = getComputedStyle(element);
+          const textTop =
+            body.top +
+            parseFloat(style.borderTopWidth) +
+            parseFloat(style.paddingTop);
+          const textBottom =
+            body.bottom -
+            parseFloat(style.borderBottomWidth) -
+            parseFloat(style.paddingBottom);
+          const visibleTextHeight =
+            Math.min(textBottom, clipBottom) - Math.max(textTop, clipTop);
+          return {
+            visibleHeight,
+            visibleLines: visibleTextHeight / parseFloat(style.lineHeight),
+          };
+        },
+      );
+      const layout = `${name} at ${width}×${height}${widerText ? " with wider text" : ""}`;
+      expect(visibleHeight, layout).toBeGreaterThan(44);
+      expect(visibleLines, layout).toBeGreaterThanOrEqual(3);
       await expect(
         page.getByRole("button", { name: "Save changes" }),
       ).toHaveCount(0);
@@ -59,6 +93,7 @@ test("clean current orchestration leaves room for both prompt editors", async ({
       await expect(status).not.toHaveAttribute("open", "");
       await expect(summary).toBeFocused();
     }
+    await textSpacing?.evaluate((element) => element.remove());
   }
 });
 
