@@ -64,7 +64,6 @@ describe("世界工作区主页", () => {
               gameplay: { mode: "interactive-fiction" },
             },
           ],
-          selectedPackageId: "package-ready",
           onCreatePackage: vi.fn(),
           onCreateSamplePackage,
           onOpenPackage,
@@ -134,7 +133,6 @@ describe("世界工作区主页", () => {
         },
         contentLibrary: {
           contentPackages: [],
-          selectedPackageId: "",
           onCreatePackage: vi.fn(),
           onCreateSamplePackage,
           onOpenPackage: vi.fn(),
@@ -201,7 +199,6 @@ describe("世界工作区主页", () => {
         },
         contentLibrary: {
           contentPackages: [],
-          selectedPackageId: "",
           onCreatePackage: vi.fn(),
           onCreateSamplePackage: vi.fn(),
           onOpenPackage: vi.fn(),
@@ -511,7 +508,6 @@ describe("世界工作区主页", () => {
         },
         contentLibrary: {
           contentPackages: [],
-          selectedPackageId: "",
           onCreatePackage: vi.fn(),
           onCreateSamplePackage: vi.fn(),
           onOpenPackage: vi.fn(),

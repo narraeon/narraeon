@@ -414,6 +414,7 @@ const englishMessages: Record<string, string> = {
     "Orchestration applied. Play changes take effect on the next normal send.",
   "导入 SillyTavern 角色卡或世界书":
     "Import SillyTavern character card or world book",
+  选择角色卡或世界书: "Choose character card or world book",
   "SillyTavern 内容导入向导": "SillyTavern content import wizard",
   "选择目标用途。SillyTavern 触发规则在 Narraeon 中仅供参考；未绑定的宏需要手动完善。":
     "Choose a destination for each item. SillyTavern trigger rules are for reference only in Narraeon. Unbound macros need manual completion.",
@@ -1157,6 +1158,7 @@ const englishMessages: Record<string, string> = {
     "Choose a content package ZIP exported by this app or with the same structure. Importing creates an independent copy and leaves existing packages untouched.",
   "内容包 ZIP": "Content-package ZIP",
   "内容包 ZIP 文件": "Content-package ZIP file",
+  "选择内容包 ZIP": "Choose content-package ZIP",
   "选择 ZIP 文件": "Choose ZIP file",
   "正在导入…": "Importing…",
   默认模型: "Default model",

@@ -266,7 +266,8 @@ export function SillyTavernContentImport({
       setShowResult(true);
     }, []),
   );
-  const picker = useRef<HTMLInputElement>(null);
+  const picker = useRef<HTMLButtonElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const isOpen = Boolean(source || error);
   async function run(work: () => Promise<void>) {
@@ -318,34 +319,48 @@ export function SillyTavernContentImport({
       ? (view.fields.extensions as Record<string, unknown>).depth_prompt
       : view?.fields[key];
   return (
-    <section className="home-import-disclosure">
-      <label>
-        {uiText("导入 SillyTavern 角色卡或世界书")}
-        <input
-          ref={picker}
-          type="file"
-          accept=".json,.png,application/json,image/png"
-          disabled={busy}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (!file) return;
-            close();
-            void run(async () => {
-              if (file.size > 8 * 1024 * 1024)
-                throw new Error("source_too_large");
-              const bytes = new Uint8Array(await file.arrayBuffer());
-              let binary = "";
-              for (const byte of bytes) binary += String.fromCharCode(byte);
-              const encoded = btoa(binary);
-              setSource(encoded);
-              setName(
-                file.name.replace(/\.(json|png)$/iu, "") || "SillyTavern",
-              );
-            });
-          }}
-        />
-      </label>
+    <>
+      <details className="home-import-disclosure">
+        <summary>{uiText("导入 SillyTavern 角色卡或世界书")}</summary>
+        <div className="home-import-card">
+          <div className="home-import-picker">
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              accept=".json,.png,application/json,image/png"
+              aria-label={uiText("导入 SillyTavern 角色卡或世界书")}
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                close();
+                void run(async () => {
+                  if (file.size > 8 * 1024 * 1024)
+                    throw new Error("source_too_large");
+                  const bytes = new Uint8Array(await file.arrayBuffer());
+                  let binary = "";
+                  for (const byte of bytes) binary += String.fromCharCode(byte);
+                  const encoded = btoa(binary);
+                  setSource(encoded);
+                  setName(
+                    file.name.replace(/\.(json|png)$/iu, "") || "SillyTavern",
+                  );
+                });
+              }}
+            />
+            <button
+              ref={picker}
+              type="button"
+              disabled={busy}
+              onClick={() => fileInput.current?.click()}
+            >
+              {uiText("选择角色卡或世界书")}
+            </button>
+          </div>
+        </div>
+      </details>
       {isOpen && (
         <dialog
           {...dialog}
@@ -724,6 +739,6 @@ export function SillyTavernContentImport({
           </button>
         </dialog>
       )}
-    </section>
+    </>
   );
 }

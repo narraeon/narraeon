@@ -92,9 +92,12 @@ test("content import contains focus, respects pending work, and restores the fil
 }) => {
   await page.goto("/");
   await page.locator(".workspace-locale-picker select").selectOption("en");
-  const picker = page.getByLabel(
+  const fileInput = page.getByLabel(
     "Import SillyTavern character card or world book",
   );
+  const picker = page.getByRole("button", {
+    name: "Choose character card or world book",
+  });
   const dialog = page.getByRole("dialog", {
     name: "SillyTavern content import wizard",
   });
@@ -110,7 +113,12 @@ test("content import contains focus, respects pending work, and restores the fil
       ).narraeonAndroidBack?.(),
     );
 
-  await picker.setInputFiles(worldBookFile);
+  await page
+    .getByText("Import SillyTavern character card or world book", {
+      exact: true,
+    })
+    .click();
+  await fileInput.setInputFiles(worldBookFile);
   await expect(dialog.getByText("A foggy port", { exact: true })).toBeVisible();
   await expect(close).toBeFocused();
   await cancel.focus();
@@ -167,7 +175,7 @@ test("content import contains focus, respects pending work, and restores the fil
   await expect(dialog).toBeVisible();
   await close.click();
   await expect(picker).toBeFocused();
-  await picker.setInputFiles(worldBookFile);
+  await fileInput.setInputFiles(worldBookFile);
   await expect(dialog).toBeVisible();
   expect(await androidBack()).toBe(true);
   await expect(dialog).toHaveCount(0);
