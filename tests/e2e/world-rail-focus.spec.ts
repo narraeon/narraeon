@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 
+const outsideDocumentParagraph = "The lanterns stay lit until dawn.";
+
 for (const locale of ["en", "zh-CN"] as const) {
   test.describe(locale, () => {
     const touch = locale === "zh-CN";
@@ -180,16 +182,50 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: new RegExp(`^${label("Choose document", "选择文档")}`, "u"),
       });
       const search = rail.getByRole("searchbox");
-      const body = rail.getByText("The doors close at dusk.", { exact: true });
+      const options = rail.getByRole("option");
+      const gates = rail.getByRole("option", { name: /Guild Gates/u });
+      const body = rail.getByText(outsideDocumentParagraph, { exact: true });
       await expect(chooser).toBeVisible();
       await chooser.press("Enter");
       await expect(search).toBeFocused();
-      await rail.getByRole("option", { name: /Guild Gates/u }).click();
+      await expect(options).toHaveCount(5);
+      for (const option of await options.all()) {
+        const title = await option.locator("strong").innerText();
+        await (touch ? option.tap() : option.click());
+        await expect(chooser).toHaveAttribute("aria-expanded", "false");
+        await expect(chooser.getByText(title, { exact: true })).toBeVisible();
+        await chooser.press("Enter");
+      }
+      await (touch ? gates.tap() : gates.click());
       await expect(chooser).toBeFocused();
       await expect(body).toBeVisible();
 
       await chooser.press("Enter");
       await expect(search).toBeFocused();
+      const menuFooter = rail.getByText(
+        label("All 5 documents", "全部 5 份文档"),
+        { exact: true },
+      );
+      await (touch ? menuFooter.tap() : menuFooter.click());
+      await expect(chooser).toHaveAttribute("aria-expanded", "true");
+      await expect(gates).toHaveAttribute("aria-selected", "true");
+      await expect(options).toHaveCount(5);
+
+      await body.scrollIntoViewIfNeeded();
+      await expect
+        .poll(() =>
+          body.evaluate((element) => {
+            const { left, top, width, height } =
+              element.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              left + width / 2,
+              top + height / 2,
+            );
+            return element.contains(hit);
+          }),
+        )
+        .toBe(true);
+      await expect(chooser).toHaveAttribute("aria-expanded", "true");
       await (touch ? body.tap() : body.click());
       await expect(chooser).toHaveAttribute("aria-expanded", "false");
       await expect(rail).toBeVisible();
@@ -284,6 +320,9 @@ async function openWorld(page: Page, locale: "en" | "zh-CN"): Promise<void> {
             (_, index) => `Gate rule ${index + 1}.\n`,
           ),
           "The doors close at dusk.",
+          "",
+          // Keep a real paragraph below the open five-document menu.
+          outsideDocumentParagraph,
         ].join("\n"),
       },
     ],
