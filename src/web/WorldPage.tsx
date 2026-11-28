@@ -1,4 +1,5 @@
 import { ChatGptUsageLink } from "./ChatGptConnectionFields.tsx";
+import { ConfirmationDialog } from "./ConfirmationDialog.tsx";
 import { DismissibleNotice } from "./DismissibleNotice.tsx";
 import styles from "./PlayTimeline.module.css";
 import {
@@ -312,11 +313,15 @@ export function WorldPage({
     eventId: number;
   } | null>(null);
   const [retryRejection, setRetryRejection] = useState<string | null>(null);
+  const regenerationTriggerRef = useRef<HTMLButtonElement>(null);
+  const restoreRegenerationFocus = useRef(false);
   const [regenerationFallback, setRegenerationFallback] = useState<{
     worldId: string;
     chainId: string;
     eventId: number;
     originalText: string;
+    opener: HTMLButtonElement | null;
+    fallback: HTMLTextAreaElement | null;
   } | null>(null);
   const cancelledExchangeRef = useRef<string | null>(null);
   const playSubmissionInFlight = useRef(false);
@@ -898,6 +903,13 @@ export function WorldPage({
   const hasPlayerText = playerText.trim().length > 0;
   const playIdle =
     pending === null && activeStatus !== "running" && !worldRevisionLocked;
+  useLayoutEffect(() => {
+    if (!playIdle || !restoreRegenerationFocus.current) return;
+    restoreRegenerationFocus.current = false;
+    // Regeneration can replace the reply that owned the original focus.
+    if (document.activeElement === document.body)
+      regenerationTriggerRef.current?.focus({ preventScroll: true });
+  }, [playIdle]);
   const canStartFresh = hasPlayerText && playIdle;
   const currentRecovery =
     activeStatus === "interrupted" && activeCanRetry
@@ -1606,6 +1618,8 @@ export function WorldPage({
       chainId,
       eventId,
       originalText: editedText,
+      opener: regenerationTriggerRef.current,
+      fallback: composerTextareaRef.current,
     };
     const replacementExchangeId = createClientId("play-exchange");
     setPending("revise");
@@ -2131,6 +2145,7 @@ export function WorldPage({
                   }
                   freshContextDisabled={!modelConfigured}
                   showTechnicalInfo={readingPreferences.showTechnicalInfo}
+                  regenerationTriggerRef={regenerationTriggerRef}
                   onRestartFrom={(head) => void deriveWorld(head)}
                   onEditPlayer={(chainId, eventId, editedText, continuation) =>
                     void reviseEditedPlayer(
@@ -2161,6 +2176,8 @@ export function WorldPage({
                         chainId,
                         eventId,
                         originalText,
+                        opener: regenerationTriggerRef.current,
+                        fallback: composerTextareaRef.current,
                       });
                       return;
                     }
@@ -2454,38 +2471,34 @@ export function WorldPage({
                 </button>
               </div>
             ) : null}
-            {regenerationFallback?.worldId === worldId ? (
-              <div className="play-retry-note" role="status">
-                <p>
-                  {uiText(
-                    "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
-                  )}
-                </p>
-                <button
-                  type="button"
-                  disabled={!playIdle || !modelConfigured}
-                  onClick={() =>
-                    void reviseEditedPlayer(
-                      regenerationFallback.chainId,
-                      regenerationFallback.eventId,
-                      regenerationFallback.originalText,
-                      "fresh_context",
-                      true,
-                    )
-                  }
-                >
-                  {uiText("用全新上下文重新生成")}
-                </button>
-                <button
-                  type="button"
-                  disabled={!playIdle}
-                  onClick={() => setRegenerationFallback(null)}
-                >
-                  {uiText("取消")}
-                </button>
-              </div>
-            ) : null}
           </PlayComposer>
+
+          {regenerationFallback?.worldId === worldId ? (
+            <ConfirmationDialog
+              request={{
+                action: regenerationFallback,
+                message: uiText(
+                  "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
+                ),
+                confirmLabel: uiText("用全新上下文重新生成"),
+                opener: regenerationFallback.opener,
+                fallback: regenerationFallback.fallback,
+              }}
+              confirmDisabled={!playIdle || !modelConfigured}
+              onDecision={(confirmed) => {
+                setRegenerationFallback(null);
+                if (!confirmed) return;
+                restoreRegenerationFocus.current = true;
+                void reviseEditedPlayer(
+                  regenerationFallback.chainId,
+                  regenerationFallback.eventId,
+                  regenerationFallback.originalText,
+                  "fresh_context",
+                  true,
+                );
+              }}
+            />
+          ) : null}
 
           <button
             type="button"

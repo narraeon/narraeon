@@ -1,7 +1,7 @@
 import styles from "./WorldHeaderChrome.module.css";
 import { ArtifactExtensionMount } from "./ArtifactExtensionHost.tsx";
 import { uiText } from "./i18n.ts";
-import type { Ref } from "react";
+import { useLayoutEffect, useRef, type Ref } from "react";
 
 export type WorldReadingRail = "documents" | "ai-reading";
 
@@ -32,8 +32,38 @@ export function WorldHeaderChrome({
   onToggleReading: () => void;
   onManage: (opener: HTMLButtonElement) => void;
 }) {
+  const headerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (header === null) return;
+
+    const updateOverlayTop = () => {
+      const bottom = header.getBoundingClientRect().bottom;
+      const zoom = header.currentCSSZoom || 1;
+      header.style.setProperty(
+        "--world-reader-header-bottom",
+        `${bottom / zoom}px`,
+      );
+    };
+
+    updateOverlayTop();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateOverlayTop);
+    observer?.observe(header, { box: "border-box" });
+    window.addEventListener("resize", updateOverlayTop);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateOverlayTop);
+    };
+  }, []);
+
   return (
-    <header className={`world-reader-header ${styles.readerHeader}`}>
+    <header
+      ref={headerRef}
+      className={`world-reader-header ${styles.readerHeader}`}
+    >
       <nav
         className={`world-floating-chrome world-floating-chrome-left ${styles.chrome} ${styles.left}`}
         aria-label={uiText("世界与状态")}

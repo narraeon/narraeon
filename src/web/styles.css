@@ -4558,7 +4558,7 @@ summary {
   width: auto;
   height: 1.9rem;
   padding: 0 0.45rem;
-  font-size: 0.72rem;
+  font-size: 0.85rem;
 }
 
 @media (pointer: coarse) {
@@ -6171,7 +6171,10 @@ summary {
 }
 
 .artifact-overlay {
-  --overlay-top: min(calc(var(--workspace-header-height) + 3.25rem), 35dvh);
+  --overlay-top: var(
+    --world-reader-header-bottom,
+    min(calc(var(--workspace-header-height) + 3.25rem), 35dvh)
+  );
   position: fixed;
   inset: var(--overlay-top) 0.75rem auto auto;
   width: min(32rem, calc(100vw - 1.5rem));
@@ -6296,7 +6299,7 @@ summary {
   padding: 0.9rem 1rem;
   border: 1px solid var(--warning);
   border-radius: 3px;
-  background: var(--danger-surface);
+  background: var(--warning-surface);
 }
 
 .setting-improvement-blocker {
@@ -6319,6 +6322,11 @@ summary {
   gap: 0.5rem;
   padding: 0.55rem 0.75rem;
   font-size: 0.84rem;
+}
+
+.setting-improvement-warning.is-error {
+  border-color: var(--danger);
+  background: var(--danger-surface);
 }
 
 .setting-improvement-warning .button-row {
@@ -7648,7 +7656,8 @@ summary {
   display: flex;
   flex-direction: column;
   height: 100dvh;
-  overflow: hidden;
+  /* Rails move offscreen. Only the story and panels can scroll. */
+  overflow: clip;
 }
 
 .world-reader-scroll {
@@ -7827,7 +7836,7 @@ summary {
   border-radius: 3px;
   color: var(--accent);
   background: var(--surface);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-panel-scrim {
@@ -7870,12 +7879,12 @@ summary {
 
 .world-document-switcher-trigger small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .world-document-switcher-trigger strong {
   margin-top: 0.1rem;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-document-switcher-trigger > span:last-child {
@@ -7907,7 +7916,7 @@ summary {
 
 .world-document-menu input {
   padding: 0.52rem 0.6rem;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-document-menu > div {
@@ -7945,7 +7954,7 @@ summary {
 }
 
 .world-document-menu > div strong {
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-document-menu > div small,
@@ -7987,7 +7996,7 @@ summary {
   display: grid;
   min-width: 0;
   gap: 0.3rem;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-document-details summary {
@@ -8021,7 +8030,7 @@ summary {
 .world-document-card > header button {
   padding: 0.35rem 0.55rem;
   border-radius: 3px;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-document-card pre {
@@ -8030,7 +8039,7 @@ summary {
   padding: 0.8rem;
   overflow: auto;
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -8061,20 +8070,20 @@ summary {
 
 .ai-reading-context-card span {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .ai-reading-context-card strong {
   margin-top: 0.15rem;
   overflow-wrap: anywhere;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .ai-reading-context-card p,
 .ai-reading-caveat {
   margin: 0.3rem 0 0;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   line-height: 1.55;
 }
 
@@ -8088,11 +8097,12 @@ summary {
 
 .ai-reading-document-list li {
   display: grid;
-  grid-template-columns: 3.2rem minmax(0, 1fr);
+  grid-template-columns: minmax(3.75rem, 1fr) minmax(0, 3fr);
   gap: 0.5rem;
   padding: 0.58rem;
   border: 1px solid var(--border);
   border-radius: 3px;
+  overflow-wrap: anywhere;
 }
 
 .ai-reading-document-list li > span {
@@ -8100,7 +8110,7 @@ summary {
   border-radius: 3px;
   color: var(--muted);
   background: var(--surface);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   text-align: center;
 }
 
@@ -8111,7 +8121,7 @@ summary {
 
 .ai-reading-document-list li.is-warning > span {
   color: var(--warning);
-  background: var(--danger-surface);
+  background: var(--warning-surface);
 }
 
 .ai-reading-document-list strong,
@@ -8120,13 +8130,13 @@ summary {
 }
 
 .ai-reading-document-list strong {
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .ai-reading-document-list small {
   margin-top: 0.15rem;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   line-height: 1.4;
 }
 
@@ -8165,7 +8175,7 @@ summary {
 .world-reading-range {
   display: grid;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-density-picker {
@@ -8186,7 +8196,7 @@ summary {
   border-radius: 3px;
   color: var(--muted);
   background: transparent;
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .world-density-picker button.is-current {
@@ -8211,7 +8221,7 @@ summary {
 
 .world-reading-reset {
   padding: 0.5rem;
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .world-reading-popover > small {

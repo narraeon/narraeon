@@ -1,5 +1,5 @@
 import styles from "./PlayTimeline.module.css";
-import { Fragment, useCallback, useId, useState } from "react";
+import { Fragment, useCallback, useId, useState, type RefObject } from "react";
 import type {
   V1PlayCallChainEvent,
   V1PlayCallChainView,
@@ -38,6 +38,7 @@ export function PlayTimeline({
   restartDisabled,
   freshContextDisabled,
   showTechnicalInfo,
+  regenerationTriggerRef,
   onRestartFrom,
   onEditPlayer,
   onRegeneratePlayer,
@@ -52,6 +53,7 @@ export function PlayTimeline({
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   showTechnicalInfo: boolean;
+  regenerationTriggerRef?: RefObject<HTMLButtonElement | null> | undefined;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -131,6 +133,11 @@ export function PlayTimeline({
                     restartDisabled={restartDisabled}
                     freshContextDisabled={freshContextDisabled}
                     showTechnicalInfo={showTechnicalInfo}
+                    actionsTriggerRef={
+                      item === latestNarrative
+                        ? regenerationTriggerRef
+                        : undefined
+                    }
                     onRestartFrom={onRestartFrom}
                     onEditPlayer={onEditPlayer}
                     onRegenerateNarrative={
@@ -452,6 +459,7 @@ function TimelineEvent({
   restartDisabled,
   freshContextDisabled,
   showTechnicalInfo,
+  actionsTriggerRef,
   onRestartFrom,
   onEditPlayer,
   onRegenerate,
@@ -466,6 +474,7 @@ function TimelineEvent({
   restartDisabled: boolean;
   freshContextDisabled: boolean;
   showTechnicalInfo: boolean;
+  actionsTriggerRef?: RefObject<HTMLButtonElement | null> | undefined;
   onRestartFrom: (head: string) => void;
   onEditPlayer: (
     chainId: string,
@@ -684,6 +693,7 @@ function TimelineEvent({
         <TimelineMessageMenu
           label={uiText("主持消息操作")}
           className={marginActions ? styles.narratorMarginActions : undefined}
+          triggerRef={actionsTriggerRef}
         >
           {responseKind === "narrative" && event.text.length > 0 ? (
             <StorySourceCopy text={event.text} />

@@ -388,8 +388,23 @@ for (const locale of ["zh-CN", "en"] as const) {
       await resume.click();
       await expectReply(story.getByText("Fixture second reply")).toBeVisible();
 
+      const viewport = page.viewportSize()!;
+      await page.setViewportSize({ width: 375, height: 440 });
       await readsButton.click();
+      const catalogBadge = page
+        .locator(".ai-reading-document-list .is-warning > span")
+        .getByText(t("标题 + 摘要", "Title + summary"), { exact: true })
+        .first();
+      await expect
+        .soft(catalogBadge)
+        .toHaveCSS("background-color", "rgb(250, 242, 223)", {
+          timeout: 1_000,
+        });
+      await expect
+        .soft(catalogBadge)
+        .toHaveCSS("font-size", "11.9px", { timeout: 500 });
       await showReadDialog();
+      await page.setViewportSize(viewport);
       const reading = readDialog;
       const readLabel = t(
         "AI 在这段对话中读过",

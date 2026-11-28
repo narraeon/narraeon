@@ -34,8 +34,9 @@ const laterReplyText = "The innkeeper adds a warning about the bridge.";
 const lastOverlayLine = "The far end of the mountain road";
 
 for (const locale of ["en", "zh-CN"] as const) {
-  test(`authored HTML folds by item and location without moving story attachments (${locale})`, async ({
+  test(`#452 authored HTML folds by item and location without moving story attachments (${locale})`, async ({
     browser,
+    browserName,
   }) => {
     const narrow = locale === "zh-CN";
     const context = await browser.newContext({
@@ -162,9 +163,13 @@ for (const locale of ["en", "zh-CN"] as const) {
       const fallbacks = leftRail.locator(".player-view-card");
       if (narrow) await expect(fallbacks).toHaveCount(0);
       else await expect(fallbacks.first()).toBeVisible();
-      await activate(
-        leftRail.getByRole("button", { name: t("Collapse all", "全部收起") }),
-      );
+      const collapseAll = leftRail.getByRole("button", {
+        name: t("Collapse all", "全部收起"),
+      });
+      await expect
+        .soft(collapseAll)
+        .toHaveCSS("font-size", "11.9px", { timeout: 500 });
+      await activate(collapseAll);
       await expect(sidebarFrames.first()).toBeHidden();
       await activate(
         leftRail.getByRole("button", { name: t("Expand all", "全部展开") }),
@@ -229,15 +234,49 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(popup).toBeVisible();
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect(close).toBeFocused();
-      const overlayBounds = await popup.boundingBox();
+      const header = page.locator(".world-reader-header");
       const viewport = page.viewportSize()!;
-      expect(overlayBounds!.x).toBeGreaterThanOrEqual(0);
-      expect(overlayBounds!.x + overlayBounds!.width).toBeLessThanOrEqual(
-        viewport.width,
-      );
-      expect(overlayBounds!.y + overlayBounds!.height).toBeLessThanOrEqual(
-        viewport.height,
-      );
+      const checkOverlayPosition = async () => {
+        await expect
+          .poll(async () => {
+            const bounds = (await popup.boundingBox())!;
+            const headerBounds = (await header.boundingBox())!;
+            return bounds.y - headerBounds.y - headerBounds.height;
+          })
+          .toBeCloseTo(0, 0);
+        await expect(popup).toBeInViewport({ ratio: 1 });
+        await expect
+          .poll(() =>
+            header.locator("nav > button").evaluateAll((buttons) =>
+              buttons.flatMap((button) => {
+                const bounds = button.getBoundingClientRect();
+                const hit = document.elementFromPoint(
+                  bounds.x + bounds.width / 2,
+                  bounds.y + bounds.height / 2,
+                );
+                return button.contains(hit)
+                  ? []
+                  : [
+                      {
+                        control:
+                          button.getAttribute("aria-label") ??
+                          button.textContent,
+                        hit: hit?.tagName,
+                        left: bounds.left,
+                        right: bounds.right,
+                      },
+                    ];
+              }),
+            ),
+          )
+          .toEqual([]);
+      };
+      await checkOverlayPosition();
+      await page.setViewportSize({ width: narrow ? 700 : 375, height: 440 });
+      await checkOverlayPosition();
+      await page.setViewportSize(viewport);
+      await checkOverlayPosition();
+      await expect(close).toBeFocused();
 
       const overlayStart = overlayFrame.getByRole("button", {
         name: "Read the map",
@@ -261,9 +300,13 @@ for (const locale of ["en", "zh-CN"] as const) {
             ),
           )
           .toBeGreaterThan(0);
-        await page.keyboard.press("Shift+Tab");
+        const previousControl =
+          browserName === "webkit" && process.platform === "darwin"
+            ? "Alt+Shift+Tab"
+            : "Shift+Tab";
+        await page.keyboard.press(previousControl);
         await expect(itemToggle(atMount("overlay")).first()).toBeFocused();
-        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press(previousControl);
         await expect(close).toBeFocused();
         await page.keyboard.press("Escape");
       }
@@ -310,7 +353,10 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: t("Show technical information", "显示技术信息"),
         exact: true,
       });
+      await trigger.click();
+      await expect(popup).toBeVisible();
       await readingSettings.click();
+      await expect(popup).toHaveCount(0);
       await technical.check();
       await expect(
         timeline

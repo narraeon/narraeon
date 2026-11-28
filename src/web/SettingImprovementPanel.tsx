@@ -1451,7 +1451,9 @@ export function SettingImprovementPanel({
             </div>
           )}
           {hasUnsavedFileDraft && (
-            <div className="setting-improvement-warning">
+            <div
+              className={`setting-improvement-warning${fileSaveConflict ? " is-error" : ""}`}
+            >
               <p role={fileSaveConflict ? "alert" : "status"}>
                 {uiText(
                   fileSaveConflict
