@@ -1,5 +1,12 @@
 import type { PlayPresetReceipt } from "./PlayPresetScreen.tsx";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import type { V1Request } from "../protocol/v1.ts";
 import { uiText } from "./i18n.ts";
@@ -9,6 +16,7 @@ import { useReadTarget } from "./useReadTarget.ts";
 import { SyncNotice } from "./SyncNotice.tsx";
 import { RuntimeRequestError } from "./RuntimeResponse.ts";
 import { browserUUID } from "./browser-uuid.ts";
+import { useModalDialog } from "./useModalDialog.ts";
 import {
   explainSillyTavernDiagnostic,
   sillyTavernErrorMessage,
@@ -75,22 +83,47 @@ export function SillyTavernImport({
   const [preview, setPreview] = useState<SillyTavernConversion>();
   const [commandBusy, setBusy] = useState(false);
   const [reading, setReading] = useState(false);
-  const busy = commandBusy || reading;
+  const [readingFile, setReadingFile] = useState(false);
+  const [fileReadFailed, setFileReadFailed] = useState(false);
+  const busy = commandBusy || reading || readingFile;
+  const open = readingFile || source !== undefined;
   const [inspectionQuery, setInspectionQuery] = useState<string | null>(null);
   const [openReference, setOpenReference] = useState<number>();
   const [openDeclaration, setOpenDeclaration] = useState<string>();
   const [visibleDeclarations, setVisibleDeclarations] = useState(100);
   const [visibleScripts, setVisibleScripts] = useState(100);
   const [error, setError] = useState("");
-  const dialog = useRef<HTMLDialogElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  const fileErrorId = useId();
+  const dialog = useModalDialog({
+    open,
+    busy,
+    opener: picker,
+    initialFocus: title,
+    onDismiss: () => {
+      if (openReference !== undefined) setOpenReference(undefined);
+      else cancel();
+    },
+  });
   const operation = useRef<{ query: string; id: string } | undefined>(
     undefined,
   );
 
-  useEffect(() => {
-    if (source !== undefined && dialog.current && !dialog.current.open)
-      dialog.current.showModal();
-  }, [source]);
+  async function readFile(file: File): Promise<void> {
+    setFileReadFailed(false);
+    setReadingFile(true);
+    try {
+      const text = await file.text();
+      setSource(text);
+      setName(file.name.replace(/\.json$/iu, "") || "SillyTavern");
+      inspect(text);
+    } catch {
+      setFileReadFailed(true);
+    } finally {
+      setReadingFile(false);
+    }
+  }
 
   async function run(work: () => Promise<void>): Promise<void> {
     setBusy(true);
@@ -162,6 +195,8 @@ export function SillyTavernImport({
     setInspection(undefined);
     setPreview(undefined);
     setSelected([]);
+    setOpenReference(undefined);
+    setOpenDeclaration(undefined);
     setError("");
   }
   const scripts = useMemo(
@@ -250,9 +285,9 @@ export function SillyTavernImport({
                   onMouseLeave={() => setOpenReference(undefined)}
                   onFocus={() => setOpenReference(token.start)}
                   onBlur={() => setOpenReference(undefined)}
-                  onClick={() => setOpenReference(token.start)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") setOpenReference(undefined);
+                  onClick={(event) => {
+                    event.currentTarget.focus();
+                    setOpenReference(token.start);
                   }}
                 >
                   {token.raw}
@@ -332,39 +367,35 @@ export function SillyTavernImport({
       <label className="play-preset-import-control">
         {uiText("导入 SillyTavern 预设")}
         <input
+          ref={picker}
           aria-label={uiText("选择 SillyTavern JSON 文件")}
+          aria-describedby={fileReadFailed ? fileErrorId : undefined}
           type="file"
           accept=".json,application/json"
           disabled={disabled || busy}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = "";
-            if (!file) return;
-            void run(async () => {
-              const text = await file.text();
-              setInspection(undefined);
-              setPreview(undefined);
-              setSelected([]);
-              setSource(text);
-              setName(file.name.replace(/\.json$/iu, "") || "SillyTavern");
-              inspect(text);
-            });
+            if (file) void readFile(file);
           }}
         />
       </label>
-      {source !== undefined &&
+      {fileReadFailed && (
+        <p id={fileErrorId} role="alert">
+          {uiText("无法读取 SillyTavern JSON 文件，请重新选择。")}
+        </p>
+      )}
+      {open &&
         createPortal(
           <dialog
-            ref={dialog}
+            {...dialog}
             className="sillytavern-import"
             aria-label={uiText("SillyTavern 导入向导")}
-            onCancel={(event) => {
-              event.preventDefault();
-              if (!busy) cancel();
-            }}
           >
             <header className="sillytavern-import-header">
-              <h2>{uiText("SillyTavern 导入向导")}</h2>
+              <h2 ref={title} tabIndex={-1}>
+                {uiText("SillyTavern 导入向导")}
+              </h2>
               <button
                 type="button"
                 disabled={busy}
@@ -402,7 +433,7 @@ export function SillyTavernImport({
                 </p>
               ) : null,
             )}
-            {inspection && (
+            {source !== undefined && inspection && (
               <>
                 <div className="st-import-fields">
                   <label>

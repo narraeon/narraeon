@@ -531,6 +531,8 @@ const englishMessages: Record<string, string> = {
   创建独立内容包: "Create independent content package",
   "导入 SillyTavern 预设": "Import SillyTavern preset",
   "选择 SillyTavern JSON 文件": "Choose SillyTavern JSON file",
+  "无法读取 SillyTavern JSON 文件，请重新选择。":
+    "Could not read the SillyTavern JSON file. Choose a file again.",
   "SillyTavern 导入向导": "SillyTavern import wizard",
   "逐项选择要导入的内容；源启用状态与选择独立。动态占位由 Narraeon 自身机制处理，不保证等价。":
     "Select each item to import; selection is independent of its source enabled state. Narraeon handles dynamic placeholders through its own mechanisms, which are not necessarily equivalent.",

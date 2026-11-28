@@ -16,6 +16,7 @@ import { StorySourceCopy } from "./StorySourceCopy.tsx";
 
 export function CreateWorldScreen({
   client,
+  titleRef,
   packages,
   selectedId,
   selectedTemplateId,
@@ -29,6 +30,7 @@ export function CreateWorldScreen({
   onNavigationProtectionChange,
 }: {
   client: Pick<RuntimeClient, "request">;
+  titleRef?: (title: HTMLHeadingElement | null) => void;
   packages: readonly {
     localId: string;
     title: string;
@@ -42,7 +44,7 @@ export function CreateWorldScreen({
   onSelect: (id: string) => void;
   onTemplateSelect: (id: string) => void;
   onCreate: (template?: ProtagonistTemplate) => void;
-  onEdit: () => void;
+  onEdit: (opener: HTMLButtonElement) => void;
   onConfigureModel: () => void;
   onNavigationProtectionChange?: (
     protection: WorkspaceNavigationProtection,
@@ -120,7 +122,9 @@ export function CreateWorldScreen({
   return (
     <main className="create-world-screen">
       <aside>
-        <h1>{uiText("新建世界")}</h1>
+        <h1 ref={titleRef} tabIndex={titleRef === undefined ? undefined : -1}>
+          {uiText("新建世界")}
+        </h1>
         <p>{uiText("选择一份内容包，从它的开场开始。")}</p>
         {packages.length === 0 ? (
           <p>{uiText("先新建或导入一份内容包。")}</p>
@@ -197,7 +201,11 @@ export function CreateWorldScreen({
         >
           {pending ? uiText("正在创建世界…") : uiText("从当前内容包创建")}
         </button>
-        <button type="button" disabled={pending} onClick={onEdit}>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={(event) => onEdit(event.currentTarget)}
+        >
           {uiText(selected === undefined ? "新建内容包" : "编辑这份内容包")}
         </button>
         <small>{uiText("新世界独立保存，之后的游玩不会修改源内容包。")}</small>

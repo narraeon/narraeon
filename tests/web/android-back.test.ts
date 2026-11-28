@@ -7,7 +7,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, createRef } from "react";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 import {
@@ -87,7 +87,11 @@ describe("Android 返回键", () => {
 
   test("新建内容包对话框：返回键取消；创建进行中时保持打开但仍吞掉返回键", () => {
     const onCancel = vi.fn();
-    const props = { onCancel, onCreate: () => Promise.resolve() };
+    const props = {
+      opener: createRef<HTMLElement>(),
+      onCancel,
+      onCreate: () => Promise.resolve(),
+    };
     const { rerender } = render(
       createElement(CreateContentPackageDialog, { ...props, pending: true }),
     );

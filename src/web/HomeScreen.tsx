@@ -80,7 +80,7 @@ export function HomeScreen({
   contentLibrary: {
     contentPackages: HomeContentPackage[];
     samplePending?: boolean;
-    onCreatePackage: () => void;
+    onCreatePackage: (opener: HTMLButtonElement) => void;
     onCreateSamplePackage: (id: SampleContentPackageId) => Promise<void>;
     onOpenPackage: (packageId: string) => void;
     onRenamePackage: (
@@ -114,9 +114,8 @@ export function HomeScreen({
   const [renameFailure, setRenameFailure] = useState("");
   const [confirmation, setConfirmation] =
     useState<ConfirmationRequest<HomeDeletion> | null>(null);
-  const [sampleOpener, setSampleOpener] = useState<HTMLButtonElement | null>(
-    null,
-  );
+  const sampleOpener = useRef<HTMLButtonElement>(null);
+  const [sampleOpen, setSampleOpen] = useState(false);
   const [openCardActions, setOpenCardActions] = useState<string | null>(null);
   const zipInput = useRef<HTMLInputElement>(null);
   const pending = importPending || samplePending;
@@ -124,6 +123,11 @@ export function HomeScreen({
     ({ status }) => status === "usable",
   ).length;
   const repairPackageCount = contentPackages.length - usablePackageCount;
+
+  function openSamples(opener: HTMLButtonElement): void {
+    sampleOpener.current = opener;
+    setSampleOpen(true);
+  }
 
   function toggleCardActions(id: string, open: boolean): void {
     setOpenCardActions((current) =>
@@ -401,14 +405,19 @@ export function HomeScreen({
             <div>
               <h2 id="home-content-title">{uiText("内容包")}</h2>
             </div>
-            <button type="button" disabled={pending} onClick={onCreatePackage}>
+            <button
+              type="button"
+              disabled={pending}
+              aria-haspopup="dialog"
+              onClick={(event) => onCreatePackage(event.currentTarget)}
+            >
               {uiText("新建内容包")}
             </button>
             <button
               type="button"
               disabled={pending}
               aria-haspopup="dialog"
-              onClick={(event) => setSampleOpener(event.currentTarget)}
+              onClick={(event) => openSamples(event.currentTarget)}
             >
               {uiText("从内置故事新建")}
             </button>
@@ -591,7 +600,7 @@ export function HomeScreen({
                     className="primary-button"
                     disabled={pending}
                     aria-haspopup="dialog"
-                    onClick={(event) => setSampleOpener(event.currentTarget)}
+                    onClick={(event) => openSamples(event.currentTarget)}
                   >
                     {uiText("挑一个故事开玩")}
                   </button>
@@ -666,11 +675,11 @@ export function HomeScreen({
             uiText(" · {count} 份待修复", { count: repairPackageCount })}
         </span>
       </footer>
-      {sampleOpener !== null && (
+      {sampleOpen && (
         <SampleStoryDialog
           pending={samplePending}
           opener={sampleOpener}
-          onCancel={() => setSampleOpener(null)}
+          onCancel={() => setSampleOpen(false)}
           onChoose={onCreateSamplePackage}
         />
       )}

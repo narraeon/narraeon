@@ -9277,12 +9277,6 @@ dialog.world-dialog-scrim::backdrop {
   box-shadow: 0 0.3rem 1rem #0006;
 }
 @media (max-width: 650px) {
-  .sillytavern-import .import-browser {
-    flex-direction: column;
-  }
-  .sillytavern-import .import-browser-list {
-    flex: 0 0 32%;
-  }
   .st-import-fields {
     gap: 0.5rem;
   }
@@ -9323,9 +9317,23 @@ dialog.world-dialog-scrim::backdrop {
   font: inherit;
 }
 @media (max-width: 850px) {
+  .sillytavern-import[open] {
+    overflow-y: auto;
+  }
   .sillytavern-import .import-browser {
     display: flex;
     flex-direction: column;
+    min-height: 12rem;
+  }
+  .sillytavern-import .import-browser-list {
+    flex: 0 0 32%;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sillytavern-import .import-browser-detail {
+    flex: 1;
+    min-height: 0;
   }
   .sillytavern-import .st-variables {
     flex: 0 1 auto;

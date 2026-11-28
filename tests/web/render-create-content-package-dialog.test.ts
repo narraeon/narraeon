@@ -8,7 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { createElement } from "react";
+import { createElement, createRef } from "react";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 import type { Gameplay } from "../../src/protocol/gameplay.ts";
@@ -54,6 +54,7 @@ function renderDialog(
   render(
     createElement(CreateContentPackageDialog, {
       pending: overrides.pending ?? false,
+      opener: createRef<HTMLElement>(),
       onCancel,
       onCreate,
     }),

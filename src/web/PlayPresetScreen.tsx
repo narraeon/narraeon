@@ -342,17 +342,26 @@ export function PlayPresetScreen({
   const [library, setLibrary] = useState(initialLibrary);
   const libraryMenu = useRef<HTMLDetailsElement>(null);
   const screenRef = useRef<HTMLElement>(null);
+  const focusLibraryMenuAfterImport = useRef(false);
   const focusAppliedStatus = useRef(false);
   const fileWorkspaceTitle = useRef<HTMLHeadingElement>(null);
   const focusFileWorkspace = useRef(false);
-  useAndroidBack(true, () => {
+  function closePresetMenus(): boolean {
     const menus =
       screenRef.current?.querySelectorAll<HTMLDetailsElement>(
         openPresetMenus,
       ) ?? [];
-    for (const menu of menus) menu.open = false;
+    const focused = document.activeElement;
+    for (const menu of menus) {
+      menu.open = false;
+      if (menu.contains(focused))
+        menu
+          .querySelector<HTMLElement>(":scope > summary")
+          ?.focus({ preventScroll: true });
+    }
     return menus.length > 0;
-  });
+  }
+  useAndroidBack(true, closePresetMenus);
   const initial =
     initialLibrary.presets.find(({ id }) => id === initialSelectedId) ??
     initialLibrary.presets.find(
@@ -544,6 +553,15 @@ export function PlayPresetScreen({
   useLayoutEffect(() => {
     onNavigationProtectionChange({ dirty, busy: dirty && pending });
   }, [dirty, pending, onNavigationProtectionChange]);
+
+  useLayoutEffect(() => {
+    if (!focusLibraryMenuAfterImport.current) return;
+    focusLibraryMenuAfterImport.current = false;
+    // Applying the receipt closes the management menu and hides its file picker.
+    libraryMenu.current
+      ?.querySelector<HTMLElement>(":scope > summary")
+      ?.focus({ preventScroll: true });
+  }, [library]);
 
   useLayoutEffect(() => {
     if (workspaceView === "files" && focusFileWorkspace.current) {
@@ -943,7 +961,11 @@ export function PlayPresetScreen({
       className="play-preset-screen"
       aria-labelledby="play-preset-title"
       onPointerDownCapture={(event) => {
-        if (deletion !== null) return;
+        if (
+          deletion !== null ||
+          (event.target instanceof Element && event.target.closest("dialog"))
+        )
+          return;
         for (const menu of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
           openPresetMenus,
         ))
@@ -958,20 +980,9 @@ export function PlayPresetScreen({
           event.target.closest("dialog")
         )
           return;
-        const menus =
-          event.currentTarget.querySelectorAll<HTMLDetailsElement>(
-            openPresetMenus,
-          );
-        if (menus.length === 0) return;
+        if (!closePresetMenus()) return;
         event.preventDefault();
         event.stopPropagation();
-        for (const menu of menus) {
-          menu.open = false;
-          if (menu.contains(event.target))
-            menu
-              .querySelector<HTMLElement>(":scope > summary")
-              ?.focus({ preventScroll: true });
-        }
       }}
     >
       <header className="play-preset-header">
@@ -1082,6 +1093,7 @@ export function PlayPresetScreen({
                       onRead: () => void target.recover(),
                     }}
                     onImported={(receipt, startAiEditing) => {
+                      focusLibraryMenuAfterImport.current = true;
                       acceptPreset(receipt);
                       setWorkspaceView("call_chain");
                       if (startAiEditing) {
