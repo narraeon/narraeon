@@ -673,6 +673,7 @@ export function PresetWorkbenchEditor({
                     )}
                     <button
                       type="button"
+                      className="danger-button"
                       onClick={() =>
                         onResourceEdit({
                           type: "remove-artifact",

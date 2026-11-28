@@ -1243,13 +1243,6 @@
 .play-preset-screen {
   border: 0;
 }
-@media (--workspace-desktop) {
-  .play-preset-screen .ordered-play-editor > aside,
-  .play-preset-screen .ordered-play-content,
-  .play-preset-screen .preset-object-detail {
-    height: calc(100dvh - 192px);
-  }
-}
 @media (--workspace-compact) {
   .workspace-header {
     gap: 16px;
@@ -1306,14 +1299,6 @@
   }
 }
 @media (--workspace-mobile) {
-  .play-preset-screen .ordered-play-editor > aside {
-    height: 144px;
-    padding: 8px 12px;
-  }
-  .play-preset-screen .ordered-play-content,
-  .play-preset-screen .preset-object-detail {
-    padding: 16px 20px;
-  }
   .play-preset-screen .ordered-play-actions,
   .play-preset-screen .preset-object-toolbar {
     padding-bottom: 10px;
