@@ -93,7 +93,9 @@ test("clean current orchestration leaves room for both prompt editors", async ({
       await expect(status).not.toHaveAttribute("open", "");
       await expect(summary).toBeFocused();
     }
-    await textSpacing?.evaluate((element) => element.remove());
+    await textSpacing?.evaluate((style) => {
+      style.parentNode?.removeChild(style);
+    });
   }
 });
 
