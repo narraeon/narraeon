@@ -330,6 +330,8 @@ for (const locale of ["zh-CN", "en"] as const) {
           .filter({ hasText: "Alex opens the window." });
       const actions = reply(page).getByRole("button", { name: actionName });
       await expect(actions).toBeVisible();
+      await expect(actions).toHaveCSS("width", "32px");
+      await expect(actions).toHaveCSS("height", "32px");
       for (const viewportWidth of [671, 673, 721, 961, 1180, 1440]) {
         await test.step(`${viewportWidth}px at the widest measure`, async () => {
           await page.setViewportSize({ width: viewportWidth, height: 800 });

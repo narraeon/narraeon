@@ -67,7 +67,7 @@ test("opening, streamed reply, and saved story keep Markdown readable and source
     throw new Error("Provider port missing");
 
   try {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await context.grantPermissions(["clipboard-read"]);
     const externalRequests: string[] = [];
     await context.route("https://story-links.test/**", async (route) => {
       externalRequests.push(route.request().url());
@@ -164,6 +164,12 @@ test("opening, streamed reply, and saved story keep Markdown readable and source
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(360);
+    const messageActions = latest.getByRole("button", {
+      name: "Narrator message actions",
+      exact: true,
+    });
+    await expect(messageActions).toHaveCSS("width", "44px");
+    await expect(messageActions).toHaveCSS("height", "44px");
     await copyOriginal(page, latest, reply);
 
     await page.reload();
@@ -200,7 +206,7 @@ async function copyOriginal(page: Page, container: Locator, source: string) {
     name: "Narrator message actions",
     exact: true,
   });
-  if ((await messageActions.count()) > 0) await messageActions.click();
+  if ((await messageActions.count()) > 0) await messageActions.tap();
   await container.getByRole("button", { name: "Copy original" }).click();
   await expect(
     container.getByRole("button", { name: "Original copied" }),

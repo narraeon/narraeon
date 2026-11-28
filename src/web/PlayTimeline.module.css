@@ -281,11 +281,8 @@
 
 @media (--world-reader-narrow) {
   .column .narratorWithMarginActions {
-    margin-inline-end: max(
-      2.5rem,
-      var(--narrator-action-space) - var(--story-inline-inset) -
-        var(--story-inline-padding)
-    );
+    /* Keep the action and its outline inside the message row. */
+    margin-inline-end: var(--narrator-action-space);
   }
 }
 
