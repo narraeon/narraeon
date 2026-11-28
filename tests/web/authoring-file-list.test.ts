@@ -6,6 +6,10 @@ import {
   createAuthoringFileSearch,
   orderAuthoringFiles,
 } from "../../src/web/authoring-file-list.ts";
+import {
+  readWorldDocumentBody,
+  worldDocumentPresentation,
+} from "../../src/web/worldDocumentPresentation.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -69,3 +73,112 @@ test("a large package indexes its YAML headers once and only reindexes changed f
   expect(search(changed, "New title")).toEqual([changed[0]]);
   expect(parse).toHaveBeenCalledTimes(1025);
 });
+
+test.each(["\n", "\r\n"])(
+  "reads draft headers with %j line endings without parsing the body",
+  (newline) => {
+    const parse = vi.spyOn(restrictedYaml, "parseRestrictedYamlDocument");
+    const search = createAuthoringFileSearch("content-package");
+    const header = [
+      "$document:",
+      "  title: 海港 Harbor",
+      "  ref: harbor",
+      "  summary: >-",
+      "    A working harbor.",
+    ];
+    const files: ContentTreeFile[] = [
+      {
+        path: "world/place.yml",
+        contents: ["  # A comment", "", ...header, "body: [draft", ""].join(
+          newline,
+        ),
+      },
+      {
+        path: "world/rules.md",
+        contents: [
+          "---",
+          ...header,
+          "---",
+          "",
+          "# A temporarily mismatched heading",
+          "",
+        ].join(newline),
+      },
+    ];
+    expect(search(files, "@harbor")).toEqual(files);
+    expect(search(files, "海港")).toEqual(files);
+    expect(parse).toHaveBeenCalledTimes(2);
+    for (const [source] of parse.mock.calls) {
+      expect(source).not.toMatch(/body:|mismatched heading/u);
+    }
+  },
+);
+
+test("shows the CRLF title and short reference even when the body falls back to source", () => {
+  const file = {
+    path: "rules/harbor.md",
+    contents: [
+      "---",
+      "$document: {id: rules.harbor, ref: harbor, title: Harbor, summary: A harbor, aliases: []}",
+      "---",
+      "# Harbor",
+      "  Draft body.  ",
+      "",
+    ].join("\r\n"),
+  };
+  expect(worldDocumentPresentation(file)).toMatchObject({
+    title: "Harbor",
+    ref: "harbor",
+  });
+  expect(readWorldDocumentBody(file)).toEqual({
+    kind: "source",
+    text: file.contents,
+  });
+});
+
+test.each(["\n", "\r\n"])(
+  "keeps the same header fallback with %j line endings",
+  (newline) => {
+    const search = createAuthoringFileSearch("world-revision");
+    const files: ContentTreeFile[] = [
+      {
+        path: "state/flow.yaml",
+        contents: [
+          "$document: { title: Harbor, ref: harbor }",
+          "body: complete",
+          "",
+        ].join(newline),
+      },
+      { path: "state/no-header.md", contents: "# Harbor" + newline },
+      {
+        path: "state/unclosed.md",
+        contents: ["---", "$document: { title: Harbor, ref: harbor }", ""].join(
+          newline,
+        ),
+      },
+      {
+        path: "state/broken-header.yaml",
+        contents: [
+          "$document:",
+          "  title: Harbor",
+          "  ref: [harbor",
+          "body: valid",
+          "",
+        ].join(newline),
+      },
+      {
+        path: "state/bare-cr.yaml",
+        contents: [
+          "$document:",
+          "  title: Harbor\rstill raw",
+          "  ref: harbor",
+          "body: valid",
+          "",
+        ].join(newline),
+      },
+    ];
+    expect(search(files, "@harbor")).toEqual([files[0]]);
+    expect(search(files, "harbor")).toEqual([files[0]]);
+    expect(search(files, "unclosed.md")).toEqual([files[2]]);
+  },
+);

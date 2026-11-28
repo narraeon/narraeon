@@ -24,7 +24,7 @@ export function readDraftIdentity(
   if (codec === null) return null;
   const source =
     codec === "markdown"
-      ? markdownFrontMatter(file.contents.replaceAll("\r\n", "\n"))
+      ? (markdownFrontMatter(file.contents)?.yaml ?? "")
       : file.contents;
   // Direct scalar reads also reserve identifiers from incomplete file drafts.
   const document = parseDocument(source);

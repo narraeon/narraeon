@@ -6,10 +6,23 @@ export function documentCodec(path: string): "yaml" | "markdown" | null {
   return null;
 }
 
-export function markdownFrontMatter(source: string): string {
-  if (!source.startsWith("---\n")) return "";
-  const end = source.indexOf("\n---\n", 4);
-  return end < 0 ? "" : source.slice(4, end);
+export function markdownFrontMatter(source: string): {
+  yaml: string;
+  yamlStart: number;
+  bodyStart: number;
+} | null {
+  const opening = /^---\r?\n/u.exec(source);
+  if (opening === null) return null;
+  const yamlStart = opening[0].length;
+  const closingDelimiter = /\r?\n---\r?\n/gu;
+  closingDelimiter.lastIndex = yamlStart;
+  const closing = closingDelimiter.exec(source);
+  if (closing === null) return null;
+  return {
+    yaml: source.slice(yamlStart, closing.index),
+    yamlStart,
+    bodyStart: closingDelimiter.lastIndex,
+  };
 }
 
 export function nextAvailableShortRef(
