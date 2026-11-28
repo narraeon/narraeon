@@ -180,8 +180,13 @@ test.describe("desktop model settings", () => {
   });
 
   test("follows the saved list, discloses each model prompt, and focuses hidden invalid fields", async ({
+    browserName,
     page,
   }) => {
+    const tab =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab";
     await runtime(page, { type: "preferences.save", locale: "en" });
     const longName = "ConnectionLongName".repeat(7);
     const prefilledPrompt = "A saved connection prompt.";
@@ -242,13 +247,13 @@ test.describe("desktop model settings", () => {
     );
 
     await createAnother.focus();
-    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press(`Shift+${tab}`);
     expect(
       await list.evaluate((element) =>
         element.contains(document.activeElement),
       ),
     ).toBe(true);
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(createAnother).toBeFocused();
 
     const summary = form
@@ -259,7 +264,7 @@ test.describe("desktop model settings", () => {
     await expect(prompt).toBeHidden();
     await summary.focus();
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(prompt).toBeFocused();
     await expect(prompt).toHaveValue(prefilledPrompt);
     await prompt.fill("");

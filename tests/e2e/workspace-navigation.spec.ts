@@ -309,8 +309,13 @@ test("手机地址栏展开和收起时，长页面只在标题栏下方滚动",
 
 for (const locale of ["en", "zh-CN"] as const) {
   test(`primary navigation and creation tools work on desktop and mobile (${locale})`, async ({
+    browserName,
     page,
   }) => {
+    const tab =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab";
     const t = (zh: string, en: string) => (locale === "zh-CN" ? zh : en);
     await runtime(page, { type: "preferences.save", locale });
     await runtime(page, {
@@ -369,13 +374,13 @@ for (const locale of ["en", "zh-CN"] as const) {
     ).toBeVisible();
     await tools.focus();
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(plans).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(tools).toBeFocused();
     await expect(plans).toBeHidden();
     await page.keyboard.press("Space");
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#\/orchestrations(?:\/[^/]+)?$/u);
     await expect(tools).toHaveAttribute("aria-current", "location");
@@ -393,7 +398,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     await menu.focus();
     await page.keyboard.press("Enter");
     await expect(worlds).toBeFocused();
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(tab);
     await expect(library).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#\/library$/u);
