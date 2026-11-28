@@ -1,9 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { stringify } from "yaml";
 
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
 import { defaultPlayPresetFiles } from "../../src/runtime/play/FileNativePlayPresetStore.ts";
 import { createZip } from "../support/createZip.ts";
+import { test } from "../support/isolatedRuntimeTest.ts";
+
+test.use({ runtimeScope: "document-reaudit" });
 
 async function runtime<T = unknown>(
   page: Page,
