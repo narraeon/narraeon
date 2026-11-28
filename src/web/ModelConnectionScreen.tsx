@@ -1236,7 +1236,19 @@ export function ModelConnectionScreen({
               key={form.connectionId}
               ref={advancedOptions}
               onInvalid={(event) => {
-                event.currentTarget.open = true;
+                const options = event.currentTarget;
+                if (options.open) return;
+                options.open = true;
+
+                // WebKit can skip a field revealed during native validation.
+                const field = event.target;
+                const firstInvalid = options
+                  .closest("form")
+                  ?.querySelector(
+                    "input:invalid, select:invalid, textarea:invalid",
+                  );
+                if (field instanceof HTMLElement && field === firstInvalid)
+                  field.focus();
               }}
             >
               <summary>{uiText("高级协议选项")}</summary>

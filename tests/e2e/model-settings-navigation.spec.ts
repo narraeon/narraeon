@@ -294,14 +294,39 @@ test.describe("desktop model settings", () => {
     await form.getByLabel("API Key", { exact: true }).fill("fixture-secret");
     await form.locator("#model-thinking-mode").selectOption("enabled");
     const budget = form.getByLabel("Thinking budget tokens");
+    const name = form.getByLabel("Configuration name", { exact: true });
+    const save = form.getByRole("button", {
+      name: "Save and enable model connection",
+    });
+    const active = page.locator(".model-active-summary strong");
     await budget.fill("600");
+    await name.fill("");
     await advanced.click();
     await expect(budget).toBeHidden();
-    await form
-      .getByRole("button", { name: "Save and enable model connection" })
-      .click();
-    await expect(budget).toBeFocused();
+    await save.click();
+    await expect(name).toBeFocused();
+    await expect(name).toHaveValue("");
     await expect(budget).toBeVisible();
+    await expect(budget).toHaveValue("600");
+    await expect(active).toHaveText("Connection 11");
+
+    await name.fill("Corrected connection");
+    await advanced.click();
+    await expect(budget).toBeHidden();
+    await save.click();
+    await expect(budget).toBeVisible();
+    await expect(budget).toBeFocused();
+    await expect(budget).toHaveValue("600");
+    await expect(name).toHaveValue("Corrected connection");
+    await expect(active).toHaveText("Connection 11");
+
+    await budget.fill("2048");
+    await advanced.click();
+    await save.click();
+    await expect(active).toHaveText("Corrected connection");
+    await expect(budget).toBeHidden();
+    await advanced.click();
+    await expect(budget).toHaveValue("2048");
   });
 });
 
