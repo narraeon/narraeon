@@ -1337,10 +1337,18 @@ test("a conflicting content-package save explains the rejection with the drawer 
     ),
   });
 
-  const { save, discard } = fileDraftActions(page, "setting");
+  const { save, discard, warning } = fileDraftActions(page, "setting");
+  await expect(warning).toHaveRole("status");
+  await expect
+    .soft(warning.locator(".."))
+    .toHaveCSS("background-color", "rgb(250, 242, 223)", { timeout: 500 });
   await save.click();
   await expect(page.getByRole("alert")).toHaveText(
     "内容包已被其他操作修改，草稿已保留，尚未保存。",
+  );
+  await expect(page.getByRole("alert").locator("..")).toHaveCSS(
+    "background-color",
+    "rgb(251, 237, 235)",
   );
   await expect(composer(page)).toBeDisabled();
   await openEditor(page, "setting");

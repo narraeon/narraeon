@@ -399,7 +399,7 @@ test("重新生成最新回复追加一次时间线修订，保留原文和旧�
   }
 });
 
-test("导入后无需新回合即可用全新上下文重新生成，并显示小于百分之一占用", async ({
+test("#449 导入后的整轮重来可在 512px 两侧取消或确认，并显示小于百分之一占用", async ({
   page,
 }) => {
   test.setTimeout(120000);
@@ -465,25 +465,81 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
       .locator(".call-chain-assistant.is-completed")
       .last()
       .getByRole("button", {
-        name: "主持消息操作",
-        exact: true,
+        name: /^(主持消息操作|Narrator message actions)$/u,
       });
     await expect(actions).toBeEnabled();
-    await actions.click();
-    await page.getByRole("button", { name: "整轮重来", exact: true }).click();
+    const redo = page.getByRole("button", {
+      name: /^(整轮重来|Redo the turn)$/u,
+    });
     const fallback = page.getByRole("button", {
-      name: "用全新上下文重新生成",
+      name: /^(用全新上下文重新生成|Regenerate with a fresh context)$/u,
+    });
+    const cancel = page.getByRole("button", {
+      name: /^(取消|Cancel)$/u,
+    });
+    const explanation = page.getByText(
+      /^(原上下文无法用于这次重新生成。|The original context cannot be used for this regeneration\.)/u,
+    );
+    const playStatus = page.getByRole("button", {
+      name: /^(游玩状态|Play status)/u,
+    });
+    const originalReply = page.getByText("Alex抬起头，向你点头致意。", {
       exact: true,
     });
-    await expect(fallback).toBeVisible();
-    await expect(
-      page.getByText(
-        "原上下文无法用于这次重新生成。可使用当前模型和编排方案，从同一条玩家输入开启全新上下文。",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    for (const height of [512, 513, 440]) {
+      await page.setViewportSize({ width: 700, height });
+      if (height <= 512)
+        await expect(playStatus).toHaveAttribute("aria-expanded", "false");
+      await actions.click();
+      await redo.click();
+      await expect(explanation).toBeInViewport({ ratio: 1 });
+      await expect(fallback).toBeInViewport({ ratio: 1 });
+      await expect(cancel).toBeInViewport({ ratio: 1 });
+      await expect(cancel).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(fallback).toBeFocused();
+      if (height === 440) {
+        expect(
+          await page.evaluate(() =>
+            (
+              window as { narraeonAndroidBack?: () => boolean }
+            ).narraeonAndroidBack?.(),
+          ),
+        ).toBe(true);
+      } else if (height === 513) {
+        await page.keyboard.press("Escape");
+      } else {
+        await cancel.click();
+      }
+      await expect(fallback).toHaveCount(0);
+      await expect(actions).toBeFocused();
+      await expect(originalReply).toBeVisible();
+      expect(requests).toHaveLength(0);
+    }
+    const localePicker = page.locator(".workspace-locale-picker select");
+    await localePicker.selectOption("en");
+    await expect(actions).toHaveAccessibleName("Narrator message actions");
+    await page.setViewportSize({ width: 375, height: 440 });
+    await expect(playStatus).toHaveAttribute("aria-expanded", "false");
+    await actions.click();
+    await redo.click();
+    await expect(explanation).toBeInViewport({ ratio: 1 });
+    await expect(fallback).toBeInViewport({ ratio: 1 });
+    await expect(cancel).toBeInViewport({ ratio: 1 });
+    await expect(cancel).toBeFocused();
+    await cancel.click();
+    await expect(actions).toBeFocused();
     expect(requests).toHaveLength(0);
-    await fallback.click();
+
+    await page.setViewportSize({ width: 700, height: 440 });
+    await localePicker.selectOption("zh-CN");
+    await expect(actions).toHaveAccessibleName("主持消息操作");
+    await actions.click();
+    await redo.click();
+    expect(requests).toHaveLength(0);
+    await page.keyboard.press("Tab");
+    await expect(fallback).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(
       page.getByText("已重新生成；原回复已离开当前时间线", { exact: true }),
     ).toBeVisible();
@@ -495,6 +551,7 @@ test("导入后无需新回合即可用全新上下文重新生成，并显示�
     ).toHaveCount(0);
     await expect(page.locator(".call-chain-player")).toHaveCount(1);
     await expect(page.getByText("上下文 <1%", { exact: true })).toBeVisible();
+    await expect(actions).toBeFocused();
     expect(requests).toHaveLength(1);
     const sent = JSON.parse(requests[0]!) as {
       messages: { role: string; content: unknown }[];

@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { useAndroidBack } from "./androidBridge.ts";
 import styles from "./PlayTimeline.module.css";
@@ -15,14 +16,17 @@ export function TimelineMessageMenu({
   className,
   label,
   children,
+  triggerRef,
 }: {
   className?: string | undefined;
   label: string;
   children: ReactNode;
+  triggerRef?: RefObject<HTMLButtonElement | null> | undefined;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const localTrigger = useRef<HTMLButtonElement>(null);
+  const trigger = triggerRef ?? localTrigger;
   const panel = useRef<HTMLSpanElement>(null);
   const panelId = useId();
 
@@ -97,7 +101,7 @@ export function TimelineMessageMenu({
       viewport?.removeEventListener("resize", place);
       viewport?.removeEventListener("scroll", place);
     };
-  }, [open]);
+  }, [open, trigger]);
 
   return (
     <span

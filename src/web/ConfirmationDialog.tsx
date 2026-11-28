@@ -12,9 +12,11 @@ export interface ConfirmationRequest<Action> {
 
 export function ConfirmationDialog({
   request: { message, confirmLabel, opener, fallback },
+  confirmDisabled = false,
   onDecision,
 }: {
   request: ConfirmationRequest<unknown>;
+  confirmDisabled?: boolean;
   onDecision: (confirmed: boolean) => void;
 }): React.JSX.Element {
   const labelId = useId();
@@ -61,7 +63,9 @@ export function ConfirmationDialog({
         if (event.key !== "Tab" || event.defaultPrevented) return;
         event.preventDefault();
         const next =
-          event.target === cancelRef.current ? confirmRef : cancelRef;
+          event.target === cancelRef.current && !confirmDisabled
+            ? confirmRef
+            : cancelRef;
         next.current?.focus();
       }}
     >
@@ -74,6 +78,7 @@ export function ConfirmationDialog({
           ref={confirmRef}
           type="button"
           className="danger-button"
+          disabled={confirmDisabled}
           onClick={() => decide(true)}
         >
           {confirmLabel}

@@ -168,8 +168,8 @@
 .messageActionsTrigger {
   display: grid;
   place-items: center;
-  inline-size: 32px;
-  block-size: 32px;
+  inline-size: var(--message-action-size);
+  block-size: var(--message-action-size);
   padding: 0;
   border-color: transparent;
   color: var(--muted);
@@ -276,12 +276,16 @@
 .narratorMarginActions {
   position: absolute;
   inset-block-start: 0;
-  inset-inline-start: calc(100% + 0.15rem);
+  inset-inline-start: calc(100% + var(--narrator-action-gap));
 }
 
 @media (--world-reader-narrow) {
   .column .narratorWithMarginActions {
-    margin-inline-end: 2.5rem;
+    margin-inline-end: max(
+      2.5rem,
+      var(--narrator-action-space) - var(--story-inline-inset) -
+        var(--story-inline-padding)
+    );
   }
 }
 
@@ -571,13 +575,39 @@
 }
 
 .column {
-  width: min(calc(100% - 2rem), var(--world-story-measure));
+  --message-action-size: 32px;
+  --narrator-action-gap: 0.15rem;
+  --narrator-action-space: calc(
+    var(--message-action-size) + var(--narrator-action-gap) + 4px
+  );
+  --story-inline-inset: 1rem;
+  --story-inline-padding: clamp(0.4rem, 2vw, 1.2rem);
+  width: min(
+    calc(100% - 2 * var(--story-inline-inset)),
+    var(--world-story-measure)
+  );
   min-height: 100%;
   margin: 0 auto;
-  padding: 10px clamp(0.4rem, 2vw, 1.2rem) 1.1rem;
+  padding: 10px var(--story-inline-padding) 1.1rem;
   font-size: var(--world-story-size);
   letter-spacing: var(--world-story-tracking);
   line-height: var(--world-story-leading);
+}
+
+@media (any-pointer: coarse) {
+  .column {
+    --message-action-size: 44px;
+  }
+}
+
+@media (--world-reader-resizable) {
+  :global(.is-story-mode) .column {
+    /* The outer inset and column padding together hold the button and its outline. */
+    --story-inline-inset: max(
+      1rem,
+      var(--narrator-action-space) - var(--story-inline-padding)
+    );
+  }
 }
 
 .column :global(.play-timeline-events),
@@ -728,9 +758,8 @@
 
 @media (--world-reader-narrow) {
   .column {
-    width: min(calc(100% - 0.6rem), var(--world-story-measure));
-    padding-right: 0.65rem;
-    padding-left: 0.65rem;
+    --story-inline-inset: 0.3rem;
+    --story-inline-padding: 0.65rem;
   }
 }
 .column :global(.story-heading) {

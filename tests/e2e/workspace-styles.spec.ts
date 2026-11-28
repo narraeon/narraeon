@@ -294,6 +294,177 @@ for (const locale of ["zh-CN", "en"] as const) {
         await expect(action).toBeFocused();
       }
     });
+
+    test("#450 narrator actions fit the reader at every tested measure", async ({
+      page,
+      browser,
+    }) => {
+      await openWorld(page, locale);
+      const settings = page.getByRole("button", {
+        name: t("阅读设置", "Reading settings"),
+      });
+      await settings.click();
+      const technical = page.getByRole("checkbox", {
+        name: t("显示技术信息", "Show technical information"),
+      });
+      await technical.uncheck();
+      const width = page.getByRole("slider", {
+        name: t("正文宽度", "Text width"),
+      });
+      await width.press("End");
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeFocused();
+      await page
+        .getByRole("textbox", { name: t("你的行动", "Your action") })
+        .fill("Look outside.");
+      await page
+        .getByRole("button", {
+          name: t("从全新上下文发送行动", "Send action from a fresh context"),
+        })
+        .click();
+
+      const actionName = t("主持消息操作", "Narrator message actions");
+      const reply = (tab: Page) =>
+        tab
+          .locator(".call-chain-assistant.is-completed")
+          .filter({ hasText: "Alex opens the window." });
+      const actions = reply(page).getByRole("button", { name: actionName });
+      await expect(actions).toBeVisible();
+      for (const viewportWidth of [671, 673, 721, 961, 1180, 1440]) {
+        await test.step(`${viewportWidth}px at the widest measure`, async () => {
+          await page.setViewportSize({ width: viewportWidth, height: 800 });
+          await page.mouse.move(4, 4);
+          await expect(actions).toHaveCSS(
+            "opacity",
+            viewportWidth >= 721 ? "0" : "1",
+          );
+          await reply(page).getByText("Alex opens the window.").hover();
+          await expect(actions).toHaveCSS("opacity", "1");
+          await expectNarratorActionEdges(actions);
+          await actions.click();
+          await expect(actions).toHaveAttribute("aria-expanded", "true");
+          await page.keyboard.press("Escape");
+          await expect(actions).toBeFocused();
+          await actions.blur();
+        });
+      }
+
+      await page.setViewportSize({ width: 1180, height: 800 });
+      await page
+        .getByRole("button", { name: t("此刻", "Now"), exact: true })
+        .click();
+      const worldRail = page.locator(".world-overlay-rail-right");
+      await page
+        .getByRole("button", { name: t("世界", "Worlds"), exact: true })
+        .click();
+      await expect(worldRail).toHaveClass(/is-open/u);
+      await reply(page).getByText("Alex opens the window.").hover();
+      await expectNarratorActionEdges(actions);
+      await worldRail
+        .getByRole("button", {
+          name: t("收起世界栏", "Close world panel"),
+        })
+        .click();
+      await page
+        .getByRole("button", { name: t("收起状态栏", "Close status panel") })
+        .click();
+
+      await settings.click();
+      await width.press("Home");
+      await page.keyboard.press("Escape");
+      await reply(page).getByText("Alex opens the window.").hover();
+      await expectNarratorActionEdges(actions);
+      await settings.click();
+      await technical.check();
+      await page.keyboard.press("Escape");
+      await expect(actions.locator("xpath=ancestor::header")).toHaveCount(1);
+      await actions.press("Enter");
+      await expect(actions).toHaveAttribute("aria-expanded", "true");
+      await page.keyboard.press("Escape");
+      await expect(actions).toBeFocused();
+
+      await settings.click();
+      await technical.uncheck();
+      await width.press("End");
+      await page.keyboard.press("Escape");
+      const touch = await browser.newContext({ hasTouch: true });
+      try {
+        const tab = await touch.newPage();
+        for (const viewportWidth of [375, 673]) {
+          await tab.setViewportSize({ width: viewportWidth, height: 800 });
+          await tab.goto(page.url());
+          const button = reply(tab).getByRole("button", { name: actionName });
+          await expect(button).toHaveCSS("opacity", "1");
+          await expect(button).toHaveAttribute("aria-expanded", "false");
+          await expect
+            .soft(button)
+            .toHaveCSS("width", "44px", { timeout: 500 });
+          await expect
+            .soft(button)
+            .toHaveCSS("height", "44px", { timeout: 500 });
+          await expectNarratorActionEdges(button);
+          await button.tap();
+          await expect(button).toHaveAttribute("aria-expanded", "true");
+          await button.tap();
+          await expect(button).toHaveAttribute("aria-expanded", "false");
+        }
+      } finally {
+        await touch.close();
+      }
+    });
+
+    test("#451 document and reading controls stay legible and reachable in a small window", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 375, height: 440 });
+      await openWorld(page, locale);
+      await page
+        .getByRole("button", { name: t("世界", "Worlds"), exact: true })
+        .click();
+      const rail = page.locator(".world-overlay-rail-right");
+      const documents = rail.getByRole("button", {
+        name: new RegExp(t("选择文档", "Choose document"), "u"),
+      });
+      await expect
+        .soft(documents.locator("strong"))
+        .toHaveCSS("font-size", "12.6px", { timeout: 500 });
+      await documents.press("Enter");
+      await expect(rail.getByRole("searchbox")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(documents).toBeFocused();
+      const source = rail.getByText(t("原始源码", "Original source"), {
+        exact: true,
+      });
+      await source.click();
+      await expect
+        .soft(source.locator("..").locator("pre"))
+        .toHaveCSS("font-size", "12.6px", { timeout: 500 });
+      await rail
+        .getByRole("button", { name: t("收起世界栏", "Close world panel") })
+        .click();
+
+      const settings = page.getByRole("button", {
+        name: t("阅读设置", "Reading settings"),
+      });
+      await settings.press("Enter");
+      const popover = page.getByRole("complementary", {
+        name: t("阅读设置", "Reading settings"),
+      });
+      const width = popover.getByRole("slider", {
+        name: t("正文宽度", "Text width"),
+      });
+      await expect
+        .soft(width.locator(".."))
+        .toHaveCSS("font-size", "12.6px", { timeout: 500 });
+      const reset = popover.getByRole("button", {
+        name: t("恢复默认", "Restore defaults"),
+      });
+      await reset.scrollIntoViewIfNeeded();
+      await expectHit(reset);
+      await reset.click();
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeFocused();
+    });
   });
 }
 
@@ -407,4 +578,28 @@ async function expectHit(target: Locator, point?: { x: number; y: number }) {
       }, point),
     )
     .toBe(true);
+}
+
+async function expectNarratorActionEdges(button: Locator) {
+  const bounds = await button.evaluate((node) => {
+    const { left, right, top, bottom } = node.getBoundingClientRect();
+    const scroller = node.closest(".world-reader-scroll")!;
+    return {
+      right,
+      readerRight: scroller.getBoundingClientRect().right,
+      scrollLeft: scroller.scrollLeft,
+      leftHit: node.contains(
+        document.elementFromPoint(left + 1, (top + bottom) / 2),
+      ),
+      rightHit: node.contains(
+        document.elementFromPoint(right - 1, (top + bottom) / 2),
+      ),
+    };
+  });
+  expect.soft(bounds.scrollLeft).toBe(0);
+  expect
+    .soft(bounds.right, JSON.stringify(bounds))
+    .toBeLessThanOrEqual(bounds.readerRight);
+  expect.soft(bounds.leftHit).toBe(true);
+  expect.soft(bounds.rightHit, JSON.stringify(bounds)).toBe(true);
 }
