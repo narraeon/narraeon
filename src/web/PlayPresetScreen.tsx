@@ -2186,7 +2186,6 @@ function PresetFileWorkspace({
     >
       <header className="play-preset-workspace-heading">
         <div>
-          <p className="play-preset-section-kicker">ADVANCED FILES</p>
           <h4 id="play-preset-files-title" ref={headingRef} tabIndex={-1}>
             {uiText("完整编排方案文件")}
           </h4>

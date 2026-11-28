@@ -308,10 +308,10 @@
   min-height: 2rem;
   padding: 0;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 3px;
   color: var(--muted);
-  background: var(--surface);
+  background: transparent;
   font-size: 0.82rem;
   cursor: pointer;
 }
@@ -319,11 +319,6 @@
 .more > summary:global(.has-turn-note) {
   border-color: var(--accent);
   color: var(--text);
-}
-
-.clearNote {
-  border-color: transparent;
-  background: transparent;
 }
 
 .clearNote:disabled {

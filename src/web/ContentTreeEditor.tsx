@@ -48,7 +48,12 @@ export function ContentFileDraftActions({
 }): React.JSX.Element {
   return (
     <div className="button-row">
-      <button type="button" disabled={disabled} onClick={onSave}>
+      <button
+        type="button"
+        className="primary-button"
+        disabled={disabled}
+        onClick={onSave}
+      >
         {mode === "world-revision" ? uiText("保存到修订") : uiText("整批保存")}
       </button>
       <button

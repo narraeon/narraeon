@@ -1657,6 +1657,7 @@ export function ModelConnectionScreen({
           </p>
           <div className="form-actions">
             <button
+              className="primary-button"
               disabled={pending !== null || (chatGpt && !canUseChatGpt)}
               type="submit"
             >

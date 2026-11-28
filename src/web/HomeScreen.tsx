@@ -357,6 +357,7 @@ export function HomeScreen({
                       <div className="button-row">
                         <button
                           type="submit"
+                          className="primary-button"
                           aria-label={uiText("保存世界名称")}
                           disabled={
                             renamePending ||
@@ -556,6 +557,7 @@ export function HomeScreen({
                           <div className="button-row">
                             <button
                               type="submit"
+                              className="primary-button"
                               aria-label={uiText("保存内容包标题")}
                               disabled={
                                 renamePending ||

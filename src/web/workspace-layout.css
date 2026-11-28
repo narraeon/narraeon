@@ -1059,8 +1059,7 @@
 .prompt-preview-header h2 {
   font-size: 22px;
 }
-.prompt-preview-header .eyebrow,
-.prompt-preview-kicker {
+.prompt-preview-header .eyebrow {
   display: none;
 }
 .prompt-preview-lede {
