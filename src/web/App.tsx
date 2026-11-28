@@ -1631,7 +1631,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             }}
             contentLibrary={{
               contentPackages: workspace.contentPackages,
-              selectedPackageId: selected,
               samplePending,
               onCreatePackage: () => setPackageDialogOpen(true),
               onCreateSamplePackage: createSamplePackage,

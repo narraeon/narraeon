@@ -217,6 +217,7 @@ export function ProtagonistTemplateManager({
             <button
               type="button"
               disabled={pending}
+              aria-pressed={baseline === null}
               onClick={(event) =>
                 requestAction(
                   { type: "select", templateId: null },

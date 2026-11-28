@@ -2,7 +2,7 @@ import type { SampleContentPackageId } from "../protocol/sampleContentPackages.t
 import { SampleStoryDialog } from "./SampleStoryDialog.tsx";
 import { gameplayLabel, type Gameplay } from "../protocol/gameplay.ts";
 import { getWebLocale, uiText } from "./i18n.ts";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { relativeActivityTime } from "./worldActivityPresentation.ts";
 import { HomeCardActions } from "./HomeCardActions.tsx";
 import {
@@ -46,7 +46,6 @@ export function HomeScreen({
   },
   contentLibrary: {
     contentPackages,
-    selectedPackageId,
     samplePending = false,
     onCreatePackage,
     onCreateSamplePackage,
@@ -80,7 +79,6 @@ export function HomeScreen({
   };
   contentLibrary: {
     contentPackages: HomeContentPackage[];
-    selectedPackageId: string;
     samplePending?: boolean;
     onCreatePackage: () => void;
     onCreateSamplePackage: (id: SampleContentPackageId) => Promise<void>;
@@ -120,6 +118,7 @@ export function HomeScreen({
     null,
   );
   const [openCardActions, setOpenCardActions] = useState<string | null>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
   const pending = importPending || samplePending;
   const usablePackageCount = contentPackages.filter(
     ({ status }) => status === "usable",
@@ -437,7 +436,6 @@ export function HomeScreen({
                             ? `home-package-gameplay-${item.localId} home-package-repair-${item.localId}`
                             : `home-package-gameplay-${item.localId}`
                         }
-                        aria-pressed={item.localId === selectedPackageId}
                         disabled={pending}
                         onClick={() => onOpenPackage(item.localId)}
                       >
@@ -617,31 +615,34 @@ export function HomeScreen({
                     )}
                   </p>
                 </div>
-                <label className="home-zip-picker">
-                  <span>{uiText("内容包 ZIP")}</span>
+                <div className="home-import-picker">
                   <input
-                    className="home-zip-picker-input"
-                    key={
-                      importArchive === null
-                        ? "empty"
-                        : `${importArchive.name}:${importArchive.size}:${importArchive.lastModified}`
-                    }
+                    ref={zipInput}
                     type="file"
+                    hidden
                     accept=".zip,application/zip,application/x-zip-compressed"
                     aria-label={uiText("内容包 ZIP 文件")}
                     disabled={pending}
-                    onChange={(event) =>
-                      onImportArchiveChange(event.target.files?.[0] ?? null)
-                    }
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      if (file) onImportArchiveChange(file);
+                    }}
                   />
-                  <span className="home-zip-picker-control">
-                    <span aria-live="polite">
-                      {importArchive === null
-                        ? uiText("尚未选择")
-                        : `${importArchive.name} · ${formatFileSize(importArchive.size)}`}
-                    </span>
+                  <button
+                    type="button"
+                    aria-describedby="home-zip-picker-status"
+                    disabled={pending}
+                    onClick={() => zipInput.current?.click()}
+                  >
+                    {uiText("选择内容包 ZIP")}
+                  </button>
+                  <span id="home-zip-picker-status" role="status">
+                    {importArchive === null
+                      ? uiText("尚未选择")
+                      : `${importArchive.name} · ${formatFileSize(importArchive.size)}`}
                   </span>
-                </label>
+                </div>
                 <button
                   type="submit"
                   disabled={importArchive === null || pending}

@@ -63,7 +63,6 @@ describe("玩法标签", () => {
               gameplay: fiction,
             },
           ],
-          selectedPackageId: "package-tabletop",
           onCreatePackage: vi.fn(),
           onCreateSamplePackage: vi.fn(),
           onOpenPackage: vi.fn(),

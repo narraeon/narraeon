@@ -8803,6 +8803,14 @@ dialog.world-dialog-scrim::backdrop {
   max-height: calc(100dvh - 2rem);
   margin: auto;
   padding: 0;
+}
+
+.create-package-dialog,
+.sample-story-dialog,
+.confirmation-dialog,
+.protagonist-template-manager,
+.sillytavern-content-import,
+.sillytavern-import {
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--text);
@@ -8812,7 +8820,10 @@ dialog.world-dialog-scrim::backdrop {
 
 .create-package-dialog::backdrop,
 .sample-story-dialog::backdrop,
-.confirmation-dialog::backdrop {
+.confirmation-dialog::backdrop,
+.protagonist-template-manager::backdrop,
+.sillytavern-content-import::backdrop,
+.sillytavern-import::backdrop {
   background: rgb(37 49 59 / 18%);
 }
 
@@ -9080,15 +9091,7 @@ dialog.world-dialog-scrim::backdrop {
   max-width: none;
   max-height: calc(100dvh - 2rem);
   padding: clamp(1rem, 3vw, 2rem);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text);
-  background: var(--surface-inset);
   overflow-y: auto;
-}
-
-.sillytavern-import::backdrop {
-  background: rgb(0 0 0 / 65%);
 }
 
 .sillytavern-import > * + * {
