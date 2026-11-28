@@ -175,6 +175,16 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       }),
   );
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
+  const packageDialogOpener = useRef<HTMLElement>(null);
+  const focusCreatedPage = useRef(false);
+  const focusCreatedPageTitle = useCallback(
+    (title: HTMLHeadingElement | null) => {
+      if (title === null || !focusCreatedPage.current) return;
+      focusCreatedPage.current = false;
+      title.focus();
+    },
+    [],
+  );
   const [creatingPackage, setCreatingPackage] = useState(false);
   const [childNavigation, setChildNavigation] =
     useState<WorkspaceNavigationProtection>(idleWorkspaceNavigation);
@@ -766,6 +776,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     else void packageReadTarget.current?.recover();
   }
 
+  function openPackageDialog(opener?: HTMLElement): void {
+    const focused = document.activeElement;
+    packageDialogOpener.current =
+      opener ?? (focused instanceof HTMLElement ? focused : null);
+    setPackageDialogOpen(true);
+  }
+
   /** The creation dialog keeps itself open and shows the error when Runtime refuses the package. */
   async function createPackage(gameplay: Gameplay): Promise<void> {
     setCreatingPackage(true);
@@ -776,6 +793,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       });
       setPackageDialogOpen(false);
       acceptPackage(created);
+      focusCreatedPage.current = true;
       switchLocation({ screen: "content", packageId: created.localId });
     } catch (error) {
       await workspaceTarget.recover();
@@ -816,6 +834,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         }),
       );
       acceptPackage(created);
+      focusCreatedPage.current = true;
       switchLocation({ screen: "create" }, undefined, {
         packageId: created.localId,
         templateId: "",
@@ -1256,14 +1275,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       ({ id }) => id === workspace.playPresets.currentPresetId,
     )?.name ?? null;
 
-  function navigate(next: Screen): void {
+  function navigate(next: Screen, opener?: HTMLElement): void {
     if (navigationBusy || creatingWorldRef.current || next === screen) return;
     if (navigationDirty)
       askToLeave({
         kind: "program",
-        navigate: () => performNavigation(next, true),
+        navigate: () => performNavigation(next, true, opener),
       });
-    else performNavigation(next);
+    else performNavigation(next, false, opener);
   }
 
   function openPromptOrder(
@@ -1306,7 +1325,11 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       });
   }
 
-  function performNavigation(next: Screen, discard = false): void {
+  function performNavigation(
+    next: Screen,
+    discard = false,
+    opener?: HTMLElement,
+  ): void {
     packageOpenRequest.current += 1;
     if (
       !workspaceHasInstances.current &&
@@ -1321,7 +1344,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
           if (loaded !== null && packageOpenRequest.current === version) {
             if (next === "content") {
               const packageId = loaded.contentPackages[0]?.localId;
-              if (packageId === undefined) setPackageDialogOpen(true);
+              if (packageId === undefined) openPackageDialog(opener);
               else void openPackage(packageId);
             } else if (next === "create") {
               switchLocation({ screen: "create" });
@@ -1334,7 +1357,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       return;
     }
     if (next === "content") {
-      if (selectedPackage === undefined) setPackageDialogOpen(true);
+      if (selectedPackage === undefined) openPackageDialog(opener);
       else if (discard)
         switchLocation({
           screen: "content",
@@ -1459,6 +1482,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         showWorkspaceBack={false}
         key={selected}
         packageName={selectedPackageName}
+        titleRef={focusCreatedPageTitle}
         modelConfigured={workspace.model.configured}
         {...(selectedGameplay === undefined
           ? {}
@@ -1551,6 +1575,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       {packageDialogOpen ? (
         <CreateContentPackageDialog
           pending={creatingPackage}
+          opener={packageDialogOpener}
           onCancel={() => setPackageDialogOpen(false)}
           onCreate={createPackage}
         />
@@ -1633,7 +1658,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               contentPackages: workspace.contentPackages,
               selectedPackageId: selected,
               samplePending,
-              onCreatePackage: () => setPackageDialogOpen(true),
+              onCreatePackage: openPackageDialog,
               onCreateSamplePackage: createSamplePackage,
               onOpenPackage: (packageId) => void openPackage(packageId),
               onRenamePackage: (item, name) =>
@@ -1759,6 +1784,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         {screen === "create" && (
           <CreateWorldScreen
             client={client}
+            titleRef={focusCreatedPageTitle}
             packages={workspace.contentPackages}
             selectedId={selected}
             selectedTemplateId={selectedTemplateId}
@@ -1775,7 +1801,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             }
             onCreate={(template) => void createWorld(template)}
             onNavigationProtectionChange={setChildNavigation}
-            onEdit={() => navigate("content")}
+            onEdit={(opener) => navigate("content", opener)}
             onConfigureModel={configureModelForCreation}
           />
         )}

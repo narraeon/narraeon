@@ -1,4 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   chatGptUsageUrl,
   type ChatGptAccount,
@@ -9,6 +16,7 @@ import {
 import { ConfirmationDialog } from "./ConfirmationDialog.tsx";
 import { uiText } from "./i18n.ts";
 import type { RuntimeClient } from "./runtimeClient.ts";
+import { useModalDialog } from "./useModalDialog.ts";
 
 export interface ChatGptCatalog {
   accountId: string;
@@ -60,6 +68,8 @@ export function ChatGptConnectionFields({
   const [disconnectOpener, setDisconnectOpener] =
     useState<HTMLButtonElement | null>(null);
   const [showIntro, setShowIntro] = useState(false);
+  const accountSelect = useRef<HTMLSelectElement>(null);
+  const introOpener = useRef<HTMLElement>(null);
   const account = accounts?.find(({ id }) => id === accountId);
   const authorized = account?.status === "plan_authorized";
   const connected = authorized || account?.status === "signed_in";
@@ -171,8 +181,12 @@ export function ChatGptConnectionFields({
     ]);
   }
 
-  async function signIn(forAccountId?: string): Promise<void> {
+  async function signIn(
+    opener: HTMLElement | null,
+    forAccountId?: string,
+  ): Promise<void> {
     if (working) return;
+    introOpener.current = opener;
     setNotice("");
     setAction("sign-in");
     try {
@@ -238,6 +252,7 @@ export function ChatGptConnectionFields({
         </p>
         <label htmlFor="chatgpt-account">{uiText("ChatGPT 账号")}</label>
         <select
+          ref={accountSelect}
           id="chatgpt-account"
           disabled={accounts === null || working}
           value={account?.id ?? ""}
@@ -270,7 +285,8 @@ export function ChatGptConnectionFields({
               type="button"
               disabled={working}
               data-oai-siwc-button=""
-              onClick={() => void signIn(account?.id)}
+              // When authorization succeeds this button is removed.
+              onClick={() => void signIn(accountSelect.current, account?.id)}
             >
               {uiText(
                 account?.status === "signed_in"
@@ -285,7 +301,7 @@ export function ChatGptConnectionFields({
               type="button"
               disabled={working}
               data-oai-siwc-button=""
-              onClick={() => void signIn()}
+              onClick={(event) => void signIn(event.currentTarget)}
             >
               {uiText("登录另一个 ChatGPT 账号")}
             </button>
@@ -378,6 +394,7 @@ export function ChatGptConnectionFields({
       )}
       {showIntro && (
         <ChatGptPlanIntro
+          opener={introOpener}
           onDismiss={() => {
             if (account !== undefined) rememberIntro(account.id);
             setShowIntro(false);
@@ -389,24 +406,23 @@ export function ChatGptConnectionFields({
 }
 
 function ChatGptPlanIntro({
+  opener,
   onDismiss,
 }: {
+  opener: RefObject<HTMLElement | null>;
   onDismiss: () => void;
 }): React.JSX.Element {
-  const ref = useRef<HTMLDialogElement>(null);
+  const initialFocus = useRef<HTMLButtonElement>(null);
   const id = useId();
-  useLayoutEffect(() => {
-    const dialog = ref.current;
-    dialog?.showModal();
-    return () => dialog?.close();
-  }, []);
+  const dialog = useModalDialog({
+    open: true,
+    busy: false,
+    opener,
+    initialFocus,
+    onDismiss,
+  });
   return (
-    <dialog
-      ref={ref}
-      className="confirmation-dialog"
-      aria-labelledby={id}
-      onCancel={onDismiss}
-    >
+    <dialog {...dialog} className="confirmation-dialog" aria-labelledby={id}>
       <h3 id={id}>{uiText("你已授权使用 ChatGPT 套餐")}</h3>
       <p>
         {uiText(
@@ -417,7 +433,7 @@ function ChatGptPlanIntro({
         <ChatGptUsageLink />
       </p>
       <div className="button-row">
-        <button type="button" autoFocus onClick={onDismiss}>
+        <button type="button" ref={initialFocus} onClick={onDismiss}>
           {uiText("知道了")}
         </button>
       </div>

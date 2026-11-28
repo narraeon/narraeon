@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import {
   chatGptUsageUrl,
   type ChatGptAccount,
@@ -12,6 +12,12 @@ import { v1Protocol } from "../../src/protocol/v1Version.ts";
 import { test } from "../support/isolatedRuntimeTest.ts";
 
 test.use({ runtimeScope: "chatgpt-model-connection" });
+
+function androidBack(page: Page) {
+  return page.evaluate(() =>
+    (window as { narraeonAndroidBack?: () => boolean }).narraeonAndroidBack?.(),
+  );
+}
 
 for (const locale of ["zh-CN", "en"] as const) {
   test(`shows ChatGPT consent, account catalog, probe costs, and disconnect in ${locale}`, async ({
@@ -174,7 +180,16 @@ for (const locale of ["zh-CN", "en"] as const) {
       "href",
       chatGptUsageUrl,
     );
-    await intro.getByRole("button", { name: t("知道了", "Got it") }).click();
+    const gotIt = intro.getByRole("button", { name: t("知道了", "Got it") });
+    await expect(gotIt).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect.soft(intro.getByRole("link")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect.soft(gotIt).toBeFocused();
+    if (locale === "zh-CN") await page.keyboard.press("Escape");
+    else expect.soft(await androidBack(page)).toBe(true);
+    await expect(intro).toBeHidden();
+    await expect(form.locator("#chatgpt-account")).toBeFocused();
     await expect(
       form.getByText(
         t("已授权使用 ChatGPT 套餐", "ChatGPT plan usage is authorized"),
@@ -267,5 +282,19 @@ for (const locale of ["zh-CN", "en"] as const) {
     await expect(probe).toBeDisabled();
     await expect(save).toBeDisabled();
     expect(probes).toBe(1);
+
+    // Exercise first-time plan confirmation through the other sign-in entry.
+    await page.evaluate((id) => {
+      localStorage.removeItem(`narraeon.chatgpt.intro.${id}`);
+    }, account.id);
+    const anotherAccount = form.getByRole("button", {
+      name: t("登录另一个 ChatGPT 账号", "Sign in to another ChatGPT account"),
+    });
+    await anotherAccount.click();
+    await expect(gotIt).toBeFocused();
+    await gotIt.click();
+    await expect(intro).toBeHidden();
+    await expect(anotherAccount).toBeFocused();
+    expect(signInRequests).toEqual([false, true, false]);
   });
 }

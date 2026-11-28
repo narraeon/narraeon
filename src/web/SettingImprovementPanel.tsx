@@ -140,6 +140,7 @@ interface SettingImprovementPanelProps {
   onViewPromptOrder?: ((target?: PromptRoleOrderTarget) => void) | undefined;
   onBack: () => void;
   showWorkspaceBack?: boolean;
+  titleRef?: (title: HTMLHeadingElement | null) => void;
   backLabel?: string;
   onCreateWorld?: () => void;
   titleSuggestion?: {
@@ -241,6 +242,7 @@ export function SettingImprovementPanel({
   onViewPromptOrder,
   onBack,
   showWorkspaceBack = true,
+  titleRef,
   backLabel,
   onCreateWorld,
   titleSuggestion,
@@ -860,7 +862,12 @@ export function SettingImprovementPanel({
             </button>
           </nav>
 
-          <h1 id="setting-improvement-title" title={packageName}>
+          <h1
+            ref={titleRef}
+            tabIndex={titleRef === undefined ? undefined : -1}
+            id="setting-improvement-title"
+            title={packageName}
+          >
             <span>{packageName}</span>
             {" · "}
             <span>{uiText(revisingWorld ? "世界修订" : "AI 设定完善")}</span>

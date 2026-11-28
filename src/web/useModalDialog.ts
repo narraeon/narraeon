@@ -45,12 +45,14 @@ export function useModalDialog({
   busy,
   opener,
   initialFocus,
+  busyFocus = initialFocus,
   onDismiss,
 }: {
   open: boolean;
   busy: boolean;
   opener: RefObject<HTMLElement | null>;
   initialFocus: RefObject<HTMLElement | null>;
+  busyFocus?: RefObject<HTMLElement | null>;
   onDismiss: () => void;
 }): React.ComponentPropsWithRef<"dialog"> {
   const ref = useRef<HTMLDialogElement>(null);
@@ -74,13 +76,13 @@ export function useModalDialog({
 
   useLayoutEffect(() => {
     // Move focus before the browser reacts to the disabled controls.
-    if (open && busy) initialFocus.current?.focus();
-  }, [open, busy, initialFocus]);
+    if (open && busy) busyFocus.current?.focus();
+  }, [open, busy, busyFocus]);
 
   useLayoutEffect(() => {
     const focused = document.activeElement;
     if (open && (focused === document.body || focused === ref.current))
-      initialFocus.current?.focus();
+      (busy ? busyFocus : initialFocus).current?.focus();
   });
 
   function dismiss(): void {

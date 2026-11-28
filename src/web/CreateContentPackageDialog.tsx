@@ -1,38 +1,38 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState, type RefObject } from "react";
 
 import type { Gameplay, ResolutionScheme } from "../protocol/gameplay.ts";
-import { useAndroidBack } from "./androidBridge.ts";
 import { resolutionSchemeChoices } from "./gameplayChoices.ts";
 import { uiText } from "./i18n.ts";
+import { useModalDialog } from "./useModalDialog.ts";
 
 type GameplayMode = Gameplay["mode"];
 
 /** The creation step for a content package: the gameplay mode, and the scheme when tabletop. */
 export function CreateContentPackageDialog({
   pending,
+  opener,
   onCancel,
   onCreate,
 }: {
   pending: boolean;
+  opener: RefObject<HTMLElement | null>;
   onCancel: () => void;
   onCreate: (gameplay: Gameplay) => Promise<void>;
 }): React.JSX.Element {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const initialFocus = useRef<HTMLInputElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
   const id = useId();
   const [mode, setMode] = useState<GameplayMode>("interactive-fiction");
   const [scheme, setScheme] = useState<ResolutionScheme>("d100");
   const [failure, setFailure] = useState("");
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog !== null && !dialog.open) dialog.showModal();
-    return () => {
-      if (dialog?.open === true) dialog.close();
-    };
-  }, []);
-  // Like Escape, Android Back closes through the parent and never while a create is pending.
-  useAndroidBack(true, () => {
-    if (!pending) onCancel();
+  const dialog = useModalDialog({
+    open: true,
+    busy: pending,
+    opener,
+    initialFocus,
+    busyFocus: title,
+    onDismiss: onCancel,
   });
 
   async function submit(): Promise<void> {
@@ -53,14 +53,9 @@ export function CreateContentPackageDialog({
 
   return (
     <dialog
-      ref={dialogRef}
+      {...dialog}
       className="create-package-dialog"
       aria-labelledby={`${id}-title`}
-      onCancel={(event) => {
-        // Escape closes the dialog only through the parent, and never while a create is pending.
-        event.preventDefault();
-        if (!pending) onCancel();
-      }}
     >
       <form
         className="create-package-form"
@@ -70,7 +65,9 @@ export function CreateContentPackageDialog({
         }}
       >
         <header>
-          <h2 id={`${id}-title`}>{uiText("新建内容包")}</h2>
+          <h2 ref={title} id={`${id}-title`} tabIndex={-1}>
+            {uiText("新建内容包")}
+          </h2>
           <p>{uiText("内容包的玩法在创建时确定，之后不能切换。")}</p>
         </header>
 
@@ -78,6 +75,7 @@ export function CreateContentPackageDialog({
           <legend>{uiText("玩法")}</legend>
           <label className="create-package-choice">
             <input
+              ref={initialFocus}
               type="radio"
               name={`${id}-mode`}
               value="interactive-fiction"
