@@ -660,7 +660,9 @@ export function HomeScreen({
         <span>
           {uiText("可用内容包")} · {usablePackageCount}
           {repairPackageCount > 0 &&
-            uiText(" · {count} 份待修复", { count: repairPackageCount })}
+            (repairPackageCount === 1
+              ? uiText(" · 1 份待修复")
+              : uiText(" · {count} 份待修复", { count: repairPackageCount }))}
         </span>
       </footer>
       {sampleOpener !== null && (

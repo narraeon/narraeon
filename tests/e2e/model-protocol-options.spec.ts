@@ -203,7 +203,7 @@ for (const locale of ["zh-CN", "en"] as const) {
     await page.keyboard.press("Tab");
     await expect(adapter).toBeFocused();
     await expect(thinking).toHaveValue(google ? "auto" : "concise");
-    const budget = label("Thinking budget tokens", "Thinking budget tokens");
+    const budget = label("思考预算（token）", "Thinking budget tokens");
     const cache = label(
       "CLIProxyAPI 转 Claude 的显式缓存标记",
       "Explicit cache markers for Claude via CLIProxyAPI",

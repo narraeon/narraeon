@@ -111,6 +111,11 @@ test("home and library keep their current connection and content-package status 
       await expect(footer).toContainText(
         en ? "Usable content packages · 1" : "可用内容包 · 1",
       );
+      await expect
+        .soft(footer)
+        .toContainText(en ? "· 1 needs repair" : "· 1 份待修复", {
+          timeout: 1500,
+        });
     }
 
     const quickSwitch = page.getByRole("button", {
@@ -126,6 +131,86 @@ test("home and library keep their current connection and content-package status 
       en ? `Current connection: ${next}` : `当前连接：${next}`,
     );
     await expect(page).toHaveURL(/#\/library$/u);
+  }
+
+  await runtime(page, {
+    type: "content.import",
+    title: "Second repair fixture",
+    archiveBase64: archive.toString("base64"),
+  });
+  await page.getByRole("combobox", { name: "界面语言" }).selectOption("en");
+  await expect(page.getByLabel("Workspace status")).toContainText(
+    "· 2 need repair",
+  );
+});
+
+test("the header keeps the current underline during pointer and keyboard navigation", async ({
+  browserName,
+  page,
+}) => {
+  await runtime(page, { type: "preferences.save", locale: "en" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#/");
+  const header = page.getByRole("navigation", { name: "Workspace navigation" });
+  const worlds = header.getByRole("button", { name: "My worlds" });
+  const library = header.getByRole("button", { name: "Content library" });
+  const settings = header.getByRole("button", { name: "Model settings" });
+  const activeColor = "rgb(207, 190, 160)";
+  await expect(worlds).toHaveCSS("border-bottom-color", activeColor);
+  await worlds.hover();
+  await expect.soft(worlds).toHaveCSS("border-bottom-color", activeColor, {
+    timeout: 1500,
+  });
+  await library.hover();
+  await expect(library).toHaveCSS("background-color", "rgb(55, 61, 62)");
+  await expect(library).toHaveCSS("border-bottom-color", "rgba(0, 0, 0, 0)");
+  await page.mouse.move(500, 250);
+  await worlds.focus();
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
+  await expect(library).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/#\/library$/u);
+  await expect(library).toBeFocused();
+  await expect
+    .soft(library)
+    .toHaveCSS("border-bottom-color", activeColor, { timeout: 1500 });
+  const navigationBottom = await library.evaluate(
+    (element) => element.getBoundingClientRect().bottom,
+  );
+  await library.hover();
+  await expect
+    .soft(library)
+    .toHaveCSS("border-bottom-color", activeColor, { timeout: 1500 });
+
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await settings.click();
+    await expect(settings).toHaveAttribute("aria-current", "page");
+    await settings.hover();
+    await expect
+      .soft(settings)
+      .toHaveCSS("border-bottom-color", activeColor, { timeout: 1500 });
+    await expect
+      .soft(settings)
+      .toHaveCSS("border-bottom-width", "2px", { timeout: 1500 });
+    await expect
+      .soft(settings)
+      .toHaveCSS("border-bottom-left-radius", "0px", { timeout: 1500 });
+    const bottom = await settings.evaluate(
+      (element) => element.getBoundingClientRect().bottom,
+    );
+    expect.soft(bottom).toBe(navigationBottom);
+    expect
+      .soft(bottom)
+      .toBe(
+        await page
+          .locator(".workspace-header")
+          .evaluate((element) => element.getBoundingClientRect().bottom),
+      );
   }
 });
 

@@ -3,7 +3,7 @@ import {
   ChatGptUsageLink,
   type ChatGptCatalog,
 } from "./ChatGptConnectionFields.tsx";
-import { uiText } from "./i18n.ts";
+import { getWebLocale, uiText } from "./i18n.ts";
 import {
   useCallback,
   useEffect,
@@ -194,6 +194,7 @@ export function ModelConnectionScreen({
   const hasSavedConfigurations = library.connections.length > 0;
   const showingSavedConfigurations =
     hasSavedConfigurations && savedConfigurationsOpen;
+  const locale = getWebLocale();
   const formHeading = useRef<HTMLHeadingElement>(null);
   const focusFormOnReturn = useRef(false);
   const [deletion, setDeletion] = useState<ConfirmationRequest<
@@ -768,6 +769,22 @@ export function ModelConnectionScreen({
               {library.connections.length} {uiText("份")}
             </span>
           </div>
+          {showingSavedConfigurations && dirty && (
+            <div className="model-saved-draft-notice">
+              <p>
+                {uiText(
+                  "编辑、克隆或删除已保存的配置前，请先保存或放弃当前修改。",
+                )}
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={showFormFromSavedConfigurations}
+              >
+                {uiText("返回草稿")}
+              </button>
+            </div>
+          )}
           {library.connections.length === 0 && (
             <p className="panel-card">{uiText("尚未保存模型配置。")}</p>
           )}
@@ -817,21 +834,31 @@ export function ModelConnectionScreen({
                         )}
                       </dt>
                       <dd>
-                        {connection.contextWindowTokens.toLocaleString()}
+                        {connection.contextWindowTokens.toLocaleString(locale)}
                         {connection.chatGptAccountId === undefined &&
-                          ` / ${connection.maxOutputTokens.toLocaleString()}`}
+                          ` / ${connection.maxOutputTokens.toLocaleString(locale)}`}
                       </dd>
                     </div>
                     <div>
-                      <dt>{uiText("方言 / Effort / Thinking")}</dt>
+                      <dt>{uiText("方言")}</dt>
+                      <dd>{connection.dialect}</dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("推理强度")}</dt>
+                      <dd>{connection.reasoningEffort}</dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("思考模式")}</dt>
                       <dd>
-                        {connection.dialect} / {connection.reasoningEffort} /{" "}
                         {connection.thinkingMode}
                         {connection.thinkingBudgetTokens === null
                           ? ""
-                          : ` (${connection.thinkingBudgetTokens.toLocaleString()} tokens)`}{" "}
-                        / {connection.reasoningSummary}
+                          : ` (${connection.thinkingBudgetTokens.toLocaleString(locale)} tokens)`}
                       </dd>
+                    </div>
+                    <div>
+                      <dt>{uiText("推理摘要")}</dt>
+                      <dd>{connection.reasoningSummary}</dd>
                     </div>
                     <div>
                       <dt>{uiText("凭据")}</dt>
@@ -1460,7 +1487,7 @@ export function ModelConnectionScreen({
                 {(google || form.provider === "anthropic_messages") &&
                 form.thinkingMode === "enabled" ? (
                   <label htmlFor="model-thinking-budget">
-                    {uiText("Thinking budget tokens")}
+                    {uiText("思考预算（token）")}
                     <input
                       id="model-thinking-budget"
                       min={google ? 0 : 1024}

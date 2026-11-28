@@ -52,6 +52,10 @@
 .workspace-navigation > button,
 .workspace-creation-tools > button {
   height: 100%;
+}
+.workspace-navigation > button,
+.workspace-creation-tools > button,
+.workspace-model-control > .workspace-model-button {
   border-radius: 0;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
@@ -75,11 +79,13 @@
   border-bottom: 2px solid transparent;
   text-align: start;
 }
-.workspace-header button[aria-current] {
+.workspace-header button[aria-current],
+.workspace-header button[aria-current]:hover {
   color: #fff;
   border-bottom-color: #cfbea0;
 }
 .workspace-header-actions {
+  align-self: stretch;
   min-width: 0;
   margin-left: auto;
   display: flex;
@@ -103,6 +109,7 @@
   opacity: 0.65;
 }
 .workspace-model-control {
+  align-self: stretch;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -179,13 +186,13 @@
   color: var(--muted);
 }
 .workspace-header .workspace-model-button {
+  align-self: stretch;
   min-width: 0;
   max-width: 16rem;
   display: flex;
   align-items: center;
   gap: 7px;
   padding-block: 4px;
-  white-space: nowrap;
 }
 .workspace-model-button-text {
   min-width: 0;
@@ -903,6 +910,9 @@
 .model-config-mobile-navigation {
   display: none;
 }
+.model-saved-draft-notice {
+  display: none;
+}
 .model-connection-screen .config-layout {
   border: 0;
   margin: 0;
@@ -1124,9 +1134,15 @@
   grid-column: 2;
   grid-row: 3;
 }
-.prompt-preview-input-card > button {
+.prompt-preview-actions {
   grid-column: 1;
   grid-row: 3;
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+.prompt-preview-actions > p {
+  margin: 0;
 }
 .prompt-preview-input-card > label > .field-note {
   grid-column: 1 / -1;
@@ -1384,6 +1400,17 @@
   .model-connection-screen .config-list {
     border: 0;
   }
+  .model-saved-draft-notice {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .model-saved-draft-notice p {
+    margin: 0;
+  }
   .model-connection-screen .config-layout[data-narrow-view="form"] .config-list,
   .model-connection-screen
     .config-layout[data-narrow-view="saved"]
@@ -1399,7 +1426,7 @@
   .prompt-preview-package-field,
   .prompt-preview-player-field,
   .prompt-preview-note-field,
-  .prompt-preview-input-card > button {
+  .prompt-preview-actions {
     grid-column: 1;
     grid-row: auto;
   }

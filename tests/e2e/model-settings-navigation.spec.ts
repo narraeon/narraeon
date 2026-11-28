@@ -10,6 +10,7 @@ test.use({
 });
 
 test("narrow model settings reach saved configurations without scrolling the form", async ({
+  browserName,
   page,
 }) => {
   await runtime(page, { type: "preferences.save", locale: "en" });
@@ -82,10 +83,32 @@ test("narrow model settings reach saved configurations without scrolling the for
   );
 
   await name.fill("Unsaved first connection");
+  await openList.press("Enter");
+  const draftNotice = list.getByText(
+    "Save or discard your changes before editing, cloning, or deleting a saved configuration.",
+  );
+  await expect.soft(draftNotice).toBeInViewport({ timeout: 1500 });
+  for (const action of ["Edit", "Clone configuration", "Delete"]) {
+    await expect(
+      second.getByRole("button", { name: action, exact: true }),
+    ).toBeDisabled();
+  }
+  const returnToDraft = list.getByRole("button", {
+    name: "Return to draft",
+  });
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
+  await expect(returnToDraft).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(formHeading).toBeFocused();
+  await expect(name).toHaveValue("Unsaved first connection");
+  await expect(page.locator(".model-active-summary strong")).toHaveText(
+    "Second connection",
+  );
   await openList.tap();
-  await expect(
-    second.getByRole("button", { name: "Edit", exact: true }),
-  ).toBeDisabled();
   await selectFirst.tap();
   await expect(page.locator(".model-active-summary strong")).toHaveText(
     "First connection",
@@ -113,6 +136,41 @@ test("narrow model settings reach saved configurations without scrolling the for
     "Second connection",
     "Unsaved first connection",
   ]);
+  await expect(draftNotice).toBeHidden();
+  await page
+    .getByRole("combobox", { name: "Interface language" })
+    .selectOption("zh-CN");
+  await page.setViewportSize({ width: 640, height: 844 });
+  const chineseName = page.getByLabel("配置名称", { exact: true });
+  await chineseName.fill("尚未保存的配置名");
+  await page.getByRole("button", { name: /已保存配置/u }).tap();
+  const chineseList = page.getByRole("region", { name: "已保存模型配置" });
+  await expect
+    .soft(
+      chineseList.getByText(
+        "编辑、克隆或删除已保存的配置前，请先保存或放弃当前修改。",
+      ),
+    )
+    .toBeVisible({ timeout: 1500 });
+  const chineseReturn = chineseList.getByRole("button", { name: "返回草稿" });
+  await expect(chineseReturn).toBeVisible();
+  await chineseReturn.tap();
+  await expect(page.getByRole("heading", { name: "编辑配置" })).toBeFocused();
+  await expect(chineseName).toHaveValue("尚未保存的配置名");
+  await expect(page.locator(".model-active-summary strong")).toHaveText(
+    "Unsaved first connection",
+  );
+  await page.getByRole("button", { name: "放弃修改" }).click();
+  await page.getByRole("button", { name: /已保存配置/u }).tap();
+  await expect(chineseReturn).toBeHidden();
+  const other = chineseList
+    .getByRole("article")
+    .filter({ hasText: "Second connection" });
+  for (const action of ["编辑", "克隆配置", "删除"]) {
+    await expect(
+      other.getByRole("button", { name: action, exact: true }),
+    ).toBeEnabled();
+  }
 });
 
 test.describe("desktop model settings", () => {
