@@ -32,8 +32,10 @@ export function readWorldDocumentMetadata(
   source: string,
   codec: "yaml" | "markdown",
 ) {
-  const yamlStart = codec === "markdown" ? 4 : 0;
-  const yaml = codec === "markdown" ? markdownFrontMatter(source) : source;
+  const frontMatter = codec === "markdown" ? markdownFrontMatter(source) : null;
+  if (codec === "markdown" && frontMatter === null) return null;
+  const yamlStart = frontMatter?.yamlStart ?? 0;
+  const yaml = frontMatter?.yaml ?? source;
   if (yaml === "") return null;
   const { document } = parseRestrictedYamlDocument(yaml, {
     rejectRawControlCharacters: true,
@@ -83,11 +85,10 @@ export function readWorldDocumentMetadata(
   )
     return null;
 
-  const bodyStart = codec === "markdown" ? yamlStart + yaml.length + 5 : 0;
   const headings =
-    codec === "markdown"
-      ? scanMarkdownHeadings(source, bodyStart).headings
-      : [];
+    frontMatter === null
+      ? []
+      : scanMarkdownHeadings(source, frontMatter.bodyStart).headings;
   const heading = headings[0];
   if (
     codec === "markdown" &&

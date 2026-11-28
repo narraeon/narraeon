@@ -31,20 +31,23 @@
   overflow-wrap: anywhere;
 }
 
-.entry pre {
+.entry pre,
+.playerViews pre {
   max-height: 14rem;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.statuses {
+.statuses,
+.playerViews {
   display: grid;
   gap: 0.5rem;
   margin: 0.75rem 0;
 }
 
-.statuses h3 {
+.statuses h3,
+.playerViews h3 {
   margin: 0;
 }
 
@@ -63,4 +66,19 @@
   flex-basis: 100%;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.playerViews > article {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--field-surface);
+  overflow-wrap: anywhere;
+}
+
+.playerViews :is(ul, pre) {
+  margin-block: 0;
 }

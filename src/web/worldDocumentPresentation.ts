@@ -34,14 +34,17 @@ export function readWorldDocumentHeader(
   if (codec === null) return noHeader;
   const source =
     codec === "markdown"
-      ? markdownFrontMatter(file.contents)
+      ? (markdownFrontMatter(file.contents)?.yaml ?? "")
       : yamlMetadataSource(file.contents);
   if (source === "") return noHeader;
 
   try {
-    const { document } = parseRestrictedYamlDocument(source, {
-      rejectRawControlCharacters: true,
-    });
+    // Only the metadata index accepts CRLF. The source and Runtime body
+    // validation still use the original bytes.
+    const { document } = parseRestrictedYamlDocument(
+      source.replaceAll("\r\n", "\n"),
+      { rejectRawControlCharacters: true },
+    );
     const first = isMap(document?.contents) ? document.contents.items[0] : null;
     if (!scalarEquals(first?.key, "$document") || !isMap(first?.value))
       return noHeader;
@@ -137,7 +140,9 @@ export function readWorldDocumentBody(
 // title and short-reference index.
 function yamlMetadataSource(source: string): string {
   const opening =
-    /^(?:[ \t]*(?:#[^\n]*)?\n)*\$document:[ \t]*(?:#[^\n]*)?\n/u.exec(source);
+    /^(?:[ \t]*(?:#[^\r\n]*)?\r?\n)*\$document:[ \t]*(?:#[^\r\n]*)?\r?\n/u.exec(
+      source,
+    );
   if (opening === null) return source;
   const nextEntry = /^[^\s#]/gmu;
   nextEntry.lastIndex = opening[0].length;

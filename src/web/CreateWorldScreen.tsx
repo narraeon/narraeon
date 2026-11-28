@@ -213,11 +213,13 @@ export function CreateWorldScreen({
             />
           ) : null}
         </header>
-        <h2>{selected?.title}</h2>
         {selected === undefined ? null : (
-          <p className="create-world-gameplay">
-            {gameplayLabel(selected.gameplay, getWebLocale())}
-          </p>
+          <div className="create-world-preview-title">
+            <h2>{selected.title}</h2>
+            <p className="create-world-gameplay">
+              {gameplayLabel(selected.gameplay, getWebLocale())}
+            </p>
+          </div>
         )}
         <SyncNotice
           failed={openingFailed}

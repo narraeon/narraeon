@@ -537,8 +537,12 @@
   min-width: 0;
   padding: 36px clamp(24px, 6vw, 100px);
 }
-.create-world-screen > article > h2 {
-  margin: 0 0 30px;
+.create-world-preview-title {
+  margin-block-end: 24px;
+  overflow-wrap: anywhere;
+}
+.create-world-preview-title h2 {
+  margin: 0;
   font-size: 20px;
 }
 .create-world-screen .create-world-opening {
