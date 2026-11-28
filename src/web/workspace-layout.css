@@ -819,6 +819,9 @@
   border-radius: 0;
   background: transparent;
 }
+.world-management-body > .manage-card > .button-row {
+  margin-top: 0;
+}
 .manage-disclosure .manage-card {
   padding: 16px 0 0;
   border: 0;

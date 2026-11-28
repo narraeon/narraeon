@@ -277,6 +277,9 @@ const englishMessages: Record<string, string> = {
   应用并开始游玩: "Apply and start playing",
   "请按下面的主角模板修改本世界的主角。\n\n- 找到本世界中代表玩家的主角文档，按模板改写姓名、外貌、背景、性格等相关内容。\n- 模板与本世界设定冲突的部分，保留模板的意图，按本世界的规则调整。\n- 只修改主角相关的内容，不修改其他人物、地点、规则或世界控制。\n- 如果本世界中找不到明确的主角文档，先在回复中说明并询问我，不要擅自新建。\n\n主角模板：\n\n{body}":
     "Please modify this world’s protagonist using the template below.\n\n- Find the protagonist document representing the player in this world, and update the name, appearance, background, personality, and other relevant content according to the template.\n- Where the template conflicts with this world’s setting, preserve its intent while adapting it to the world’s rules.\n- Modify only protagonist-related content. Do not modify other characters, locations, rules, or world control.\n- If there is no clear protagonist document, explain this in your reply and ask me first. Do not create one on your own.\n\nProtagonist template:\n\n{body}",
+  世界备份: "World backup",
+  "将世界保存为 ZIP，之后可在「我的世界」导入并继续游玩。":
+    "Save your world as a ZIP file. Import it from My worlds to keep playing.",
   导出世界备份: "Export world backup",
   导出备份: "Export backup",
   "正在导出世界备份…": "Exporting world backup…",

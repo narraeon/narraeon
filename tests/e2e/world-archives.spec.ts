@@ -232,7 +232,13 @@ for (const locale of ["zh-CN", "en"] as const) {
             imported: "世界备份已导入，新世界已加入列表。",
             open: `打开世界：${title}`,
             manage: "世界管理",
+            story: "导出故事",
+            backup: "世界备份",
+            backupImport:
+              "将世界保存为 ZIP，之后可在「我的世界」导入并继续游玩。",
             exportWorld: "导出世界备份",
+            branch: "从这里开新分支",
+            downloadStarted: "世界备份已开始下载。",
             note: "世界从备份导入；下一次行动会从新上下文开始",
             description:
               "备份包含完整故事、世界文档和模型调用记录，不包含 API Key 和模型配置。",
@@ -245,7 +251,13 @@ for (const locale of ["zh-CN", "en"] as const) {
               "World backup imported. The new world is now in your list.",
             open: `Open world: ${title}`,
             manage: "World management",
+            story: "Export story",
+            backup: "World backup",
+            backupImport:
+              "Save your world as a ZIP file. Import it from My worlds to keep playing.",
             exportWorld: "Export world backup",
+            branch: "Branch from here",
+            downloadStarted: "Your world backup download has started.",
             note: "World imported from backup; your next action will start a fresh context",
             description:
               "Backups include the complete story, world documents, and model call records. API keys and model configuration are excluded.",
@@ -294,12 +306,34 @@ for (const locale of ["zh-CN", "en"] as const) {
     await page.getByRole("button", { name: text.open, exact: true }).click();
     await expect(page.getByText(text.note, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: text.manage, exact: true }).click();
+    const management = page.getByRole("dialog", { name: text.manage });
+    const backup = management.getByRole("article", { name: text.backup });
+    const storyHeading = backup
+      .locator("xpath=preceding-sibling::*[1]")
+      .getByRole("heading");
+    await expect(storyHeading).toHaveText(text.story);
+    await expect(
+      backup.locator("xpath=following-sibling::*[1]").getByRole("heading"),
+    ).toHaveText(text.branch);
+    await expect(backup.getByText(text.backupImport)).toBeVisible();
+    const exportBackup = backup.getByRole("button", {
+      name: text.exportWorld,
+      exact: true,
+    });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      const [story, button] = await Promise.all([
+        storyHeading.boundingBox(),
+        exportBackup.boundingBox(),
+      ]);
+      expect(button!.x).toBeCloseTo(story!.x, 0);
+    }
     const secondDownload = page.waitForEvent("download");
-    await page
-      .getByRole("button", { name: text.exportWorld, exact: true })
-      .click();
+    await exportBackup.click();
     expect((await secondDownload).suggestedFilename()).toContain(
       ".narraeon-world.zip",
     );
+    await expect(backup.getByRole("status")).toHaveText(text.downloadStarted);
+    await expect(backup.getByText(text.description)).toBeVisible();
   });
 }

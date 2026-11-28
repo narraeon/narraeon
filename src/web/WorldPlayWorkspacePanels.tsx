@@ -1084,6 +1084,19 @@ export function WorldManagementDialog({
             </button>
           </div>
         </article>
+        {worldBackupExport ? (
+          <article className="manage-card" aria-labelledby="world-backup-title">
+            <div className="manage-card-copy">
+              <h3 id="world-backup-title">{uiText("世界备份")}</h3>
+              <p>
+                {uiText(
+                  "将世界保存为 ZIP，之后可在「我的世界」导入并继续游玩。",
+                )}
+              </p>
+            </div>
+            {worldBackupExport}
+          </article>
+        ) : null}
         <article className="manage-card derive-card">
           <div>
             <h3>{uiText("从这里开新分支")}</h3>
@@ -1099,7 +1112,6 @@ export function WorldManagementDialog({
             {uiText("创建分叉")}
           </button>
         </article>
-        {worldBackupExport}
         <details
           className="manage-disclosure"
           open={controlEditorOpen}

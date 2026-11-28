@@ -4798,12 +4798,14 @@ summary {
 }
 
 .manage-card-copy p,
-.derive-card p {
+.derive-card p,
+.manage-card > .world-archive-control > p {
   position: relative;
   max-width: 44rem;
   margin: 0.35rem 0 0;
   color: var(--muted);
   font-size: 0.8rem;
+  overflow-wrap: anywhere;
 }
 
 .derive-card {
