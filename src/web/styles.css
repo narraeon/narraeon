@@ -1066,7 +1066,6 @@ summary {
   cursor: pointer;
 }
 
-.play-preset-operations[open] > summary,
 .play-preset-advanced-card[open] > summary {
   margin-bottom: 0.8rem;
 }
@@ -1335,10 +1334,6 @@ summary {
   font-size: 0.78rem;
 }
 
-.play-preset-file-jump {
-  display: none;
-}
-
 .play-preset-file-browser,
 .play-preset-block-browser {
   display: grid;
@@ -1582,23 +1577,16 @@ summary {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .play-preset-file-jump {
-    display: grid;
-  }
-
-  .play-preset-file-browser,
   .play-preset-block-browser {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }
 
-  .play-preset-file-browser > aside,
   .play-preset-block-browser > aside {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .play-preset-file-browser > aside ul,
   .play-preset-block-browser > aside ol {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1606,13 +1594,11 @@ summary {
   .play-preset-prompt-card > header,
   .play-preset-artifact-definition > header,
   .play-preset-player-panel-card > header,
-  .play-preset-file-editor-pane > header,
   .play-preset-block-editor > header,
   .prompt-preview-embedded-header {
     display: grid;
   }
 
-  .play-preset-file-editor-pane > header > p,
   .prompt-preview-embedded-header p {
     max-width: none;
     text-align: left;
@@ -1625,10 +1611,6 @@ summary {
 
   .play-preset-inline-editor > * {
     width: 100%;
-  }
-
-  .play-preset-source-editor textarea {
-    min-height: 24rem;
   }
 
   .play-preset-editor-actions {

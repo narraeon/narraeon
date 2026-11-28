@@ -823,3 +823,388 @@ test("repairing imported orchestration source exposes a named panel with real la
     await expect(panel).toHaveAttribute("aria-labelledby", tabId!);
   }
 });
+
+const reviewResource = "assets/review.css";
+const reviewName =
+  "Fogbell Harbor tabletop orchestration for the lighthouse, guild records, and coastal investigations";
+
+async function openReviewOrchestration(page: Page, locale: "en" | "zh-CN") {
+  await runtime(page, { type: "preferences.save", locale });
+  const library = await runtime<FileNativePlayPresetLibrary>(page, {
+    type: "play.read",
+  });
+  const base = library.presets.find(
+    ({ id }) => id === library.currentPresetId,
+  )!;
+  const files = {
+    ...base.files,
+    ...Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [
+        `assets/fixture-${index}.css`,
+        "",
+      ]),
+    ),
+    [reviewResource]: "body { color: green; }",
+    "assets/review-notes.txt": "Review notes",
+  };
+  const { preset } = await runtime<{ preset: { id: string } }>(page, {
+    type: "play.import",
+    name: reviewName,
+    files: Object.entries(files).map(([path, contents]) => ({
+      path,
+      contents,
+    })),
+  });
+  await page.goto(`/#/orchestrations/${preset.id}`);
+}
+
+for (const locale of ["en", "zh-CN"] as const) {
+  const cn = locale === "zh-CN";
+  const actionsLabel = cn ? "编排方案操作" : "Orchestration actions";
+  const filesLabel = cn ? "完整编排方案文件" : "Complete orchestration files";
+  const retainedLabel = cn ? "保留的资源" : "Retained assets";
+  const danger = "rgb(161, 62, 53)";
+  const dangerFill = "rgb(251, 237, 235)";
+
+  test(`#453 orchestration distinguishes destructive actions and errors (${locale})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 844 });
+    await openReviewOrchestration(page, locale);
+    const button = (name: string) =>
+      page.getByRole("button", { name, exact: true });
+    const checkDanger = async (control: ReturnType<typeof button>) => {
+      await expect(control).toBeEnabled();
+      expect
+        .soft(
+          await control.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return [
+              style.color,
+              style.backgroundColor,
+              style.borderColor,
+              style.borderWidth,
+            ];
+          }),
+        )
+        .toEqual([danger, dangerFill, danger, "1px"]);
+    };
+    const actions = page.getByText(actionsLabel, { exact: true });
+    await actions.press("Enter");
+    const disable = button(cn ? "停用编排方案" : "Disable orchestration");
+    await expect(disable).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const deletePreset = button(cn ? "删除编排方案" : "Delete orchestration");
+    await deletePreset.click();
+    const dialog = page.getByRole("dialog", {
+      name: cn ? /删除编排方案/ : /Delete orchestration/,
+    });
+    const message = dialog.getByText(reviewName, { exact: false });
+    const cancel = dialog.getByRole("button", {
+      name: cn ? "取消" : "Cancel",
+      exact: true,
+    });
+    const confirm = dialog.getByRole("button", {
+      name: cn ? "删除" : "Delete",
+      exact: true,
+    });
+    await expect(cancel).toBeFocused();
+    await expect(cancel).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await checkDanger(confirm);
+    expect
+      .soft(
+        await message.evaluate((element) => {
+          const text = getComputedStyle(element);
+          const dialog = getComputedStyle(element.closest("dialog")!);
+          return [
+            text.fontSize === dialog.fontSize,
+            text.lineHeight === dialog.lineHeight,
+            text.color === dialog.color,
+          ];
+        }),
+      )
+      .toEqual([true, true, true]);
+    await page.keyboard.press("Tab");
+    await expect(confirm).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(deletePreset).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(cancel).toBeFocused();
+    expect(
+      await page.evaluate(() =>
+        (
+          window as Window & {
+            narraeonAndroidBack?: () => boolean;
+          }
+        ).narraeonAndroidBack?.(),
+      ),
+    ).toBe(true);
+    await expect(dialog).toBeHidden();
+    await expect(deletePreset).toBeFocused();
+
+    await button(retainedLabel).click();
+    const files = page.getByRole("tabpanel", { name: filesLabel });
+    await expect(
+      files.getByRole("heading", { name: filesLabel }),
+    ).toBeFocused();
+    const asset = files.getByRole("button", {
+      name: cn
+        ? `打开编排方案文件 ${reviewResource}`
+        : `Open orchestration file ${reviewResource}`,
+    });
+    await asset.click();
+    const deleteResource = button(
+      cn ? "删除未引用资源" : "Delete unused resource",
+    );
+    await checkDanger(deleteResource);
+    await deleteResource.hover();
+    await checkDanger(deleteResource);
+
+    await files
+      .getByText(cn ? "新增修复文件" : "Add a repair file", { exact: true })
+      .click();
+    const path = files.getByRole("textbox", {
+      name: cn ? "新增编排方案文件路径" : "New play-file path",
+    });
+    const addFile = button(cn ? "加入文件草稿" : "Add file to draft");
+    await path.fill(reviewResource);
+    await addFile.click();
+    const error = page.getByRole("alert").filter({
+      hasText: cn
+        ? "该编排方案文件路径已经存在。"
+        : "That play-file path already exists.",
+    });
+    await expect(error).toBeVisible();
+    expect
+      .soft(
+        await error.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return [
+            style.backgroundColor,
+            style.borderInlineStartColor,
+            style.borderInlineStartStyle,
+            style.borderInlineStartWidth,
+          ];
+        }),
+      )
+      .toEqual([dangerFill, danger, "solid", "3px"]);
+    await path.fill("assets/repair.css");
+    await addFile.click();
+    await expect(error).toBeHidden();
+    const status = page
+      .locator(".play-preset-feedback")
+      .and(page.getByRole("status"));
+    await expect(status).toBeVisible();
+    await expect(status).not.toHaveCSS("background-color", dangerFill);
+    await expect(status).toHaveCSS("border-inline-start-width", "0px");
+
+    await page
+      .getByRole("tab", { name: cn ? "游玩" : "Play", exact: true })
+      .click();
+    await button(cn ? "新增纯界面" : "Add interface panel").click();
+    await checkDanger(button(cn ? "删除面板" : "Delete panel"));
+    await button(cn ? "新增后置请求" : "Add follow-up request").click();
+    await button(cn ? "界面产物" : "Outputs").click();
+    await checkDanger(button(cn ? "移除此产物" : "Remove output"));
+    await expect(button(cn ? "保存修改" : "Save changes")).toHaveCSS(
+      "background-color",
+      "rgb(52, 56, 50)",
+    );
+  });
+
+  test(`#454 orchestration actions leave the toolbar and editor in place (${locale})`, async ({
+    page,
+  }) => {
+    await openReviewOrchestration(page, locale);
+    const actions = page.getByText(actionsLabel, { exact: true });
+    const options = page.locator(".play-preset-operations-content");
+    const name = options.getByRole("textbox", {
+      name: cn ? "编排方案名称" : "Orchestration name",
+    });
+    const verticalBounds = () =>
+      Promise.all(
+        [
+          actions,
+          page.locator(".play-preset-toolbar"),
+          page.locator(".play-preset-editor-header"),
+        ].map(async (element) => {
+          const { y, height } = (await element.boundingBox())!;
+          return { y, height };
+        }),
+      );
+
+    for (const width of [390, 800, 801, 1440]) {
+      await test.step(`viewport ${width}px`, async () => {
+        await page.setViewportSize({ width, height: 844 });
+        await expect(actions).toBeVisible();
+        const before = await verticalBounds();
+        await actions.press("Enter");
+        await expect(options).toBeVisible();
+        expect.soft(await verticalBounds()).toEqual(before);
+        const menu = (await options.boundingBox())!;
+        expect(menu.x).toBeGreaterThanOrEqual(0);
+        expect(menu.x + menu.width).toBeLessThanOrEqual(width);
+        expect(menu.y + menu.height).toBeLessThanOrEqual(844);
+        await page.keyboard.press("Tab");
+        await expect(name).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(options).toBeHidden();
+        await expect(actions).toBeFocused();
+        expect(await verticalBounds()).toEqual(before);
+      });
+    }
+  });
+
+  test(`#455 orchestration editor and file navigation fit the available width (${locale})`, async ({
+    page,
+  }) => {
+    await openReviewOrchestration(page, locale);
+    const column = page.locator(".orchestration-editor-column");
+    const orderedList = column.locator(".ordered-play-editor > aside");
+    const editor = column.locator(".ordered-play-content");
+    const widthCases = [
+      { viewport: 390 },
+      { viewport: 600 },
+      { viewport: 601 },
+      { viewport: 620 },
+      { viewport: 640 },
+      { viewport: 641 },
+      { viewport: 700 },
+      { viewport: 768 },
+      { viewport: 850 },
+      { viewport: 1440 },
+      { viewport: 1440, available: 645 },
+      { viewport: 1440, available: 644 },
+      { viewport: 1440, available: 620 },
+    ];
+    const resize = async (viewport: number, available?: number) => {
+      await page.setViewportSize({ width: viewport, height: 844 });
+      await column.evaluate((element, available) => {
+        element.style.maxWidth =
+          available === undefined ? "" : `${available}px`;
+      }, available);
+      expect((await column.boundingBox())!.width).toBe(available ?? viewport);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(viewport);
+    };
+    await expect(editor).toBeVisible();
+    for (const { viewport, available } of widthCases) {
+      await test.step(`prompt editor at ${viewport}px, column ${available ?? viewport}px`, async () => {
+        await resize(viewport, available);
+        const list = (await orderedList.boundingBox())!;
+        const detail = (await editor.boundingBox())!;
+        if ((available ?? viewport) <= 640) {
+          expect.soft(detail.x).toBe(list.x);
+          expect.soft(detail.y).toBeCloseTo(list.y + list.height, 0);
+          expect.soft(detail.width).toBe(list.width);
+          expect.soft(list.height).toBeLessThanOrEqual(144);
+        } else {
+          expect(detail.y).toBe(list.y);
+          expect(detail.x).toBeCloseTo(list.x + list.width, 0);
+          expect(detail.height).toBe(list.height);
+        }
+        expect
+          .soft(
+            await orderedList.evaluate(
+              (element) =>
+                getComputedStyle(element).overflowY === "auto" &&
+                element.scrollHeight > element.clientHeight,
+            ),
+          )
+          .toBe(true);
+      });
+    }
+    await orderedList.hover();
+    await page.mouse.wheel(0, 120);
+    await expect
+      .poll(() => orderedList.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await page
+      .getByRole("button", {
+        name: cn ? "新增提示词" : "Add prompt",
+        exact: true,
+      })
+      .click();
+    const prompt = editor.getByRole("textbox", {
+      name: cn ? "提示词正文" : "Prompt text",
+    });
+    await prompt.click();
+    await expect(prompt).toBeFocused();
+    await page.keyboard.type("Prompt draft");
+    await expect(prompt).toHaveValue("Prompt draft");
+
+    await page.getByText(actionsLabel, { exact: true }).press("Enter");
+    await page
+      .getByRole("button", { name: retainedLabel, exact: true })
+      .press("Enter");
+    const files = page.getByRole("tabpanel", { name: filesLabel });
+    await expect(
+      files.getByRole("heading", { name: filesLabel }),
+    ).toBeFocused();
+    const jump = files.getByRole("combobox", {
+      name: cn ? "编排方案文件" : "Orchestration files",
+    });
+    const list = files.locator(".play-preset-file-browser > aside");
+    const pane = files.locator(".play-preset-file-editor-pane");
+    for (const { viewport, available } of widthCases) {
+      await test.step(`file editor at ${viewport}px, column ${available ?? viewport}px`, async () => {
+        await resize(viewport, available);
+        const compact = (available ?? viewport) <= 644;
+        const side = await list.boundingBox();
+        expect.soft(await jump.isVisible()).toBe(compact);
+        expect.soft(side === null).toBe(compact);
+        const file = (await pane.boundingBox())!;
+        if (side !== null && !compact) {
+          expect.soft(file.y).toBe(side.y);
+          expect.soft(file.x).toBeCloseTo(side.x + side.width, 0);
+          expect(
+            await list.evaluate(
+              (element) => getComputedStyle(element).overflowY,
+            ),
+          ).toBe("auto");
+        }
+        expect
+          .soft(
+            await pane.evaluate((element) =>
+              parseFloat(getComputedStyle(element).paddingInlineStart),
+            ),
+          )
+          .toBeCloseTo(compact ? 9.1 : 14);
+        expect
+          .soft(file.x + file.width)
+          .toBeLessThanOrEqual((available ?? viewport) + 0.1);
+      });
+    }
+    const source = files.getByRole("textbox", {
+      name: cn
+        ? `编辑编排方案文件 ${reviewResource}`
+        : `Edit orchestration file ${reviewResource}`,
+    });
+    await jump.selectOption(reviewResource);
+    await jump.press("Tab");
+    await expect(source).toBeFocused();
+    await expect(source).toHaveValue("body { color: green; }");
+    await resize(1440);
+    await list.hover();
+    await page.mouse.wheel(0, 120);
+    await expect
+      .poll(() => list.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const notes = "assets/review-notes.txt";
+    const otherFile = list.getByRole("button", {
+      name: cn
+        ? `打开编排方案文件 ${notes}`
+        : `Open orchestration file ${notes}`,
+    });
+    await otherFile.click();
+    await expect(otherFile).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      files.getByRole("textbox", {
+        name: cn
+          ? `编辑编排方案文件 ${notes}`
+          : `Edit orchestration file ${notes}`,
+      }),
+    ).toHaveValue("Review notes");
+  });
+}
