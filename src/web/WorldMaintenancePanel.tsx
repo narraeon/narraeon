@@ -94,10 +94,10 @@ export function WorldMaintenancePanel({
                   {document.title}
                   <small> @{document.shortRef}</small>
                 </th>
-                <td>{document.bodyBytes.toLocaleString()}</td>
-                <td>{document.injectedBytes.toLocaleString()}</td>
+                <td>{document.bodyBytes.toLocaleString(locale)}</td>
+                <td>{document.injectedBytes.toLocaleString(locale)}</td>
                 <td>
-                  {document.advisoryBytes?.toLocaleString() ?? "—"}
+                  {document.advisoryBytes?.toLocaleString(locale) ?? "—"}
                   {document.overAdvisory
                     ? zh
                       ? " · 超出建议"
@@ -109,19 +109,24 @@ export function WorldMaintenancePanel({
                     ? zh
                       ? "无世界基准"
                       : "No world baseline"
-                    : `${document.baselineKind === "world_origin" ? (zh ? "世界创建" : "World creation") : zh ? "创建后新增" : "Added later"}: ${document.baselineBytes}`}
+                    : `${document.baselineKind === "world_origin" ? (zh ? "世界创建" : "World creation") : zh ? "创建后新增" : "Added later"}: ${document.baselineBytes?.toLocaleString(locale) ?? "—"}`}
                 </td>
                 <td>
                   {document.growthBytes === null
                     ? "—"
-                    : `${document.growthBytes >= 0 ? "+" : ""}${document.growthBytes}`}
+                    : document.growthBytes.toLocaleString(locale, {
+                        signDisplay: "always",
+                      })}
                   {document.growthRatio === null
                     ? ""
-                    : ` (${document.growthRatio.toFixed(2)}×)`}
+                    : ` (${document.growthRatio.toLocaleString(locale, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}×)`}
                 </td>
                 <td>
-                  {document.bodyChangedContexts} /{" "}
-                  {document.metadataChangedContexts}
+                  {document.bodyChangedContexts.toLocaleString(locale)} /{" "}
+                  {document.metadataChangedContexts.toLocaleString(locale)}
                 </td>
               </tr>
             ))}
@@ -132,8 +137,9 @@ export function WorldMaintenancePanel({
         <ul>
           {report.slots.map((slot) => (
             <li key={slot.id}>
-              {zh ? "材料槽" : "Slot"} {slot.id}: {slot.bytes.toLocaleString()}{" "}
-              / {slot.advisoryBytes?.toLocaleString() ?? "—"}
+              {zh ? "材料槽" : "Slot"} {slot.id}:{" "}
+              {slot.bytes.toLocaleString(locale)} /{" "}
+              {slot.advisoryBytes?.toLocaleString(locale) ?? "—"}
               {slot.overAdvisory
                 ? zh
                   ? " · 超出建议"

@@ -1254,6 +1254,9 @@ const englishMessages: Record<string, string> = {
   已保存模型配置: "Saved model configurations",
   已保存配置: "Saved configurations",
   返回配置表单: "Back to configuration form",
+  "编辑、克隆或删除已保存的配置前，请先保存或放弃当前修改。":
+    "Save or discard your changes before editing, cloning, or deleting a saved configuration.",
+  返回草稿: "Return to draft",
   "尚未保存模型配置。": "No model configurations saved yet.",
   当前使用: "In use",
   模型: "Model",
@@ -2818,6 +2821,7 @@ const dynamicEnglishMessages: Record<string, string> = {
   "重命名世界：{title}": "Rename world: {title}",
   "删除世界：{title}": "Delete world: {title}",
   "{count} 份": "{count} package(s)",
+  " · 1 份待修复": " · 1 needs repair",
   " · {count} 份待修复": " · {count} need repair",
   "{count} 份内容包": "{count} content package(s)",
   "{count} 份可用": "{count} ready",
@@ -2974,10 +2978,13 @@ const dynamicEnglishMessages: Record<string, string> = {
   "标准 Google Interactions 的 xhigh 适用于 Gemini 4 Neon 和 Gemini 4 Hydrogen。请为当前连接选择可用的推理强度或 Provider 默认。":
     "Standard Google Interactions supports xhigh for Gemini 4 Neon and Gemini 4 Hydrogen. Choose an available level for this connection or leave it at Provider default.",
   "Thinking 返回内容": "Returned thinking content",
-  "Thinking budget tokens": "Thinking budget tokens",
+  "思考预算（token）": "Thinking budget tokens",
   "手动 token 预算": "Manual token budget",
   "Provider 默认": "Provider default",
-  "方言 / Effort / Thinking": "Dialect / effort / thinking",
+  方言: "Dialect",
+  推理强度: "Reasoning effort",
+  思考模式: "Thinking mode",
+  推理摘要: "Reasoning summary",
   "CLIProxyAPI 方言只启用代理明确支持的兼容参数；响应仍按所选协议解析，不从可见文本猜测思考块。Claude 的签名 thinking 请选 Responses 或 Anthropic Messages；Chat Completions 通常只有 reasoning_content，不能承诺无损续传签名。模型名的 (high) 等 thinking 后缀会覆盖请求参数，因此 Effort 与 Thinking 都必须保留“Provider 默认”。":
     "The CLIProxyAPI dialect enables only compatibility parameters explicitly supported by the proxy. Responses are still decoded as the selected protocol; visible text is never guessed to be a thinking block. Use Responses or Anthropic Messages for signed Claude thinking. Chat Completions usually exposes only reasoning_content and cannot guarantee lossless signature continuation. Model-name thinking suffixes such as (high) override request fields, so leave both Effort and Thinking at Provider default.",
   "Effort 控制整份响应投入；Anthropic Thinking 独立控制思考块，手动预算必须小于最大输出。Thinking 返回内容只进入模型诊断；原生续传块仍会原样保存。":

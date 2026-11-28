@@ -441,14 +441,14 @@ test("Google 手工选择方言、推理等级或兼容预算，均保留独立�
   fireEvent.change(summary, { target: { value: "auto" } });
   fireEvent.change(mode, { target: { value: "enabled" } });
   expect(effort.value).toBe("provider_default");
-  fireEvent.change(screen.getByLabelText("Thinking budget tokens"), {
+  fireEvent.change(screen.getByLabelText("思考预算（token）"), {
     target: { value: "16" },
   });
   fireEvent.change(effort, { target: { value: "high" } });
   expect(mode.value).toBe("provider_default");
   expect(summary.value).toBe("auto");
   fireEvent.change(mode, { target: { value: "enabled" } });
-  fireEvent.change(screen.getByLabelText("Thinking budget tokens"), {
+  fireEvent.change(screen.getByLabelText("思考预算（token）"), {
     target: { value: "16" },
   });
   fireEvent.click(screen.getByRole("button", { name: "保存模型连接并启用" }));
@@ -498,9 +498,7 @@ test("Google 标准配置显示旧预算并要求明确选择可发送的设置"
   fireEvent.click(save);
   expect(advanced.parentElement).toHaveProperty("open", true);
   expect(request).not.toHaveBeenCalled();
-  const budget = screen.getByLabelText<HTMLInputElement>(
-    "Thinking budget tokens",
-  );
+  const budget = screen.getByLabelText<HTMLInputElement>("思考预算（token）");
   expect(budget.value).toBe("128");
   expect(budget.readOnly).toBe(true);
   const dialect = screen.getByLabelText("端点方言");
@@ -520,7 +518,7 @@ test("Google 标准配置显示旧预算并要求明确选择可发送的设置"
     effort.querySelector<HTMLOptionElement>('option[value="xhigh"]')?.disabled,
   ).toBe(false);
   fireEvent.change(effort, { target: { value: "xhigh" } });
-  expect(screen.queryByLabelText("Thinking budget tokens")).toBeNull();
+  expect(screen.queryByLabelText("思考预算（token）")).toBeNull();
   expect(screen.queryByLabelText("Thinking（兼容预算模式）")).toBeNull();
   const model = screen.getByLabelText("模型 ID");
   fireEvent.change(model, { target: { value: "gemini-4-carbon" } });
@@ -641,7 +639,7 @@ test("模型设置分别保存 Anthropic effort、thinking 模式、预算和返
   fireEvent.change(screen.getByLabelText("Thinking（思考模式）"), {
     target: { value: "enabled" },
   });
-  fireEvent.change(screen.getByLabelText("Thinking budget tokens"), {
+  fireEvent.change(screen.getByLabelText("思考预算（token）"), {
     target: { value: "4096" },
   });
   fireEvent.change(screen.getByLabelText("Thinking 返回内容"), {
@@ -891,6 +889,56 @@ test("拉取模型后提供独立下拉列表，已有 ID 不会隐藏其他模�
   });
   expect(screen.queryByRole("combobox", { name: "已拉取的模型" })).toBeNull();
 });
+
+test.each([
+  ["zh-CN", "思考预算（token）", ["方言", "推理强度", "思考模式", "推理摘要"]],
+  [
+    "en",
+    "Thinking budget tokens",
+    ["Dialect", "Reasoning effort", "Thinking mode", "Reasoning summary"],
+  ],
+] as const)(
+  "%s shows the budget label and matches each saved parameter to its label",
+  (locale, budget, labels) => {
+    setWebLocale(locale);
+    const library = modelLibrary();
+    library.connections[0] = {
+      ...library.connections[0]!,
+      thinkingMode: "enabled",
+      thinkingBudgetTokens: 2048,
+      reasoningSummary: "auto",
+    };
+    render(
+      createElement(ModelConnectionScreen, {
+        client: { request: vi.fn() } as unknown as RuntimeClient,
+        library,
+        onLibraryChange: vi.fn(),
+        onNotice: vi.fn(),
+        onDirtyChange: vi.fn(),
+      }),
+    );
+    expect.soft(screen.queryByLabelText(budget)).not.toBeNull();
+    const details = screen.getByText("claude-sonnet", {
+      selector: "summary",
+    }).parentElement!;
+    const parameters = Array.from(details.querySelectorAll("dl > div")).map(
+      (row) => [
+        row.querySelector("dt")?.textContent,
+        row.querySelector("dd")?.textContent,
+      ],
+    );
+    expect(parameters).toEqual(
+      expect.arrayContaining(
+        labels.map((label, index) => [
+          label,
+          ["cliproxyapi", "provider_default", "enabled (2,048 tokens)", "auto"][
+            index
+          ],
+        ]),
+      ),
+    );
+  },
+);
 
 function modelLibrary(): ModelConnectionLibraryView {
   return {

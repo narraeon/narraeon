@@ -5220,10 +5220,6 @@ summary {
   line-height: 1.65;
 }
 
-.prompt-preview-input-card > button {
-  justify-self: start;
-}
-
 .prompt-preview-input-card > [role="status"],
 .prompt-preview-input-card > [role="alert"] {
   margin: 0;
@@ -8626,7 +8622,7 @@ dialog.world-dialog-scrim::backdrop {
 .maintenance-table-scroll td {
   padding: 0.5rem;
   text-align: start;
-  border-bottom: 1px solid var(--border-subtle, #8884);
+  border-bottom: 1px solid var(--border);
 }
 
 /* Preset selection stays above the content-first prompt workbench. */

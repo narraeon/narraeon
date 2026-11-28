@@ -367,33 +367,43 @@ export function PromptPreviewScreen({
             </p>
           ) : (
             <>
-              <label className="prompt-preview-package-field">
-                {uiText("内容包")}
-                <select
-                  aria-label={uiText("预览内容包")}
-                  value={packageId}
-                  onChange={(event) => {
-                    const nextPackageId = event.currentTarget.value;
-                    setPackageId(nextPackageId);
-                    onPackageSelect(nextPackageId);
-                    invalidatePreview();
-                  }}
-                >
-                  {packages.map((package_) => (
-                    <option key={package_.localId} value={package_.localId}>
-                      {package_.title}
-                      {package_.status === "usable"
-                        ? ""
-                        : uiText(" · 需要修复")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {selectedPackage === undefined ? null : (
-                <p className="prompt-preview-gameplay">
-                  {gameplayLabel(selectedPackage.gameplay, getWebLocale())}
-                </p>
-              )}
+              <div className="prompt-preview-package-field">
+                <label>
+                  {uiText("内容包")}
+                  <select
+                    aria-label={uiText("预览内容包")}
+                    aria-describedby={
+                      selectedPackage === undefined
+                        ? undefined
+                        : "prompt-preview-gameplay"
+                    }
+                    value={packageId}
+                    onChange={(event) => {
+                      const nextPackageId = event.currentTarget.value;
+                      setPackageId(nextPackageId);
+                      onPackageSelect(nextPackageId);
+                      invalidatePreview();
+                    }}
+                  >
+                    {packages.map((package_) => (
+                      <option key={package_.localId} value={package_.localId}>
+                        {package_.title}
+                        {package_.status === "usable"
+                          ? ""
+                          : uiText(" · 需要修复")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedPackage === undefined ? null : (
+                  <p
+                    className="prompt-preview-gameplay"
+                    id="prompt-preview-gameplay"
+                  >
+                    {gameplayLabel(selectedPackage.gameplay, getWebLocale())}
+                  </p>
+                )}
+              </div>
 
               <label className="prompt-preview-player-field">
                 {uiText("预览玩家输入")}
@@ -427,25 +437,26 @@ export function PromptPreviewScreen({
                 />
               </label>
 
-              {selectedPackage?.status === "needs_repair" ? (
-                <p className="prompt-preview-blocker" role="status">
-                  {uiText(
-                    "这份内容包仍需修复；真实首轮预览要求有效的 opening.md、世界文档和控制框架。",
-                  )}
-                </p>
-              ) : null}
-
-              <button
-                disabled={!ready || pending}
-                onClick={() => void compilePreview()}
-                type="button"
-              >
-                {pending
-                  ? uiText("正在编译真实预览…")
-                  : preview === null
-                    ? uiText("生成真实预览")
-                    : uiText("重新生成真实预览")}
-              </button>
+              <div className="prompt-preview-actions">
+                {selectedPackage?.status === "needs_repair" ? (
+                  <p className="prompt-preview-blocker" role="status">
+                    {uiText(
+                      "这份内容包仍需修复；真实首轮预览要求有效的 opening.md、世界文档和控制框架。",
+                    )}
+                  </p>
+                ) : null}
+                <button
+                  disabled={!ready || pending}
+                  onClick={() => void compilePreview()}
+                  type="button"
+                >
+                  {pending
+                    ? uiText("正在编译真实预览…")
+                    : preview === null
+                      ? uiText("生成真实预览")
+                      : uiText("重新生成真实预览")}
+                </button>
+              </div>
             </>
           )}
 
