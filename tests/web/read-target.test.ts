@@ -105,6 +105,31 @@ test("disposal discards callbacks and leaves a newly activated target's recovery
   expect(sync.mock.calls).toEqual([[false], [false]]);
 });
 
+test("retargeting starts a new read without sharing the previous scope or its recovery", async () => {
+  const pending = Promise.withResolvers<string>();
+  const load = vi
+    .fn()
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce("new scope");
+  const apply = vi.fn();
+  const target = new ReadTarget({ load, apply, onSyncFailure: vi.fn() });
+  const oldRead = target.read();
+  await Promise.resolve();
+  const oldRecovery = target.recover();
+
+  target.retarget();
+  expect(await target.read()).toBe("new scope");
+  pending.resolve("old scope");
+  expect(await Promise.all([oldRead, oldRecovery])).toEqual([null, null]);
+  expect(apply.mock.calls).toEqual([["new scope"]]);
+  expect(load).toHaveBeenCalledTimes(2);
+
+  target.dispose();
+  target.retarget();
+  expect(await target.read()).toBeNull();
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
 test("concurrent command failures recover the target while each write is sent only once", async () => {
   const pending = Promise.withResolvers<string>();
   const load = vi

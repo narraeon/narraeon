@@ -41,6 +41,14 @@ export class ReadTarget<T> {
     else if (this.inFlight !== null) this.recoveryNeeded = true;
   }
 
+  /** Retire this scope without closing the boundary shared by its callers. */
+  retarget(): void {
+    if (this.disposed) return;
+    this.activate();
+    this.recoveryNeeded = false;
+    this.options.onSyncFailure(false);
+  }
+
   /** Reattach after React's development lifecycle check; old work remains invalid. */
   activate(): void {
     this.disposed = false;

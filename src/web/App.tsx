@@ -103,6 +103,7 @@ interface PlayPresetLibrary {
 }
 
 type Screen = WorkspaceScreen;
+type WorkspaceReadScope = "full" | "orchestration";
 type LeaveIntent =
   | { kind: "browser"; entry: BrowserWorkspaceEntry }
   | { kind: "program"; navigate: () => void };
@@ -118,7 +119,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const workspaceReceiptVersion = useRef(0);
-  const workspaceReadScope = useRef<"full" | undefined>(undefined);
+  const workspaceReadScope = useRef<WorkspaceReadScope>("full");
   const workspaceHasInstances = useRef(false);
   const currentWorkspace = useEffectEvent(() => workspace);
 
@@ -253,7 +254,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
   function switchLocation(
     next: WorkspaceLocation,
     mode?: "replace",
-    creation?: CreationSelection,
+    {
+      creation,
+      modelSetup,
+    }: {
+      creation?: CreationSelection;
+      modelSetup?: Omit<ModelSettingsVisit, "settings">;
+    } = {},
   ): void {
     const previous = locationRef.current;
     const hash = workspaceHash(next);
@@ -303,14 +310,19 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       replace ? position : position + 1,
       creationSelection,
     );
+    if (modelSetup !== undefined)
+      modelSettingsVisit.current = {
+        ...modelSetup,
+        settings: browserEntry.current,
+      };
+    workspaceTargetForEntry(browserEntry.current);
   }
 
   function cancelBrowserNavigation(destination: BrowserWorkspaceEntry): void {
     const original = browserEntry.current;
-    if (
-      original !== null &&
-      !returnToBrowserWorkspaceEntry(original, destination)
-    )
+    if (original === null) return;
+    workspaceTargetForEntry(original);
+    if (!returnToBrowserWorkspaceEntry(original, destination))
       setNotice(uiText("浏览器无法恢复旧历史地址，当前页面的修改仍在。"));
   }
 
@@ -395,12 +407,14 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         ({ localId }) => localId === packageId,
       );
       switchLocation(target, "replace", {
-        packageId: exists
-          ? packageId
-          : saved === undefined
-            ? (next.contentPackages[0]?.localId ?? "")
-            : "",
-        templateId: saved?.templateId ?? "",
+        creation: {
+          packageId: exists
+            ? packageId
+            : saved === undefined
+              ? (next.contentPackages[0]?.localId ?? "")
+              : "",
+          templateId: saved?.templateId ?? "",
+        },
       });
       if (saved?.packageId && !exists) setNotice(uiText("找不到该内容包。"));
     } else {
@@ -429,9 +443,9 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         return;
       }
       // Recheck local identities: another tab may have deleted the target.
-      if (workspace === null) return;
       const receiptVersion = workspaceReceiptVersion.current;
-      void workspaceTarget.read().then((next) => {
+      const target = workspaceTargetForEntry(entry);
+      void target.read().then((next) => {
         if (
           version !== packageOpenRequest.current ||
           !sameBrowserWorkspaceEntry(entry, readBrowserWorkspaceEntry())
@@ -510,10 +524,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       () =>
         client.request<Workspace>({
           type: "workspace.read",
-          ...(workspaceReadScope.current !== "full" &&
-          (parseWorkspaceHash(window.location.hash)?.screen === "plays" ||
-            (modelSettingsVisit.current?.orchestration === true &&
-              parseWorkspaceHash(window.location.hash)?.screen === "model"))
+          ...(workspaceReadScope.current === "orchestration"
             ? { scope: "orchestration" }
             : {}),
         }),
@@ -547,8 +558,37 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setNotice("");
     }, []),
   );
+  const workspaceTargetForScope = useCallback(
+    (scope: WorkspaceReadScope) => {
+      if (workspaceReadScope.current !== scope) {
+        workspaceReadScope.current = scope;
+        workspaceTarget.retarget();
+      }
+      return workspaceTarget;
+    },
+    [workspaceTarget],
+  );
+  const workspaceTargetForEntry = useCallback(
+    (entry = readBrowserWorkspaceEntry()) => {
+      const screen = parseWorkspaceHash(entry.hash)?.screen;
+      const visit = modelSettingsVisit.current;
+      return workspaceTargetForScope(
+        screen === "plays" ||
+          (screen === "model" &&
+            visit?.orchestration &&
+            sameBrowserWorkspaceEntry(visit.settings, entry))
+          ? "orchestration"
+          : "full",
+      );
+    },
+    [workspaceTargetForScope],
+  );
   async function refresh(): Promise<void> {
-    await workspaceTarget.read();
+    await workspaceTargetForEntry().read();
+  }
+
+  function recoverWorkspace(): Promise<Workspace | null> {
+    return workspaceTargetForEntry().recover();
   }
 
   function updateWorkspace(update: (current: Workspace) => Workspace): void {
@@ -568,7 +608,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       updateWorkspace((current) => ({ ...current, model }));
       return true;
     } catch (error: unknown) {
-      const recovered = await workspaceTarget.recover();
+      const recovered = await recoverWorkspace();
       if (recovered?.model.activeConnectionId === connectionId) return true;
       throw error;
     } finally {
@@ -632,8 +672,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
 
   useEffect(() => {
     let active = true;
-    const read =
-      loadAttempt === 0 ? workspaceTarget.read() : workspaceTarget.recover();
+    const target = workspaceTargetForEntry();
+    const read = loadAttempt === 0 ? target.read() : target.recover();
     void read.then((next) => {
       if (active && next !== null) restoreInitialAddress(next);
     });
@@ -642,7 +682,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       packageOpenRequest.current += 1;
       presetPageInstanceRef.current += 1;
     };
-  }, [workspaceTarget, loadAttempt]);
+  }, [workspaceTargetForEntry, loadAttempt]);
 
   const reconcileVisibleResource = useEffectEvent(() => {
     if (
@@ -796,7 +836,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       focusCreatedPage.current = true;
       switchLocation({ screen: "content", packageId: created.localId });
     } catch (error) {
-      await workspaceTarget.recover();
+      await recoverWorkspace();
       throw error;
     } finally {
       setCreatingPackage(false);
@@ -836,8 +876,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       acceptPackage(created);
       focusCreatedPage.current = true;
       switchLocation({ screen: "create" }, undefined, {
-        packageId: created.localId,
-        templateId: "",
+        creation: { packageId: created.localId, templateId: "" },
       });
     } finally {
       samplePendingRef.current = false;
@@ -907,7 +946,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     } catch (error: unknown) {
       if (copying && !hasUnconfirmedOutcome(error))
         packageCopyAttempt.current = null;
-      await workspaceTarget.recover();
+      await recoverWorkspace();
       report(error);
     } finally {
       if (copying) copyingPackageRef.current = false;
@@ -955,7 +994,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       setNotice(uiText("内容包已重命名。"));
       return true;
     } catch (error: unknown) {
-      const recovered = await workspaceTarget.recover();
+      const recovered = await recoverWorkspace();
       if (
         hasUnconfirmedOutcome(error) &&
         recovered?.contentPackages.some(
@@ -998,7 +1037,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       switchLocation({ screen: "content", packageId: imported.localId });
       setNotice(uiText("已将内容包导入为独立副本，现有内容包未被覆盖。"));
     } catch (error: unknown) {
-      await workspaceTarget.recover();
+      await recoverWorkspace();
       report(error);
     } finally {
       setImportPending(false);
@@ -1018,10 +1057,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         blob: new Blob([bytes], { type: "application/zip" }),
       });
     } catch (error: unknown) {
-      await Promise.all([
-        workspaceTarget.recover(),
-        authoringWorkspace.refresh(),
-      ]);
+      await Promise.all([recoverWorkspace(), authoringWorkspace.refresh()]);
       report(error);
     }
   }
@@ -1069,19 +1105,17 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     const current = locationRef.current;
     if (origin.hash !== workspaceHash(current)) return;
     const draft = worldComposerDraft.current;
-    switchLocation({ screen: "model" });
-    const settings = browserEntry.current;
-    if (settings !== null)
-      modelSettingsVisit.current = {
+    switchLocation({ screen: "model" }, undefined, {
+      modelSetup: {
         origin,
-        settings,
         ...(current.screen === "world" && draft?.worldId === current.worldId
           ? { worldDraft: draft }
           : {}),
         ...(fromOrchestration && current.screen === "plays"
           ? { orchestration: true }
           : {}),
-      };
+      },
+    });
   }
 
   useEffect(() => {
@@ -1171,7 +1205,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       );
       acceptCreatedWorld(created);
     } catch (error: unknown) {
-      await workspaceTarget.recover();
+      await recoverWorkspace();
       report(error);
     } finally {
       creatingWorldRef.current = false;
@@ -1232,7 +1266,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       }));
       setNotice(uiText("世界已从本机删除。"));
     } catch (error: unknown) {
-      await workspaceTarget.recover();
+      await recoverWorkspace();
       report(error);
     }
   }
@@ -1335,12 +1369,10 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
       !workspaceHasInstances.current &&
       (next === "content" || next === "create" || next === "preview")
     ) {
-      workspaceReadScope.current = "full";
       const version = packageOpenRequest.current;
-      void workspaceTarget
+      void workspaceTargetForScope("full")
         .recover()
         .then((loaded) => {
-          if (loaded?.scope === "orchestration") return;
           if (loaded !== null && packageOpenRequest.current === version) {
             if (next === "content") {
               const packageId = loaded.contentPackages[0]?.localId;
@@ -1350,9 +1382,6 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
               switchLocation({ screen: "create" });
             } else openPromptPreview();
           }
-        })
-        .finally(() => {
-          workspaceReadScope.current = undefined;
         });
       return;
     }
@@ -1416,7 +1445,8 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
     // A direct workbench visit has no package/world index. Load the destination
     // before validating a browser entry that has just passed the leave guard.
     const version = ++packageOpenRequest.current;
-    void workspaceTarget.read().then((loaded) => {
+    const target = workspaceTargetForEntry(destination);
+    void target.read().then((loaded) => {
       if (
         loaded !== null &&
         version === packageOpenRequest.current &&
@@ -1458,7 +1488,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
         onComposerDraftChange={rememberWorldDraft}
         onNavigationProtectionChange={setChildNavigation}
         onRenameWorld={(name) => renameWorld(worldId, name)}
-        onRecoverWorkspace={() => workspaceTarget.recover()}
+        onRecoverWorkspace={() => recoverWorkspace()}
         initialReadingPreferences={
           workspace.preferences.reading ?? defaultAppReadingPreferences
         }
@@ -1595,7 +1625,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
             workspaceSyncError
           }
           onRead={() => {
-            if (syncFailed) void workspaceTarget.recover();
+            if (syncFailed) void recoverWorkspace();
             if (packageSyncFailed) retryPackageRead();
             if (creationOverviewFailed) void creationOverviewTarget.recover();
             if (creationSyncFailed) void rereadCreation();
@@ -1638,7 +1668,7 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                   label="导出备份"
                   disabled={importPending || archivePending || samplePending}
                   onBusyChange={setArchivePending}
-                  onFailure={() => workspaceTarget.recover()}
+                  onFailure={() => recoverWorkspace()}
                 />
               ),
               onCreateWorld: () => navigate("create"),
@@ -1672,13 +1702,13 @@ export function App({ client }: { client: RuntimeClient }): React.JSX.Element {
                   disabled={importPending || samplePending || archivePending}
                   onBusyChange={setArchivePending}
                   onImported={acceptWorld}
-                  onFailure={() => workspaceTarget.recover()}
+                  onFailure={() => recoverWorkspace()}
                 />
               ),
               sillyTavernContentImport: (
                 <SillyTavernContentImport
                   client={client}
-                  onFailure={() => workspaceTarget.recover()}
+                  onFailure={() => recoverWorkspace()}
                   onImported={(receipt) => {
                     acceptPackage(receipt);
                     switchLocation({
