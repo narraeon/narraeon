@@ -166,9 +166,6 @@
   margin: 0;
   padding: 6px 16px;
 }
-.play-preset-screen .play-preset-section-kicker {
-  display: none;
-}
 .play-preset-screen .play-preset-editor-badges {
   justify-content: start;
   gap: 3px 7px;
@@ -320,7 +317,7 @@
 .play-preset-screen .preset-object-toolbar > span {
   flex: 1;
   font-size: 12px;
-  color: #85877f;
+  color: var(--muted);
 }
 .play-preset-screen .ordered-play-actions button,
 .play-preset-screen .preset-object-toolbar button {
@@ -336,7 +333,7 @@
   align-items: center;
   justify-content: space-between;
   font-size: 11px;
-  color: #888980;
+  color: var(--muted);
 }
 .play-preset-screen .preset-directory-group > header button {
   border: 0;
@@ -389,7 +386,7 @@
 }
 .play-preset-screen .preset-output-cards span {
   font-size: 11px;
-  color: #8a887e;
+  color: var(--muted);
 }
 .play-preset-screen .preset-output-fields {
   border: 0;

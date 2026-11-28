@@ -17,7 +17,7 @@
   --border: #deded8;
   --field-border: #c9cbc5;
   --field-surface: #ffffff;
-  --muted: #6d756f;
+  --muted: #606862;
   --panel: var(--surface);
   color-scheme: light;
   font-size: 14px;
@@ -145,7 +145,7 @@ summary {
   font-size: 18px;
   line-height: 24px;
 }
-.primary-button {
+.primary-button:where(:enabled) {
   background: #343832;
   color: #fff;
 }
@@ -623,15 +623,6 @@ summary {
 .play-preset-editor h3,
 .play-preset-editor h4 {
   margin: 0;
-}
-
-.play-preset-section-kicker {
-  margin: 0 0 0.2rem;
-  color: var(--accent);
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .play-preset-list {
@@ -5210,14 +5201,6 @@ summary {
 .prompt-preview-section-heading h3,
 .prompt-preview-binding-card h3 {
   font-size: 1.35rem;
-}
-
-.prompt-preview-kicker {
-  margin: 0 0 0.18rem;
-  color: var(--accent);
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
 }
 
 .prompt-preview-mode,

@@ -169,7 +169,7 @@ export function HomeCardActions({
           onToggle(!open);
         }}
       >
-        •••
+        ⋯
       </button>
       <div
         ref={panelRef}

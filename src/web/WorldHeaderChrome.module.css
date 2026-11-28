@@ -1,123 +1,4 @@
 @import "./breakpoints.css";
-.chrome {
-  position: fixed;
-  z-index: var(--z-reader-controls);
-  top: 0.65rem;
-  display: flex;
-  gap: 0.2rem;
-  padding: 0.18rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--surface);
-  box-shadow: none;
-}
-
-.left {
-  left: 0.7rem;
-}
-
-.right {
-  right: 0.7rem;
-}
-
-.chrome button {
-  min-width: 2.15rem;
-  min-height: 2.05rem;
-  padding: 0.35rem 0.58rem;
-  border-color: transparent;
-  border-radius: 3px;
-  color: var(--muted);
-  background: transparent;
-  font-size: 0.75rem;
-}
-
-.chrome button:global(.is-current) {
-  color: var(--accent);
-  background: var(--surface-selected);
-}
-
-.title {
-  position: fixed;
-  z-index: var(--z-reader-foreground);
-  top: 2.75rem;
-  left: 50%;
-  max-width: min(24rem, 50vw);
-  transform: translateX(-50%);
-  overflow: hidden;
-  color: var(--text);
-  font-size: 0.75rem;
-  font-weight: 500;
-  line-height: 1.2;
-  margin: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-@media (--world-reader-narrow) {
-  .chrome {
-    top: 0.4rem;
-  }
-
-  .left {
-    left: 0.35rem;
-  }
-
-  .right {
-    right: 0.35rem;
-  }
-
-  .title {
-    display: none;
-  }
-}
-.chrome,
-.title {
-  position: absolute;
-}
-.chrome {
-  top: 12px;
-  border: 0;
-  padding: 0;
-  background: var(--surface);
-  box-shadow: none;
-}
-.left {
-  left: 20px;
-}
-.right {
-  right: 20px;
-}
-.chrome button {
-  font-size: 13px;
-  min-height: 34px;
-  border-radius: 3px;
-}
-.title {
-  top: 60px;
-  color: var(--muted);
-  font-size: 12px;
-  max-width: calc(100% - 40px);
-}
-@media (--workspace-mobile) {
-  .chrome {
-    gap: 0;
-  }
-  .left {
-    left: 8px;
-  }
-  .right {
-    right: 8px;
-  }
-  .chrome button {
-    padding: 6px;
-    font-size: 12px;
-  }
-  .title {
-    display: block;
-    top: 58px;
-  }
-}
 
 .readerHeader {
   display: grid;
@@ -130,10 +11,33 @@
   background: var(--surface);
 }
 
-.readerHeader .chrome {
+.chrome {
   position: relative;
-  inset: auto;
+  z-index: var(--z-reader-controls);
+  display: flex;
+  gap: 0.2rem;
   min-width: 0;
+  background: var(--surface);
+}
+
+.chrome button {
+  min-width: 2.15rem;
+  min-height: 34px;
+  padding: 0.35rem 0.58rem;
+  border-color: transparent;
+  border-radius: 3px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+}
+
+.chrome button:global(.is-current) {
+  color: var(--accent);
+  background: var(--surface-selected);
+}
+
+.chrome .manage {
+  padding-inline: 0;
 }
 
 .readerTitle {
@@ -156,15 +60,20 @@
     padding-inline: 8px;
   }
 
-  .readerHeader .right {
+  .right {
     grid-column: 2;
     grid-row: 1;
     justify-content: end;
   }
 
-  .readerHeader .chrome button {
+  .chrome {
+    gap: 0;
+  }
+
+  .chrome button {
     min-width: 1.9rem;
-    padding-inline: 0.28rem;
+    padding: 6px 0.28rem;
+    font-size: 12px;
     white-space: nowrap;
   }
 

@@ -141,7 +141,7 @@ export function CreateContentPackageDialog({
           >
             {uiText("取消")}
           </button>
-          <button type="submit" disabled={pending}>
+          <button type="submit" className="primary-button" disabled={pending}>
             {uiText("创建")}
           </button>
         </footer>

@@ -467,7 +467,6 @@ export function PromptPreviewScreen({
             className="panel-card prompt-preview-binding-card"
             aria-labelledby="prompt-preview-binding-title"
           >
-            <p className="prompt-preview-kicker">FIXED BINDING</p>
             <h3 id="prompt-preview-binding-title">{uiText("本次固定绑定")}</h3>
             <dl>
               <div>
@@ -592,7 +591,6 @@ function PromptPreviewResult({
       >
         <div className="prompt-preview-result-heading">
           <div>
-            <p className="prompt-preview-kicker">COMPILED REQUEST</p>
             <h3 id="prompt-preview-result-title">{uiText("编译通过")}</h3>
             <p>
               {packageName} · {hostName} · {modelName}
@@ -767,7 +765,6 @@ function InitialPlayerAppend({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">FIRST DYNAMIC APPEND</p>
           <h3 id="initial-player-append-title">{uiText("首条玩家追加")}</h3>
         </div>
         <p>
@@ -819,9 +816,6 @@ function PlayPresetCallChain({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">
-            {uiText("编排方案 · 冻结修订")}
-          </p>
           <h3 id="play-preset-call-chain-title">
             {uiText("编排方案绑定与调用链工具")}
           </h3>
@@ -939,7 +933,6 @@ function TurnGuidePanel({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">TURN GUIDE</p>
           <h3 id="turn-guide-title">{uiText("本轮提示")}</h3>
         </div>
         <p>
@@ -1020,7 +1013,6 @@ function LogicalMessages({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">PROVIDER-NEUTRAL</p>
           <h3 id="logical-messages-title">
             {uiText("逻辑消息与最终 Markdown")}
           </h3>
@@ -1067,7 +1059,6 @@ function LogicalMessages({
         <article className="prompt-message-reader">
           <header>
             <div>
-              <p className="prompt-preview-kicker">{selected.role}</p>
               <h4>{uiText(roleDescriptions[selected.role].title)}</h4>
               <p>{uiText(roleDescriptions[selected.role].description)}</p>
             </div>
@@ -1122,7 +1113,6 @@ function MaterialsAndTools({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">SOURCES & CAPABILITIES</p>
           <h3 id="materials-tools-title">{uiText("材料覆盖与调用链工具")}</h3>
         </div>
         <p>
@@ -1229,7 +1219,6 @@ function ProviderMapping({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">FINAL ROLE MAPPING</p>
           <h3 id="provider-mapping-title">
             {uiText("Provider 映射 · {provider}", {
               provider: providerLabels[provider.protocol],
@@ -1420,7 +1409,6 @@ function BudgetAndDiagnostics({
     >
       <div className="prompt-preview-detail-heading">
         <div>
-          <p className="prompt-preview-kicker">BUDGET, CACHE & LEAKAGE</p>
           <h3 id="budget-diagnostics-title">{uiText("预算与诊断")}</h3>
         </div>
         <p>

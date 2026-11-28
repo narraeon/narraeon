@@ -41,7 +41,7 @@ export function WorldHeaderChrome({
   return (
     <header className={`world-reader-header ${styles.readerHeader}`}>
       <nav
-        className={`world-floating-chrome world-floating-chrome-left ${styles.chrome} ${styles.left}`}
+        className={`world-floating-chrome world-floating-chrome-left ${styles.chrome}`}
         aria-label={uiText("世界与状态")}
       >
         {onBack !== undefined && (
@@ -109,10 +109,11 @@ export function WorldHeaderChrome({
         </button>
         <button
           type="button"
+          className={styles.manage}
           aria-label={uiText("世界管理")}
           onClick={(event) => onManage(event.currentTarget)}
         >
-          ···
+          ⋯
         </button>
       </nav>
     </header>
