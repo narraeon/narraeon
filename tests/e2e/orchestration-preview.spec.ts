@@ -70,27 +70,45 @@ test("empty workspace previews unsaved and saved changes without accessing insta
   ]);
   expect(seen.filter(({ type }) => type === "play.save")).toHaveLength(1);
 
-  // Leaving the workbench restores the normal workspace read.
-  await page.getByRole("button", { name: "我的世界", exact: true }).click();
-  await expect
-    .poll(() => seen.filter(({ type }) => type === "workspace.read").at(-1))
-    .toEqual({ type: "workspace.read" });
-  const readsBeforeBack = seen.filter(
-    ({ type }) => type === "workspace.read",
-  ).length;
-  await page.goBack();
-  await expect(
-    panel.getByRole("combobox", { name: "预览版本", exact: true }),
-  ).toHaveCount(0);
-  await drawer.click();
-  await panel.getByLabel("预览玩法").selectOption("d20");
-  await expect
-    .poll(() =>
-      seen
-        .filter(({ type }) => type === "workspace.read")
-        .slice(readsBeforeBack),
-    )
-    .toEqual([{ type: "workspace.read", scope: "orchestration" }]);
+  const full = await holdWorkspaceRead(page, undefined, "en");
+  try {
+    // Complete the scoped Back read while the real full response is still held.
+    await page.getByRole("button", { name: "我的世界", exact: true }).click();
+    await full.captured;
+    const readsBeforeBack = seen.filter(
+      ({ type }) => type === "workspace.read",
+    ).length;
+    expect(seen.filter(({ type }) => type === "workspace.read").at(-1)).toEqual(
+      { type: "workspace.read" },
+    );
+    await page.goBack();
+    await expect
+      .poll(() =>
+        seen
+          .filter(({ type }) => type === "workspace.read")
+          .slice(readsBeforeBack),
+      )
+      .toEqual([{ type: "workspace.read", scope: "orchestration" }]);
+    await expect(drawer).toBeVisible();
+    await expect(
+      panel.getByRole("combobox", { name: "预览版本", exact: true }),
+    ).toHaveCount(0);
+    const late = page.waitForResponse((response) =>
+      isWorkspaceRead(response.request().postDataJSON(), undefined),
+    );
+    full.release();
+    expect(await (await late).json()).toMatchObject({
+      result: { preferences: { locale: "en" } },
+    });
+    await drawer.click();
+    await panel.getByLabel("预览玩法").selectOption("d20");
+    await expect(
+      panel.getByRole("heading", { name: "预览结果" }),
+    ).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  } finally {
+    full.release();
+  }
 });
 
 test("author preview switches targets in English with existing instances kept outside the workbench", async ({
@@ -175,6 +193,56 @@ test("author preview switches targets in English with existing instances kept ou
       gameplay: { mode: "tabletop", scheme: "d100" },
     },
   ]);
+
+  const scoped = await holdWorkspaceRead(page, "orchestration", "en");
+  const packageCard = page.getByRole("button", {
+    name: "打开内容包：Private example package",
+  });
+  try {
+    await page
+      .getByRole("combobox", { name: "Interface language", exact: true })
+      .selectOption("zh-CN");
+    await scoped.captured;
+    const full = page.waitForResponse((response) =>
+      isWorkspaceRead(response.request().postDataJSON(), undefined),
+    );
+    await page.getByRole("button", { name: "我的世界", exact: true }).click();
+    await (await full).finished();
+    await expect(packageCard).toBeVisible();
+    const late = page.waitForResponse((response) =>
+      isWorkspaceRead(response.request().postDataJSON(), "orchestration"),
+    );
+    scoped.release();
+    expect(await (await late).json()).toMatchObject({
+      result: { preferences: { locale: "en" } },
+    });
+    await expect(packageCard).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  } finally {
+    scoped.release();
+  }
+
+  const full = await holdWorkspaceRead(page, undefined);
+  try {
+    const readCount = seen.filter(
+      ({ type }) => type === "workspace.read",
+    ).length;
+    await page.getByRole("button", { name: "内容库", exact: true }).click();
+    await full.captured;
+    await page.getByRole("button", { name: "我的世界", exact: true }).click();
+    await expect(page).toHaveURL(/#\/$/u);
+    const completed = page.waitForResponse((response) =>
+      isWorkspaceRead(response.request().postDataJSON(), undefined),
+    );
+    full.release();
+    await (await completed).finished();
+    await expect(packageCard).toBeVisible();
+    expect(
+      seen.filter(({ type }) => type === "workspace.read").slice(readCount),
+    ).toEqual([{ type: "workspace.read" }]);
+  } finally {
+    full.release();
+  }
 });
 
 test("an open preview queues latest conditions and coalesces typing without reading while closed", async ({
@@ -272,6 +340,46 @@ test("an open preview queues latest conditions and coalesces typing without read
   }
 });
 
+type WorkspaceScope = Extract<V1Request, { type: "workspace.read" }>["scope"];
+
+function isWorkspaceRead(input: unknown, scope: WorkspaceScope): boolean {
+  const body = input as { request?: V1Request } | null;
+  return (
+    body?.request?.type === "workspace.read" && body.request.scope === scope
+  );
+}
+
+async function holdWorkspaceRead(
+  page: Page,
+  scope: WorkspaceScope,
+  staleLocale?: "en" | "zh-CN",
+) {
+  const captured = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let intercepted = false;
+  await page.route("**/api/runtime/v1", async (route) => {
+    if (intercepted || !isWorkspaceRead(route.request().postDataJSON(), scope))
+      return route.fallback();
+    intercepted = true;
+    const response = await route.fetch();
+    const body =
+      staleLocale === undefined
+        ? undefined
+        : ((await response.json()) as {
+            result: { preferences: { locale: string } };
+          });
+    if (body !== undefined && staleLocale !== undefined)
+      body.result.preferences.locale = staleLocale;
+    captured.resolve();
+    await release.promise;
+    await route.fulfill({
+      response,
+      ...(body === undefined ? {} : { json: body }),
+    });
+  });
+  return { captured: captured.promise, release: () => release.resolve() };
+}
+
 function observe(page: Page): V1Request[] {
   const seen: V1Request[] = [];
   page.on("request", (request) => {
@@ -282,6 +390,7 @@ function observe(page: Page): V1Request[] {
     seen.push(command);
     const available = [
       "workspace.read",
+      "preferences.save",
       "play.read",
       "play.orchestration.preview",
       "play.save",
