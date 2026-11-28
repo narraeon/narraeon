@@ -1,6 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 import type { ContentTreeFile, V1Request } from "../../src/protocol/v1.ts";
+import { test } from "../support/isolatedRuntimeTest.ts";
+
+test.use({ runtimeScope: "world-rail-focus" });
 
 const outsideDocumentParagraph = "The lanterns stay lit until dawn.";
 
