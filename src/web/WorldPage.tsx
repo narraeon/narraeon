@@ -243,6 +243,10 @@ export function WorldPage({
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [rightRailTab, setRightRailTab] =
     useState<WorldReadingRail>("documents");
+  const rightRailId = useId();
+  const documentsButtonRef = useRef<HTMLButtonElement>(null);
+  const aiReadingButtonRef = useRef<HTMLButtonElement>(null);
+  const rightRailCloseRef = useRef<HTMLButtonElement>(null);
   const [readingOpen, setReadingOpen] = useState(false);
   const readingButtonRef = useRef<HTMLButtonElement>(null);
   const readingPanelId = useId();
@@ -254,9 +258,19 @@ export function WorldPage({
     nowButtonRef.current?.focus({ preventScroll: true });
     setLeftRailOpen(false);
   }
+  function closeRightRail(): void {
+    const trigger =
+      rightRailTab === "documents" ? documentsButtonRef : aiReadingButtonRef;
+    trigger.current?.focus({ preventScroll: true });
+    setRightRailOpen(false);
+  }
   useLayoutEffect(() => {
     if (leftRailOpen) leftRailCloseRef.current?.focus({ preventScroll: true });
   }, [leftRailOpen]);
+  useLayoutEffect(() => {
+    if (rightRailOpen)
+      rightRailCloseRef.current?.focus({ preventScroll: true });
+  }, [rightRailOpen]);
   useLayoutEffect(() => {
     const rail = leftRailRef.current;
     if (!leftRailOpen || rail === null || typeof ResizeObserver === "undefined")
@@ -270,10 +284,8 @@ export function WorldPage({
     observer.observe(rail);
     return () => observer.disconnect();
   }, [leftRailOpen]);
-  useAndroidBack(leftRailOpen || rightRailOpen, () => {
-    if (leftRailOpen) closeLeftRail();
-    setRightRailOpen(false);
-  });
+  useAndroidBack(leftRailOpen, closeLeftRail);
+  useAndroidBack(rightRailOpen, closeRightRail);
   const [dialog, setDialog] = useState<WorldDialog>(null);
   const [protagonistCustomization, setProtagonistCustomization] = useState(
     () =>
@@ -2051,6 +2063,9 @@ export function WorldPage({
             leftRailOpen={leftRailOpen}
             nowButtonRef={nowButtonRef}
             rightRail={rightRailOpen ? rightRailTab : null}
+            rightRailId={rightRailId}
+            documentsButtonRef={documentsButtonRef}
+            aiReadingButtonRef={aiReadingButtonRef}
             readingOpen={readingOpen}
             readingButtonRef={readingButtonRef}
             readingPanelId={readingPanelId}
@@ -2059,7 +2074,13 @@ export function WorldPage({
               if (leftRailOpen) closeLeftRail();
               else setLeftRailOpen(true);
             }}
-            onOpenRail={(tab) => {
+            onToggleRail={(tab) => {
+              if (rightRailOpen && rightRailTab === tab) {
+                closeRightRail();
+                return;
+              }
+              if (rightRailOpen)
+                rightRailCloseRef.current?.focus({ preventScroll: true });
               setRightRailTab(tab);
               setRightRailOpen(true);
               setReadingOpen(false);
@@ -2498,7 +2519,7 @@ export function WorldPage({
             tabIndex={-1}
             onClick={() => {
               if (leftRailOpen) closeLeftRail();
-              setRightRailOpen(false);
+              if (rightRailOpen) closeRightRail();
             }}
           />
 
@@ -2633,6 +2654,7 @@ export function WorldPage({
           </aside>
 
           <aside
+            id={rightRailId}
             className={
               rightRailOpen
                 ? "world-overlay-rail world-overlay-rail-right is-open"
@@ -2645,6 +2667,11 @@ export function WorldPage({
                 ? uiText("当前世界")
                 : uiText("AI 如何读取")
             }
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              closeRightRail();
+            }}
           >
             <header>
               <div>
@@ -2655,9 +2682,10 @@ export function WorldPage({
                 </strong>
               </div>
               <button
+                ref={rightRailCloseRef}
                 type="button"
                 aria-label={uiText("收起世界栏")}
-                onClick={() => setRightRailOpen(false)}
+                onClick={closeRightRail}
               >
                 ×
               </button>
@@ -2666,6 +2694,7 @@ export function WorldPage({
               <button
                 type="button"
                 className={rightRailTab === "documents" ? "is-current" : ""}
+                aria-pressed={rightRailTab === "documents"}
                 onClick={() => setRightRailTab("documents")}
               >
                 {uiText("世界")}
@@ -2673,6 +2702,7 @@ export function WorldPage({
               <button
                 type="button"
                 className={rightRailTab === "ai-reading" ? "is-current" : ""}
+                aria-pressed={rightRailTab === "ai-reading"}
                 onClick={() => setRightRailTab("ai-reading")}
               >
                 {uiText("AI 读取")}
@@ -2745,6 +2775,7 @@ export function WorldPage({
               }
               onChange={(next) => void saveReadingPreferences(next)}
               onClose={closeReadingPreferences}
+              onDismissOutside={() => setReadingOpen(false)}
             />
           ) : null}
 
