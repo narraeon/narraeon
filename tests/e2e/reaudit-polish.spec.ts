@@ -1,7 +1,10 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { ModelConnectionLibraryView } from "../../src/protocol/modelConnections.ts";
 import type { V1Request } from "../../src/protocol/v1.ts";
 import type { EditableContentPackageDetail } from "../../src/runtime/content/CurrentTreeContentLibrary.ts";
+import { test } from "../support/isolatedRuntimeTest.ts";
+
+test.use({ runtimeScope: "reaudit-polish" });
 
 const primaryFill = "rgb(52, 56, 50)";
 const fixtureModel = {

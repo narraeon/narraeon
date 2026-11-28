@@ -1,5 +1,8 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { V1Request } from "../../src/protocol/v1.ts";
+import { test } from "../support/isolatedRuntimeTest.ts";
+
+test.use({ runtimeScope: "content-library-entrypoints" });
 
 async function runtime<T = unknown>(
   page: Page,
