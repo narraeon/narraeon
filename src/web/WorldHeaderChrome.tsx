@@ -10,12 +10,15 @@ export function WorldHeaderChrome({
   leftRailOpen,
   nowButtonRef,
   rightRail,
+  rightRailId,
+  documentsButtonRef,
+  aiReadingButtonRef,
   readingOpen,
   readingButtonRef,
   readingPanelId,
   onBack,
   onToggleNow,
-  onOpenRail,
+  onToggleRail,
   onToggleReading,
   onManage,
 }: {
@@ -23,12 +26,15 @@ export function WorldHeaderChrome({
   leftRailOpen: boolean;
   nowButtonRef: Ref<HTMLButtonElement>;
   rightRail: WorldReadingRail | null;
+  rightRailId: string;
+  documentsButtonRef: Ref<HTMLButtonElement>;
+  aiReadingButtonRef: Ref<HTMLButtonElement>;
   readingOpen: boolean;
   readingButtonRef: Ref<HTMLButtonElement>;
   readingPanelId: string;
   onBack?: (() => void) | undefined;
   onToggleNow: () => void;
-  onOpenRail: (tab: WorldReadingRail) => void;
+  onToggleRail: (tab: WorldReadingRail) => void;
   onToggleReading: () => void;
   onManage: (opener: HTMLButtonElement) => void;
 }) {
@@ -71,16 +77,22 @@ export function WorldHeaderChrome({
       >
         <ArtifactExtensionMount mount="overlay" />
         <button
+          ref={documentsButtonRef}
           type="button"
           className={rightRail === "documents" ? "is-current" : ""}
-          onClick={() => onOpenRail("documents")}
+          aria-expanded={rightRail === "documents"}
+          aria-controls={rightRailId}
+          onClick={() => onToggleRail("documents")}
         >
           {uiText("世界")}
         </button>
         <button
+          ref={aiReadingButtonRef}
           type="button"
           className={rightRail === "ai-reading" ? "is-current" : ""}
-          onClick={() => onOpenRail("ai-reading")}
+          aria-expanded={rightRail === "ai-reading"}
+          aria-controls={rightRailId}
+          onClick={() => onToggleRail("ai-reading")}
         >
           {uiText("AI 读取")}
         </button>

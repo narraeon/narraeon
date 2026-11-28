@@ -43,12 +43,26 @@ export function WorldDocumentRail({
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const switcherRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   function closeMenu(): void {
     setMenuOpen(false);
     menuTrigger.current?.focus({ preventScroll: true });
   }
   useAndroidBack(menuOpen, closeMenu);
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    function dismissOutside(event: PointerEvent): void {
+      if (
+        event.target instanceof Node &&
+        !switcherRef.current?.contains(event.target)
+      )
+        setMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", dismissOutside, true);
+    return () =>
+      document.removeEventListener("pointerdown", dismissOutside, true);
+  }, [menuOpen]);
   const selected =
     documents.find(({ path }) => path === selectedPath) ?? documents[0];
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
@@ -68,7 +82,16 @@ export function WorldDocumentRail({
   return (
     <div className="world-document-rail">
       <div
+        ref={switcherRef}
         className="world-document-switcher"
+        onBlur={(event) => {
+          if (
+            menuOpen &&
+            event.relatedTarget !== null &&
+            !event.currentTarget.contains(event.relatedTarget)
+          )
+            setMenuOpen(false);
+        }}
         onKeyDown={(event) => {
           if (!menuOpen || event.key !== "Escape" || event.defaultPrevented)
             return;
@@ -430,6 +453,7 @@ export function ReadingPreferencesPopover({
   syncNotice,
   onChange,
   onClose,
+  onDismissOutside,
 }: {
   id: string;
   triggerRef: RefObject<HTMLButtonElement | null>;
@@ -438,20 +462,32 @@ export function ReadingPreferencesPopover({
   syncNotice: ReactNode;
   onChange: (value: AppReadingPreferences) => void;
   onClose: () => void;
+  onDismissOutside: () => void;
 }): React.JSX.Element {
   useAndroidBack(true, onClose);
   const close = useEffectEvent(onClose);
+  const dismiss = useEffectEvent(onDismissOutside);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
     function dismissOutside(event: MouseEvent): void {
       if (
-        event.target instanceof Node &&
-        !panelRef.current?.contains(event.target) &&
-        !triggerRef.current?.contains(event.target)
+        !(event.target instanceof Element) ||
+        panelRef.current?.contains(event.target) ||
+        triggerRef.current?.contains(event.target)
+      )
+        return;
+      const active = document.activeElement;
+      const clickedControl = event.target.closest(
+        "button, input, textarea, select, label, a[href], summary, [tabindex], [contenteditable]",
+      );
+      if (
+        clickedControl === null &&
+        (active === document.body || panelRef.current?.contains(active))
       )
         close();
+      else dismiss();
     }
     function dismissEscape(event: KeyboardEvent): void {
       if (event.key !== "Escape" || event.defaultPrevented) return;
