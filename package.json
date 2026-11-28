@@ -1,6 +1,6 @@
 {
   "name": "narraeon",
-  "version": "1.0.0-preview.2",
+  "version": "1.0.0-preview.3",
   "description": "Local-first AI roleplay workspace with file-native worlds, persistent state, and forkable timelines.",
   "license": "Apache-2.0",
   "type": "module",
